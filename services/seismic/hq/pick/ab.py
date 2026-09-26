@@ -26,8 +26,11 @@ weights, adopted profiles, Check B), ``picks.parquet`` (every pick >= threshold 
 combination, ``Pick`` schema) and one ``record_section_<eventId>.png`` per event; ``run(ctx)``
 also writes ``pick_known.record.json`` (runtime, counts, params).
 
-CLI: writes everything above except ``known/pick_known.record.json``, which only ``run(ctx)``
-writes; neither touches ``run.json`` (pick_known is a sub-step, not a registered stage)::
+CLI: writes everything above except ``known/pick_known.record.json``. Only ``run(ctx)`` writes
+that record, and nothing calls ``run(ctx)`` outside the tests: ``hq.runs.STAGES`` has no
+``pick_known`` and ``hq run`` rejects the name. A real run therefore has no record of this
+sub-step's runtime, counts or params (flagged in the SEIS-08 PR). Neither touches ``run.json``
+(pick_known is a sub-step, not a registered stage)::
 
     uv run python -m hq.pick.ab --run-dir <dir> --config-dir configs/showcase --cache-dir <dir>
 """
@@ -1230,7 +1233,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print()
     for name, path in result.paths.items():
         print(f"{name}: {path}")
-    print("(CLI run: known/pick_known.record.json not written; hq.pick.ab.run(ctx) writes it)")
+    print(
+        "(known/pick_known.record.json not written: only hq.pick.ab.run(ctx) writes it, and no "
+        "stage or CLI calls that)"
+    )
     return 0
 
 
