@@ -1,0 +1,65 @@
+# Live worker knobs (API-04, H4). Parsed by hq_api.config.LiveConfig; unknown keys are an error.
+# Every value the worker and the API use lives here and is recorded in each window record
+# (GET /health), so a served window traces to its knobs. Paths are relative to the checkout root
+# unless absolute.
+
+window:
+  # Seconds of data per window: the last two hours (LiveStatus.windowS, the "last 2 h" label).
+  windowS: 7200
+  # Seconds between window starts. Must not exceed windowS, or windows would leave gaps.
+  everyS: 600
+  # Seconds the window end trails the wall clock so the last samples reach the data center.
+  # Counted into latencyS (data end -> results ready).
+  dataLagS: 0
+  # Pipeline stages one window runs, in `hq stages` order. validate belongs to the frozen showcase
+  # run and export is done by the worker itself, so neither is allowed here.
+  stages: [inventory, catalog, download, pick, associate, locate, match, tier]
+  # Live kill switch (docs/03): a window slower than this (data end -> results ready) is logged as
+  # slow and flagged in /health. Unstable or over this -> cut the LIVE pill.
+  maxLatencyS: 600
+
+paths:
+  # The showcase config directory. Each window copies its YAMLs and rewrites run.yaml's window.
+  configDir: services/seismic/configs/showcase
+  # Runs root (<dataDir>/live/runs/<runId>) and waveform cache (<dataDir>/cache). null means the
+  # main checkout's data/, shared by every worktree (the hq CLI rule).
+  dataDir: null
+  # Generated per-window config directories (run.yaml with the live window).
+  windowConfigDir: data/live/configs
+  # The last good window plus recent history; a restart serves the last window from here.
+  stateFile: data/live/latest.json
+  # One exported live bundle per window, <bundlesDir>/<runId>/; the API serves the latest good one.
+  bundlesDir: data/live/bundles
+  # The snapshot bundle the web app fails over to (API-05).
+  snapshotDir: apps/web/public/data/snapshot
+  # Bundles older than the newest keepBundles are removed.
+  keepBundles: 6
+
+snapshot:
+  # Rewrite the snapshot bundle after every window that produced a valid bundle.
+  enabled: true
+  # Also freeze a window with no candidate events. false keeps the last snapshot that showed
+  # something; the API still serves the empty window live.
+  writeEmptyWindows: true
+
+serve:
+  # Cap on GET /api/live/events, in reveal order (Tier A first). docs/01 sizes events.json at
+  # under 1 MB for 2,000 events.
+  maxEvents: 2000
+  # A served window whose updatedAt is older than this is reported stale in /health
+  # (three missed windows at everyS 600).
+  staleAfterS: 1800
+  # Window records kept in the state file and returned by /health, newest first.
+  historyN: 24
+  # Origins allowed by CORS. Add the deployed site's origin (the Vercel URL, API-03) when the
+  # worker runs for it; "*" allows every origin.
+  corsOrigins:
+    - http://localhost:3000
+
+server:
+  host: 127.0.0.1
+  port: 8000
+  # Seconds an idle keep-alive connection stays open.
+  keepAliveS: 5
+  # Seconds the server waits for in-flight requests on shutdown.
+  gracefulShutdownS: 10
