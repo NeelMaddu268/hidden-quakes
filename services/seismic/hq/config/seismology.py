@@ -302,16 +302,19 @@ class StaticsExplainConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # The other stations' terms of the same phase, fit as a plane over station position, explain
-    # a term as lateral structure when the plane predicts the term's sign and at least this
-    # fraction of its size at the station.
+    # The median term of a station's nearest other stations (same phase) explains its term as
+    # lateral structure when it has the term's sign and at least this fraction of its size.
+    neighbours: int = Field(ge=1)
     lateralFraction: float = Field(gt=0, le=1)
-    minTrendStations: int = Field(ge=3)  # other stations with a term the plane fit needs
-    # S term / P term of one station, compared only when |P term| is at least this (s).
+    # S term / P term of one station (same sign), compared only when |P term| is at least this.
     minRatioTermS: float = Field(gt=0)
     # S/P within a factor ratioBand of the model's Vp/Vs at the sensor: a path (velocity) anomaly;
-    # within a factor ratioBand of 1: equal P and S delays, a timing offset is possible.
+    # above it: the local Vp/Vs differs from the model's; within a factor ratioBand of 1: equal P
+    # and S delays, a timing offset is possible.
     ratioBand: float = Field(gt=1)
+    # An early term at a station farther than this (m) from the events' median epicentre: rays
+    # bottoming in the model's deepest (extrapolated) layers; reported as an untested hypothesis.
+    farStationM: float = Field(gt=0)
 
 
 class StaticsConfig(BaseModel):
