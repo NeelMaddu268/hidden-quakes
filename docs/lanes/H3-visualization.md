@@ -295,8 +295,17 @@ or change inclusion because the depth gate failed.
 
 ### Handoffs to preserve
 
-H4 owns mounting `EvidenceDrawer` from `@/drawer` (REQ-H3-5), matching mock evidence with provider
-preloads (REQ-H3-3), and the deployed mock build for Gate M. The stock mock currently needs the
-labelled slab because its projection differs from the DEM (REQ-H3-4). Keep the real terrain assets
-and `?terrain=slab` fallback intact. After WEB-07, WEB-06 remains scheduled after Gate E and WEB-08
-retains the full ten-run, two-browser hardening checklist.
+Main 544c869 integrates all four lanes. H4 completed drawer mounting (REQ-H3-5), mock evidence
+preload coverage (REQ-H3-3), and ENU-to-geographic UTM conversion with the matching DEM projection
+(REQ-H3-4). The stock mock can now render the real terrain; retain `?terrain=slab` as the explicit
+fallback. FEAT-01 reference features remain honestly unverified and must stay dashed.
+
+The public Gate M check still needs the one-time Vercel connection and a deployment URL. Offline
+static-export acceptance is distinct from that deployed gate. The available shared run
+`20260926-0210-a04c611` contains inventory, catalog and known-event picks, but no run-root events,
+arrivals or picks tables; do not treat it as a completed showcase export input. H1/H2 must finish and
+publish the run stages before H4's exporter can produce the real bundle. This laptop has working gh
+access, so downloading a completed run is not blocked here.
+
+After WEB-07, WEB-06 remains scheduled after Gate E and WEB-08 retains the full ten-run, two-browser
+hardening checklist. The 1–5 AM no-merge window remains in force.
