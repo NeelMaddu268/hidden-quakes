@@ -54,12 +54,12 @@ T0 = 1_789_041_600.25  # 2026-09-10T12:00:00.25Z, inside the showcase window
 KM = 1000.0
 HYPO_U = -4000.0  # ENU u of every synthetic hypocentre
 HYPO = (0.0, 0.0, HYPO_U)  # public hypocentre ENU used by the reason tests
-MATCH_ARROW = {
-    "catalogId": pa.string(),
-    "eventId": pa.string(),
+MATCH_ARROW = {  # docs/02 §2 dtype rule: str -> Arrow large_string
+    "catalogId": pa.large_string(),
+    "eventId": pa.large_string(),
     "dtS": pa.float64(),
     "distM": pa.float64(),
-    "reason": pa.string(),
+    "reason": pa.large_string(),
 }
 SENSITIVITY_ARROW = {"dtS": pa.float64(), "distM": pa.float64(), "recovered": pa.int64()}
 # events_located.parquet (docs/02 §2): SeismicEvent fields except tier, tierReasons, catalogMatch
