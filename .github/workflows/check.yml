@@ -32,6 +32,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
         with:
+          # The interpreter most laptops run; the code must also pass on 3.11 and 3.13.
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: |
             services/seismic/uv.lock
