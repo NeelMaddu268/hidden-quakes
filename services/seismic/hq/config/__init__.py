@@ -1,10 +1,10 @@
 """Config loader: one YAML per lane composed into a ``RunConfig`` (docs/02 §3).
 
-``load_config(dir)`` reads ``run.yaml`` (H2), ``signal.yaml`` (H1), ``seismology.yaml`` (H2) and
-``export.yaml`` (H4) from one directory and validates each with its lane's Pydantic model.
-Unknown keys are errors, never warnings.
+``load_config(dir)`` reads ``run.yaml`` (H2), ``signal.yaml`` (H1), ``seismology.yaml`` (H2),
+``export.yaml`` (H4) and ``validate.yaml`` (H4) from one directory and validates each with its
+lane's Pydantic model. Unknown keys are errors, never warnings.
 
-``run`` and ``export`` are required. A lane section whose model module and YAML are both absent
+``run``, ``export`` and ``validate`` are required. A lane section whose model module and YAML are both absent
 loads as ``None`` with a warning naming the owner, so nobody waits on anybody; exactly one of the
 two present is an error naming the owner. A stage that needs a section that is ``None`` asks for
 it with ``RunConfig.section(name)`` and gets the same clear error.
@@ -21,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 
 from hq.config.export import ExportConfig
 from hq.config.run import RunSection
+from hq.config.validate import ValidateConfig
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +54,9 @@ SECTIONS: tuple[SectionSpec, ...] = (
         False,
     ),
     SectionSpec("export", "hq.config.export", "ExportConfig", "export.yaml", "H4 Platform", True),
+    SectionSpec(
+        "validate", "hq.config.validate", "ValidateConfig", "validate.yaml", "H4 Platform", True
+    ),
 )
 SECTION_BY_NAME: dict[str, SectionSpec] = {spec.name: spec for spec in SECTIONS}
 
@@ -65,6 +69,7 @@ class RunConfig:
     signal: Any  # hq.config.signal.SignalConfig (H1) once it exists, else None
     seismology: Any  # hq.config.seismology.SeismologyConfig (H2) once it exists, else None
     export: ExportConfig
+    validate: ValidateConfig  # hq.validate reruns (VAL-02 null test, VAL-01 baseline, G-R)
 
     def section(self, name: str) -> Any:
         """The named section, or a ``ConfigError`` naming its owner when it isn't loaded."""
@@ -178,16 +183,24 @@ def load_config(config_dir: Path) -> RunConfig:
     if not config_dir.is_dir():
         raise ConfigError(f"config directory not found: {config_dir}")
     loaded = {spec.name: _load_section(config_dir, spec) for spec in SECTIONS}
-    run, export = loaded["run"], loaded["export"]
-    if not isinstance(run, RunSection) or not isinstance(export, ExportConfig):
-        raise ConfigError(f"{config_dir}: run/export sections loaded as unexpected types")
+    run, export, validate = loaded["run"], loaded["export"], loaded["validate"]
+    if (
+        not isinstance(run, RunSection)
+        or not isinstance(export, ExportConfig)
+        or not isinstance(validate, ValidateConfig)
+    ):
+        raise ConfigError(f"{config_dir}: run/export/validate sections loaded as unexpected types")
     log.info(
         "loaded config from %s: %s",
         config_dir,
         ", ".join(name for name, value in loaded.items() if value is not None),
     )
     return RunConfig(
-        run=run, signal=loaded["signal"], seismology=loaded["seismology"], export=export
+        run=run,
+        signal=loaded["signal"],
+        seismology=loaded["seismology"],
+        export=export,
+        validate=validate,
     )
 
 
@@ -199,6 +212,7 @@ __all__ = [
     "RunConfig",
     "RunSection",
     "SectionSpec",
+    "ValidateConfig",
     "lax_models",
     "load_config",
 ]
