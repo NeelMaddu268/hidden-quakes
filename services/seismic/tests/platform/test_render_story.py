@@ -129,7 +129,16 @@ def test_values_come_from_the_bundle(rendered: tuple[Path, list, str]) -> None:
     hero = json.loads(
         (MOCK_BUNDLE / "evidence" / f"{meta['scene']['heroEventId']}.json").read_text()
     )
-    assert value[("pitch-and-qa.md", "{nStations}")] == str(len(hero["traces"]))
+    events = json.loads((MOCK_BUNDLE / "events.json").read_text(encoding="utf-8"))
+    hero_event = next(e for e in events if e["id"] == meta["scene"]["heroEventId"])
+    # The drawer header prints quality.nStations; the evidence trace count is only a fallback.
+    assert value[("pitch-and-qa.md", "{nStations}")] == str(hero_event["quality"]["nStations"])
+    assert "traces" in hero  # the evidence file exists, and is not what the count comes from
+    hidden = [e for e in events if e["tier"] == "A" and e["catalogMatch"] is None]
+    best = min(
+        hidden, key=lambda e: (-e["quality"]["nStations"], e["quality"]["rmsS"], e["t"], e["id"])
+    )
+    assert value[("pitch-and-qa.md", "{hiddenHeroId}")] == best["id"]
     pitch = (out / "pitch-filled.md").read_text(encoding="utf-8")
     assert f"lists {meta['summary']['publicCatalogCount']} events" in pitch
     # A code span wrapping two placeholders keeps its backticks.

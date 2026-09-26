@@ -47,7 +47,7 @@ from typing import Any
 
 from hq_contracts import models as m
 
-from hq.export.files import EVIDENCE_DIR, META_JSON, VALIDATION_JSON
+from hq.export.files import EVENTS_JSON, EVIDENCE_DIR, META_JSON, VALIDATION_JSON
 
 # ML-01 (H2's PR agent/ML-01-ui): optional, next to validation.json in the bundle.
 CONFIDENCE_JSON = "confidence.json"
@@ -118,6 +118,7 @@ class Bundle:
     meta: dict[str, Any]
     validation: dict[str, Any] | None
     hero_evidence: dict[str, Any] | None
+    events: list[dict[str, Any]] | None = None  # events.json when present (hero stations, Q37)
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -163,8 +164,22 @@ def load_bundle(bundle_dir: Path) -> Bundle:
                 f"{EVIDENCE_DIR}/{hero_id}.json is missing: the hero station count renders as "
                 "not available"
             )
+    events: list[dict[str, Any]] | None = None
+    events_path = bundle_dir / EVENTS_JSON
+    if events_path.is_file():
+        events = [m.SeismicEvent.model_validate(e).model_dump() for e in _load_json(events_path)]
+    else:
+        notes.append(
+            f"{EVENTS_JSON} is missing: the hero station count falls back to the evidence "
+            "traces and the hidden-event pointer renders as not available"
+        )
     return Bundle(
-        path=bundle_dir, meta=meta, validation=validation, hero_evidence=hero, notes=notes
+        path=bundle_dir,
+        meta=meta,
+        validation=validation,
+        hero_evidence=hero,
+        events=events,
+        notes=notes,
     )
 
 
@@ -454,16 +469,55 @@ def confidence_auc() -> Resolver:
 
 
 def hero_station_count() -> Resolver:
-    source = f"{EVIDENCE_DIR}/<scene.heroEventId>.json → traces.length"
+    """ "{nStations} stations agreed": the hero's ``quality.nStations`` from ``events.json``,
+    which is what the drawer header prints. The evidence file's trace count is only a fallback
+    (the exporter caps traces per file, so it can read lower than the drawer)."""
+    source = f"{EVENTS_JSON} → hero's quality.nStations"
+    fallback = f"{EVIDENCE_DIR}/<scene.heroEventId>.json → traces.length"
 
     def resolve(bundle: Bundle) -> Resolved:
+        hero_id = bundle.meta["scene"]["heroEventId"]
+        if hero_id is not None and bundle.events is not None:
+            for event in bundle.events:
+                if event["id"] == hero_id:
+                    return Resolved(fmt(event["quality"]["nStations"]), source, STATUS_VALUE)
         if bundle.hero_evidence is None:
             return Resolved(
-                f"[not available: {source} (no hero evidence file in the bundle)]",
+                f"[not available: {source} (no hero in {EVENTS_JSON} and no hero evidence file)]",
                 source,
                 STATUS_NOT_AVAILABLE,
             )
-        return Resolved(fmt(len(bundle.hero_evidence["traces"])), source, STATUS_VALUE)
+        return Resolved(
+            fmt(len(bundle.hero_evidence["traces"])),
+            f"{fallback} (fallback: {EVENTS_JSON} absent)",
+            STATUS_VALUE,
+        )
+
+    return resolve
+
+
+def hidden_hero_id() -> Resolver:
+    """Q37's pointer: the strict event with no catalog match chosen by the hero's own rule
+    (most stations, then smallest timing misfit, then earliest, then id), from ``events.json``."""
+    source = (
+        f"{EVENTS_JSON} → Tier A, catalogMatch null, by the hero rule (most stations, least rmsS)"
+    )
+
+    def resolve(bundle: Bundle) -> Resolved:
+        if bundle.events is None:
+            return _not_available(bundle, META_JSON, source)
+        hidden = [e for e in bundle.events if e["tier"] == "A" and e["catalogMatch"] is None]
+        if not hidden:
+            return Resolved(
+                "[condition not met: no strict event without a catalog match; omit this sentence]",
+                source,
+                STATUS_CONDITION,
+            )
+        best = min(
+            hidden,
+            key=lambda e: (-e["quality"]["nStations"], e["quality"]["rmsS"], e["t"], e["id"]),
+        )
+        return Resolved(str(best["id"]), source, STATUS_VALUE)
 
     return resolve
 
@@ -536,6 +590,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
     Spec("{strictAdditionalCount}", meta_field("summary.strictAdditionalCount")),
     Spec("{N}", meta_field("summary.publicCatalogCount"), label="{N} (PUBLIC counter)"),
     Spec("{nStations}", hero_station_count()),
+    Spec("{hiddenHeroId}", hidden_hero_id()),
     # Metres, whole: the Validation card rounds this row the same way (rows.ts DECIMALS.depth).
     Spec("{medianVErrM}", validation_field("synthetic.medianVErrM", decimals=0)),
     Spec(
@@ -742,7 +797,7 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
             sentence=MAG_SENTENCE,
         ),
     ),
-    Spec("<from evidence/<heroEventId>.json: traces.length>", hero_station_count()),
+    Spec("<from events.json: hero quality.nStations>", hero_station_count()),
     Spec("<heroEventId>", meta_field("scene.heroEventId")),
     Spec("<scene.heroEventId>", meta_field("scene.heroEventId")),
     Spec("<deployed URL>", deployed_url()),
