@@ -328,6 +328,7 @@ def test_stage_writes_tables_report_and_record(
     assert rows[1][4].startswith("Not the cause")  # boreholes carry their depths
     assert rows[2][4].startswith("Not the cause")  # the datum check recovers the event
     assert "No known public event was compared" in rows[2][4]
+    assert "known/windows.json (H1's known-event windows) is not in the run dir" in rows[2][4]
     # Row 5 counts every associated pick: the planted P outlier sits in the 'surface' profile.
     assert "P surface: " in rows[5][3] and "dropped by the outlier pass" in rows[5][3]
     assert "catalog.parquet is not in the run dir" in report
@@ -373,6 +374,7 @@ def test_catalog_comparison_and_row_seven_at_catalog_hypocentres(
     assert "every compared event with a stated horizontal uncertainty (2 of 2) lies within" in report
     row2 = next(line for line in report.splitlines() if line.startswith("| 2 |"))
     assert "Independent check" in row2 and "2 of 2 within the catalog's stated depth" in row2
+    assert "2 of 2 within the catalog's stated horizontal error" in row2
     row7 = next(line for line in report.splitlines() if line.startswith("| 7 |"))
     assert "hypocentre fixed at the public regional catalog's for the 2 compared" in row7
     assert "Lateral structure" not in row7  # truth hypocentres: noise-level residuals only

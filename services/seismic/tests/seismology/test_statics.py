@@ -263,7 +263,7 @@ def test_residual_sigma_flags_a_spread_well_above_the_configured_sigma(
     assert sig.loc["P", "robustSigmaS"] == pytest.approx(0.05, rel=0.15)
     assert bool(sig.loc["P", "wellAbove"]) is (0.05 / sigma_p > 1.5)
     assert not bool(sig.loc["S", "wellAbove"])
-    assert sig.loc["P", "recommendedS"] == round(sig.loc["P", "robustSigmaS"], 3)
+    assert sig.loc["P", "robustSigmaRoundedS"] == round(sig.loc["P", "robustSigmaS"], 3)
 
 
 @pytest.mark.smoke

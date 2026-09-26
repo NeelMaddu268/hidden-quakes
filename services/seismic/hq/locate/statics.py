@@ -540,7 +540,8 @@ def residual_sigma(
 ) -> pd.DataFrame:
     """Per phase: robust sigma (``GAUSS_MAD`` x MAD) of the used-pick residuals of ``event_ids``
     (``label`` names them) against ``locator.pickSigmaS``; ``wellAbove`` past
-    ``statics.sigmaFlagRatio``; ``recommendedS`` the robust sigma rounded to ms."""
+    ``statics.sigmaFlagRatio``; ``robustSigmaRoundedS`` the robust sigma rounded to ms (the
+    value diagnostics.md recommends for ``locator.pickSigmaS`` only when ``wellAbove``)."""
     use = arrivals[arrivals["usedInLocation"].to_numpy(dtype=bool)
                    & arrivals["eventId"].astype(str).isin(set(event_ids))]
     rows = []
@@ -552,7 +553,8 @@ def residual_sigma(
         rows.append({"events": label, "phase": ph, "nPicks": int(r.size), "configuredS": conf,
                      "robustSigmaS": sigma, "ratio": ratio,
                      "wellAbove": bool(math.isfinite(ratio) and ratio > cfg.statics.sigmaFlagRatio),
-                     "recommendedS": round(sigma, 3) if math.isfinite(sigma) else math.nan})
+                     "robustSigmaRoundedS": round(sigma, 3) if math.isfinite(sigma)
+                     else math.nan})
     return pd.DataFrame(rows)
 
 
