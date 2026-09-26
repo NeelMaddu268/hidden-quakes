@@ -521,6 +521,10 @@ def test_stage_writes_calibrated_magnitudes(
     assert len(params["leaveOneEventOut"]["events"]) == len(ML_EVENTS)
     assert params["leaveOneEventOut"]["nullModelMae"] > calibration.looMae
     assert rec["counts"]["magnitudes"] == N_EVENTS
+    ml = world.mags[list(ML_EVENTS)]
+    assert params["magnitudes"]["calibratedRange"] == pytest.approx([ml.min(), ml.max()])
+    below = int((events["magnitude_value"] < ml.min()).sum())
+    assert params["magnitudes"]["belowCalibratedRange"] == below
     assert rec["counts"]["stationsExcluded"] == 2
     assert not list(world.run_dir.glob("*.part"))
 
