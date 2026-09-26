@@ -16,8 +16,9 @@ import socket
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
+import numpy as np
 import pytest
 import requests
 import yaml
@@ -939,7 +940,7 @@ def test_rate_unverified_keeps_metadata_or_raises(
 
 
 @pytest.mark.smoke
-def test_rate_probe_falls_through_to_the_next_offset(
+def test_rate_probe_uses_every_in_window_offset(
     run_section: RunSection, cfg: StationSelection, tmp_path: Path
 ) -> None:
     first = run_section.window_start_s + cfg.rateCheck.probeOffsetsS[0]
@@ -950,11 +951,111 @@ def test_rate_probe_falls_through_to_the_next_offset(
         return serving({"UU.FOR2": 100.0})(net, sta, loc, channels, t0, t1)
 
     res = build(run_section, cfg, tmp_path / "cache", rate_probe=probe)
-    det = {d["id"]: d for d in res.report["stations"]}["UU.FOR2"]
-    assert (
-        det["rateCheck"]["probeT0"] == run_section.window_start_s + cfg.rateCheck.probeOffsetsS[1]
-    )
+    det = detail(res, "UU.FOR2")
+    starts = inv.probe_starts(run_section, cfg.rateCheck)
+    assert det["rateCheck"]["probeTimes"] == starts[1:]
     assert det["rateCheck"]["dataHz"] == 100.0
+
+
+@pytest.mark.smoke
+def test_rate_change_inside_the_window_is_an_error(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    last = inv.probe_starts(run_section, cfg.rateCheck)[-1]
+
+    def probe(net: str, sta: str, loc: str, channels: Any, t0: float, t1: float) -> Any:
+        rate = 100.0 if f"{net}.{sta}" == "UU.FOR2" and t0 == last else None
+        if rate is not None:
+            return {cha: rate for cha in channels}
+        return metadata_rate_probe(net, sta, loc, channels, t0, t1)
+
+    with pytest.raises(InventoryError, match="changes inside the window"):
+        build(run_section, cfg, tmp_path / "cache", rate_probe=probe)
+
+
+@pytest.mark.smoke
+def test_no_data_replies_are_not_cached(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    cache = tmp_path / "cache"
+    build(run_section, cfg, cache, rate_probe=serving({"UU.FOR2": None}))
+    again = serving({})
+    res = build(run_section, cfg, cache, rate_probe=again)
+    assert [sid for sid, _ in again.calls] == ["UU.FOR2"] * len(
+        inv.probe_starts(run_section, cfg.rateCheck)
+    )
+    assert detail(res, "UU.FOR2")["rateCheck"]["status"] == "match"
+
+
+@pytest.mark.smoke
+def test_station_measured_empty_is_not_probed(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    probe = serving({})
+    res = build(run_section, cfg, tmp_path / "cache", rate_probe=probe)
+    unprobed = [d["id"] for d in res.report["stations"] if d["rateCheck"]["status"] == "unprobed"]
+    assert unprobed and all(not by_id(res)[sid]["usedInRun"] for sid in unprobed)
+    assert not any(sid in unprobed for sid, _ in probe.calls)
+
+
+@pytest.mark.smoke
+def test_no_probe_offset_inside_the_window_is_an_error(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    span = run_section.window_end_s - run_section.window_start_s
+    bad = with_rate(cfg, probeOffsetsS=(span,))
+    with pytest.raises(InventoryError, match="fits inside"):
+        build(run_section, bad, tmp_path / "cache")
+
+
+class _FakeFdsn:
+    """Stands in for obspy's FDSN Client in the default probe."""
+
+    script: ClassVar[list[Any]] = []
+    made: ClassVar[int] = 0
+
+    def __init__(self, base: str, timeout: float) -> None:
+        type(self).made += 1
+
+    def get_waveforms(self, *args: Any) -> Any:
+        step = type(self).script.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+
+def _stream(rates: dict[str, list[float]]) -> Any:
+    from obspy import Stream, Trace
+
+    traces = []
+    for cha, rs in rates.items():
+        for r in rs:
+            tr = Trace(data=np.zeros(10, dtype=np.float64))
+            tr.stats.channel = cha
+            tr.stats.sampling_rate = r
+            traces.append(tr)
+    return Stream(traces)
+
+
+@pytest.mark.smoke
+def test_default_probe_retries_parses_and_rejects_mixed_rates(
+    cfg: StationSelection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from obspy.clients import fdsn
+
+    monkeypatch.setattr(fdsn, "Client", _FakeFdsn)
+    monkeypatch.setattr(inv.time, "sleep", lambda s: None)
+    probe = inv.fdsn_rate_probe(cfg.query, cfg.rateCheck)
+    _FakeFdsn.script = [FDSNException("timeout"), _stream({"HHZ": [100.0], "HHN": [100.0]})]
+    assert probe("UU", "X", "01", ["HHZ", "HHN"], 0.0, 5.0) == {"HHZ": 100.0, "HHN": 100.0}
+    _FakeFdsn.script = [FDSNNoDataException("204")]
+    assert probe("UU", "X", "01", ["HHZ"], 0.0, 5.0) is None
+    _FakeFdsn.script = [_stream({"HHZ": [100.0, 200.0]})]
+    with pytest.raises(InventoryError, match="mixed rates"):
+        probe("UU", "X", "01", ["HHZ"], 0.0, 5.0)
+    _FakeFdsn.script = [FDSNException("down")] * (cfg.rateCheck.retries + 1)
+    with pytest.raises(InventoryError, match="failed after"):
+        probe("UU", "X", "01", ["HHZ"], 0.0, 5.0)
 
 
 @pytest.mark.smoke
