@@ -43,8 +43,6 @@ from hq.match.reasons import (
     explain_unmatched,
 )
 
-pytestmark = pytest.mark.smoke
-
 stage = importlib.import_module("hq.match.run")
 
 RUN = RunSection.model_validate(
@@ -260,6 +258,7 @@ def _scaled(cfg: SeismologyConfig) -> SeismologyConfig:
 # ---------------------------------------------------------------- config
 
 
+@pytest.mark.smoke
 def test_matching_config_parses_and_rejects_bad_values(
     seismology_config: SeismologyConfig,
 ) -> None:
@@ -289,6 +288,7 @@ def test_matching_config_parses_and_rejects_bad_values(
             MatchingConfig.model_validate({**raw["matching"], **moved})
 
 
+@pytest.mark.smoke
 def test_grid_scale_factor_is_negligible_over_the_showcase_bbox(run_section: RunSection) -> None:
     """The module docstring's claim: UTM grid distance is within 1.7e-4 of ellipsoidal distance."""
     proj = Proj("EPSG:32612")
@@ -414,6 +414,7 @@ def test_assignment_is_optimal_against_brute_force(
         assert float(cost[rows, cols].sum()) == pytest.approx(total, abs=1e-9)
 
 
+@pytest.mark.smoke
 def test_competition_prefers_more_pairs_over_one_cheap_pair(
     seismology_config: SeismologyConfig,
 ) -> None:
@@ -425,6 +426,7 @@ def test_competition_prefers_more_pairs_over_one_cheap_pair(
 
 
 @pytest.mark.parametrize("scaled", [False, True])
+@pytest.mark.smoke
 def test_more_pairs_win_even_when_their_costs_are_near_the_bound(
     seismology_config: SeismologyConfig, scaled: bool
 ) -> None:
@@ -437,6 +439,7 @@ def test_more_pairs_win_even_when_their_costs_are_near_the_bound(
     assert matches.at["a", "eventId"] == "y" and matches.at["b", "eventId"] == "x"
 
 
+@pytest.mark.smoke
 def test_distance_decides_between_equal_time_offsets(seismology_config: SeismologyConfig) -> None:
     """Equal |dt|: the closer event wins, although the farther one sorts first."""
     pub = public([("a", T0, 0.0, 0.0)])
@@ -444,6 +447,7 @@ def test_distance_decides_between_equal_time_offsets(seismology_config: Seismolo
     assert match(loc, pub, seismology_config).matches.at[0, "eventId"] == "near"
 
 
+@pytest.mark.smoke
 def test_cost_uses_scales_and_admissibility_uses_limits(
     seismology_config: SeismologyConfig,
 ) -> None:
@@ -463,6 +467,7 @@ def test_cost_uses_scales_and_admissibility_uses_limits(
         assert m.at["b", "eventId"] == "z" and pd.isna(m.at["c", "eventId"])
 
 
+@pytest.mark.smoke
 def test_result_does_not_depend_on_row_order(seismology_config: SeismologyConfig) -> None:
     rng = np.random.default_rng(11)
     pub, loc = _scenario(rng, 15, 20)
@@ -477,6 +482,7 @@ def test_result_does_not_depend_on_row_order(seismology_config: SeismologyConfig
 
 
 @pytest.mark.parametrize("sign", [1.0, -1.0])
+@pytest.mark.smoke
 def test_admissibility_edges(seismology_config: SeismologyConfig, sign: float) -> None:
     """Exactly 2 s and exactly 5 km (together) are admissible; the next step past either is not."""
     tiny_dt = 2.0**-20  # a few ulps of an epoch near 1.8e9 s; T0 + 2 s + tiny_dt is exact
@@ -500,6 +506,7 @@ def test_admissibility_edges(seismology_config: SeismologyConfig, sign: float) -
         )
 
 
+@pytest.mark.smoke
 def test_magnitude_is_ignored(seismology_config: SeismologyConfig) -> None:
     """Magnitudes that agree or disagree, or no magnitude columns at all, give the same result."""
     pub = public([("a", T0, 0.0, 0.0)])
@@ -517,12 +524,14 @@ def test_magnitude_is_ignored(seismology_config: SeismologyConfig) -> None:
     pd.testing.assert_frame_equal(base.matches, bare.matches)
 
 
+@pytest.mark.smoke
 def test_depth_is_ignored(seismology_config: SeismologyConfig) -> None:
     pub = public([("a", T0, 0.0, 0.0)])
     loc = located([("x", T0, 4999.0, 0.0)]).assign(enu_u=-20000.0, elevM=-18000.0)
     assert match(loc, pub, seismology_config).matches.at[0, "distM"] == 4999.0
 
 
+@pytest.mark.smoke
 def test_sensitivity_rows_rerun_with_each_pair(seismology_config: SeismologyConfig) -> None:
     pub = public([("a", T0, 0, 0), ("b", T0 + 100, 0, 0), ("c", T0 + 200, 0, 0)])
     loc = located(
@@ -549,6 +558,7 @@ def test_sensitivity_rows_rerun_with_each_pair(seismology_config: SeismologyConf
     assert match(loc, pub, only).sensitivity["recovered"].tolist() == [1]
 
 
+@pytest.mark.smoke
 def test_zero_located_events_all_unmatched_with_types(
     seismology_config: SeismologyConfig, tmp_path: Path
 ) -> None:
@@ -563,6 +573,7 @@ def test_zero_located_events_all_unmatched_with_types(
     assert arrow_types(result.sensitivity, tmp_path, "sens") == SENSITIVITY_ARROW
 
 
+@pytest.mark.smoke
 def test_zero_catalog_events(seismology_config: SeismologyConfig, tmp_path: Path) -> None:
     result = match(located([("x", T0, 0, 0)]), public([]), seismology_config)
     assert len(result.matches) == 0 and dict(result.matches.dtypes) == MATCH_DTYPES
@@ -570,6 +581,7 @@ def test_zero_catalog_events(seismology_config: SeismologyConfig, tmp_path: Path
     assert result.sensitivity["recovered"].tolist() == [0, 0, 0]
 
 
+@pytest.mark.smoke
 def test_all_matched_keeps_reason_typed(
     seismology_config: SeismologyConfig, tmp_path: Path
 ) -> None:
@@ -586,6 +598,7 @@ def test_all_matched_keeps_reason_typed(
         (lambda df: df.assign(t=np.nan), "non-finite t"),
     ],
 )
+@pytest.mark.smoke
 def test_bad_inputs_fail_loudly(
     seismology_config: SeismologyConfig, mutate: Any, message: str
 ) -> None:
@@ -600,6 +613,7 @@ def test_bad_inputs_fail_loudly(
 # ---------------------------------------------------------------- arrival windows
 
 
+@pytest.mark.smoke
 def test_straight_ray_time_against_hand_sums() -> None:
     """Two layers: 2000 m/s above 0 m ASL (extending upward), 4000 m/s below (P; S is half)."""
     model = ArrivalModel(
@@ -627,6 +641,7 @@ def test_straight_ray_time_against_hand_sums() -> None:
     assert above[0] == pytest.approx(100.0 / 2000.0, rel=1e-12)
 
 
+@pytest.mark.smoke
 def test_expected_windows_follow_the_formula(
     arrivals: ArrivalModel, seismology_config: SeismologyConfig
 ) -> None:
@@ -667,6 +682,7 @@ def _explain(
     return reasons, explained
 
 
+@pytest.mark.smoke
 def test_reason_lost_one_to_one(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -682,6 +698,7 @@ def test_reason_lost_one_to_one(
     assert explained.codes == {"b": "lostOneToOne"}
 
 
+@pytest.mark.smoke
 def test_reason_outside_window_and_bbox(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -697,6 +714,7 @@ def test_reason_outside_window_and_bbox(
     assert explained.codes == {"early": "outsideWindow", "east": "outsideBbox"}
 
 
+@pytest.mark.smoke
 def test_reason_no_evidence_keeps_lowest_cost_candidate(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -716,6 +734,7 @@ def test_reason_no_evidence_keeps_lowest_cost_candidate(
     }
 
 
+@pytest.mark.smoke
 def test_reason_arrivals_outside_run_window(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -742,6 +761,7 @@ def test_reason_arrivals_outside_run_window(
     )
 
 
+@pytest.mark.smoke
 def test_reason_too_few_used_stations(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -757,6 +777,7 @@ def test_reason_too_few_used_stations(
     assert explained.codes == {"a": "tooFewUsedStations"}
 
 
+@pytest.mark.smoke
 def test_reason_no_waveform_data_and_partial_gaps(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -795,6 +816,7 @@ def test_reason_no_waveform_data_and_partial_gaps(
     assert reasons["a"].startswith("no candidate within")
 
 
+@pytest.mark.smoke
 def test_reason_too_few_picks_and_below_threshold(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -828,6 +850,7 @@ def test_reason_too_few_picks_and_below_threshold(
     assert reasons["a"].startswith("no candidate within")
 
 
+@pytest.mark.smoke
 def test_window_edges_and_pad(seismology_config: SeismologyConfig, arrivals: ArrivalModel) -> None:
     """Picks exactly on a window edge count; 1 ms outside do not; the pad knob moves the edges."""
     pub = public([("a", T0, 0, 0)])
@@ -861,6 +884,7 @@ def test_window_edges_and_pad(seismology_config: SeismologyConfig, arrivals: Arr
     assert reason(edge_picks(0.0, 0.0), no_pad).startswith("no candidate within")
 
 
+@pytest.mark.smoke
 def test_reason_picks_not_associated_counts_one_associated_event(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -878,6 +902,7 @@ def test_reason_picks_not_associated_counts_one_associated_event(
         assert explained.codes == {"a": "picksNotAssociated"}
 
 
+@pytest.mark.smoke
 def test_reason_associated_not_located_and_candidate_time_limit(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -913,6 +938,7 @@ def test_reason_associated_not_located_and_candidate_time_limit(
     )
 
 
+@pytest.mark.smoke
 def test_reason_located_out_of_tolerance(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -946,6 +972,7 @@ def test_reason_located_out_of_tolerance(
     }
 
 
+@pytest.mark.smoke
 def test_reason_located_out_of_tolerance_names_the_carriers_match(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -965,6 +992,7 @@ def test_reason_located_out_of_tolerance_names_the_carriers_match(
 
 
 @pytest.mark.parametrize("dt_s", [8.0, 3.0, -3.0])
+@pytest.mark.smoke
 def test_neighbouring_event_picks_are_not_credited(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel, dt_s: float
 ) -> None:
@@ -992,6 +1020,7 @@ def test_neighbouring_event_picks_are_not_credited(
     assert explained.codes == {"a": "tooFewPicks"}
 
 
+@pytest.mark.smoke
 def test_reason_no_carrier_without_association_keeps_base(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -1002,6 +1031,7 @@ def test_reason_no_carrier_without_association_keeps_base(
     assert reasons == {"a": "no candidate within 2 s / 5 km (no located events)"}
 
 
+@pytest.mark.smoke
 def test_every_reason_has_one_stable_prefix() -> None:
     prefixes = list(REASONS.values())
     for p in prefixes:
@@ -1072,6 +1102,7 @@ def _bad_evidence(case: str) -> tuple[pd.DataFrame, pd.DataFrame, Evidence, bool
         ("without an arrival model", "stations given without an arrival model"),
     ],
 )
+@pytest.mark.smoke
 def test_bad_evidence_fails_loudly(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel, case: str, message: str
 ) -> None:
@@ -1089,6 +1120,7 @@ def test_bad_evidence_fails_loudly(
         )
 
 
+@pytest.mark.smoke
 def test_tables_out_of_sync_fail_loudly(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
@@ -1122,6 +1154,7 @@ def _assert_catalog_metadata(path: Path) -> None:
     assert pq.read_schema(path).remove_metadata().equals(catalog_stage._CATALOG_SCHEMA)
 
 
+@pytest.mark.smoke
 def test_stage_writes_tables_fills_matched_ids_and_records(
     make_ctx: Any,
     run_section: RunSection,
@@ -1196,6 +1229,7 @@ def test_stage_writes_tables_fills_matched_ids_and_records(
     assert "dt 3 s, dist 8 km: recovered 2 / 3" in text
 
 
+@pytest.mark.smoke
 def test_stage_reasons_from_run_dir_evidence(
     make_ctx: Any, run_section: RunSection, seismology_config: SeismologyConfig
 ) -> None:
@@ -1221,6 +1255,7 @@ def test_stage_reasons_from_run_dir_evidence(
     assert read_table(ctx.path("catalog.parquet"))["matchedEventId"].isna().all()
 
 
+@pytest.mark.smoke
 def test_stage_without_stations_does_not_load_the_velocity_model(
     monkeypatch: pytest.MonkeyPatch, make_ctx: Any, run_section: RunSection
 ) -> None:
@@ -1236,6 +1271,7 @@ def test_stage_without_stations_does_not_load_the_velocity_model(
     assert record["params"]["match"]["arrivalWindows"] is None
 
 
+@pytest.mark.smoke
 def test_stage_rerun_overwrites_and_write_failure_leaves_previous_files(
     monkeypatch: pytest.MonkeyPatch,
     make_ctx: Any,
@@ -1270,6 +1306,7 @@ def test_stage_rerun_overwrites_and_write_failure_leaves_previous_files(
     assert not list(ctx.run_dir.glob("*.part"))
 
 
+@pytest.mark.smoke
 def test_stage_failure_between_moves_is_logged(
     monkeypatch: pytest.MonkeyPatch,
     make_ctx: Any,
@@ -1304,6 +1341,7 @@ def test_stage_failure_between_moves_is_logged(
     assert not list(ctx.run_dir.glob("*.part"))
 
 
+@pytest.mark.smoke
 def test_stage_zero_rows_keep_types(make_ctx: Any, run_section: RunSection) -> None:
     ctx = make_ctx(run_section)
     _write_run(ctx, public([]), located([]))
@@ -1316,6 +1354,7 @@ def test_stage_zero_rows_keep_types(make_ctx: Any, run_section: RunSection) -> N
     assert read_table(ctx.path("catalog.parquet")).empty
 
 
+@pytest.mark.smoke
 def test_stage_requires_its_inputs(make_ctx: Any, run_section: RunSection) -> None:
     ctx = make_ctx(run_section)
     catalog_stage.write_catalog(public([]), ctx.path("catalog.parquet"))
@@ -1340,6 +1379,7 @@ def test_stage_requires_its_inputs(make_ctx: Any, run_section: RunSection) -> No
         ("shifted origin", "catalog: stored ENU differs"),
     ],
 )
+@pytest.mark.smoke
 def test_stage_rejects_malformed_inputs(
     make_ctx: Any, run_section: RunSection, case: str, message: str
 ) -> None:

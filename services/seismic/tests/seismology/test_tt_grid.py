@@ -25,8 +25,6 @@ from hq.locate.tt_grid import (
 )
 from hq.locate.velocity import LayerModel, load_configured_model
 
-pytestmark = pytest.mark.smoke
-
 MAX_ERR_S = 0.005  # ticket acceptance: < 5 ms against analytic over the whole table
 FloatArray = np.ndarray
 
@@ -63,6 +61,7 @@ def _solve(
 
 
 @pytest.mark.parametrize("vs", [1163.0, 3374.0])  # slowest and fastest S in the FORGE model
+@pytest.mark.smoke
 def test_homogeneous_half_space_matches_analytic(loc02: Any, grids: GridsConfig, vs: float) -> None:
     receiver = 1700.0
     grid = make_grid(grids, receiver)
@@ -85,6 +84,7 @@ def _two_layer_analytic(
     return np.where(rr >= x_crit, np.minimum(direct, head), direct), head < direct
 
 
+@pytest.mark.smoke
 def test_two_layer_head_wave_matches_analytic(loc02: Any, grids: GridsConfig) -> None:
     v1, v2, interface, receiver = 3000.0, 5000.0, 1012.5, 1600.0  # interface between nodes
     grid = make_grid(grids, receiver)
@@ -118,6 +118,7 @@ def test_borehole_receiver(loc02: Any, grids: GridsConfig) -> None:
                                rtol=0, atol=1e-9)
 
 
+@pytest.mark.smoke
 def test_layered_solver_matches_closed_forms(loc02: Any) -> None:
     v1, v2, interface = 3000.0, 5000.0, 1000.0
     model = loc02.toy_model([2000.0, interface], [v1, v2], [1700.0, 2900.0])
@@ -178,6 +179,7 @@ def _ro(a: FloatArray) -> FloatArray:
     return a
 
 
+@pytest.mark.smoke
 def test_bilinear_lookup_is_exact_on_a_linear_field() -> None:
     grid = GridSpec(dr_m=25.0, dz_m=25.0, n_r=41, n_z=21, bottom_elev_m=-100.0)
     rr, zz = np.meshgrid(grid.r_nodes(), grid.z_nodes())
@@ -239,6 +241,7 @@ def test_cache_keys_sharing_and_determinism(
     assert base not in changed and len(changed) == 5
 
 
+@pytest.mark.smoke
 def test_accuracy_record_matches_the_exact_solver(
     loc_cfg: SeismologyConfig, forge_model: LayerModel, tmp_path: Path
 ) -> None:
@@ -273,6 +276,7 @@ def test_accuracy_record_matches_the_exact_solver(
                              max_extension_m=loc_cfg.velocity.maxTopExtensionM)
 
 
+@pytest.mark.smoke
 def test_top_extension_is_explicit_and_recorded(
     loc_cfg: SeismologyConfig, forge_model: LayerModel, tmp_path: Path
 ) -> None:
@@ -295,6 +299,7 @@ def test_top_extension_is_explicit_and_recorded(
                              max_extension_m=loc_cfg.velocity.maxTopExtensionM)
 
 
+@pytest.mark.smoke
 def test_bad_inputs_raise(loc_cfg: SeismologyConfig, forge_model: LayerModel,
                           tmp_path: Path) -> None:
     small = loc_cfg.grids.model_copy(update={"rMaxM": 2000.0, "bottomElevM": -1000.0})
@@ -317,6 +322,7 @@ def test_bad_inputs_raise(loc_cfg: SeismologyConfig, forge_model: LayerModel,
                              max_extension_m=1000.0)
 
 
+@pytest.mark.smoke
 def test_grid_config_guards(loc02: Any) -> None:
     raw = loc02.showcase_raw()["grids"]
     with pytest.raises(ValueError, match="multiple of drM"):
@@ -339,6 +345,7 @@ NESTED_SECTIONS = ("grids", "locator", "locator.volume", "locator.pickSigmaS", "
 
 
 @pytest.mark.parametrize("where", NESTED_SECTIONS)
+@pytest.mark.smoke
 def test_unknown_nested_config_keys_fail(loc02: Any, where: str) -> None:
     raw = loc02.showcase_raw()
     target = raw
@@ -349,6 +356,7 @@ def test_unknown_nested_config_keys_fail(loc02: Any, where: str) -> None:
         SeismologyConfig.model_validate(raw)
 
 
+@pytest.mark.smoke
 def test_unknown_profile_sigma_keys_fail(loc02: Any) -> None:
     raw = loc02.showcase_raw()
     raw["locator"]["profilePickSigmaS"] = {"borehole-B": {"P": 0.03, "S": 0.05, "tpyo": 1.0}}
