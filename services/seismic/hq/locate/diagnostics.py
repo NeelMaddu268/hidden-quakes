@@ -512,16 +512,30 @@ def position_fit(medians: pd.DataFrame, stations: pd.DataFrame) -> pd.DataFrame:
                                        "corrWithSensorElevM"])
 
 
-def row_trend(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> Row:
+def _fit_text(az: pd.DataFrame) -> str:
+    return "; ".join(
+        f"{r.phase} amplitude {_f(r.amplitudeS, '.3f')} s, latest toward az {_f(r.lateAzDeg)} deg "
+        f"(n {r.n})" for r in az.itertuples(index=False)
+    )
+
+
+def _flagged(az: pd.DataFrame, min_n: int, flag_s: float) -> pd.DataFrame:
+    ok = az[(az["n"] >= min_n) & np.isfinite(az["amplitudeS"])]
+    return ok[ok["amplitudeS"] > flag_s]
+
+
+def row_trend(
+    inputs: DiagnosticsInputs,
+    ua: pd.DataFrame,
+    at_catalog: pd.DataFrame | None,
+    comp: pd.DataFrame | None,
+) -> Row:
     dcfg = inputs.cfg.diagnostics
     az = azimuth_fit(ua)
     pos = position_fit(station_medians(inputs, ua), inputs.details.stations)
     if az.empty:
         return Row(7, "No used picks.", "Can't conclude on this data: nothing was located.")
-    result = "; ".join(
-        f"{r.phase} vs azimuth: amplitude {_f(r.amplitudeS, '.3f')} s, latest toward az "
-        f"{_f(r.lateAzDeg)} deg (n {r.n})" for r in az.itertuples(index=False)
-    )
+    result = "At our locations, residual vs azimuth: " + _fit_text(az)
     if len(pos):
         result += "; " + "; ".join(
             f"{r.phase} station medians vs position ({r.nStations} stations): gradient "
@@ -529,26 +543,106 @@ def row_trend(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> Row:
             f"{_f(r.gradientAzDeg)} deg, r(median, sensorElevM) {_f(r.corrWithSensorElevM, '+.2f')}"
             for r in pos.itertuples(index=False)
         )
+    cat_az = None
+    if at_catalog is not None and len(at_catalog):
+        cat_az = azimuth_fit(at_catalog)
+        corr = {
+            ph: float(np.corrcoef(g["residualS"], g["sensorElevM"])[0, 1]) if len(g) > 2 else math.nan
+            for ph, g in at_catalog.groupby("phase", sort=True)
+        }
+        result += (
+            f". With the hypocentre fixed at the public regional catalog's for the "
+            f"{at_catalog['catalogId'].nunique()} compared event(s) (origin time by weighted "
+            "median): " + _fit_text(cat_az) + "; r(residual, sensorElevM) "
+            + ", ".join(f"{ph} {_f(v, '+.2f')}" for ph, v in corr.items())
+        )
     result += ". Azimuths are grid (UTM) azimuths from the epicentre to the station."
-    ok = az[az["n"] >= dcfg.minGroupSize]
-    if ok.empty or not np.isfinite(ok["amplitudeS"]).any():
-        return Row(7, result, f"Can't conclude on this data: fewer than minGroupSize "
-                   f"{dcfg.minGroupSize} used picks per phase.")
-    trend = ok[ok["amplitudeS"] > dcfg.trendFlagS]
-    if len(trend):
+    ours = _flagged(az, dcfg.minGroupSize, dcfg.trendFlagS)
+    cat = (_flagged(cat_az, dcfg.minGroupSize, dcfg.trendFlagS) if cat_az is not None
+           else cat_az)
+    if cat is not None and len(cat):
+        listed = ", ".join(f"{r.phase} {r.amplitudeS:.3f} s, later toward az {r.lateAzDeg:.0f} and "
+                           f"earlier toward az {(r.lateAzDeg + 180) % 360:.0f} deg"
+                           for r in cat.itertuples(index=False))
+        shift = ""
+        have = comp[comp["eventId"].notna()] if comp is not None else None
+        if have is not None and len(have):
+            de, dn = float(have["deM"].median()), float(have["dnM"].median())
+            shift_az = math.degrees(math.atan2(de, dn)) % 360.0
+            early = (float(cat.loc[cat["amplitudeS"].idxmax(), "lateAzDeg"]) + 180.0) % 360.0
+            side = "the early side" if abs((shift_az - early + 180) % 360 - 180) <= 45 else (
+                "not the early side")
+            shift = (f" Our candidates sit a median {math.hypot(de, dn):.0f} m from the catalog's "
+                     f"epicentres toward az {shift_az:.0f} deg, {side}.")
+        conclusion = (
+            f"Lateral structure the 1D model can't hold: with the hypocentre at the public regional "
+            f"catalog's, residuals trend with azimuth ({listed}; above trendFlagS "
+            f"{dcfg.trendFlagS:g} s).{shift} Fix: 3D grids (LOC-07), or station terms fixed at "
+            "reference hypocentres (LOC-05)."
+        )
+    elif len(ours):
         listed = ", ".join(f"{r.phase} {r.amplitudeS:.3f} s toward az {r.lateAzDeg:.0f} deg"
-                           for r in trend.itertuples(index=False))
+                           for r in ours.itertuples(index=False))
         conclusion = (
             f"Residuals trend with azimuth ({listed}, above trendFlagS {dcfg.trendFlagS:g} s): "
             "either the 1D model misses lateral structure (dipping basement; LOC-07 3D grids) or "
             "station terms line up with azimuth (LOC-05 statics first, then recheck)."
         )
+    elif az["n"].max() < dcfg.minGroupSize:
+        conclusion = (f"Can't conclude on this data: fewer than minGroupSize {dcfg.minGroupSize} "
+                      "used picks per phase.")
     else:
         conclusion = (
             f"No azimuthal trend above trendFlagS {dcfg.trendFlagS:g} s (largest "
-            f"{float(ok['amplitudeS'].max()):.3f} s): nothing here asks for 3D grids (LOC-07) yet."
+            f"{float(az['amplitudeS'].max()):.3f} s): nothing here asks for 3D grids (LOC-07) yet."
         )
     return Row(7, result, conclusion)
+
+
+def catalog_hypocentre_residuals(
+    inputs: DiagnosticsInputs, comp: pd.DataFrame
+) -> pd.DataFrame:
+    """Residuals of each compared candidate's picks with the hypocentre fixed at the catalog's.
+
+    The origin time is the locator's weighted median (weights prob / sigma, statics as applied)
+    over every associated pick of the candidate; then the locator's outlier rule is applied at
+    that hypocentre (``|residual| > max(madK * MAD, floorS)`` left out), so a pick dropped only
+    because our location moved is kept. Public events outside the travel-time grid are left out.
+    """
+    from hq.locate.locator import weighted_median
+
+    columns = ["catalogId", "eventId", "stationId", "phase", "residualS", "evE", "evN", "stE",
+               "stN", "sensorElevM"]
+    if inputs.catalog is None or comp.empty:
+        return pd.DataFrame(columns=columns)
+    locator = inputs.details.locator
+    outlier = inputs.cfg.locator.outlier
+    grid = locator.tables.grid
+    by_event = dict(zip(inputs.details.result.events["id"].astype(str), inputs.details.locations,
+                        strict=True))
+    cat = inputs.catalog.set_index(inputs.catalog["id"].astype(str))
+    st = inputs.details.stations.set_index("id")
+    parts = []
+    for r in comp[comp["eventId"].notna()].itertuples(index=False):
+        c = cat.loc[r.catalogId]
+        e, n, z = float(c["enu_e"]), float(c["enu_n"]), float(c["elevM"])
+        reach = np.hypot(st["enu_e"] - e, st["enu_n"] - n).max()
+        if not (grid.bottom_elev_m <= z <= grid.top_elev_m and reach <= grid.r_max_m):
+            continue
+        a = by_event[str(r.eventId)].arrivals
+        tt = locator.travel_times(e, n, z).set_index(["stationId", "phase"])["travelTimeS"]
+        keys = list(zip(a["stationId"].astype(str), a["phase"].astype(str), strict=True))
+        d = a["tObs"].to_numpy(dtype=np.float64) - tt.loc[keys].to_numpy() - a["staticS"].to_numpy()
+        res = d - weighted_median(d, a["weight"].to_numpy(dtype=np.float64))
+        keep = np.abs(res) <= max(outlier.madK * _mad(res), outlier.floorS)
+        sid = a["stationId"].astype(str)[keep]
+        parts.append(pd.DataFrame({
+            "catalogId": r.catalogId, "eventId": r.eventId, "stationId": sid.to_numpy(),
+            "phase": a["phase"].astype(str).to_numpy()[keep], "residualS": res[keep], "evE": e,
+            "evN": n, "stE": st.loc[sid, "enu_e"].to_numpy(), "stN": st.loc[sid, "enu_n"].to_numpy(),
+            "sensorElevM": st.loc[sid, "sensorElevM"].to_numpy(),
+        }))
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=columns)
 
 
 # --- table error exposure ------------------------------------------------------------------------
@@ -697,14 +791,15 @@ def compare_with_catalog(
     return pd.DataFrame(rows, columns=columns)
 
 
-def catalog_section(inputs: DiagnosticsInputs) -> list[str]:
+def catalog_section(
+    inputs: DiagnosticsInputs, comp: pd.DataFrame | None, lateral: bool
+) -> list[str]:
+    """The comparison table; ``lateral``: row 7 flags a trend at the catalog hypocentres."""
     lines = ["## Comparison with the public regional catalog", ""]
-    if inputs.catalog is None:
+    if inputs.catalog is None or comp is None:
         lines.append("catalog.parquet is not in the run dir: no comparison.")
         return lines
     m = inputs.cfg.matching
-    comp = compare_with_catalog(inputs.details.result.events, inputs.catalog,
-                                inputs.catalog_errors, inputs.cfg, inputs.known_ids)
     have = comp[comp["eventId"].notna()]
     source = ("catalog.quakeml preferred origins" if inputs.catalog_errors is not None
               else "none (catalog.quakeml absent)")
@@ -718,12 +813,14 @@ def catalog_section(inputs: DiagnosticsInputs) -> list[str]:
     )
     lines.append("")
     if len(have):
-        within = have["withinH"].eq(True) & have["withinZ"].eq(True)
+        within_h = have["withinH"].eq(True)
+        within_z = have["withinZ"].eq(True)
         lines.append(
             f"Median offsets over those {len(have)}: dt {have['dtS'].median():+.2f} s, de "
             f"{have['deM'].median():+.0f} m, dn {have['dnM'].median():+.0f} m, dz "
-            f"{have['dzM'].median():+.0f} m; within the catalog's stated horizontal and depth "
-            f"uncertainty: {int(within.sum())} of {len(have)}."
+            f"{have['dzM'].median():+.0f} m. Within the catalog's stated horizontal uncertainty: "
+            f"{int(within_h.sum())} of {len(have)}; depth: {int(within_z.sum())} of {len(have)}; "
+            f"both: {int((within_h & within_z).sum())} of {len(have)}."
         )
         lines.append("")
         lines.append("| catalogId | known | eventId | dt (s) | dist (m) | de (m) | dn (m) | dz (m) "
@@ -735,9 +832,28 @@ def catalog_section(inputs: DiagnosticsInputs) -> list[str]:
             lines.append(
                 f"| {r.catalogId} | {'yes' if r.known else ''} | {r.eventId} | {r.dtS:+.2f} | "
                 f"{r.distM:.0f} | {r.deM:+.0f} | {r.dnM:+.0f} | {r.dzM:+.0f} | {_f(r.hErrM)} / "
-                f"{_f(r.vErrM)} | {_f(r.catalogHErrM)} / {_f(r.catalogZErrM)} | {r.nStations} / "
-                f"{r.nP} / {r.nS} | {r.rmsS:.3f} | {r.withinH} / {r.withinZ} |"
+                f"{_f(r.vErrM)} | {_f(r.catalogHErrM)} / {_f(r.catalogZErrM)} | "
+                f"{int(r.nStations)} / {int(r.nP)} / {int(r.nS)} | {r.rmsS:.3f} | {r.withinH} / "
+                f"{r.withinZ} |"
             )
+        lines.append("")
+        outside = int((~within_h).sum())
+        if outside and lateral:
+            lines.append(
+                f"Conclusion: {outside} of {len(have)} compared events lie outside the catalog's "
+                f"horizontal uncertainty (median de {have['deM'].median():+.0f} m, dn "
+                f"{have['dnM'].median():+.0f} m). Row 7 flags the cause: with the hypocentre at "
+                "the catalog's, residuals trend with azimuth beyond trendFlagS (lateral structure "
+                "the 1D model can't hold; the row gives the shift direction)."
+            )
+        elif outside:
+            lines.append(
+                f"Conclusion: {outside} of {len(have)} compared events lie outside the catalog's "
+                "horizontal uncertainty, and rows 1-7 flag no cause on this data."
+            )
+        else:
+            lines.append("Conclusion: every compared event lies within the catalog's stated "
+                         "horizontal uncertainty.")
     missing = comp[comp["eventId"].isna()]
     if len(missing):
         lines.append("")
@@ -751,12 +867,22 @@ def catalog_section(inputs: DiagnosticsInputs) -> list[str]:
 
 def build_rows(inputs: DiagnosticsInputs) -> tuple[list[Row], dict[str, list[str]]]:
     ua = used_arrivals(inputs.details, inputs.details.stations)
+    comp = (
+        compare_with_catalog(inputs.details.result.events, inputs.catalog,
+                             inputs.catalog_errors, inputs.cfg, inputs.known_ids)
+        if inputs.catalog is not None else None
+    )
+    at_catalog = catalog_hypocentre_residuals(inputs, comp) if comp is not None else None
     row1, stations_table = row_borehole(inputs)
     row6, medians_table = row_stations(inputs, ua)
     rows = [row1, row_datum(inputs), row_pyocto(inputs), row_ns(inputs),
-            row_profiles(inputs, ua), row6, row_trend(inputs, ua)]
+            row_profiles(inputs, ua), row6, row_trend(inputs, ua, at_catalog, comp)]
+    dcfg = inputs.cfg.diagnostics
+    lateral = at_catalog is not None and len(at_catalog) > 0 and len(
+        _flagged(azimuth_fit(at_catalog), dcfg.minGroupSize, dcfg.trendFlagS)) > 0
     return rows, {"stations": stations_table, "medians": medians_table,
-                  "tableErrors": table_error_section(inputs, ua)}
+                  "tableErrors": table_error_section(inputs, ua),
+                  "catalog": catalog_section(inputs, comp, lateral)}
 
 
 def build_diagnostics(inputs: DiagnosticsInputs) -> str:
@@ -794,7 +920,7 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
         test = test.format(k=inputs.cfg.diagnostics.minSForDepth)
         cells = [str(row.number), suspect, test, row.result, row.conclusion, fix]
         lines.append("| " + " | ".join(_cell(x) for x in cells) + " |")
-    lines += ["", *extra["tableErrors"], "", *catalog_section(inputs), "",
+    lines += ["", *extra["tableErrors"], "", *extra["catalog"], "",
               "## Appendix A: stations (row 1)", "", *extra["stations"], "",
               "## Appendix B: residuals per station and phase (row 6, input for LOC-05)", "",
               *extra["medians"], "",
