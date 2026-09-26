@@ -1,0 +1,17 @@
+# Seismology config (H2). Parsed by hq.config.seismology.SeismologyConfig; unknown keys are an error.
+# Every seismology knob lives here and is recorded in ProcessingRun (docs/02 -> Config files).
+
+velocity:
+  # 1D layer model (LOC-01), relative to services/seismic. Its '#' header holds the source,
+  # license, the source datum and its evidence, and the conversion to elevM (m ASL, up positive).
+  layerFile: configs/velocity/forge_1d.csv
+  # Display only: the profile figure draws the half-space down to this elevation (m ASL).
+  profilePlotBottomElevM: -2000.0
+  # 3D model for LOC-07, downloaded into data/cache/velocity/<cacheFile>.
+  model3d:
+    submissionUrl: https://gdr.openei.org/submissions/1800
+    url: https://gdr.openei.org/files/1800/Cape-model_50m_grid_sonic-logs-only_stretched_3-1-24.nc
+    cacheFile: Cape-model_50m_grid_sonic-logs-only_stretched_3-1-24.nc
+    expectedBytes: 1161642687
+    citation: "Nakata, N., Hopp, C., Wu, S., Robertson, M., & Dadi, S. (2025). Cape EGS and Utah FORGE: Empirical 3D Seismic Velocity Model [Data set]. Geothermal Data Repository, Lawrence Berkeley National Laboratory. https://gdr.openei.org/submissions/1800"
+    license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
