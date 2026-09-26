@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AnalysisSummary, BaselineRow, Validation } from "@/providers";
-import { baselineRan, rows, STRICT_COMPARE_NOTE, strictComparison, type RowId, type SummaryInput, type ValidationInput } from "./rows";
+import { baselineRan, DEPTH_NOTE, rows, STRICT_COMPARE_NOTE, strictComparison, type RowId, type SummaryInput, type ValidationInput } from "./rows";
 
 const SUMMARY: AnalysisSummary = {
   runId: "t",
@@ -189,13 +189,19 @@ describe("rows()", () => {
       expect(rows(SUMMARY, VALIDATION).find((r) => r.id === "strictCompare")!.label).not.toMatch(/\d/);
     });
 
-    it("carries the statics note, in words, and is the only row that carries a note", () => {
+    it("carries the statics note, in words; only it and the depth row carry a note", () => {
       const list = rows(SUMMARY, VALIDATION);
       const row = list.find((r) => r.id === "strictCompare")!;
       expect(row.note).toBe(STRICT_COMPARE_NOTE);
       expect(row.note).toMatch(/statics/);
       expect(row.note).not.toMatch(/\d/);
-      for (const other of list) if (other.id !== "strictCompare") expect(other.note).toBeUndefined();
+      const depth = list.find((r) => r.id === "depth")!;
+      expect(depth.note).toBe(DEPTH_NOTE);
+      expect(depth.note).toMatch(/every station/);
+      expect(depth.note).not.toMatch(/\d/);
+      for (const other of list) {
+        if (other.id !== "strictCompare" && other.id !== "depth") expect(other.note).toBeUndefined();
+      }
     });
   });
 });

@@ -36,6 +36,13 @@ export interface ValidationRow {
  */
 export const STRICT_COMPARE_NOTE = "Rerun with one statics table for every event; the count differs from the strict count above";
 
+/**
+ * Why the depth-resolution figure is an upper bound on what a typical candidate gets: the
+ * synthetic test records every event on every station, while a typical candidate has fewer
+ * stations and resolves less finely (H2's 5:50 PM Sat note). Shown under the row.
+ */
+export const DEPTH_NOTE = "Synthetic test with every event on every station; a typical candidate, on fewer stations, resolves less finely";
+
 /** Display precision per row (decimals shown), not a data threshold. */
 const DECIMALS = { count: 0, stations: 1, residual: 3, depth: 0, gain: 2, chance: 1 } as const;
 
@@ -103,7 +110,12 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
   }
   const medianVErrM = v.synthetic?.medianVErrM;
   if (isFiniteNumber(medianVErrM)) {
-    out.push({ id: "depth", label: "Depth resolution", value: `±${formatNumber(medianVErrM, DECIMALS.depth)} m` });
+    out.push({
+      id: "depth",
+      label: "Depth resolution",
+      value: `±${formatNumber(medianVErrM, DECIMALS.depth)} m`,
+      note: DEPTH_NOTE,
+    });
   }
   // Lane doc: the strict counts side by side whenever the full profile has both rows; the table
   // is the source, so the row also shows when STA/LTA's strict count is zero and no gain exists.
