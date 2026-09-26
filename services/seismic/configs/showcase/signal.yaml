@@ -2,7 +2,54 @@
 # One block per ticket. Every pipeline knob of the signal lane lives here and is recorded in run.json.
 
 # --- SEIS-01: station inventory and channel selection ------------------------------------------------
-stations: {}
+stations:
+  query:
+    fdsnClient: EARTHSCOPE      # ObsPy >= 1.5 key for https://service.earthscope.org
+    timeoutS: 180
+    network: "*"
+    station: "*"
+    location: "*"
+    channel: "*"                # everything; the rules below decide what is usable
+    excludeNetworks: [SY]       # SY = synthetic seismograms, not recorded data
+    skipRestricted: true
+    cacheSubdir: stationxml     # data/cache/stationxml/: raw XML, <Station.id>.xml, DEM cache
+  channels:
+    verticalComponents: [Z]
+    horizontalPairs: [[N, E], ["1", "2"]]   # N/E preferred, else 1/2
+    # Velocity sensors, best first (band+instrument). Borehole geophones beat surface short period.
+    velocityCodes: [GH, GP, DH, DP, CH, CP, HH, HP, EH, EP, SH, SP]
+    # Accelerometers: only when the site (net.sta) has no velocity triplet at all.
+    accelerometerCodes: [GN, DN, CN, HN, EN]
+    componentDepthTolM: 1.0
+    locationDepthTolM: 5.0
+    coordTolM: 50.0
+  kind:
+    boreholeMinDepthM: 10.0
+    strongMotionInstrumentCodes: [N]
+    boreholeLookingCodes: [DP, GP, GH]
+  profiles:                     # first match on sampleRateHz (inclusive); names from preprocess
+    - {minRateHz: 90, maxRateHz: 110, profile: surface-100}
+    - {minRateHz: 190, maxRateHz: 260, profile: surface-hi}
+    - {minRateHz: 400, maxRateHz: 1100, profile: borehole-A}
+  elevation:
+    # StationXML is inconsistent about whether station elevation is the surface or the sensor.
+    # Each chosen sensor's station elevation is checked against this DEM (USGS 3DEP via EPQS).
+    demUrl: https://epqs.nationalmap.gov/v1/json
+    demTimeoutS: 30
+    demRetries: 3
+    demBackoffS: 2.0
+    demNoDataValue: -1000000
+    demCacheFile: surface_elev_dem.json
+    demKeyDecimals: 5
+    toleranceM: 15.0
+    onAmbiguous: error
+  availability:
+    # The FDSN availability service is retired at EarthScope (404 / 410); MUSTANG daily
+    # percent_availability is the working source. Coverage = overlap-weighted daily value.
+    url: https://service.earthscope.org/mustang/measurements/1/query
+    metric: percent_availability
+    timeoutS: 60
+    onMissing: unused           # never measured by MUSTANG: coverage null, usedInRun false
 
 # --- SEIS-05: full-window download and cache ---------------------------------------------------------
 download: {}
