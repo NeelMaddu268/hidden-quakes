@@ -65,7 +65,10 @@ from hq.config.signal import KnownEventsConfig, SignalConfig
 
 log = logging.getLogger(__name__)
 
-STAGE = "known_windows"  # key passed to ctx.record()
+STAGE = "known_windows"  # key passed to ctx.record() and the key params nest under
+# Not a registered stage, so RunContext has no default field for it; its params go into
+# ProcessingRun.picker next to the other H1 stages (docs/requests/H4.md, REQ-H1-2).
+PARAMS_FIELD = "picker"
 KNOWN_DIR = "known"
 WINDOWS_FILE = "windows.json"
 GAP_COLUMNS = ("stationId", "channel", "gapStart", "gapEnd")
@@ -147,6 +150,7 @@ class StageContext(Protocol):
         runtime_s: float,
         counts: dict[str, int],
         params: dict | None = None,
+        field: str | None = None,
     ) -> None: ...
 
 
@@ -931,7 +935,13 @@ def run_known_windows(
         len(written),
         runtime_s,
     )
-    ctx.record(STAGE, runtime_s=runtime_s, counts=result.counts, params=cfg.model_dump(mode="json"))
+    ctx.record(
+        STAGE,
+        runtime_s=runtime_s,
+        counts=result.counts,
+        params={STAGE: cfg.model_dump(mode="json")},
+        field=PARAMS_FIELD,
+    )
     return result.doc
 
 
@@ -963,6 +973,7 @@ class _CliContext:
         runtime_s: float,
         counts: dict[str, int],
         params: dict | None = None,
+        field: str | None = None,
     ) -> None:
         log.info(
             "record %s (CLI, run.json not updated): runtime %.2f s, counts %s, params %s",

@@ -1146,12 +1146,19 @@ def build_inventory(
         cov = station_coverage(coverage[c.id])
         if cov is None:
             used = cfg.availability.onMissing == "used"
+            note = ""
+            if used and rd.status == "nodata":
+                # Unmeasured coverage is only a reason to keep a station if the service might
+                # still serve it; no data at any rate probe says it doesn't.
+                used = False
+                note = "; no data at any rate probe either, so usedInRun False"
             flags.append(
                 {
                     "station": c.id,
                     "flag": (
                         f"no {cfg.availability.metric} measurement for the window; coverage "
                         f"unknown, usedInRun {used} (onMissing={cfg.availability.onMissing})"
+                        f"{note}"
                     ),
                 }
             )
@@ -1316,7 +1323,7 @@ def finish(ctx: StageContext, result: InventoryResult, runtime_s: float) -> None
         STAGE,
         runtime_s=runtime_s,
         counts=result.counts,
-        params=cfg.stations.model_dump(mode="json"),
+        params={STAGE: cfg.stations.model_dump(mode="json")},  # nested: RUN-01 maps it to picker
     )
     logger.info("inventory stage finished in %.1f s", runtime_s)
 
