@@ -51,3 +51,12 @@ gr:
   # docs/03 magnitude kill switch: when H2's magnitude.json reports a leave-one-out MAE above
   # this, G-R is skipped with a warning and only the calibration is embedded.
   maxLooMae: 0.4
+
+# Associator overrides for the p_only profile (REQ-H2-7). run.yaml/seismology.yaml's associator
+# requires S picks (nSPicks, nPAndSPicks); P-only picks through it associate nothing, so every
+# p_only rerun (null test and baseline) uses a copy of SeismologyConfig.associator with these
+# values. The full profile always uses the run's config unchanged. Recorded with the run through
+# its git sha; the validate stage logs the override it applied.
+pOnlyAssociator:
+  nSPicks: 0
+  nPAndSPicks: 0

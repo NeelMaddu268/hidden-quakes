@@ -79,6 +79,17 @@ class GRConfig(BaseModel):
     maxLooMae: float = Field(default=0.4, gt=0.0)
 
 
+class POnlyAssociatorConfig(BaseModel):
+    """Associator fields overridden for the ``p_only`` profile (REQ-H2-7). The run's own
+    ``SeismologyConfig.associator`` requires S picks (``nSPicks``, ``nPAndSPicks``), so feeding
+    P-only picks through it associates nothing; the p_only reruns use a copy with these values."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    nSPicks: int = Field(default=0, ge=0)  # PyOcto n_s_picks for the p_only profile
+    nPAndSPicks: int = Field(default=0, ge=0)  # PyOcto n_p_and_s_picks for the p_only profile
+
+
 class ValidateConfig(BaseModel):
     """Contents of ``validate.yaml``. Unknown keys are an error."""
 
@@ -87,3 +98,6 @@ class ValidateConfig(BaseModel):
     nullTest: NullTestConfig = Field(default_factory=NullTestConfig)
     baseline: BaselineConfig = Field(default_factory=BaselineConfig)
     gr: GRConfig = Field(default_factory=GRConfig)
+    # Associator overrides for every p_only rerun (null test and baseline); the ``full`` profile
+    # always uses the run's ``SeismologyConfig`` unchanged.
+    pOnlyAssociator: POnlyAssociatorConfig = Field(default_factory=POnlyAssociatorConfig)

@@ -1158,7 +1158,7 @@ def run(ctx: StageContext) -> None:
         "download",
         runtime_s=time.perf_counter() - t_start,
         counts=counts,
-        params=cfg.model_dump(mode="json"),
+        params={"download": cfg.model_dump(mode="json")},  # nested: RUN-01 maps it to picker
     )
     if error is not None:
         raise error

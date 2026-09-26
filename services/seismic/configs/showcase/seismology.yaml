@@ -43,6 +43,107 @@ velocity:
     citation: "Nakata, N., Hopp, C., Wu, S., Robertson, M., & Dadi, S. (2025). Cape EGS and Utah FORGE: Empirical 3D Seismic Velocity Model [Data set]. Geothermal Data Repository, Lawrence Berkeley National Laboratory. https://gdr.openei.org/submissions/1800"
     license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
 
+# Travel-time tables (LOC-02, hq.locate.tt_grid): one 2D (r, elevM) eikonal table per receiver
+# elevation and phase, solved with scikit-fmm with the source at the sensor (reciprocity).
+# Cached as .npy under <cache_dir>/ttgrids/, keyed by a hash of every input below.
+grids:
+  drM: 25.0
+  dzM: 25.0
+  # Largest epicentral distance in a table (m). Must cover every station-to-search-node distance;
+  # the locator raises if a station is farther from a search-volume corner than this. The run bbox
+  # corners lie about 36.6 km from the origin and the volume's half diagonal is 14.1 km, so a
+  # station anywhere in the bbox needs about 50.7 km.
+  rMaxM: 52000.0
+  # Grid top = highest receiver sensorElevM (or the search-volume top, if higher) + topMarginM,
+  # snapped up onto the dzM lattice. The model's top layer is extended up to it (recorded).
+  topMarginM: 100.0
+  # Grid bottom (m ASL): at least one dzM below locator.volume.bottomElevM (checked).
+  bottomElevM: -8000.0
+  # Exact 1D layered times seed every node within this distance of the receiver (m); the
+  # eikonal solve starts from an isochron inside it. At least 4 cells (checked).
+  seedRadiusM: 500.0
+  fmmOrder: 2
+  # Each new table is compared with the exact 1D layered times at every elevation node and every
+  # Nth distance node; the max error per model layer goes to the sidecar and the run record.
+  # Cell-mean slowness makes the tables slow by up to ~14 ms (S) just below shallow interfaces.
+  accuracyCheckStrideR: 4
+
+# Grid-search locator (LOC-02, hq.locate.locator and hq.locate.uncertainty).
+locator:
+  volume:
+    halfWidthM: 10000.0 # e and n in [-halfWidthM, +halfWidthM] around the run origin
+    # null = run.refSurfaceElevM (the ground at the origin; there is no DEM in a 1D search),
+    # snapped down onto the fine lattice.
+    topElevM: null
+    bottomElevM: -7000.0
+  coarseSpacingM: 200.0 # full-volume grid
+  fineSpacingM: 25.0 # the reported PDF lives on this lattice
+  # First fine box: +/- this around the best coarse node, clipped to the volume. The search
+  # starts there; the PDF region grows past it until it covers the mass (locator.py).
+  fineHalfWidthM: 1000.0
+  # The misfit is first evaluated every fineStageSpacingM, from the first fine box outward until the
+  # region within pdfCutoff of the minimum clears every face that is not a volume face; fine nodes
+  # are then evaluated over that region and grown the same way (locator.py).
+  fineStageSpacingM: 100.0
+  # Nodes whose PDF exponent (pdfMisfitScale * misfit) is more than this above its minimum hold
+  # < exp(-pdfCutoff) of the peak node's mass; they count as zero mass. The misfit is L1, so PDF
+  # tails are near-exponential and the region within the cutoff grows about linearly with it.
+  # Measured on weak test events (6 P + 2 S picks, prob 0.5, PDF sd 200-340 m): 12 leaves ~2e-4 of
+  # the mass outside and the PDF sd within 0.3% of the untruncated value, on 1.5-2.1M fine nodes
+  # (20 would need 6-9M).
+  pdfCutoff: 12.0
+  # PDF = exp(-pdfMisfitScale * misfit). 1.0 is the ticket's exp(-misfit): the Laplace likelihood
+  # with scale sigma / prob. The synthetic test measures how well the "68%" errors cover the true
+  # errors on the real geometry; change this only if that measurement says so. Formal errors only.
+  pdfMisfitScale: 1.0
+  # Most fine nodes one PDF may cover (misfit cost ~27 ns per node and pick). A PDF that needs more
+  # is truncated: hErrM and vErrM become None and the search record says pdfTruncated.
+  maxPdfNodes: 3000000
+  # Pick sigma (s): weight = pick probability / sigma. The Laplace scale of the L1 likelihood.
+  pickSigmaS:
+    P: 0.02
+    S: 0.04
+  # Per-profile overrides keyed by Station.preprocessProfile, e.g. {borehole-B: {P: 0.03, S: 0.05}}.
+  profilePickSigmaS: {}
+  # Drop picks with |residual| > max(madK * MAD, floorS) (MAD unscaled), then relocate once.
+  outlier:
+    madK: 3.0
+    floorS: 0.15
+  minPicks: 4
+  # hErrM = 68% semi-major axis of the horizontal marginal. docs/02 fixes 68% (vErrM is the vertical
+  # 1-sigma), so any other value is rejected.
+  errConfidence: 0.68
+  # depthOnEdge (docs/02): > this PDF mass on the fine grid's top or bottom face.
+  depthOnEdgeMassFraction: 0.05
+  # Separate from depthOnEdge: mapOnVolumeTop / mapOnVolumeBottom (EventLocation fields and the
+  # search record) are set when the MAP node lies within this distance (m) of the search volume's
+  # top / bottom, so a broad PDF pinned at the top is caught even when its face row holds < 5%.
+  # One fineStageSpacingM; 0 would mean the face row only.
+  mapOnVolumeFaceBandM: 100.0
+  nWorkers: 8 # processes for locate_many (spawned); results do not depend on it
+  evalChunkNodes: 65536 # nodes per misfit block (memory only)
+  enuConsistencyTolM: 0.01 # stations: |enu_u + origin elevM - sensorElevM| must be below this
+
+# Synthetic recovery test (LOC-02, hq.locate.synthetic). Hypocentres are drawn in this zone, picks
+# are exact 1D layered times plus Gaussian noise at locator.pickSigmaS, located by the locator.
+synthetic:
+  nEvents: 200
+  seed: 20260925
+  # ENU cylinder around the origin covering the depth band of the region's public-catalog
+  # activity. These are config values; the code never reads catalog values.
+  zone:
+    centerEM: 0.0
+    centerNM: 0.0
+    radiusM: 2000.0
+    topElevM: -1000.0
+    bottomElevM: -4500.0
+  # PLACEHOLDERS until LOC-04 has association output: each station's S pick is kept with this
+  # probability (the real nS distribution replaces it), and every synthetic pick gets pickProb (the
+  # real pick-probability distribution replaces it). Every station gets a P pick. Both make the
+  # synthetic picks optimistic for weak events; the params record says so.
+  sKeepProb: 0.6
+  pickProb: 1.0
+
 # Public regional catalog (stage "catalog", hq.match.catalog, MATCH-01).
 catalog:
   # ObsPy FDSN client key. "USGS" is the ComCat FDSN event service at https://earthquake.usgs.gov,
@@ -81,3 +182,132 @@ catalog:
         - https://quake.utah.edu/resources/catalog-details/
         - https://earthquake.usgs.gov/data/comcat/index.php#depth
         - https://quake.ethz.ch/quakeml/Documents
+
+# Association (stage "associate", hq.associate, LOC-03) with PyOcto 0.2.0, fed the same 1D layer
+# file as the locator (velocity.layerFile) through station-specific travel-time tables built here.
+# Every value below, and every argument actually passed to PyOcto, is recorded in
+# ProcessingRun.associator. PyOcto's own knobs keep its units: km (Km suffix) and s.
+# Values are starting points; the sweep below, completed in LOC-06, picks the knee.
+associator:
+  # Stage input in the run dir: known/picks.parquet (H1's known-event windows) or picks.parquet.
+  picksTable: picks.parquet
+  # Picks from stations in stations.parquet with usedInRun false (H1's known-event picker picks
+  # them on purpose): drop (counted and logged) or reject. Unknown stations always fail.
+  picksFromUnusedStations: drop
+  # Picks are stored at prob >= 0.1; association uses only picks at or above this. PyOcto 0.2.0
+  # takes no per-pick weight, so prob is used only as this threshold.
+  minPickProb: 0.3
+  # Final events need picks from at least this many distinct stations (applied after the
+  # duplicate merge and shared-pick resolution below).
+  minStations: 5
+  # PyOcto's pick minimums (n_picks, n_p_picks, n_s_picks, n_p_and_s_picks; P/S/both count
+  # stations). The config rejects values PyOcto would silently raise, and nPicks/nPPicks above the
+  # smallest minStations, so the station minimum stays the binding one.
+  nPicks: 4
+  nPPicks: 2
+  nSPicks: 1
+  nPAndSPicks: 0
+  toleranceS: 0.3                     # velocity model tolerance
+  # Not knobs, fixed by design and recorded with the others: second_pass_overwrites null (no
+  # second pass), velocity_model_location null (location uses the association model), crs null
+  # (coordinates are projected in hq.associate.frame).
+  associationCutoffDistanceKm: null   # null: every station takes part in the space partitioning
+  # Overlap between time slices. Must cover the largest S travel time from any station to any
+  # point of the search volume; the stage computes that from the tables and fails if it does not.
+  timeBeforeS: 30.0
+  timeSlicingS: 1200.0
+  minNodeSizeKm: 4.0                  # half the runtime of 2.0, same recall (synthetic 57k-pick day)
+  minNodeSizeLocationKm: 0.25
+  pickMatchToleranceS: 0.5
+  # PyOcto drops the smaller of two events closer than this in time, whatever picks they share.
+  # 0 leaves near-simultaneous events to the explicit duplicate merge below.
+  minIntereventTimeS: 0.0
+  exponentialEdt: false
+  edtPickStdS: 1.0                    # used by PyOcto only when exponentialEdt is true
+  maxPickOverlap: 4
+  refinementIterations: 3
+  locationSplitDepth: 6
+  locationSplitReturn: 4
+  minPickFraction: 0.25
+  queueMemoryProtectionDfsSize: 500000
+  nodeLogInterval: 0                  # 0: PyOcto prints no node progress
+  nThreads: 8                         # results do not depend on it (tested)
+  # Stations: |stored enu - enu from latitude/longitude/sensorElevM| must be below this (m).
+  enuConsistencyTolM: 0.01
+  # Duplicate merge: two events whose origin times differ by at most mergeWithinS and that share
+  # at least mergeMinSharedFraction of the smaller event's picks become one.
+  mergeWithinS: 0.5
+  mergeMinSharedFraction: 0.5
+  volume:
+    horizontalMarginM: 1000.0         # around the run bbox projected to ENU (EPSG:32612 - origin)
+    topElevM: null                    # null = run.refSurfaceElevM (the ground at the origin)
+    bottomElevM: -10000.0             # m ASL
+  # Station-specific tables in PyOcto's binary format, cached under data/cache/ttgrids/pyocto/.
+  tables:
+    spacingM: 50.0                    # with cell-averaged slowness: within ~20 ms of a 10 m solve
+    seedRadiusM: 100.0
+    fmmOrder: 2
+    maxSeedErrorS: 0.05
+  # Sweep (docs/lanes/H2 -> Association): every combination of these values, all other knobs as
+  # above. sweep.parquet (SweepPoint: located candidates, recoveredPublic, tierA) is written by
+  # LOC-06's tier stage, which runs the sweep with its locate/match/tier evaluator. enabled: true
+  # also runs it in stage associate, only to log and record associated counts per point: one
+  # PyOcto run per (minPickProb, nSPicks) pair beyond the configured one, several minutes on a
+  # full day at the permissive points, so it is off by default.
+  sweep:
+    enabled: false
+    minStations: [4, 5, 6, 8]
+    nSPicks: [0, 1, 2]
+    minPickProb: [0.1, 0.2, 0.3]
+
+# Catalog matching (stage "match", hq.match, MATCH-02): one-to-one assignment of located events to
+# public regional catalog events with scipy's linear_sum_assignment. Distance is epicentral, from
+# the horizontal ENU of both tables. Magnitude is never in the cost: magnitudes are calibrated on these
+# same matches.
+matching:
+  # cost = |dt| / dtScaleS + distance / distScaleM, summed over the chosen pairs and minimised
+  # among the one-to-one sets with the most admissible pairs.
+  dtScaleS: 2.0
+  distScaleM: 5000.0
+  # A pair is admissible only if |dt| <= maxDtS and distance <= maxDistM (both edges admissible).
+  # An inadmissible pair is never matched.
+  maxDtS: 2.0
+  maxDistM: 5000.0
+  # Tolerance pairs for match_sensitivity.parquet. Each pair reruns the full assignment with that
+  # pair as both the admissibility limit and the cost scale. Must include (maxDtS, maxDistM).
+  sensitivity:
+    - {dtS: 1.0, distM: 3000.0}
+    - {dtS: 2.0, distM: 5000.0}
+    - {dtS: 3.0, distM: 8000.0}
+  # The stage recomputes ENU from latitude/longitude/elevation (hq.locate.coords.to_enu, run origin)
+  # for the catalog, the located events and the stations, and fails if any stored e/n/u differs by
+  # more than this (m): a table in another frame or origin. Far above round-off, far below any
+  # distance that changes a match.
+  enuConsistencyM: 1.0
+  # Reasons for unmatched public events (hq.match.reasons), from the evidence files in the run dir.
+  reasons:
+    # A public event whose expected arrival windows have waveform data, picks, or picks of one
+    # associated event on fewer than this many used stations gets that reason. 4 is the smallest
+    # station count in the association sweep (lane doc), so no swept associator setting can form an
+    # event below it. Known gap: not read from the associator's own minStations until LOC-03 merges.
+    # LOC-03 configures associator.minStations 5, so a public event picked on exactly 4 stations
+    # reads "picks not associated" where "below the associator's minimum" would be more useful. At
+    # the LOC-03 merge: read associator.minStations and minPickProb here (or validate that they
+    # agree) and record both side by side in ProcessingRun.matching.match.
+    minStations: 4
+    # Picks at or above this probability count for "too few picks"; picks below it (stored down to
+    # 0.1) only turn that into "picks below threshold". 0.3 is LOC-03's working associator threshold
+    # and the top of the lane doc's sweep {0.1, 0.2, 0.3}. Known gap: keep equal to the associator's
+    # minPickProb by hand until LOC-03 merges, then read it from there.
+    minPickProb: 0.3
+    # Each expected window [R / vMax, straight-ray time] after the public origin (hq.match.reasons)
+    # is widened by this much on both sides (s). Budget: the public regional catalog's stated errors
+    # for the showcase day (QuakeML, checked 2026-09-25: horizontal <= 420 m, depth <= 770 m, so at
+    # most ~0.9 km of hypocentral distance, <= 0.35 s of S time; rms <= 0.18 s), plus station delays
+    # up to the 0.3 s statics cap (LOC-05) and pick error. That sums to under 0.9 s.
+    arrivalPadS: 1.0
+    # A located event carrying this event's in-window picks counts as its "located out of
+    # tolerance" candidate only if its origin is within this many seconds of the public origin.
+    # Picks inside these windows pin the origin to within about a window width (a few s) plus the
+    # travel-time change of a mislocation, so 10 s only drops candidates that cannot be this event.
+    maxCandidateDtS: 10.0
