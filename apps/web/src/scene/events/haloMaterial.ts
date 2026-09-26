@@ -2,17 +2,14 @@
 // (fresnel) so the outline reads as "the event is somewhere in here" without hiding the glyph.
 
 import { Color, type IUniform } from "three";
-import { TIMELINE } from "../reveal/timeline";
 
 export interface HaloUniforms {
   [name: string]: IUniform;
   uColor: IUniform<Color>;
   /** Filter-driven halo opacity (0 outside STRICT). */
   uOpacity: IUniform<number>;
+  /** Reveal clock (s); a halo shows once it passes the event's appearance time. */
   uRevealElapsed: IUniform<number>;
-  uEventsStart: IUniform<number>;
-  uEventsDuration: IUniform<number>;
-  uEventsExponent: IUniform<number>;
 }
 
 /** Peak rim alpha at full halo opacity: a halo is context, never brighter than its event. */
@@ -21,21 +18,17 @@ export const HALO_RIM_ALPHA = 0.55;
 export const HALO_RIM_POWER = 2.2;
 
 export const HALO_VERTEX_SHADER = /* glsl */ `
-  attribute float aRevealAt;
+  attribute float aAppearAt;
 
   uniform float uRevealElapsed;
-  uniform float uEventsStart;
-  uniform float uEventsDuration;
-  uniform float uEventsExponent;
   uniform float uOpacity;
 
   varying float vRim;
   varying float vAlpha;
 
   void main() {
-    // Same appearance time as the event glyph (scene/reveal/timeline.ts → appearTimeOf).
-    float appearT = uEventsStart + uEventsDuration * pow(clamp(aRevealAt, 0.0, 1.0), 1.0 / uEventsExponent);
-    float shown = step(appearT, uRevealElapsed);
+    // Same appearance time as the event glyph (computed on the CPU with appearTimeOf).
+    float shown = step(aAppearAt, uRevealElapsed);
     vAlpha = uOpacity * shown;
 
     // Ellipsoid normal: the unit sphere's normal divided by the per-axis scale.
@@ -67,8 +60,5 @@ export function createHaloUniforms(color: string): HaloUniforms {
     uColor: { value: new Color(color) },
     uOpacity: { value: 0 },
     uRevealElapsed: { value: -1 },
-    uEventsStart: { value: TIMELINE.events.startS },
-    uEventsDuration: { value: TIMELINE.events.endS - TIMELINE.events.startS },
-    uEventsExponent: { value: TIMELINE.events.exponent },
   };
 }

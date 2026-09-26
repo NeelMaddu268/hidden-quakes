@@ -76,10 +76,10 @@ describe("buildHaloInstances", () => {
     expect(halos.matrices[13]).toBeCloseTo(-4, 6);
   });
 
-  it("carries each event's reveal slot so a halo never shows before its event", () => {
+  it("carries each event's appearance time so a halo never shows before its event", () => {
     const cand = buildCandidateInstances(events, 1, 0);
     const halos = buildHaloInstances(events, cand, 1);
-    expect(Array.from(halos.revealAt)).toEqual([cand.revealAt[0], cand.revealAt[3]]);
+    expect(Array.from(halos.appearAt)).toEqual([cand.appearAt[0], cand.appearAt[3]]);
   });
 
   it("fails loudly if events and candidate instances are out of step", () => {
