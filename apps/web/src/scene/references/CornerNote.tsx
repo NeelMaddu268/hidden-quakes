@@ -1,6 +1,6 @@
 "use client";
 
-import { Html } from "@react-three/drei";
+import { SceneHtml as Html } from "./SceneHtml";
 import { useThree } from "@react-three/fiber";
 import { colors } from "@hq/visualization";
 import type { ReactNode } from "react";

@@ -19,6 +19,8 @@ function station(over: Partial<Station> & Pick<Station, "id" | "kind">): Station
   const sensorElevM = over.sensorElevM ?? surfaceElevM - sensorDepthM;
   return {
     network: "XX",
+    location: "",
+    staticsS: {},
     station: over.id,
     latitude: 0,
     longitude: 0,

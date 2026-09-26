@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import { formatExaggeration, verticalBadgeText } from "./badge";
 
 describe("verticalBadgeText", () => {
-  it("shows nothing without exaggeration (1.0, or the field omitted)", () => {
+  it("shows nothing without exaggeration (1.0)", () => {
     expect(verticalBadgeText({ verticalExaggeration: 1 })).toBeNull();
-    expect(verticalBadgeText({})).toBeNull();
   });
 
   it("shows 'Vertical ×N' with N from the data", () => {
