@@ -84,9 +84,12 @@ class Knobs:
     n_public: int = 43  # public regional catalog rows (the ticket's "43 public points")
     n_matched: dict[str, int] = field(default_factory=lambda: {"A": 26, "B": 10, "C": 2})  # =38
     n_events: dict[str, int] = field(default_factory=lambda: {"A": 150, "B": 200, "C": 150})
-    # Evidence files per tier (=20). A includes the hero (16 traces); C includes the Tier C event
-    # with the fewest stations (a 4-trace file), so the drawer sees both ends of the range.
-    n_evidence: dict[str, int] = field(default_factory=lambda: {"A": 12, "B": 5, "C": 3})
+    # Evidence files per tier. A = the hero (16 traces) plus the first n_evidence["A"] events in
+    # reveal order, exactly the set the web provider preloads (hero + EVIDENCE_PRELOAD_COUNT by
+    # reveal order), so a mock session never 404s on a preload; B and C are random picks, C forced
+    # to include the Tier C event with the fewest stations (a 4-trace file), so the drawer sees
+    # both ends of the range.
+    n_evidence: dict[str, int] = field(default_factory=lambda: {"A": 20, "B": 5, "C": 3})
     n_surface_stations: int = 14  # 13 used + 3 boreholes = 16 stations, so the hero gets 16 traces
     n_unused_surface_stations: int = 1  # usedInRun false (e.g. too many gaps), exercises the UI
     max_sample_attempts: int = 50  # redraws allowed before a draw is declared unreachable
@@ -1147,7 +1150,8 @@ def make_features(frame: Frame, k: Knobs) -> list[m.GeoFeature]:
 def choose_evidence(
     rng: np.random.Generator, drafts: list[EventDraft], hero: EventDraft, k: Knobs
 ) -> list[EventDraft]:
-    """The hero, the Tier C event with the fewest stations (a 4-trace file), then random picks."""
+    """The hero, the first Tier A events in reveal order (the provider's preload set), the Tier C
+    event with the fewest stations (a 4-trace file), then random B and C picks."""
     smallest_c = min((d for d in drafts if d.tier == "C"), key=lambda d: (d.n_stations, d.id))
     if smallest_c.n_stations != k.n_stations_range["C"][0]:
         raise RuntimeError(
@@ -1156,7 +1160,10 @@ def choose_evidence(
         )
     forced = [hero, smallest_c]
     chosen = list(forced)
-    for tier in TIERS:
+    # Tier A: reveal order, not random, so the files match what the provider preloads.
+    first_a = [d for d in sorted(drafts, key=lambda d: d.reveal_order) if d is not hero]
+    chosen.extend(first_a[: k.n_evidence["A"]])
+    for tier in ("B", "C"):
         pool = [d for d in drafts if d.tier == tier and all(d is not f for f in forced)]
         want = k.n_evidence[tier] - sum(1 for f in forced if f.tier == tier)
         idx = rng.choice(len(pool), size=want, replace=False)
