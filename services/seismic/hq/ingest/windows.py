@@ -20,10 +20,11 @@ For every event and station it reports:
   every missing span fetched by the downloader; ``reason`` says why not
 
 A window PASSes when at least ``minStations`` stations are usable. A hole in the samples is a gap
-when it is longer than ``minGapSamples - 1`` sample intervals, so sub-sample jitter is not a gap
-and a single missing sample is. SEIS-05's ``download.channel_gaps`` (``gaps.parquet``) shares
-that interior rule but not the leading edge: here a leading hole must exceed ``minGapSamples``
-intervals, there it needs at least ``minGapSamples - 0.5``. A station is usable here at
+when it is longer than ``known.minGapSamples - 1`` sample intervals, so sub-sample jitter is not
+a gap and a single missing sample is. SEIS-05's ``download.channel_gaps`` (``gaps.parquet``)
+applies the same interior rule with its own knob, ``download.minGapSamples``, but not the same
+leading edge: here a leading hole must exceed ``known.minGapSamples`` intervals, there it needs
+at least ``download.minGapSamples - 0.5``. A station is usable here at
 ``gapFraction <= maxGapFraction``; Check A counts one as useful only below
 ``download.maxGapFraction``.
 
@@ -37,7 +38,10 @@ Outputs in ``runs/<id>/known/``:
 - ``known_windows.record.json``: this sub-step's runtime, counts and ``known:`` params.
 
 Not a registered pipeline stage (``hq.runs.STAGES`` rejects the name), so its record goes to
-``known/known_windows.record.json``, never ``run.json``; run it with the CLI::
+``known/known_windows.record.json``, never ``run.json``. Runs built before that rule (commit
+c43b853; the showcase run of record is one) carry this sub-step and SEIS-04's ``pick_known`` in
+``run.json`` and ``stages.json`` instead, and have no ``known/*.record.json``. Run it with the
+CLI::
 
     uv run python -m hq.ingest.windows --run-dir <dir> --config-dir configs/showcase \\
         --cache-dir <dir>
