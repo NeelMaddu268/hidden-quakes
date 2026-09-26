@@ -450,34 +450,64 @@ def test_gap_rows_and_check_a_classification(tmp_path: Path) -> None:
     assert "useful stations: 1 (need >= 2) -> FAIL" in table
 
 
-def test_stage_run_writes_gaps_and_records(tmp_path: Path, fake_ctx, monkeypatch) -> None:
-    io = pytest.importorskip("hq_contracts.io")  # CONTRACT-01 (H4) has not landed yet
+def _exercise_stage(io, fake_ctx, monkeypatch) -> None:
     import pandas as pd
 
     import hq.ingest.download as dl
 
     run = fake_ctx.config.run
     t0, t1 = run.window_start_s, run.window_end_s
-    client = FakeClient(full(["A"], t0 - HOUR, t1 + HOUR))
+    cov = full(["A"], t0 - HOUR, t1 + HOUR)
+    del cov[("A", "HHE")]
+    client = FakeClient(cov)
     monkeypatch.setattr(dl, "default_client_factory", lambda cfg: factory(client))
-    stations = pd.DataFrame(
-        [
-            {
-                "id": "XX.A",
-                "network": "XX",
-                "station": "A",
-                "location": "00",
-                "channels": ["HHZ", "HHN", "HHE"],
-                "latitude": 38.5,
-                "longitude": -112.9,
-                "usedInRun": True,
-            }
-        ]
-    )
-    io.write_table(stations, fake_ctx.path("stations.parquet"), "Station")
+    row = {
+        "id": "XX.A",
+        "network": "XX",
+        "station": "A",
+        "location": "00",
+        "channels": ["HHZ", "HHN", "HHE"],
+        "latitude": 38.5,
+        "longitude": -112.9,
+        "usedInRun": True,
+    }
+    unused = {**row, "id": "XX.B", "station": "B", "usedInRun": False}
+    io.write_table(pd.DataFrame([row, unused]), fake_ctx.path("stations.parquet"), "Station")
     dl.run(fake_ctx)
+    assert {c[0] for c in client.calls} == {"A"}  # usedInRun=False is not downloaded
     gaps = io.read_table(fake_ctx.path("gaps.parquet"))
-    assert list(gaps.columns) == ["stationId", "channel", "gapStart", "gapEnd"] and gaps.empty
+    assert list(gaps.columns) == ["stationId", "channel", "gapStart", "gapEnd"]
+    assert gaps.to_dict(orient="records") == [
+        {"stationId": "XX.A", "channel": "HHE", "gapStart": t0, "gapEnd": t1}
+    ]
     rec = fake_ctx.records["download"]
-    assert rec["counts"]["usefulStations"] == 1 and rec["params"]["chunkS"] == 3600
-    assert fake_ctx.path("download_report.json").is_file()
+    assert rec["counts"]["usefulStations"] == 0 and rec["counts"]["gapRows"] == 1
+    assert rec["counts"]["requests"] == 26 and rec["params"]["chunkS"] == 3600
+    report = json.loads(fake_ctx.path("download_report.json").read_text(encoding="utf-8"))
+    assert report["pass"] is False and report["stations"][0]["componentsPresent"] == 2
+
+
+def test_stage_run_writes_gaps_and_records(fake_ctx, monkeypatch) -> None:
+    io = pytest.importorskip("hq_contracts.io")  # CONTRACT-01 (H4) has not landed yet
+    _exercise_stage(io, fake_ctx, monkeypatch)
+
+
+def test_stage_run_with_stand_in_table_io(fake_ctx, monkeypatch) -> None:
+    """Same stage flow against a parquet stand-in for ``hq_contracts.io`` (docs/02 section 2)."""
+    import sys
+    import types
+
+    import pandas as pd
+
+    stub = types.ModuleType("hq_contracts.io")
+    written: dict[str, str] = {}
+
+    def write_table(df: pd.DataFrame, path: Path, model_name: str) -> None:
+        written[Path(path).name] = model_name
+        df.to_parquet(path)
+
+    stub.write_table = write_table  # type: ignore[attr-defined]
+    stub.read_table = pd.read_parquet  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "hq_contracts.io", stub)
+    _exercise_stage(stub, fake_ctx, monkeypatch)
+    assert written["gaps.parquet"] == "Gap"
