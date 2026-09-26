@@ -147,6 +147,9 @@ class AssociatorConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     picksTable: Literal["known/picks.parquet", "picks.parquet"]  # stage input, in the run dir
+    # Picks from a stations.parquet station with usedInRun false: drop them (counted, logged) or
+    # reject the input. A pick from a station missing from stations.parquet always fails.
+    picksFromUnusedStations: Literal["drop", "reject"]
     minPickProb: float = Field(gt=0, le=1)  # picks below this probability are not associated
     minStations: int = Field(ge=1)  # final events need picks from at least this many stations
     nPicks: int = Field(ge=1)  # PyOcto n_picks

@@ -90,6 +90,9 @@ catalog:
 associator:
   # Stage input in the run dir: known/picks.parquet (H1's known-event windows) or picks.parquet.
   picksTable: picks.parquet
+  # Picks from stations in stations.parquet with usedInRun false (H1's known-event picker picks
+  # them on purpose): drop (counted and logged) or reject. Unknown stations always fail.
+  picksFromUnusedStations: drop
   # Picks are stored at prob >= 0.1; association uses only picks at or above this. PyOcto 0.2.0
   # takes no per-pick weight, so prob is used only as this threshold.
   minPickProb: 0.3
