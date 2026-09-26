@@ -80,6 +80,7 @@ function StripView({ model, width }: StripViewProps) {
   const pubCount = useRef<HTMLSpanElement>(null);
   const recCount = useRef<HTMLSpanElement>(null);
   const recLabel = useRef<HTMLSpanElement>(null);
+  const recSep = useRef<HTMLSpanElement>(null);
   const playButton = useRef<HTMLButtonElement>(null);
   const dragging = useRef<number | null>(null);
   const playing = useDemo((s) => s.playing);
@@ -114,6 +115,7 @@ function StripView({ model, width }: StripViewProps) {
       if (pubCount.current) pubCount.current.textContent = countUpTo(model.sortedPublic, now).toLocaleString("en-US");
       if (recCount.current) recCount.current.textContent = set === "none" ? "" : countUpTo(sorted, now).toLocaleString("en-US");
       if (recLabel.current) recLabel.current.textContent = set === "none" ? "" : set === "strict" ? " strict" : " recovered";
+      if (recSep.current) recSep.current.textContent = set === "none" ? "" : " · ";
       const el = slider.current;
       if (el) {
         el.setAttribute("aria-valuenow", String(Math.round(now)));
@@ -181,7 +183,11 @@ function StripView({ model, width }: StripViewProps) {
           ref={playButton}
           type="button"
           onClick={() => togglePlay(model)}
-          onKeyDown={(e) => e.stopPropagation()}
+          // Space / Enter activate the button, so they must not also reach the shell's Space beat. Every
+          // other key (P, S, R, T, E, Esc) still reaches the presenter keyboard while the button has focus.
+          onKeyDown={(e) => {
+            if (e.key === " " || e.key === "Enter") e.stopPropagation();
+          }}
           aria-label={playing ? "Pause replay" : "Play replay"}
           data-testid="time-play"
           style={{
@@ -206,7 +212,8 @@ function StripView({ model, width }: StripViewProps) {
         <span style={{ flex: 1 }} />
         <span data-testid="time-counts" style={{ fontFamily: fonts.mono, fontSize: 11, ...numeric, ...dim, whiteSpace: "nowrap" }}>
           <span ref={pubCount} style={{ color: PUBLIC_BAR }} /> public
-          <span ref={recCount} style={{ color: colors.recovered, marginLeft: 8 }} />
+          <span ref={recSep} />
+          <span ref={recCount} style={{ color: colors.recovered }} />
           <span ref={recLabel} />
         </span>
       </header>

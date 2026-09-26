@@ -90,18 +90,18 @@ describe("TimeScrubber readouts (every number counted from the bundle)", () => {
     enterTimeMode(START + 800);
     flush();
     expect(text("time-clock")).toBe("00:13 UTC");
-    expect(text("time-counts")).toBe("1 public2 recovered");
+    expect(text("time-counts")).toBe("1 public · 2 recovered");
     act(() => useDemo.setState({ tNow: START + 7200 }));
     flush();
     expect(text("time-clock")).toBe("02:00 UTC");
-    expect(text("time-counts")).toBe("2 public4 recovered");
+    expect(text("time-counts")).toBe("2 public · 4 recovered");
     act(() => useDemo.setState({ filter: "strict" }));
     flush();
-    expect(text("time-counts")).toBe("2 public2 strict");
+    expect(text("time-counts")).toBe("2 public · 2 strict");
     act(() => useDemo.setState({ tNow: END }));
     flush();
     expect(text("time-clock")).toBe("24:00 UTC");
-    expect(text("time-counts")).toBe("2 public2 strict");
+    expect(text("time-counts")).toBe("2 public · 2 strict");
   });
 
   it("labels the bins and the shared scale", () => {
@@ -167,6 +167,19 @@ describe("TimeScrubber controls", () => {
     fireEvent.keyDown(screen.getByTestId("time-strip"), { key: "ArrowRight" });
     window.removeEventListener("keydown", onWindowKey);
     expect(onWindowKey).toHaveBeenCalledTimes(1); // "s" bubbled; the seek key did not
+  });
+
+  it("a focused play button keeps Space / Enter to itself but passes every presenter key to the shell", () => {
+    render(<TimeScrubber />);
+    enterTimeMode(START);
+    const onWindowKey = vi.fn();
+    window.addEventListener("keydown", onWindowKey);
+    const play = screen.getByTestId("time-play");
+    for (const key of [" ", "Enter"]) fireEvent.keyDown(play, { key });
+    expect(onWindowKey).not.toHaveBeenCalled();
+    for (const key of ["p", "s", "r", "t", "e", "Escape"]) fireEvent.keyDown(play, { key });
+    window.removeEventListener("keydown", onWindowKey);
+    expect(onWindowKey.mock.calls.map(([e]) => (e as KeyboardEvent).key)).toEqual(["p", "s", "r", "t", "e", "Escape"]);
   });
 
   it("pressing on the strip pauses and seeks to that time; dragging follows the pointer", () => {
