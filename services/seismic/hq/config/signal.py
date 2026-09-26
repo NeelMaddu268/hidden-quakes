@@ -558,12 +558,20 @@ class BaselineThresholds(_Section):
 
 
 class BaselineSweep(_Section):
-    """Grid pOn x sOn x offLevels; each off level is used for both phases at that grid point."""
+    """Grid pOn x sOn x offLevels; each off level is used for both phases at that grid point.
+
+    Scoring (``hq.baseline.score``) runs grid points through H2's pipeline as VAL-01 does:
+    ``scoreMode`` ``all`` scores every point, ``coordinate`` a coordinate descent from
+    ``baseline.chosen`` (pOn, then sOn, then the off level, whole passes until one moves nowhere,
+    at most ``maxPasses``), ``none`` nothing (pick counts only).
+    """
 
     pOn: tuple[float, ...] = Field(min_length=1)
     sOn: tuple[float, ...] = Field(min_length=1)
     offLevels: tuple[float, ...] = Field(min_length=1)
-    scoreWithH2: bool  # score every grid point through H2's associate..assign_tiers, once merged
+    scoreMode: Literal["all", "coordinate", "none"]  # hq.baseline.score.ScoreMode
+    scoreWorkers: int = Field(ge=1)  # grid points scored at once (spawned processes); 1 = inline
+    maxPasses: int = Field(ge=1)  # coordinate mode: passes over pOn, sOn, off at most
 
     @model_validator(mode="after")
     def _check(self) -> "BaselineSweep":
