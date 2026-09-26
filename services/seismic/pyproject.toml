@@ -17,6 +17,7 @@ dependencies = [
   "pydantic>=2",
   "pyyaml",
   "pyproj",
+  "requests",
   "matplotlib",
   "hq-contracts",
 ]

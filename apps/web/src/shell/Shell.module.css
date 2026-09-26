@@ -1,0 +1,251 @@
+/* The shell overlay. Every color, font and duration is a --hq-* token from packages/visualization
+   (set on <html> in app/layout.tsx); nothing here names a hex value or a millisecond. */
+
+.shell {
+  --shell-inset: 24px;
+  --shell-top: var(--shell-inset);
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  color: var(--hq-text);
+  font-family: var(--hq-font-ui);
+  user-select: none;
+}
+
+.shell[data-banner] {
+  --shell-top: calc(var(--shell-inset) + 2rem);
+}
+
+/* SYNTHETIC banner: full width, alert red, at the very top. */
+.banner {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hq-alert);
+  color: var(--hq-bg);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Title and mode label, top-left and small. */
+.header {
+  position: absolute;
+  top: var(--shell-top);
+  left: var(--shell-inset);
+}
+
+.title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.modeLabel {
+  margin-top: 0.35rem;
+  min-height: 1em;
+  font-family: var(--hq-font-mono);
+  font-size: 0.72rem;
+  color: var(--hq-text-dim);
+}
+
+/* Counters and, after the reveal, the filter pills, in one right-aligned column. */
+.topRight {
+  position: absolute;
+  top: var(--shell-top);
+  right: var(--shell-inset);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1rem;
+}
+
+.counters {
+  display: flex;
+  gap: 2.5rem;
+  text-align: right;
+}
+
+.counterLabel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hq-text-dim);
+}
+
+.counterValue {
+  margin-top: 0.3rem;
+  font-size: clamp(2.25rem, 5.5vw, 4.5rem);
+  font-weight: 500;
+  line-height: 1;
+  transition:
+    color var(--hq-motion-state) var(--hq-ease),
+    opacity var(--hq-motion-state) var(--hq-ease);
+}
+
+.counter[data-tone="public"] .counterValue {
+  color: var(--hq-public);
+}
+
+.counter[data-tone="recovered"] .counterValue {
+  color: var(--hq-recovered);
+}
+
+.counter[data-tone="strict"] .counterValue {
+  color: var(--hq-strict-halo);
+}
+
+/* Not yet known to the viewer: a dimmed dash, never a zero. */
+.counter[data-dim] .counterValue {
+  color: var(--hq-text-dim);
+  opacity: 0.45;
+}
+
+/* REVEAL HIDDEN SIGNAL: the only accent on the pre-reveal frame, centered low. */
+.reveal {
+  position: absolute;
+  left: 50%;
+  bottom: 14vh;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  padding: 1.1rem 3rem;
+  border: 1px solid var(--hq-recovered);
+  border-radius: 999px;
+  color: var(--hq-recovered);
+  background: color-mix(in srgb, var(--hq-bg) 82%, transparent);
+  font-size: clamp(1.1rem, 2.2vw, 1.6rem);
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  animation: reveal-pulse calc(var(--hq-motion-scene) * 2) var(--hq-ease) infinite alternate;
+  transition:
+    background var(--hq-motion-micro) var(--hq-ease),
+    transform var(--hq-motion-micro) var(--hq-ease);
+}
+
+.reveal:hover {
+  background: color-mix(in srgb, var(--hq-recovered) 14%, var(--hq-bg));
+}
+
+.reveal:active {
+  transform: translateX(-50%) scale(0.98);
+}
+
+.reveal:focus-visible {
+  outline: 2px solid var(--hq-recovered);
+  outline-offset: 4px;
+}
+
+/* The one loop in the shell: a gentle glow breathing on the call to action. */
+@keyframes reveal-pulse {
+  from {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  to {
+    box-shadow: 0 0 32px 4px color-mix(in srgb, var(--hq-recovered) 28%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    animation: none;
+  }
+}
+
+/* Pills: filter row (under the counters) and mode row (bottom-left). */
+.filters,
+.modes {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.modes {
+  position: absolute;
+  left: var(--shell-inset);
+  bottom: var(--shell-inset);
+  opacity: 0.7;
+  transition: opacity var(--hq-motion-micro) var(--hq-ease);
+}
+
+.modes:hover {
+  opacity: 1;
+}
+
+.pill {
+  pointer-events: auto;
+  padding: 0.32rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--hq-text-dim) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hq-surface) 75%, transparent);
+  color: var(--hq-text-dim);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  transition:
+    color var(--hq-motion-micro) var(--hq-ease),
+    background var(--hq-motion-micro) var(--hq-ease),
+    border-color var(--hq-motion-micro) var(--hq-ease);
+}
+
+.pill:hover {
+  color: var(--hq-text);
+  border-color: var(--hq-text-dim);
+}
+
+.pill[aria-pressed="true"] {
+  color: var(--hq-bg);
+  background: var(--hq-text);
+  border-color: var(--hq-text);
+}
+
+.pill:focus-visible {
+  outline: 2px solid var(--hq-text);
+  outline-offset: 2px;
+}
+
+.modePill {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.62rem;
+}
+
+/* Error panel: the provider's message, in alert red, readable from the back of the room. */
+.error {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: max-content;
+  max-width: min(44rem, calc(100vw - 2 * var(--shell-inset)));
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--hq-alert);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--hq-surface) 94%, transparent);
+  color: var(--hq-alert);
+  pointer-events: auto;
+  user-select: text;
+}
+
+.errorTitle {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.errorMessage {
+  margin-top: 0.5rem;
+  font-family: var(--hq-font-mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--hq-text);
+  overflow-wrap: anywhere;
+}
