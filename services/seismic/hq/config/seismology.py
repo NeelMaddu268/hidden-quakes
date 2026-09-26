@@ -1,12 +1,11 @@
-"""Seismology config: velocity models, catalog, association, location, tiers (``seismology.yaml``).
-
-Parsed from ``configs/showcase/seismology.yaml``. Unknown keys are an error (docs/02 -> Config files).
-Each section is added by the ticket that needs it; one field per line in ``SeismologyConfig``.
-"""
+"""Seismology lane config (``configs/showcase/seismology.yaml``). Unknown keys are an error."""
 
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# services/seismic: config paths such as ``velocity.layerFile`` are relative to it.
+SEISMIC_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Velocity3dConfig(BaseModel):
@@ -35,6 +34,9 @@ class VelocityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     layerFile: Path  # 1D layer file, relative to services/seismic
+    # Unit guard for any layer file: every Vp and Vs (m/s) must lie inside these [min, max] ranges.
+    plausibleVpMPerS: tuple[float, float]
+    plausibleVsMPerS: tuple[float, float]
     profilePlotBottomElevM: float  # m ASL; how far down the profile figure draws the half-space
     model3d: Velocity3dConfig
 
@@ -45,9 +47,23 @@ class VelocityConfig(BaseModel):
             raise ValueError(f"layerFile must be relative to services/seismic, got {value}")
         return value
 
+    @model_validator(mode="after")
+    def _ranges(self) -> "VelocityConfig":
+        for label, (low, high) in (
+            ("plausibleVpMPerS", self.plausibleVpMPerS),
+            ("plausibleVsMPerS", self.plausibleVsMPerS),
+        ):
+            if not 0.0 < low < high:
+                raise ValueError(f"{label} must be [min, max], 0 < min < max, got {[low, high]}")
+        return self
+
+    def layer_path(self) -> Path:
+        """Absolute path of ``layerFile`` (resolved against services/seismic, not the CWD)."""
+        return SEISMIC_ROOT / self.layerFile
+
 
 class SeismologyConfig(BaseModel):
-    """Contents of ``seismology.yaml``. Unknown keys are an error."""
+    """Contents of ``seismology.yaml``."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

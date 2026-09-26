@@ -4,6 +4,8 @@ A layer file (``configs/velocity/*.csv``) is a block of ``# key: value`` header 
 CSV table ``topElevM,vpMPerS,vsMPerS`` ordered top-down. Each row is the top of a layer with that
 layer's constant velocities; the deepest layer is a half-space. The header carries the source
 (citation, URLs, license), how the source's depths were converted to ``elevM``, and the datum.
+Load it with ``load_configured_model(cfg.velocity)``, which resolves the path and applies the
+configured Vp/Vs unit guard.
 
 Boundary convention: layer ``i`` spans ``topElevM[i+1] < elevM <= topElevM[i]``, so a point exactly
 on a boundary takes the layer below it. The top of the model belongs to the first layer. Anything
@@ -17,12 +19,15 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from numpy.typing import ArrayLike, NDArray
+
+from hq.config.seismology import VelocityConfig
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +45,24 @@ REQUIRED_HEADER_KEYS = (
     "datum",
     "verified",
 )
-OPTIONAL_HEADER_KEYS = ("model", "sourceSha256", "sourceColumns", "retrieved", "notes")
+OPTIONAL_HEADER_KEYS = (
+    "model",
+    "sourceSha256",
+    "sourceColumns",
+    "retrieved",
+    "notes",
+    "verifiedBasis",
+)
+# Header fields copied into the run record next to the SourceRef, so run.json carries the evidence
+# for the datum and the layer reading, the exact source bytes and the model's limits.
+RECORD_HEADER_KEYS = (
+    "sourceSha256",
+    "sourceDatum",
+    "layerConvention",
+    "conversion",
+    "notes",
+    "verifiedBasis",
+)
 BOUNDARY_CONVENTION = (
     "layer i spans topElevM[i+1] < elevM <= topElevM[i]: a point exactly on a boundary takes the "
     "layer below; the deepest layer is a half-space; above the top of the model is an error"
@@ -51,13 +73,15 @@ class LayerFileError(ValueError):
     """A layer file is malformed, incomplete or physically impossible."""
 
 
+# TODO(CONTRACT-01): replace with hq_contracts.models.SourceRef once it lands; keep the fields equal
+# to docs/02 until then (a smoke test checks them).
 @dataclass(frozen=True)
 class SourceRef:
-    """Where a model comes from. Same fields as ``SourceRef`` in docs/02."""
+    """Where a model comes from. Same fields and meaning as ``SourceRef`` in docs/02."""
 
     citation: str
     url: str
-    verified: bool  # values taken unchanged from the authoritative source file
+    verified: bool  # taken from an authoritative source; the layer file's verifiedBasis says how
 
     def to_record(self) -> dict[str, Any]:
         return {"citation": self.citation, "url": self.url, "verified": self.verified}
@@ -67,11 +91,16 @@ class SourceRef:
 class TopExtension:
     """An explicit upward extension of the top layer (for receivers above the model top)."""
 
-    fromElevM: float  # the source model's own top, m ASL
-    toElevM: float  # the new top, m ASL
+    from_elev_m: float  # the source model's own top, m ASL
+    to_elev_m: float  # the new top, m ASL
 
-    def to_record(self) -> dict[str, float]:
-        return {"fromElevM": self.fromElevM, "toElevM": self.toElevM}
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "fromElevM": self.from_elev_m,
+            "toElevM": self.to_elev_m,
+            "note": "Vp and Vs above fromElevM are the source's top layer extended upward; the "
+            "source has no values there",
+        }
 
 
 def _frozen(values: ArrayLike) -> NDArray[np.float64]:
@@ -113,18 +142,27 @@ class LayerModel:
     top_elev_m: NDArray[np.float64]
     vp_m_per_s: NDArray[np.float64]
     vs_m_per_s: NDArray[np.float64]
-    source_file: str = ""  # exact URL of the source file the values came from
-    license: str = ""
+    source_file: str  # exact URL of the source file the values came from
+    license: str
     top_extension: TopExtension | None = None
-    header: Mapping[str, str] = field(default_factory=dict)  # the layer file's full header
+    header: Mapping[str, str] = field(default_factory=dict)  # the file's full header (read-only)
 
     def __post_init__(self) -> None:
         for attr in ("top_elev_m", "vp_m_per_s", "vs_m_per_s"):
             object.__setattr__(self, attr, _frozen(getattr(self, attr)))
-        object.__setattr__(self, "header", dict(self.header))
+        object.__setattr__(self, "header", MappingProxyType(dict(self.header)))
         _check_layers(self.top_elev_m, self.vp_m_per_s, self.vs_m_per_s)
-        if not self.name or not self.datum:
-            raise LayerFileError("a layer model needs a name and a datum sentence")
+        provenance = {
+            "name": self.name,
+            "datum": self.datum,
+            "citation": self.source.citation,
+            "url": self.source.url,
+            "source_file": self.source_file,
+            "license": self.license,
+        }
+        empty = [key for key, value in provenance.items() if not value.strip()]
+        if empty:
+            raise LayerFileError(f"a layer model needs non-empty provenance; empty: {empty}")
 
     @property
     def n_layers(self) -> int:
@@ -162,21 +200,25 @@ class LayerModel:
         return np.asarray(self.vs_m_per_s[self.layer_index(elev_m)])
 
     def with_top_extended_to(self, elev_m: float) -> "LayerModel":
-        """A copy whose top layer reaches up to ``elev_m`` (m ASL), with the extension recorded.
+        """A model whose top reaches at least ``elev_m`` (m ASL), with any extension recorded.
 
-        The top layer keeps its velocities; no other layer changes. ``elev_m`` must lie above the
-        current top. Extending twice keeps the source model's original top in the record.
+        If ``elev_m`` lies above the current top, returns a copy whose top layer reaches up to it.
+        The top layer keeps its velocities, no other layer changes, and ``top_extension`` records
+        the change; extending twice keeps the source model's original top in the record. If the
+        model already reaches ``elev_m``, returns this model unchanged (logged), so
+        ``model.with_top_extended_to(max(sensor_elev_m))`` is safe to call.
         """
         new_top = float(elev_m)
         if not math.isfinite(new_top):
             raise ValueError("elev_m must be finite")
         current = self.top_of_model_elev_m
         if new_top <= current:
-            raise ValueError(
-                f"{new_top:.1f} m ASL is not above the top of {self.name!r} ({current:.1f} m ASL); "
-                "there is nothing to extend"
+            log.info(
+                "velocity model %s: top %.1f m ASL already reaches %.1f m ASL; no extension",
+                self.name, current, new_top,
             )
-        original = self.top_extension.fromElevM if self.top_extension else current
+            return self
+        original = self.top_extension.from_elev_m if self.top_extension else current
         tops = self.top_elev_m.copy()
         tops[0] = new_top
         log.info(
@@ -186,11 +228,14 @@ class LayerModel:
         return replace(
             self,
             top_elev_m=tops,
-            top_extension=TopExtension(fromElevM=original, toElevM=new_top),
+            top_extension=TopExtension(from_elev_m=original, to_elev_m=new_top),
         )
 
     def to_record(self) -> dict[str, Any]:
-        """The ``ProcessingRun.velocityModel`` dict: name, SourceRef, layers, datum, provenance."""
+        """The ``ProcessingRun.velocityModel`` dict: name, SourceRef, layers, datum, provenance.
+
+        Also carries the header's evidence and limits (``RECORD_HEADER_KEYS``; null when absent).
+        """
         layers = [
             {"topElevM": float(t), "vpMPerS": float(p), "vsMPerS": float(s)}
             for t, p, s in zip(self.top_elev_m, self.vp_m_per_s, self.vs_m_per_s, strict=True)
@@ -201,6 +246,7 @@ class LayerModel:
             "sourceFile": self.source_file,
             "license": self.license,
             "datum": self.datum,
+            **{key: self.header.get(key) for key in RECORD_HEADER_KEYS},
             "boundaryConvention": BOUNDARY_CONVENTION,
             "layers": layers,
             "topExtension": self.top_extension.to_record() if self.top_extension else None,
@@ -251,13 +297,38 @@ def _parse_table(lines: list[tuple[int, str]], path: Path) -> NDArray[np.float64
     return np.array(rows, dtype=np.float64)
 
 
-def load_layer_model(path: Path) -> LayerModel:
-    """Load and validate a layer file. Raises ``LayerFileError`` on anything malformed."""
+def _check_ranges(
+    model: LayerModel, vp_range_m_per_s: tuple[float, float], vs_range_m_per_s: tuple[float, float]
+) -> None:
+    for name, values, (low, high) in (
+        ("vpMPerS", model.vp_m_per_s, vp_range_m_per_s),
+        ("vsMPerS", model.vs_m_per_s, vs_range_m_per_s),
+    ):
+        outside = values[(values < low) | (values > high)]
+        if outside.size:
+            raise LayerFileError(
+                f"{name} values {outside.tolist()} lie outside the plausible range [{low}, {high}] "
+                "m/s; is the file in km/s?"
+            )
+
+
+def load_layer_model(
+    path: Path,
+    *,
+    vp_range_m_per_s: tuple[float, float],
+    vs_range_m_per_s: tuple[float, float],
+) -> LayerModel:
+    """Load and validate a layer file. Raises ``LayerFileError`` on anything malformed.
+
+    ``vp_range_m_per_s`` and ``vs_range_m_per_s`` (config ``plausibleVpMPerS``/``plausibleVsMPerS``)
+    reject a file whose velocities are not plausibly in m/s.
+    """
     started = time.perf_counter()
     path = Path(path)
     header_lines: list[tuple[int, str]] = []
     table_lines: list[tuple[int, str]] = []
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    # utf-8-sig drops a leading byte-order mark (spreadsheet exports add one); it holds no data.
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), start=1):
         line = raw.strip()
         if not line:
             raise LayerFileError(f"{path}:{lineno}: blank lines are not allowed")
@@ -285,6 +356,7 @@ def load_layer_model(path: Path) -> LayerModel:
             license=header["license"],
             header=header,
         )
+        _check_ranges(model, vp_range_m_per_s, vs_range_m_per_s)
     except LayerFileError as err:
         raise LayerFileError(f"{path}: {err}") from err
     log.info(
@@ -294,6 +366,15 @@ def load_layer_model(path: Path) -> LayerModel:
         time.perf_counter() - started,
     )
     return model
+
+
+def load_configured_model(cfg: VelocityConfig) -> LayerModel:
+    """Load ``cfg.layerFile`` (resolved against services/seismic) with the configured unit guard."""
+    return load_layer_model(
+        cfg.layer_path(),
+        vp_range_m_per_s=cfg.plausibleVpMPerS,
+        vs_range_m_per_s=cfg.plausibleVsMPerS,
+    )
 
 
 def _step_profile(
@@ -306,27 +387,22 @@ def _step_profile(
     return vals, elev
 
 
-def plot_profile(
+def profile_figure(
     model: LayerModel,
-    path: Path,
     *,
     bottom_elev_m: float,
     reference_elevations: Mapping[str, float] | None = None,
-) -> Path:
-    """Plot Vp, Vs and Vp/Vs against elevM with the datum stated on the figure; write a PNG.
+) -> Figure:
+    """Vp, Vs and Vp/Vs against elevM, with the datum sentence stated on the figure.
 
     ``bottom_elev_m`` (m ASL, from config) is where the drawing of the half-space stops; it must
     lie below the half-space top. ``reference_elevations`` draws labelled horizontal lines.
     """
-    started = time.perf_counter()
     half_space_top = float(model.top_elev_m[-1])
     if not bottom_elev_m < half_space_top:
         raise ValueError(
             f"bottom_elev_m {bottom_elev_m} must lie below the half-space top {half_space_top}"
         )
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
     fig = Figure(figsize=(9.0, 8.0), layout="constrained")
     FigureCanvasAgg(fig)
     ax_v, ax_r = fig.subplots(1, 2, sharey=True, gridspec_kw={"width_ratios": [3, 1]})
@@ -349,9 +425,9 @@ def plot_profile(
     if model.top_extension is not None:
         ext = model.top_extension
         for ax in (ax_v, ax_r):
-            ax.axhspan(ext.fromElevM, ext.toElevM, color="orange", alpha=0.15, zorder=0)
+            ax.axhspan(ext.from_elev_m, ext.to_elev_m, color="orange", alpha=0.15, zorder=0)
         ax_v.annotate(
-            f"top layer extended from {ext.fromElevM:.0f} m ASL", xy=(0.01, ext.toElevM),
+            f"top layer extended from {ext.from_elev_m:.0f} m ASL", xy=(0.01, ext.to_elev_m),
             xycoords=("axes fraction", "data"), va="top", fontsize=8, color="darkorange",
         )
     for label, elev in (reference_elevations or {}).items():
@@ -369,6 +445,23 @@ def plot_profile(
     fig.suptitle(f"{model.name}: {model.n_layers} layers", fontsize=11)
     footer = f"Datum: {model.datum}\nSource: {model.source.url} ({model.source_file})"
     fig.text(0.5, -0.01, footer, ha="center", va="top", fontsize=8, wrap=True)
+    return fig
+
+
+def plot_profile(
+    model: LayerModel,
+    path: Path,
+    *,
+    bottom_elev_m: float,
+    reference_elevations: Mapping[str, float] | None = None,
+) -> Path:
+    """Write ``profile_figure`` as a PNG at ``path``; returns ``path``."""
+    started = time.perf_counter()
+    fig = profile_figure(
+        model, bottom_elev_m=bottom_elev_m, reference_elevations=reference_elevations
+    )
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, bbox_inches="tight")
     log.info("wrote velocity profile %s (%.2f s)", path, time.perf_counter() - started)
     return path

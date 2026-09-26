@@ -1,13 +1,25 @@
-# Seismology config (H2). Parsed by hq.config.seismology.SeismologyConfig; unknown keys are an error.
+# Seismology lane config (H2). Parsed by hq.config.seismology.SeismologyConfig; unknown keys are an error.
 # Every seismology knob lives here and is recorded in ProcessingRun (docs/02 -> Config files).
 
 velocity:
   # 1D layer model (LOC-01), relative to services/seismic. Its '#' header holds the source,
   # license, the source datum and its evidence, and the conversion to elevM (m ASL, up positive).
   layerFile: configs/velocity/forge_1d.csv
+  # Unit guard, not a physical fit: the loader rejects a layer file with any Vp or Vs (m/s) outside
+  # [min, max]. Catches a file written in km/s (values below 10) under the m/s column names.
+  plausibleVpMPerS: [300.0, 9000.0]
+  plausibleVsMPerS: [100.0, 5000.0]
   # Display only: the profile figure draws the half-space down to this elevation (m ASL).
   profilePlotBottomElevM: -2000.0
-  # 3D model for LOC-07, downloaded into data/cache/velocity/<cacheFile>.
+  # 3D model for LOC-07, downloaded into data/cache/velocity/<cacheFile>. Checked in the file:
+  # - Vp and Vs are float64 in km/s (basement 5.8 / 3.392); the 1D layer file is in m/s.
+  # - Dims (northing 601, easting 601, elevation 201), 50 m spacing, elevation -7000..3000 m.
+  # - No CRS attributes anywhere (spatial_ref has none). Extents E 315300-345300, N 4246200-4276200
+  #   look like UTM 12N (EPSG:32612); unconfirmed.
+  # - Cells above ground hold Vp 0.73271 / Vs 0.40002 km/s, not the 0.01 km/s the manuscript
+  #   (Nakata.pdf p. 3) states, so air can't be masked by value: mask it with the DEM.
+  # - Vp and Vs are NaN in a strip at the west edge (E 315300-315400, N 4270750-4276200), all depths.
+  # LOC-07 adds these as knobs and builds the SourceRef (citation, url, verified) for velocityModel.
   model3d:
     submissionUrl: https://gdr.openei.org/submissions/1800
     url: https://gdr.openei.org/files/1800/Cape-model_50m_grid_sonic-logs-only_stretched_3-1-24.nc
