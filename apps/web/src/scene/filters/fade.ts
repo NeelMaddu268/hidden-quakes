@@ -3,7 +3,8 @@
 // cubic-out. Time-based and allocation-free, so it's deterministic at any frame rate.
 
 import { easeOutCubic, motion, strictFadeOpacity, tierStyle } from "@hq/visualization";
-import type { EventFilter } from "../../state/demo";
+import type { DemoPhase, EventFilter } from "../../state/demo";
+import { LOOK } from "../look";
 
 /** Everything a filter controls, as plain numbers. */
 export interface FilterLook {
@@ -18,8 +19,16 @@ export interface FilterLook {
   halos: number;
 }
 
-/** Public-catalog weight under STRICT: still there for reference, but Tier A carries the frame. */
-export const STRICT_PUBLIC_WEIGHT = 0.4;
+/** Public-catalog weight under STRICT (scene/look.ts): still there for reference, Tier A leads. */
+export const STRICT_PUBLIC_WEIGHT = LOOK.strictPublicWeight;
+
+/**
+ * The look actually applied. Before the reveal the start frame never changes: a STRICT (or ALL)
+ * pressed early is remembered by the store and takes effect when the reveal starts.
+ */
+export function effectiveFilter(phase: DemoPhase, filter: EventFilter): EventFilter {
+  return phase === "public" ? "public" : filter;
+}
 
 export const FILTER_LOOK: Readonly<Record<EventFilter, Readonly<FilterLook>>> = Object.freeze({
   public: Object.freeze({
@@ -65,30 +74,40 @@ export function createFilterFade(initial: EventFilter, durationS: number = motio
   let target: EventFilter = initial;
   let t = durationS;
 
+  const assign = (dst: FilterLook, src: Readonly<FilterLook>) => {
+    for (let i = 0; i < KEYS.length; i++) dst[KEYS[i]] = src[KEYS[i]];
+  };
+
   return {
     current,
     step(filter, deltaS) {
       if (filter !== target) {
         target = filter;
         t = 0;
-        for (const k of KEYS) from[k] = current[k];
+        assign(from, current);
+      }
+      const to = FILTER_LOOK[target];
+      if (durationS <= 0) {
+        assign(current, to); // reduced motion: switch instantly
+        return;
       }
       if (t >= durationS) return;
       t += deltaS > 0 ? deltaS : 0;
-      const to = FILTER_LOOK[target];
-      if (t >= durationS || durationS <= 0) {
-        for (const k of KEYS) current[k] = to[k];
+      if (t >= durationS) {
+        assign(current, to);
         t = durationS;
         return;
       }
       const k = easeOutCubic(t / durationS);
-      for (const key of KEYS) current[key] = from[key] + (to[key] - from[key]) * k;
+      for (let i = 0; i < KEYS.length; i++) {
+        const key = KEYS[i];
+        current[key] = from[key] + (to[key] - from[key]) * k;
+      }
     },
     snap(filter) {
       target = filter;
       t = durationS;
-      const to = FILTER_LOOK[filter];
-      for (const k of KEYS) current[k] = to[k];
+      assign(current, FILTER_LOOK[filter]);
     },
   };
 }

@@ -52,3 +52,11 @@ describe("filter fade", () => {
     expect(fade.current).toBe(ref);
   });
 });
+
+describe("filter fade edge cases", () => {
+  it("a zero duration reaches the target on the first step", () => {
+    const fade = createFilterFade("all", 0);
+    fade.step("strict", 1 / 60);
+    expect({ ...fade.current }).toEqual({ ...FILTER_LOOK.strict });
+  });
+});

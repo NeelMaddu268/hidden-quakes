@@ -10,6 +10,10 @@ describe("halo shaders", () => {
     expect(src).not.toMatch(/\$\{|undefined|NaN/);
   });
 
+  it("clamp the fresnel base so pow() never sees a negative (NaN would smear through bloom)", () => {
+    expect(HALO_FRAGMENT_SHADER).toMatch(/clamp\(abs\(dot\(/);
+  });
+
   it("start hidden: zero opacity and a reveal clock before every appearance", () => {
     const u = createHaloUniforms("#FFD08A");
     expect(u.uOpacity.value).toBe(0);

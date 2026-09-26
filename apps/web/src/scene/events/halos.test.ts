@@ -41,6 +41,8 @@ describe("haloEligible", () => {
     expect(haloEligible(ev("c", "A", null, 300))).toBe(false);
     expect(haloEligible(ev("d", "A", 120, null))).toBe(false);
     expect(haloEligible(ev("e", "A", 0, 300))).toBe(false);
+    expect(haloEligible(ev("f", "A", Infinity, 300))).toBe(false);
+    expect(haloEligible(ev("g", "A", 120, Number.NaN))).toBe(false);
   });
 });
 
@@ -56,6 +58,7 @@ describe("buildHaloInstances", () => {
     const cand = buildCandidateInstances(events, 1, 0);
     const halos = buildHaloInstances(events, cand, 1);
     expect(halos.count).toBe(2);
+    expect(halos.tierAWithoutHalo).toBe(1); // "c" has no hErrM
     expect(Array.from(halos.eventIndex)).toEqual([0, 3]);
     const m0 = halos.matrices.slice(0, 16);
     expect(m0[0]).toBeCloseTo(0.12, 6);
