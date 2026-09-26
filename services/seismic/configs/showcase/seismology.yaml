@@ -41,3 +41,75 @@ velocity:
     expectedBytes: 1161642687
     citation: "Nakata, N., Hopp, C., Wu, S., Robertson, M., & Dadi, S. (2025). Cape EGS and Utah FORGE: Empirical 3D Seismic Velocity Model [Data set]. Geothermal Data Repository, Lawrence Berkeley National Laboratory. https://gdr.openei.org/submissions/1800"
     license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+
+# Travel-time tables (LOC-02, hq.locate.tt_grid): one 2D (r, elevM) eikonal table per receiver
+# elevation and phase, solved with scikit-fmm with the source at the sensor (reciprocity).
+# Cached as .npy under <cache_dir>/ttgrids/, keyed by a hash of every input below.
+grids:
+  drM: 25.0
+  dzM: 25.0
+  # Largest epicentral distance in a table (m). Must cover every station-to-search-node distance;
+  # the locator raises if a station is farther from the search volume than this.
+  rMaxM: 40000.0
+  # Grid top = highest receiver sensorElevM (or the search-volume top, if higher) + topMarginM,
+  # snapped up onto the dzM lattice. The model's top layer is extended up to it (recorded).
+  topMarginM: 100.0
+  # Grid bottom (m ASL): at least one dzM below locator.volume.bottomElevM (checked).
+  bottomElevM: -8000.0
+  # Exact 1D layered times seed every node within this distance of the receiver (m); the
+  # eikonal solve starts from an isochron inside it. At least 4 cells (checked).
+  seedRadiusM: 500.0
+  fmmOrder: 2
+
+# Grid-search locator (LOC-02, hq.locate.locator and hq.locate.uncertainty).
+locator:
+  volume:
+    halfWidthM: 10000.0 # e and n in [-halfWidthM, +halfWidthM] around the run origin
+    # null = run.refSurfaceElevM (the ground at the origin; there is no DEM in a 1D search),
+    # snapped down onto the fine lattice.
+    topElevM: null
+    bottomElevM: -7000.0
+  coarseSpacingM: 200.0 # full-volume grid
+  fineSpacingM: 25.0 # the reported PDF lives on this lattice
+  fineHalfWidthM: 1000.0 # fine box: +/- this around the best coarse node, clipped to the volume
+  # Inside the fine box the misfit is first evaluated every fineStageSpacingM; fine nodes are then
+  # evaluated over the region within pdfCutoff of the minimum, grown until every face of that
+  # region clears pdfCutoff or meets the fine box (locator.py).
+  fineStageSpacingM: 100.0
+  # Nodes more than this above the minimum misfit hold < exp(-pdfCutoff) of the peak node's mass;
+  # they count as zero mass.
+  pdfCutoff: 20.0
+  # Pick sigma (s): weight = pick probability / sigma. The Laplace scale of the L1 likelihood.
+  pickSigmaS:
+    P: 0.02
+    S: 0.04
+  # Per-profile overrides keyed by Station.preprocessProfile, e.g. {borehole-B: {P: 0.03, S: 0.05}}.
+  profilePickSigmaS: {}
+  # Drop picks with |residual| > max(madK * MAD, floorS) (MAD unscaled), then relocate once.
+  outlier:
+    madK: 3.0
+    floorS: 0.15
+  minPicks: 4
+  errConfidence: 0.68 # hErrM = 68% semi-major axis of the horizontal marginal
+  depthOnEdgeMassFraction: 0.05 # depthOnEdge: > this PDF mass on the fine top or bottom face
+  nWorkers: 8 # processes for locate_many (spawned); results do not depend on it
+  evalChunkNodes: 65536 # nodes per misfit block (memory only)
+  enuConsistencyTolM: 0.01 # stations: |enu_u + origin elevM - sensorElevM| must be below this
+
+# Synthetic recovery test (LOC-02, hq.locate.synthetic). Hypocentres are drawn in this zone, picks
+# are exact 1D layered times plus Gaussian noise at locator.pickSigmaS, located by the locator.
+synthetic:
+  nEvents: 200
+  seed: 20260925
+  # ENU cylinder around the origin covering the depth band of the region's public-catalog
+  # activity. These are config values; the code never reads catalog values.
+  zone:
+    centerEM: 0.0
+    centerNM: 0.0
+    radiusM: 2000.0
+    topElevM: -1000.0
+    bottomElevM: -4500.0
+  # Each station's S pick is kept with this probability (the real nS distribution from
+  # association replaces it later).
+  sKeepProb: 0.6
+  pickProb: 1.0

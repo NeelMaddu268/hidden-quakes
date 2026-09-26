@@ -1,6 +1,8 @@
 """Seismology lane config (``configs/showcase/seismology.yaml``). Unknown keys are an error."""
 
+import math
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -65,9 +67,171 @@ class VelocityConfig(BaseModel):
         return SEISMIC_ROOT / self.layerFile
 
 
+def _is_multiple(value: float, step: float) -> bool:
+    """True when ``value`` is an integer multiple of ``step`` (to float rounding)."""
+    ratio = value / step
+    return abs(ratio - round(ratio)) <= 1e-9 * max(1.0, abs(ratio))
+
+
+class GridsConfig(BaseModel):
+    """Per-station 2D (r, elevM) eikonal travel-time tables (LOC-02, ``hq.locate.tt_grid``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    drM: float = Field(gt=0)  # horizontal node spacing (m)
+    dzM: float = Field(gt=0)  # vertical node spacing (m)
+    rMaxM: float = Field(gt=0)  # largest epicentral distance in a table (m); a multiple of drM
+    # The grid top is the highest receiver sensorElevM (or the search-volume top, if higher) plus
+    # this margin, snapped up onto the dzM lattice anchored at bottomElevM. The velocity model's
+    # top layer is extended up to it explicitly (with_top_extended_to) and that is recorded.
+    topMarginM: float = Field(ge=0)
+    bottomElevM: float  # grid bottom (m ASL); must lie below the search volume (checked below)
+    # Near-source initialisation: nodes within this distance of the receiver get exact 1D layered
+    # times, and the eikonal solve starts from an isochron inside that region.
+    seedRadiusM: float = Field(gt=0)
+    fmmOrder: Literal[1, 2]  # scikit-fmm stencil order
+
+    @model_validator(mode="after")
+    def _check(self) -> "GridsConfig":
+        if not _is_multiple(self.rMaxM, self.drM):
+            raise ValueError(f"rMaxM {self.rMaxM} must be a multiple of drM {self.drM}")
+        if self.seedRadiusM < 4.0 * max(self.drM, self.dzM):
+            raise ValueError("seedRadiusM must be at least 4 grid cells so the seed isochron spans cells")
+        return self
+
+
+class SearchVolumeConfig(BaseModel):
+    """Where the locator searches, in ENU metres around the run origin and in elevM."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    halfWidthM: float = Field(gt=0)  # e and n both span [-halfWidthM, +halfWidthM]
+    # Top of the search volume (m ASL). null means run.refSurfaceElevM: with a 1D model and no DEM,
+    # the ground at the origin is the one surface we know, so hypocentres stay below it. The top
+    # is then snapped down onto the fine lattice, so it never lies above this value.
+    topElevM: float | None
+    bottomElevM: float  # m ASL
+
+
+class PhaseSigma(BaseModel):
+    """Pick-time uncertainty per phase (s)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    P: float = Field(gt=0)
+    S: float = Field(gt=0)
+
+
+class OutlierConfig(BaseModel):
+    """Outlier pass: drop picks with |residual| > max(madK * MAD, floorS), then relocate once."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    madK: float = Field(gt=0)
+    floorS: float = Field(ge=0)
+
+
+class LocatorConfig(BaseModel):
+    """Grid-search locator (``hq.locate.locator``) and its PDF uncertainty (``uncertainty``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    volume: SearchVolumeConfig
+    coarseSpacingM: float = Field(gt=0)  # full-volume grid search
+    fineSpacingM: float = Field(gt=0)  # the reported PDF lives on this lattice
+    fineHalfWidthM: float = Field(gt=0)  # fine box: +/- this around the best coarse node, clipped
+    # Inside the fine box the misfit is first evaluated every fineStageSpacingM; the fine nodes are
+    # then evaluated over the region within pdfCutoff of the minimum, grown until every face of
+    # that region clears pdfCutoff or meets the fine box (see locator.py).
+    fineStageSpacingM: float = Field(gt=0)
+    # Nodes whose misfit exceeds the minimum by more than this carry less than exp(-pdfCutoff) of
+    # the peak node's mass and are treated as zero mass.
+    pdfCutoff: float = Field(gt=0)
+    # Pick sigma per phase (s) for every preprocessing profile, and per-profile overrides keyed by
+    # Station.preprocessProfile (empty: every profile uses pickSigmaS).
+    pickSigmaS: PhaseSigma
+    profilePickSigmaS: dict[str, PhaseSigma]
+    outlier: OutlierConfig
+    minPicks: int = Field(ge=4)  # fewer picks cannot constrain (e, n, elevM, t0)
+    errConfidence: float = Field(gt=0, lt=1)  # hErrM is the semi-major axis at this level
+    depthOnEdgeMassFraction: float = Field(gt=0, lt=1)  # PDF mass on the fine top/bottom face
+    nWorkers: int = Field(ge=1)  # processes for locate_many; results do not depend on it
+    evalChunkNodes: int = Field(ge=1)  # nodes per misfit block (memory only; results unchanged)
+    enuConsistencyTolM: float = Field(gt=0)  # |enu_u + origin elevM - sensorElevM| must be below
+
+    @model_validator(mode="after")
+    def _check(self) -> "LocatorConfig":
+        fine = self.fineSpacingM
+        for label, value in (
+            ("coarseSpacingM", self.coarseSpacingM),
+            ("fineStageSpacingM", self.fineStageSpacingM),
+            ("fineHalfWidthM", self.fineHalfWidthM),
+        ):
+            if not _is_multiple(value, fine):
+                raise ValueError(f"{label} {value} must be a multiple of fineSpacingM {fine}")
+        if not _is_multiple(self.volume.halfWidthM, self.coarseSpacingM):
+            raise ValueError("volume.halfWidthM must be a multiple of coarseSpacingM")
+        top = self.volume.topElevM
+        if top is not None and top - self.volume.bottomElevM < self.coarseSpacingM:
+            raise ValueError("the search volume must be at least one coarse cell tall")
+        return self
+
+
+class SyntheticZoneConfig(BaseModel):
+    """Where synthetic hypocentres are drawn: a vertical cylinder in ENU metres and elevM."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    centerEM: float
+    centerNM: float
+    radiusM: float = Field(gt=0)  # uniform in area within this horizontal radius
+    topElevM: float  # m ASL, uniform in elevation between bottomElevM and topElevM
+    bottomElevM: float
+
+    @model_validator(mode="after")
+    def _check(self) -> "SyntheticZoneConfig":
+        if not self.bottomElevM < self.topElevM:
+            raise ValueError("synthetic zone bottomElevM must lie below topElevM")
+        return self
+
+
+class SyntheticConfig(BaseModel):
+    """Synthetic recovery test (``hq.locate.synthetic``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    nEvents: int = Field(ge=1)
+    seed: int = Field(ge=0)
+    zone: SyntheticZoneConfig
+    sKeepProb: float = Field(ge=0, le=1)  # each station's S pick is kept with this probability
+    pickProb: float = Field(gt=0, le=1)  # picker probability given to every synthetic pick
+
+
 class SeismologyConfig(BaseModel):
     """Contents of ``seismology.yaml``."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     velocity: VelocityConfig
+    grids: GridsConfig
+    locator: LocatorConfig
+    synthetic: SyntheticConfig
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "SeismologyConfig":
+        vol = self.locator.volume
+        if self.grids.bottomElevM > vol.bottomElevM - self.grids.dzM:
+            raise ValueError(
+                f"grids.bottomElevM {self.grids.bottomElevM} must lie at least one dzM below "
+                f"locator.volume.bottomElevM {vol.bottomElevM}"
+            )
+        corner = math.hypot(vol.halfWidthM, vol.halfWidthM)
+        if corner >= self.grids.rMaxM:
+            raise ValueError("grids.rMaxM must exceed the search volume's half diagonal")
+        zone = self.synthetic.zone
+        reach = math.hypot(zone.centerEM, zone.centerNM) + zone.radiusM
+        if reach > vol.halfWidthM or zone.bottomElevM < vol.bottomElevM:
+            raise ValueError("the synthetic zone must lie inside the search volume")
+        if vol.topElevM is not None and zone.topElevM > vol.topElevM:
+            raise ValueError("the synthetic zone must lie below the search volume top")
+        return self
