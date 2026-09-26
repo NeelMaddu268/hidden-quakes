@@ -508,7 +508,7 @@ Verified on the mock and the real preview, headed Chrome 153 + WebKit 26.5:
 
 `make check`: seismic 778 / 3 skipped, API 26, web 584, tokens 12, copy clean.
 
-### WEB-08 QA checkpoint on the real bundle · 2026-09-26 5:50 PM EDT
+### WEB-08 QA checkpoint on the real bundle · 2026-09-26 5:00 PM EDT
 
 Real showcase bundle on main (981b746, run 20260926-0210-a04c611, v3), static export of feat/web, headed Chrome 153
 and WebKit 26.5 on the dev machine (Apple M4 Pro). Local harness: `work/web08-qa-real.mjs` and `web08-determinism.mjs`.
