@@ -257,6 +257,33 @@ PreprocessProfile = Annotated[
 ]
 
 
+class ChunkConfig(_Section):
+    """Hour-scale tiling of a picking window (``hq.preprocess.chunks``), shared by both pickers.
+
+    ``[t0, t1)`` is cut into keep intervals on multiples of ``lengthS`` since the epoch. Each
+    is read with ``overlapS`` extra real seconds on both sides and preprocessed on its own, and
+    a picker keeps only the picks inside its keep interval. ``edgeProbeS`` extends every read a
+    little further so a real data edge can be told apart from the chunk's own cut.
+    """
+
+    lengthS: float = Field(gt=0.0)  # keep interval length, real seconds
+    overlapS: float = Field(gt=0.0)  # extra real seconds read before and after each keep interval
+    minOverlapS: float = Field(gt=0.0)  # floor for overlapS (edge effects must stay outside keep)
+    edgeProbeS: float = Field(gt=0.0)  # must exceed one input sample interval (checked per trace)
+
+    @model_validator(mode="after")
+    def _check(self) -> "ChunkConfig":
+        if self.overlapS < self.minOverlapS:
+            raise ValueError(
+                f"chunks.overlapS {self.overlapS} is below chunks.minOverlapS {self.minOverlapS}"
+            )
+        if self.edgeProbeS >= self.overlapS:
+            raise ValueError(
+                f"chunks.edgeProbeS {self.edgeProbeS} must be below overlapS {self.overlapS}"
+            )
+        return self
+
+
 class PreprocessConfig(_Section):
     """Per-sensor-type preprocessing profiles that turn raw counts into 100 Hz model input."""
 
@@ -271,6 +298,7 @@ class PreprocessConfig(_Section):
     componentRename: dict[str, str]
     modelComponents: str = Field(min_length=1)
     profiles: dict[str, PreprocessProfile] = Field(min_length=1)
+    chunks: ChunkConfig
 
     @model_validator(mode="after")
     def _check(self) -> "PreprocessConfig":
