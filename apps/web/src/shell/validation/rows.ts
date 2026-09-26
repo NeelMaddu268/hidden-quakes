@@ -33,20 +33,17 @@ const DECIMALS = { count: 0, stations: 1, residual: 3, depth: 0, gain: 2, chance
 const ASSOCIATION_PROFILES = ["full", "p_only"] as const satisfies readonly BaselineRow["associationProfile"][];
 
 /**
- * "Gain > 1 in both profiles", computed from the baseline table itself: for each association
- * profile, the PhaseNet row's Tier A count divided by the STA/LTA row's must exceed one. Either
- * row missing, or an STA/LTA count of zero (an unbounded ratio), means the claim is not supported.
+ * "The baseline ran": a presence check only. The table has a PhaseNet row and an STA/LTA row for
+ * each association profile. Whether the gain holds in both profiles is VAL-01's call: the
+ * exporter writes `summary.baseline` only then, and the UI never recomputes the ratio.
  */
-export function gainHoldsInBothProfiles(rows: readonly Nullable<BaselineRow>[] | null | undefined): boolean {
+export function baselineRan(rows: readonly Nullable<BaselineRow>[] | null | undefined): boolean {
   if (!rows) return false;
-  return ASSOCIATION_PROFILES.every((profile) => {
-    const phasenet = rows.find((row) => row.method === "phasenet" && row.associationProfile === profile);
-    const stalta = rows.find((row) => row.method === "stalta" && row.associationProfile === profile);
-    const strictPhasenet = phasenet?.tiers?.A;
-    const strictStalta = stalta?.tiers?.A;
-    if (!isFiniteNumber(strictPhasenet) || !isFiniteNumber(strictStalta)) return false;
-    return strictStalta > 0 && strictPhasenet / strictStalta > 1;
-  });
+  return ASSOCIATION_PROFILES.every(
+    (profile) =>
+      rows.some((row) => row.method === "phasenet" && row.associationProfile === profile) &&
+      rows.some((row) => row.method === "stalta" && row.associationProfile === profile),
+  );
 }
 
 /** The rows to show, in the lane doc's order; absent sources yield no row. */
@@ -75,8 +72,10 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
   if (isFiniteNumber(medianVErrM)) {
     out.push({ id: "depth", label: "Depth resolution", value: `±${formatNumber(medianVErrM, DECIMALS.depth)} m` });
   }
+  // Lane doc: "Baseline ran and gain > 1 in both profiles". The value is summary.baseline.gain;
+  // "ran" is the presence of the four baseline rows; "both profiles" is the exporter's guarantee.
   const gain = s.baseline?.gain;
-  if (isFiniteNumber(gain) && gain > 1 && gainHoldsInBothProfiles(v.baseline)) {
+  if (isFiniteNumber(gain) && gain > 1 && baselineRan(v.baseline)) {
     out.push({ id: "gain", label: "PhaseNet vs STA/LTA gain", value: `${formatNumber(gain, DECIMALS.gain)}×` });
   }
   const meanChanceEvents = v.nullTest?.meanChanceEvents;
