@@ -318,6 +318,8 @@ def test_stage_writes_tables_report_and_record(
     assert stats["pickProb"] == pytest.approx(float(probs.median()))
     assert record["stationGeometry"]["stationIds"] == list(located.stations["id"])
     assert record["stationGeometry"]["label"] == ctx.run_id
+    assert record["stationsWithoutPicks"] == []
+    assert locator["counts"]["syntheticStationsWithoutPicks"] == 0
 
     report = ctx.path("diagnostics.md").read_text(encoding="utf-8")
     rows = {}
@@ -335,7 +337,8 @@ def test_stage_writes_tables_report_and_record(
     assert "P surface: " in rows[5][3] and "dropped by the outlier pass" in rows[5][3]
     assert "catalog.parquet is not in the run dir" in report
     assert "## Pick sigma vs observed residual spread" in report
-    assert f"{SYNTHETIC_EVENTS} synthetic events on the {len(located.stations)} used" in report
+    n_used = len(located.stations)
+    assert f"{SYNTHETIC_EVENTS} synthetic events on {n_used} of the {n_used} used stations," in report
 
 
 @pytest.mark.smoke
