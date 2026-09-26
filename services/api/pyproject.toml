@@ -1,0 +1,50 @@
+[project]
+name = "hq-api"
+version = "0.1.0"
+description = "Hidden Quakes live worker: runs the hq pipeline on a rolling window and serves docs/02 §7"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "pydantic>=2",
+  "pyyaml",
+  "hq",
+  "hq-contracts",
+]
+
+[project.scripts]
+hq-api = "hq_api.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "httpx2>=2.13.1",
+]
+
+[tool.uv.sources]
+# The pipeline package and the contracts, by path (the same way services/seismic depends on
+# hq-contracts). Both are listed because uv applies sources of the root project only.
+hq = { path = "../seismic", editable = true }
+hq-contracts = { path = "../../packages/contracts/python", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hq_api"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+pythonpath = ["."]  # tests/ is a package so test modules can import the conftest helpers
+markers = ["smoke: fast offline tests (< 30 s per lane)"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint.isort]
+# Same grouping as services/seismic: the pipeline package is ours, the contracts are a library.
+known-first-party = ["hq_api", "hq"]
