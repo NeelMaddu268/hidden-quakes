@@ -308,6 +308,10 @@ def test_inconsistent_inputs_fail_loudly(seismology_config: SeismologyConfig) ->
         assign_tiers(final, matches, seismology_config)
     with pytest.raises(TierError, match="lacks columns"):
         assign_tiers(events.drop(columns=["quality_nS"]), matches, seismology_config)
+    no_rms = events.copy()
+    no_rms.loc[len(events) - 1, "quality_rmsS"] = np.nan  # an unmatched event
+    with pytest.raises(TierError, match="null quality_rmsS"):
+        assign_tiers(no_rms, matches, seismology_config)
 
 
 # --- event picks ----------------------------------------------------------------------------------

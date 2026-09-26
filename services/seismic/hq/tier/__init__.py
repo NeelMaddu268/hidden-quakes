@@ -531,6 +531,8 @@ def assign_tiers(
     event_ids = _check_located(events_located)
     matched = matched_rows(matches, event_ids)
     map_on_top = _map_on_top(flags, event_ids)
+    for metric in METRICS:  # every event, matched or not: nulls only where docs/02 allows them
+        _metric_values(events_located, metric)
     is_matched = event_ids.isin(set(matched["eventId"])).to_numpy(dtype=bool)
     source = "derived" if thresholds is None else "supplied"
     rules = {
