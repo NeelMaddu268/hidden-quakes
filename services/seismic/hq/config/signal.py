@@ -417,6 +417,20 @@ class PickerABConfig(_Section):
     checkB: CheckBConfig
 
 
+class PickerRunConfig(_Section):
+    """Full-window picking (``hq.pick.run``, SEIS-06): how the station tasks are executed.
+
+    Execution only: the picks depend on the chunking (``preprocess.chunks``), the weights and the
+    thresholds, never on how many workers ran them or in which order they finished.
+    """
+
+    workers: int = Field(ge=1)  # station-parallel worker processes (spawned); 1 runs in-process
+    torchThreadsPerWorker: int = Field(ge=1)  # torch intra-op threads in each worker
+    # A usedInRun station with nothing at all in the cache. "error": the stage stops before any
+    # picking. "report": the station gets zero picks and says why in pick_report.json.
+    onCacheMiss: Literal["error", "report"]
+
+
 class PickerConfig(_Section):
     """PhaseNet weights, thresholds and gap-edge handling."""
 
@@ -429,12 +443,15 @@ class PickerConfig(_Section):
     weightsByProfile: dict[str, str]
     pThreshold: float = Field(gt=0.0, le=1.0)
     sThreshold: float = Field(gt=0.0, le=1.0)
-    gapEdgeS: float = Field(ge=0.0)  # real s; picks this close to a block edge are dropped
+    # Real s. The A/B drops picks this close to a block edge; the full-window run (hq.pick.run)
+    # drops picks this close to a raw data edge (a gap, or where the cached data stops).
+    gapEdgeS: float = Field(ge=0.0)
     batchSize: int = Field(ge=1)
     torchThreads: int = Field(ge=1)
     seed: int
     seisbench: SeisbenchArgs
     ab: PickerABConfig
+    run: PickerRunConfig
 
     @model_validator(mode="after")
     def _check(self) -> "PickerConfig":

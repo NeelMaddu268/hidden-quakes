@@ -172,7 +172,8 @@ picker:
     borehole-B: instance
   pThreshold: 0.1                          # store everything >= 0.1; H2 filters later
   sThreshold: 0.1
-  gapEdgeS: 1.0                            # real s; picks this close to a block edge are dropped
+  gapEdgeS: 1.0                            # real s; picks this close to a block edge (A/B) or to a
+                                           # raw data edge (full window, hq.pick.run) are dropped
   batchSize: 256
   torchThreads: 4
   seed: 0
@@ -182,6 +183,14 @@ picker:
     blinding: [250, 250]                   # samples with no output at each block edge; sum <= overlap
     strict: true
     flexibleHorizontalComponents: false    # for_picking already renamed 1/2 to N/E
+  run:                                     # SEIS-06 full-window picking (hq.pick.run). Execution only:
+                                           # the picks never depend on these three
+    workers: 6                             # station-parallel worker processes (spawned; each loads its
+                                           # model once per weights); 1 runs in-process
+    torchThreadsPerWorker: 3               # torch intra-op threads per worker: 6 x 3 = 18 of 24 logical
+                                           # cores. picker.torchThreads stays the single-process A/B value
+    onCacheMiss: error                     # usedInRun station with nothing cached: error (stop before any
+                                           # picking) | report (zero picks, reason in pick_report.json)
   ab:
     profileVariants:
       borehole-A: [borehole-B]
