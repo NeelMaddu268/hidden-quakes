@@ -6,9 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@hq/contracts": "workspace:*",
+    "@hq/visualization": "workspace:*",
     "@react-three/drei": "^10.7.8",
     "@react-three/fiber": "^9.8.1",
     "@react-three/postprocessing": "^3.1.2",
@@ -19,12 +23,15 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "^0.186.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
-    "typescript": "^5"
+    "jsdom": "^30.1.1",
+    "typescript": "^5",
+    "vitest": "^5.0.1"
   }
 }

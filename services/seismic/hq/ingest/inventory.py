@@ -53,6 +53,7 @@ from hq.config.run import Origin, RunSection
 from hq.config.signal import (
     AvailabilityCheck,
     ElevationCheck,
+    RateCheck,
     SignalConfig,
     StationQuery,
     StationSelection,
@@ -111,6 +112,9 @@ class HttpResult:
 
 HttpGet = Callable[[str, Mapping[str, str], float], HttpResult]
 DemLookup = Callable[[float, float], float]  # (lat, lon) -> ground elevation, m ASL
+# (network, station, location, channels, t0, t1) -> {channel: served sample rate}, or None when
+# the service has no data in [t0, t1].
+RateProbe = Callable[[str, str, str, Sequence[str], float, float], "dict[str, float] | None"]
 
 
 class StationClient(Protocol):
@@ -1018,9 +1022,11 @@ def build_inventory(
     client: StationClient | None = None,
     dem: DemLookup | None = None,
     http_get: HttpGet | None = None,
+    rate_probe: RateProbe | None = None,
 ) -> InventoryResult:
     """Everything except writing run outputs. Network access only through the injected callables
-    (or their defaults), and only on cache misses (StationXML, DEM, availability, responses)."""
+    (or their defaults), and only on cache misses (StationXML, DEM, availability, responses,
+    dataselect sample-rate probes)."""
     get = http_get or requests_get
     lazy = _LazyClient(cfg, client)
     xml_dir = cache_dir / STATIONXML_DIR
@@ -1070,10 +1076,73 @@ def build_inventory(
     coverage = fetch_coverage(kept, run, cfg.availability, get, avail_cache)
     ensure_responses(kept, run, cfg, xml_dir, lazy)
 
+    rcfg = cfg.rateCheck
+    rate_cache = JsonCache(xml_dir / rcfg.cacheFile)
+    probe = rate_probe or fdsn_rate_probe(cfg.query, rcfg)
+    rates: dict[str, RateDecision] = {}
+    rate_ok: list[tuple[Chosen, ElevationDecision]] = []
+    mismatches = 0
+    for c, d in resolved:
+        t = c.triplet
+        if station_coverage(coverage[c.id]) == 0:  # measured empty: usedInRun false, skip probe
+            rd = RateDecision(t.sample_rate_hz, None, (), "unprobed")
+        else:
+            rd = check_rate(c, run, cfg.query, rcfg, probe, rate_cache)
+        rates[c.id] = rd
+        if rd.status == "nodata":
+            if rcfg.onNoData == "error":
+                raise InventoryError(f"{t.label}: no data at any rate probe {rcfg.probeOffsetsS}")
+            flags.append(
+                {
+                    "station": c.id,
+                    "flag": (
+                        f"{t.label}: sample rate unverified (no data at any probe); kept "
+                        f"StationXML {rd.metadata_hz:g} Hz"
+                    ),
+                }
+            )
+        elif rd.status == "mismatch":
+            assert rd.data_hz is not None
+            mismatches += 1
+            msg = (
+                f"{t.label}: StationXML says {rd.metadata_hz:g} Hz but the service serves "
+                f"{rd.data_hz:g} Hz at all {len(rd.probe_times)} probe(s) with data"
+            )
+            if rcfg.onMismatch == "error":
+                raise InventoryError(msg)
+            if rcfg.onMismatch == "skip":
+                logger.warning("FLAG %s; station skipped (onMismatch=skip)", msg)
+                skipped.append({"site": c.id, "reason": f"{msg}; onMismatch=skip"})
+                continue
+            profile = match_profile(rd.data_hz, cfg)
+            if profile is None:
+                logger.warning("FLAG %s; no profile for the served rate, station skipped", msg)
+                skipped.append({"site": c.id, "reason": f"{msg}; no profile for the served rate"})
+                continue
+            note = (
+                f"{msg}; profile {c.profile} -> {profile}; the cached response XML still "
+                f"describes the {rd.metadata_hz:g} Hz epoch"
+            )
+            logger.warning("FLAG %s", note)
+            flags.append({"station": c.id, "flag": note})
+            c = Chosen(id=c.id, triplet=c.triplet, kind=c.kind, profile=profile)
+        rate_ok.append((c, d))
+    resolved = rate_ok
+    logger.info(
+        "rate check: %d probe cache hits, %d probed; %d mismatch, %d unverified, %d unprobed",
+        rate_cache.hits,
+        rate_cache.misses,
+        mismatches,
+        sum(1 for r in rates.values() if r.status == "nodata"),
+        sum(1 for r in rates.values() if r.status == "unprobed"),
+    )
+
     rows: list[dict[str, Any]] = []
     details: list[dict[str, Any]] = []
     for c, d in resolved:
         t = c.triplet
+        rd = rates[c.id]
+        rate_hz = rd.data_hz if rd.data_hz is not None else rd.metadata_hz
         cov = station_coverage(coverage[c.id])
         if cov is None:
             used = cfg.availability.onMissing == "used"
@@ -1101,7 +1170,7 @@ def build_inventory(
                 "sensorElevM": d.sensor_elev_m,
                 "kind": c.kind,
                 "channels": list(t.channels),
-                "sampleRateHz": t.sample_rate_hz,
+                "sampleRateHz": rate_hz,
                 "enu": project(t.latitude, t.longitude, d.sensor_elev_m),
                 "preprocessProfile": c.profile,
                 "usedInRun": used,
@@ -1114,7 +1183,13 @@ def build_inventory(
                 "triplet": t.label,
                 "family": t.family,
                 "kind": c.kind,
-                "sampleRateHz": t.sample_rate_hz,
+                "sampleRateHz": rate_hz,
+                "rateCheck": {
+                    "status": rd.status,
+                    "metadataHz": rd.metadata_hz,
+                    "dataHz": rd.data_hz,
+                    "probeTimes": list(rd.probe_times),
+                },
                 "channels": list(t.channels),
                 "profile": c.profile,
                 "elevation": {
@@ -1150,6 +1225,8 @@ def build_inventory(
             1 for d in details if d["elevation"]["convention"] == "sensor"
         ),
         "demSurface": sum(1 for d in details if d["elevation"]["convention"] == "dem"),
+        "rateMismatch": mismatches,  # includes stations skipped for a mismatch
+        "rateUnverified": sum(1 for d in details if d["rateCheck"]["status"] == "nodata"),
         "skippedSites": len(skipped),
         "droppedTriplets": len(dropped),
         "excludedStations": sum(len(v) for v in excluded.values()),
@@ -1249,6 +1326,127 @@ def run(ctx: StageContext) -> None:
     t_start = time.perf_counter()
     result = build_inventory(ctx.config.run, ctx.config.signal.stations, ctx.cache_dir)
     finish(ctx, result, time.perf_counter() - t_start)
+
+
+# --- sample-rate check --------------------------------------------------------------------------
+
+
+def fdsn_rate_probe(query: StationQuery, rcfg: RateCheck) -> RateProbe:
+    """Default probe: a short dataselect request, retried on transport errors and timeouts."""
+    holder: dict[str, Any] = {}
+
+    def probe(
+        net: str, sta: str, loc: str, channels: Sequence[str], t0: float, t1: float
+    ) -> dict[str, float] | None:
+        from obspy.clients.fdsn import Client
+
+        for attempt in range(rcfg.retries + 1):
+            try:
+                if "client" not in holder:  # service discovery is retried like a request
+                    holder["client"] = Client(query.fdsnClient, timeout=rcfg.timeoutS)
+                st = holder["client"].get_waveforms(
+                    net, sta, loc or "--", ",".join(channels), UTCDateTime(t0), UTCDateTime(t1)
+                )
+            except FDSNNoDataException:
+                return None
+            except (FDSNException, OSError) as exc:
+                if attempt == rcfg.retries:
+                    raise InventoryError(
+                        f"rate probe {net}.{sta}.{loc} failed after {attempt + 1} attempt(s): {exc}"
+                    ) from exc
+                time.sleep(rcfg.backoffS * (attempt + 1))
+                continue
+            rates: dict[str, set[float]] = {}
+            for tr in st:
+                rates.setdefault(tr.stats.channel, set()).add(float(tr.stats.sampling_rate))
+            if not rates:
+                return None
+            mixed = {ch: sorted(r) for ch, r in rates.items() if len(r) > 1}
+            if mixed:
+                raise InventoryError(f"rate probe {net}.{sta}.{loc}: mixed rates {mixed}")
+            return {ch: next(iter(r)) for ch, r in rates.items()}
+        raise AssertionError("unreachable")
+
+    return probe
+
+
+@dataclass(frozen=True)
+class RateDecision:
+    metadata_hz: float
+    data_hz: float | None  # None: no probe returned data (or the station was not probed)
+    probe_times: tuple[float, ...]  # probe starts that returned data
+    status: Literal["match", "mismatch", "nodata", "unprobed"]
+
+
+def probe_starts(run: RunSection, rcfg: RateCheck) -> list[float]:
+    """Probe start times inside the window; a config where none fits is an error."""
+    starts = [
+        run.window_start_s + off
+        for off in rcfg.probeOffsetsS
+        if run.window_start_s + off + rcfg.probeS <= run.window_end_s
+    ]
+    if not starts:
+        raise InventoryError(
+            f"rateCheck: no probe (offsets {rcfg.probeOffsetsS}, {rcfg.probeS:g} s) fits inside "
+            f"the {run.window_end_s - run.window_start_s:g} s window"
+        )
+    return starts
+
+
+def check_rate(
+    c: Chosen,
+    run: RunSection,
+    query: StationQuery,
+    rcfg: RateCheck,
+    probe: RateProbe,
+    cache: JsonCache,
+) -> RateDecision:
+    """Probe the chosen triplet at every in-window offset.
+
+    Every probe that returns data must agree on one rate; a rate change inside the window fails
+    loudly. Only replies with data are cached, so late-arriving data is probed again next run.
+    """
+    t = c.triplet
+    meta = t.sample_rate_hz
+    served_at: list[tuple[float, float]] = []
+    for t0 in probe_starts(run, rcfg):
+        t1 = t0 + rcfg.probeS
+        key = (
+            f"{query.fdsnClient}|{t.network}.{t.station}.{t.location}."
+            f"{','.join(t.channels)}@{t0:.3f}+{rcfg.probeS:g}"
+        )
+        rates = cache.get(key)
+        if rates is None:
+            rates = probe(t.network, t.station, t.location, t.channels, t0, t1)
+            if rates:
+                cache.put(key, rates)
+        if not rates:
+            continue
+        missing = sorted(set(t.channels) - set(rates))
+        served = sorted(set(rates.values()))
+        if len(served) > 1:
+            raise InventoryError(f"{t.label}: components serve different rates {rates}")
+        if missing:
+            logger.warning(
+                "%s: rate probe at %s got no data for %s", t.label, UTCDateTime(t0), missing
+            )
+        served_at.append((t0, served[0]))
+    if not served_at:
+        return RateDecision(metadata_hz=meta, data_hz=None, probe_times=(), status="nodata")
+    distinct = sorted({hz for _, hz in served_at})
+    if len(distinct) > 1:
+        detail = ", ".join(f"{UTCDateTime(t0)}: {hz:g} Hz" for t0, hz in served_at)
+        raise InventoryError(f"{t.label}: served sample rate changes inside the window ({detail})")
+    data = distinct[0]
+    status: Literal["match", "mismatch"] = (
+        "match" if abs(data - meta) <= rcfg.relTol * meta else "mismatch"
+    )
+    return RateDecision(
+        metadata_hz=meta,
+        data_hz=data,
+        probe_times=tuple(t0 for t0, _ in served_at),
+        status=status,
+    )
 
 
 # --- acceptance driver --------------------------------------------------------------------------
