@@ -309,3 +309,16 @@ access, so downloading a completed run is not blocked here.
 
 After WEB-07, WEB-06 remains scheduled after Gate E and WEB-08 retains the full ten-run, two-browser
 hardening checklist. The 1–5 AM no-merge window remains in force.
+
+### Integrated baseline verification after main 544c869
+
+H3 independently built the static export and tested it in headed Chrome at 1280×720, DPR 2: all
+21 evidence preloads succeeded; core bundle files each loaded once; real terrain rendered without
+fallback; reveal and STRICT counts matched provider/selector values; E opened the mounted hero
+drawer (21.3 ms trace paint); validation, Run details and reset worked. There were zero external
+requests, HTTP failures or page/console errors during the tested flow. Explicit `?terrain=slab`
+also displayed its label. This verifies the local production export, not a Vercel deployment.
+
+The web gate passes (404 web tests, 12 token tests, lint and typecheck). Full `make check` on this
+laptop reports seismic 453 passed / 2 skipped and API 18 passed / 1 failed. The scheduler shutdown
+failure reproduces alone and is reported to H4 in REQ-H3-6; do not mark the aggregate gate green.
