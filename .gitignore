@@ -4,6 +4,8 @@ data/cache/
 data/*/runs/
 # Live worker state, per-window configs and bundles (services/api)
 data/live/
+# Filled pitch/Devpost text rendered from a bundle (scripts/render-story.py)
+data/story/
 
 # Python
 .venv/
