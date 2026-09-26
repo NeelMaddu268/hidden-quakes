@@ -14,6 +14,11 @@ Stage ``inventory`` (docs/02 -> Stage API). For the run window and bbox it
 4. assigns ``kind``, ``preprocessProfile`` and ENU (UTM 12N minus the origin, docs/01),
 5. estimates per-station data coverage of the window (MUSTANG daily availability, cached),
 6. caches instrument responses per station for ``read_inventory`` (SEIS-05),
+7. probes the served sample rate of each chosen triplet with a few seconds of dataselect
+   (``stations.rateCheck``): a rate that differs from StationXML follows ``onMismatch``, and no
+   data at any probe follows ``onNoData``,
+8. sets ``usedInRun``: coverage > 0; a station with no measurement follows
+   ``availability.onMissing``, and ``onMissingNoProbeData`` drops one no rate probe got data for,
 
 and writes ``stations.parquet`` plus ``inventory_report.json`` (every decision with its numbers).
 

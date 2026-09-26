@@ -64,7 +64,10 @@ stations:
     backoffS: 2.0
     cacheFile: availability_mustang.json   # raw replies; delete it to re-query
     onMissing: used             # no measurement (MUSTANG lag): coverage null, usedInRun true
-    onMissingNoProbeData: unused  # ...unless no rate probe got data either (full-day window)
+    onMissingNoProbeData: unused  # ...unless no rate probe got data either (full-day window).
+                                  # Added after run 20260926-0210-a04c611's inventory, which behaved
+                                  # as "used" (its run.json has no such key): rerunning that
+                                  # inventory marks its station with no data usedInRun false
   rateCheck:
     # StationXML can disagree with the data (an epoch saying 200 Hz that serves 100 Hz). The
     # profile follows the rate, so each chosen triplet is probed with a few seconds of dataselect.
@@ -102,8 +105,12 @@ known:
   preS: 120.0           # s before the catalog origin time (noise context ahead of the P arrival)
   postS: 480.0          # s after it; preS + postS = 600 s, the ticket's 10-minute window
   minGapSamples: 1.5    # a hole longer than (minGapSamples - 1) sample intervals is a gap, so one
-                        # missing sample is a gap and sub-sample jitter is not; same rule as SEIS-05
+                        # missing sample is a gap and sub-sample jitter is not. SEIS-05's
+                        # download.channel_gaps shares this interior rule but not the leading edge:
+                        # here a leading hole must exceed minGapSamples intervals (1.5), there it
+                        # needs at least minGapSamples - 0.5 (1.0)
   maxGapFraction: 0.2   # a station is usable only if its gappiest component misses <= 20 %
+                        # (Check A, download.maxGapFraction, counts a station useful only below it)
   minStations: 8        # usable three-component stations a window needs to PASS
   usedInRunOnly: true   # consider only stations.parquet rows with usedInRun = true
 
@@ -180,12 +187,17 @@ picker:
   model: seisbench.PhaseNet
   weightsVersion: "2"                      # pinned; from_pretrained never queries the remote
   candidateWeights: [instance, stead, original, scedc]
-  defaultWeights: instance                 # placeholder until known/ab.csv names the winners
-  weightsByProfile:                        # placeholders; copy the A/B winners in here
+  defaultWeights: instance                 # run.json pickerWeights, and the weights of a profile
+                                           # with no weightsByProfile entry
+  weightsByProfile:                        # SEIS-04 A/B winners (known/ab.json chosenWeightsByProfile,
+                                           # run 20260926-0210-a04c611), copied by hand; hq.pick.run
+                                           # warns while they disagree
     surface-100: instance
     surface-hi: instance
     borehole-A: instance
-    borehole-B: instance
+    borehole-B: instance                   # unused: borehole-B lost the like-for-like A/B to
+                                           # borehole-A, so no station runs it (its own A/B winner
+                                           # was original; this value was left as it was)
   pThreshold: 0.1                          # store everything >= 0.1; H2 filters later
   sThreshold: 0.1
   gapEdgeS: 1.0                            # real s; picks this close to a block edge (A/B) or to a
@@ -335,11 +347,16 @@ baseline:
     # exactly as H4's VAL-01 scores its BaselineRow (the run's own tier bars from
     # ProcessingRun.tiering), and PhaseNet's picks.parquet is scored once the same way, first and
     # alone, as the reference (baseline_reference.json). Association profile full only: VAL-01 also
-    # needs p_only for its gain claim, and these thresholds are not optimised for it. The run's tier
-    # bars exist only after stage tier, which the pipeline runs after this stage, so a fresh `hq run`
-    # cannot score: scoreMode stays none here (a test pins it), and scoring is a CLI rerun of this
-    # stage on a run that went through tier (the CLI records into that run's run.json unless
-    # --stations, --start or --end pick a subset):
+    # needs p_only for its gain claim, and these thresholds are not optimised for it.
+    # Statics: the run's bars come from statics-corrected events, but this locate runs WITHOUT
+    # station statics (hq.baseline.score.real_api binds cache_dir and run_id only) until the run's
+    # statics.parquet is passed to locate as REQ-H1-5 option (a) decided (H2 PR #94); check the
+    # notes in baseline_reference.json before trusting the scale. The statics were fitted on
+    # PhaseNet-located events, so they favour PhaseNet.
+    # The run's tier bars exist only after stage tier, which the pipeline runs after this stage, so
+    # a fresh `hq run` cannot score: scoreMode stays none here (a test pins it), and scoring is a CLI
+    # rerun of this stage on a run that went through tier (the CLI records into that run's run.json
+    # unless --stations, --start or --end pick a subset):
     #   1. python -m hq.baseline.run --run-dir <run> --config-dir configs/showcase --cache-dir <cache>
     #        --score-mode coordinate --score-only
     #      (--score-only needs picks_stalta.parquet to hold the chosen thresholds' picks with this
