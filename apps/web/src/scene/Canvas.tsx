@@ -37,6 +37,7 @@ import { selectedInstanceIndex } from "./picking/selection";
 import { Post } from "./post/Post";
 import { RevealDriver } from "./reveal/RevealDriver";
 import { References } from "./references";
+import { rulerMaxDepthKm } from "./references/ruler";
 import { Terrain } from "./terrain";
 import { TimeDriver } from "./time/TimeDriver";
 import type { BundleState } from "./types";
@@ -107,6 +108,11 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
     [candidates, publicEvents, meta.scene],
   );
   const view = useDemo((s) => s.view);
+  // The depth ruler and slices reach the deepest displayed event (candidates and public catalog).
+  const rulerDepthKm = useMemo(
+    () => rulerMaxDepthKm([...events.map((e) => e.elevM), ...catalog.map((c) => c.elevM)], meta.scene),
+    [events, catalog, meta.scene],
+  );
 
   const halos = useMemo(() => buildHaloInstances(events, candidates, ve), [events, candidates, ve]);
   const planRings = useMemo(() => buildPlanHaloInstances(events, candidates), [events, candidates]);
@@ -132,7 +138,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
     <>
       <TimeDriver windowStart={windowStart} windowEnd={meta.run.windowEnd} />
       <Terrain scene={meta.scene} bounds={bounds} />
-      <References bundle={bundle} bounds={bounds} planView={view === "plan"} />
+      <References bundle={bundle} bounds={bounds} rulerDepthKm={rulerDepthKm} planView={view === "plan"} />
       <EventsLayer
         name="public-events"
         instances={publicEvents}

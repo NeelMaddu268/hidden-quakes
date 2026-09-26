@@ -101,7 +101,7 @@ The app was scaffolded with the latest create-next-app, which ships `apps/web/AG
 ### Scene composition
 
 - **Terrain:** ~16 × 16 km around the origin, 512 × 512 segments, dark base, thin contours every 100 m, opacity uniform. No licensed imagery; compute your own hillshade. AWS Terrain Tiles (Terrarium encoding) or USGS 3DEP are fine public DEM sources.
-- **Subsurface:** depth ruler at the scene edge (0–6 km below site surface, 1 km ticks) with the depth label beside it; faint slices every 1 km.
+- **Subsurface:** depth ruler at the scene edge (0–6 km below site surface, 1 km ticks) with the depth label beside it; faint slices every 1 km. *As built (WEB-08 follow-up):* the ruler and slices reach the deepest displayed event (candidates and public catalog, from provider data, rounded up to a whole kilometre), not a fixed 6 km.
 - **Stations:** small inverted triangles on the surface. Borehole sensors: a marker at true depth plus a thin line up to the wellhead. That one detail shows judges why depth is constrained.
 - **Events:** public = cool white, recovered = amber, tier sets opacity (A 1.0, B 0.6, C 0.3). Size and halo carry tier too, not color alone.
 - **Post:** bloom with a luminance threshold so only events glow; light vignette; DPR capped at 2; exponential fog increasing with depth.
@@ -570,3 +570,12 @@ Manual run sheet for the demo laptop (Chrome, then Safari; 1280×720, then a 4K 
 12. Resize to 1280×720 and to 4K. Repeat steps 3, 6, 8 and 9: nothing overlaps the counters, validation card, drawer or
     scrubber.
 13. Repeat steps 1–12 in Safari.
+
+### WEB-08 follow-up · depth ruler from the data · 2026-09-26 5:30 PM EDT
+
+At H2's request, the depth ruler and the depth slices now reach the deepest displayed event instead of a fixed
+6 km. `rulerMaxDepthKm` takes the candidates' and the public catalog's `elevM`, turns them into display depth
+((refSurfaceElevM − elevM)/1000), and rounds up to a whole tick, with a minimum of one tick. On the real v3 bundle
+that is 9 km: 15 Tier C events lie deeper than 6 km, the deepest at 8.63 km. The label-obstacle list is sized
+from the same depth. The five pre-reveal feature labels and the verbatim tier reasons stay as they are (H2's
+call).
