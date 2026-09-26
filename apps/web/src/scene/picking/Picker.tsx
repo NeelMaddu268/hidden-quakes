@@ -75,7 +75,7 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
       const pub = pickNearest(publicEvents.positions, {
         ...base,
         radius: (i) => sizeKm.public * publicEvents.scales[i],
-        visible: (i) => publicTargets[i] !== null && shownAt(publicEvents.times[i], now),
+        visible: (i) => phase !== "public" && publicTargets[i] !== null && shownAt(publicEvents.times[i], now),
       });
       const best: PickHit | null = pub && betterHit(pub, cand) ? pub : cand;
       if (!best) return null;

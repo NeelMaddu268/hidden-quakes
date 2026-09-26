@@ -165,7 +165,7 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
           Depth section
         </div>
         <div style={{ fontSize: 10.5 }}>
-          Grid east · true scale (1 km = 1 km) · {plot?.framedOn === "all" ? "framed on every event" : "framed on Tier A and B"}
+          Grid east · true scale · {plot?.framedOn === "all" ? "framed on every event" : "framed on Tier A and B"}
         </div>
         <div style={{ fontSize: 10.5, ...numeric }} data-testid="depth-section-outside">
           {outsideText(outside)}

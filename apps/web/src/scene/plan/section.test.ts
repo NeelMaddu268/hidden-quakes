@@ -148,7 +148,7 @@ describe("sectionPlot", () => {
   it("labels ticks with derived round numbers only, including the surface at 0", () => {
     const labels = plot.depthTicks.map((t) => t.label);
     expect(labels).toContain("0");
-    for (const t of [...plot.depthTicks, ...plot.eastTicks]) expect(t.label).toMatch(/^-?\d+(\.\d+)?$/);
+    for (const t of [...plot.depthTicks, ...plot.eastTicks]) expect(t.label).toMatch(/^−?\d+(\.\d+)?$/); // typographic minus, never an ASCII hyphen
   });
 
   it("niceStep picks 1/2/5 × 10^n", () => {
@@ -223,12 +223,17 @@ describe("sectionHit", () => {
     expect(sectionHit(model, plot, { phase: "revealed", filter: "strict", revealElapsedS: TIMELINE.endS }, x, y, 10)).toBeNull();
   });
 
-  it("a public event selects its matched candidate; an unmatched one selects nothing", () => {
+  it("after the reveal a public event selects its matched candidate; an unmatched one selects nothing", () => {
     const [x1, y1] = at(0.05, 2.1);
     const [x2, y2] = at(-3, 5);
-    const s = { phase: "public" as const, filter: "public" as const, revealElapsedS: 0 };
+    const s = { phase: "revealed" as const, filter: "public" as const, revealElapsedS: TIMELINE.endS };
     expect(sectionHit(model, plot, s, x1, y1, 3)).toBe("a");
     expect(sectionHit(model, plot, s, x2, y2, 10)).toBeNull();
+  });
+
+  it("before the reveal a public event selects nothing (no candidate drawer ahead of the reveal beat)", () => {
+    const [x1, y1] = at(0.05, 2.1);
+    expect(sectionHit(model, plot, { phase: "public", filter: "public", revealElapsedS: 0 }, x1, y1, 3)).toBeNull();
   });
 });
 

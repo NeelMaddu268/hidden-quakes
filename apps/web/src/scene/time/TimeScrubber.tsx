@@ -104,6 +104,9 @@ function StripView({ model, width }: StripViewProps) {
       dpr,
     };
     let raf = 0;
+    // What the text nodes last showed: during playback the strip redraws every frame, but the clock (to
+    // the minute) and the counts change far less often, so strings are built only when they change.
+    const shown = { minute: NaN, pub: -1, rec: -1, set: "" };
     const draw = () => {
       raf = 0;
       const s = useDemo.getState();
@@ -111,15 +114,31 @@ function StripView({ model, width }: StripViewProps) {
       const now = s.tNow ?? model.windowEnd;
       const set = recoveredSet(s.filter);
       const sorted = set === "strict" ? model.sortedRecoveredStrict : model.sortedRecoveredAll;
-      if (clock.current) clock.current.textContent = `${fmtClockUtc(now, model.windowStart)} UTC`;
-      if (pubCount.current) pubCount.current.textContent = countUpTo(model.sortedPublic, now).toLocaleString("en-US");
-      if (recCount.current) recCount.current.textContent = set === "none" ? "" : countUpTo(sorted, now).toLocaleString("en-US");
-      if (recLabel.current) recLabel.current.textContent = set === "none" ? "" : set === "strict" ? " strict" : " recovered";
-      if (recSep.current) recSep.current.textContent = set === "none" ? "" : " · ";
-      const el = slider.current;
-      if (el) {
-        el.setAttribute("aria-valuenow", String(Math.round(now)));
-        el.setAttribute("aria-valuetext", `${fmtClockUtc(now, model.windowStart)} UTC`);
+      const minute = Math.floor(now / 60);
+      const pub = countUpTo(model.sortedPublic, now);
+      const rec = set === "none" ? 0 : countUpTo(sorted, now);
+      if (minute !== shown.minute) {
+        shown.minute = minute;
+        const text = `${fmtClockUtc(now, model.windowStart)} UTC`;
+        if (clock.current) clock.current.textContent = text;
+        const el = slider.current;
+        if (el) {
+          el.setAttribute("aria-valuenow", String(Math.round(now)));
+          el.setAttribute("aria-valuetext", text);
+        }
+      }
+      if (pub !== shown.pub && pubCount.current) {
+        shown.pub = pub;
+        pubCount.current.textContent = pub.toLocaleString("en-US");
+      }
+      if ((rec !== shown.rec || set !== shown.set) && recCount.current) {
+        shown.rec = rec;
+        recCount.current.textContent = set === "none" ? "" : rec.toLocaleString("en-US");
+      }
+      if (set !== shown.set) {
+        shown.set = set;
+        if (recLabel.current) recLabel.current.textContent = set === "none" ? "" : set === "strict" ? " strict" : " recovered";
+        if (recSep.current) recSep.current.textContent = set === "none" ? "" : " · ";
       }
     };
     const schedule = () => {

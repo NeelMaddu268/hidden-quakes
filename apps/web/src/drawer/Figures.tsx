@@ -28,17 +28,21 @@ export interface FiguresProps {
   stations: Station[] | null;
   /** Evidence station ids the bundle has no station record for. */
   missing: string[];
+  /** Where `stations` came from: the evidence traces, or the event's picks when it has no evidence file. */
+  source?: "evidence" | "picks";
 }
 
 /** Plan view (north up) with station-to-epicenter lines, and the depth section beside it. */
-export function Figures({ event, meta, stations, missing }: FiguresProps) {
+export function Figures({ event, meta, stations, missing, source = "evidence" }: FiguresProps) {
   return (
     <section className="hqd-section" aria-label="Station geometry">
       <div className="hqd-figs">
         <div className="hqd-fig">
           <span className="hqd-label">Plan view</span>
           {stations ? <MiniMap event={event} stations={stations} /> : <div className="hqd-fig-empty" />}
-          <div className="hqd-fig-caption">Grid north up · station → epicenter lines</div>
+          <div className="hqd-fig-caption">
+            Grid north up · {source === "picks" ? "picking station" : "station"} → epicenter lines
+          </div>
         </div>
         <div className="hqd-fig">
           <span className="hqd-label">Depth section · looking north</span>
@@ -83,7 +87,7 @@ function MiniMap({ event, stations }: { event: SeismicEvent; stations: Station[]
       ))}
       {errR > 0 && (
         <circle cx={r1(ex)} cy={r1(ey)} r={r1(errR)} fill="none" stroke={colors.recovered} strokeOpacity={0.55} strokeDasharray="2 2" strokeWidth={0.75}>
-          <title>{`68% horizontal error ±${fmtFixed(hErrM, 0)} m`}</title>
+          <title>{`One-sigma horizontal error ±${fmtFixed(hErrM, 0)} m`}</title>
         </circle>
       )}
       {stations.map((st) => (
@@ -201,7 +205,7 @@ function DepthSection({ event, meta, stations }: { event: SeismicEvent; meta: Bu
             strokeWidth={1}
             fill="none"
           >
-            <title>{`68% vertical error ±${fmtFixed(vErrM, 0)} m`}</title>
+            <title>{`One-sigma vertical error ±${fmtFixed(vErrM, 0)} m`}</title>
           </path>
         )}
         <circle cx={r1(ex)} cy={r1(ey)} r={6.5} fill="none" stroke={colors.strictHalo} strokeWidth={1} />
