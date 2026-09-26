@@ -149,7 +149,7 @@ _STAGE_RECORDS = TypeAdapter(dict[str, StageRecord])
 # --- run.json / stages.json ---------------------------------------------------------------------
 
 
-def _write_text(path: Path, text: str) -> None:
+def write_text_atomic(path: Path, text: str) -> None:
     """Write through a temp file in the same directory and ``os.replace`` it into place, so a
     crash never leaves a half-written JSON. One process writes a run at a time; there is no
     cross-process locking."""
@@ -183,7 +183,7 @@ def read_run_json(run_dir: Path) -> ProcessingRun:
 
 
 def write_run_json(run_dir: Path, run: ProcessingRun) -> None:
-    _write_text(Path(run_dir) / RUN_JSON, run.model_dump_json(indent=2) + "\n")
+    write_text_atomic(Path(run_dir) / RUN_JSON, run.model_dump_json(indent=2) + "\n")
 
 
 def read_stage_records(run_dir: Path) -> dict[str, StageRecord]:
@@ -198,7 +198,7 @@ def read_stage_records(run_dir: Path) -> dict[str, StageRecord]:
 
 def write_stage_records(run_dir: Path, records: dict[str, StageRecord]) -> None:
     text = _STAGE_RECORDS.dump_json(records, indent=2).decode()
-    _write_text(Path(run_dir) / STAGES_JSON, text + "\n")
+    write_text_atomic(Path(run_dir) / STAGES_JSON, text + "\n")
 
 
 # --- RunContext -----------------------------------------------------------------------------------
