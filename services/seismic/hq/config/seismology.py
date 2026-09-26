@@ -242,8 +242,104 @@ class SyntheticConfig(BaseModel):
     nEvents: int = Field(ge=1)
     seed: int = Field(ge=0)
     zone: SyntheticZoneConfig
-    sKeepProb: float = Field(ge=0, le=1)  # each station's S pick is kept with this probability
-    pickProb: float = Field(gt=0, le=1)  # picker probability given to every synthetic pick
+    # Each station's S pick is kept with this probability; every synthetic pick gets pickProb.
+    # None: stage locate measures both from the run's located events (hq.locate.synthetic
+    # .measured_pick_stats); a direct run_synthetic call then needs a config with numbers.
+    sKeepProb: Annotated[float, Field(ge=0, le=1)] | None
+    pickProb: Annotated[float, Field(gt=0, le=1)] | None
+
+
+class DatumCheckConfig(BaseModel):
+    """Diagnostics row 2: noise-free synthetic events at known elevM through the real stations."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    eM: float  # ENU east of the run origin (m)
+    nM: float  # ENU north of the run origin (m)
+    elevM: list[float] = Field(min_length=1)  # m ASL; one synthetic event per value
+    passTolM: float = Field(gt=0)  # largest |elevM| and horizontal error that still passes (m)
+
+
+class DiagnosticsConfig(BaseModel):
+    """Depth diagnostics written to ``diagnostics.md`` by stage ``locate`` (LOC-04)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    datumCheck: DatumCheckConfig
+    minSForDepth: int = Field(ge=1)  # row 4 splits events at nS >= this vs nS < this
+    # Fewest events (row 4) or picks (rows 5-7) a group needs before a row concludes from it.
+    minGroupSize: int = Field(ge=1)
+    # Rows 4 and 5: a group's spread counts as worse than another's above this ratio.
+    degradationRatio: float = Field(gt=1)
+    # Row 6: a station-phase median residual above this (s) is flagged (lane doc: every static
+    # above 0.15 s needs a written explanation).
+    stationResidualFlagS: float = Field(gt=0)
+    # Row 5: profiles whose Station.preprocessProfile starts with this are the borehole profiles
+    # the row's suspect is about (signal.yaml names them borehole-A, borehole-B).
+    boreholeProfilePrefix: str = Field(min_length=1)
+    # Row 7: an azimuthal residual amplitude (s) above this counts as a trend (1D misses structure).
+    trendFlagS: float = Field(gt=0)
+    # Row 7: at the catalog hypocentres, an S/P ratio of the trend amplitudes above the model's
+    # Vp/Vs at the source depths times this factor counts as S-heavy (see diagnostics.py).
+    trendSPRatioExcess: float = Field(gt=1)
+    # Table-vs-exact travel-time error (s) at a located hypocentre above this counts as exposure to
+    # the cell-mean interface bias of the tables (LOC-02 accuracy record).
+    tableErrorFlagS: float = Field(gt=0)
+
+
+class WellConstrainedConfig(BaseModel):
+    """Events whose residuals estimate selfConsistent statics (``hq.locate.statics``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    minStations: int = Field(ge=1)  # quality.nStations at least this
+    minS: int = Field(ge=0)  # quality.nS at least this
+    maxGapDeg: float = Field(gt=0, le=360)  # quality.gapDeg at most this
+
+
+class StaticsExplainConfig(BaseModel):
+    """Evidence rules for the written explanation of every static above the flag threshold."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # The median term of a station's nearest other stations (same phase, at most
+    # neighbourMaxDistM away) explains its term as lateral structure when it has the term's sign
+    # and at least this fraction of its size.
+    neighbours: int = Field(ge=1)
+    neighbourMaxDistM: float = Field(gt=0)
+    lateralFraction: float = Field(gt=0, le=1)
+    # S term / P term of one station (same sign), compared only when |P term| is at least this.
+    minRatioTermS: float = Field(gt=0)
+    # S/P within a factor ratioBand of the model's Vp/Vs at the sensor: a path (velocity) anomaly;
+    # above it: the local Vp/Vs differs from the model's; within a factor ratioBand of 1: equal P
+    # and S delays, a timing offset is possible.
+    ratioBand: float = Field(gt=1)
+    # An early term at a station farther than this (m) from the events' median epicentre: rays
+    # bottoming in the model's deepest (extrapolated) layers; a hypothesis, contradicted (and then
+    # not a verdict) when another station that far has a late term above the flag.
+    farStationM: float = Field(gt=0)
+
+
+class StaticsConfig(BaseModel):
+    """Station statics (LOC-05, ``hq.locate.statics``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["selfConsistent", "referenceEvents"]
+    # selfConsistent: median residual per station-phase over well-constrained events, subtracted,
+    # events relocated; ``iterations`` times, each static capped at +/- capS.
+    iterations: int = Field(ge=1)
+    capS: float = Field(gt=0)
+    minEvents: int = Field(ge=1)  # fewer well-constrained events on a station-phase: static 0
+    wellConstrained: WellConstrainedConfig
+    # referenceEvents: terms at the public-catalog hypocentres of the matched events.
+    minReferenceEvents: int = Field(ge=1)  # fewer reference events on a station-phase: term 0
+    referenceCapS: float = Field(gt=0)  # every term capped at +/- this
+    folds: Annotated[int, Field(ge=2)] | None  # null: leave-one-out; k: k-fold
+    polishIterations: int = Field(ge=1)  # origin-time / term alternations (median polish)
+    explain: StaticsExplainConfig
+    # Robust residual sigma above this multiple of locator.pickSigmaS is reported as well above.
+    sigmaFlagRatio: float = Field(gt=1)
 
 
 class CatalogDatum(BaseModel):
@@ -432,6 +528,134 @@ class MatchingConfig(BaseModel):
         return self
 
 
+class TierQuantiles(BaseModel):
+    """Per tier, the share of the matched set allowed to fall on the worse side of each bar."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    A: float = Field(ge=0, lt=1)  # 0.25: p25 (higher is better) / p75 (lower is better)
+    B: float = Field(ge=0, lt=1)  # 0.0: the worst matched event itself
+
+    @model_validator(mode="after")
+    def _b_not_stricter(self) -> "TierQuantiles":
+        if self.B > self.A:
+            raise ValueError(f"quantiles.B {self.B} must not exceed quantiles.A {self.A}")
+        return self
+
+
+class TierSweepConfig(BaseModel):
+    """The association sweep the tier stage scores (``hq.tier.sweep``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool  # true: stage tier reruns associate -> locate -> match -> tiers per point
+
+
+class TieringConfig(BaseModel):
+    """Quality tiers from matched-event quantiles (stage ``tier``, LOC-06, ``hq.tier``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    quantiles: TierQuantiles
+    # Tier A also needs a station with a used pick within this many focal depths (epicentral).
+    strictNearestStationFactor: float = Field(gt=0)
+    minMatched: int = Field(ge=1)  # fewer matched events than this: derivation fails loudly
+    # Stored vs recomputed depthKm and nearest used station distance must agree within this (m).
+    consistencyTolM: float = Field(gt=0)
+    sweep: TierSweepConfig
+
+
+class MagnitudeWindowConfig(BaseModel):
+    """Where amplitudes are measured, relative to each station's P and S anchor times (s)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sPreS: float = Field(ge=0)  # the S window starts this long before the S anchor ...
+    sPostS: float = Field(gt=0)  # ... and ends this long after it
+    noiseLenS: float = Field(gt=0)  # noise window length, ending noiseGapS before the P anchor
+    noiseGapS: float = Field(ge=0)
+    # Data read beyond both windows on each side; cosine-tapered for the FFT, never measured.
+    padS: float = Field(gt=0)
+
+
+class ResponseRemovalConfig(BaseModel):
+    """Instrument response removal to ground displacement (ObsPy evalresp in the sensor's input
+    units + water level, then integrated to displacement)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # ObsPy pre_filt: cosine frequency taper, 0 below f1, 1 between f2 and f3, 0 above f4 (Hz).
+    preFiltHz: tuple[float, float, float, float]
+    # ObsPy water_level, dB below the maximum of the response in the sensor's own input units
+    waterLevelDb: float = Field(gt=0)
+    # |response sample rate / data sample rate - 1| above this excludes the station.
+    rateRelTol: float = Field(gt=0)
+
+    @field_validator("preFiltHz")
+    @classmethod
+    def _increasing(cls, value: tuple[float, float, float, float]) -> tuple[float, ...]:
+        if not 0.0 < value[0] < value[1] < value[2] < value[3]:
+            raise ValueError(f"preFiltHz must be 0 < f1 < f2 < f3 < f4, got {list(value)}")
+        return value
+
+
+class SaturationConfig(BaseModel):
+    """Digitizer clipping screen: a window whose raw horizontal counts reach ``maxFraction`` of
+    ``fullScaleCounts`` anywhere in its processed span gets status ``clipped`` (no magnitude)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    fullScaleCounts: float = Field(gt=0)  # largest |count| the digitizer can output
+    maxFraction: float = Field(gt=0, le=1)
+
+
+class WoodAndersonConfig(BaseModel):
+    """The simulated Wood-Anderson torsion seismometer (displacement in, trace amplitude out)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    periodS: float = Field(gt=0)  # free period
+    damping: float = Field(gt=0, lt=1)  # fraction of critical
+    gain: float = Field(gt=0)  # static magnification
+
+
+class MagnitudeFitConfig(BaseModel):
+    """Robust least squares for M_cat = a log10(A) + b log10(R) + c + station term."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    loss: Literal["linear", "soft_l1", "huber", "cauchy", "arctan"]  # scipy least_squares loss
+    fScaleMag: float = Field(gt=0)  # scipy f_scale: residual (magnitude units) where it turns
+    # null fits a; a number fixes it (1.0 is the Richter definition: M scales with log10 A).
+    amplitudeSlope: Annotated[float, Field(gt=0)] | None
+    # Ridge constraint on the station terms: the objective adds stationTermRidge * sum(s_j^2)
+    # (quadratic, outside the robust loss); (residual sd / station-term sd)^2 in Gaussian terms.
+    stationTermRidge: float = Field(gt=0)
+    # A station gets a term only with at least this many calibration observations; stations with
+    # fewer are left out of the fit and of every magnitude from it (logged).
+    minStationObs: int = Field(ge=1)
+
+
+class MagnitudeConfig(BaseModel):
+    """Local magnitude calibrated on matched public events (stage ``magnitude``, MAG-01)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    calibrationMagType: str = Field(min_length=1)  # the one CatalogEvent.magType calibrated on
+    maxLooMae: float = Field(gt=0)  # magnitudes are written only when the LOO MAE is at most this
+    # Usable station amplitudes (above minSnr, station with a term) an event needs for a
+    # magnitude; calibration events need as many.
+    minStations: int = Field(ge=1)
+    minCalibrationEvents: int = Field(ge=2)  # fewer calibration events: the stage fails
+    minSnr: float = Field(gt=0)  # S-window peak / noise-window peak, on the same processed trace
+    readChunkS: float = Field(gt=0)  # longest span read from the cache at once per station
+    window: MagnitudeWindowConfig
+    response: ResponseRemovalConfig
+    saturation: SaturationConfig
+    woodAnderson: WoodAndersonConfig
+    fit: MagnitudeFitConfig
+
+
 class SeismologyConfig(BaseModel):
     """Contents of ``seismology.yaml``."""
 
@@ -444,10 +668,27 @@ class SeismologyConfig(BaseModel):
     catalog: CatalogConfig
     associator: AssociatorConfig
     matching: MatchingConfig
+    diagnostics: DiagnosticsConfig
+    statics: StaticsConfig
+    tiering: TieringConfig
+    magnitude: MagnitudeConfig
 
     @model_validator(mode="after")
     def _consistent(self) -> "SeismologyConfig":
         vol = self.locator.volume
+        # Every associated event has at least minStations stations, so at least that many picks;
+        # the locator needs minPicks. Checked here so no associated event is left unlocatable.
+        fewest = min(self.associator.minStations, *self.associator.sweep.minStations)
+        if fewest < self.locator.minPicks:
+            raise ValueError(
+                f"associator minStations (smallest, sweep included) {fewest} is below "
+                f"locator.minPicks {self.locator.minPicks}: such events could not be located"
+            )
+        datum = self.diagnostics.datumCheck
+        if max(abs(datum.eM), abs(datum.nM)) > vol.halfWidthM or min(datum.elevM) < vol.bottomElevM:
+            raise ValueError("diagnostics.datumCheck points must lie inside the search volume")
+        if vol.topElevM is not None and max(datum.elevM) > vol.topElevM:
+            raise ValueError("diagnostics.datumCheck elevM must lie below the search volume top")
         if self.grids.bottomElevM > vol.bottomElevM - self.grids.dzM:
             raise ValueError(
                 f"grids.bottomElevM {self.grids.bottomElevM} must lie at least one dzM below "

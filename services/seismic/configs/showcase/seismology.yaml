@@ -137,12 +137,108 @@ synthetic:
     radiusM: 2000.0
     topElevM: -1000.0
     bottomElevM: -4500.0
-  # PLACEHOLDERS until LOC-04 has association output: each station's S pick is kept with this
-  # probability (the real nS distribution replaces it), and every synthetic pick gets pickProb (the
-  # real pick-probability distribution replaces it). Every station gets a P pick. Both make the
-  # synthetic picks optimistic for weak events; the params record says so.
-  sKeepProb: 0.6
-  pickProb: 1.0
+  # Stage "locate" runs this test on the run's usedInRun stations and writes synthetic.json.
+  # Each station's S pick is kept with probability sKeepProb, and every synthetic pick gets
+  # pickProb. null = measured from the run's located events by stage locate: sKeepProb = median
+  # over events of nS / nStations, pickProb = median prob of the picks used in the final locations
+  # (both recorded in ProcessingRun.locator.synthetic). A number fixes the value instead. Every
+  # station still gets a P pick, which keeps the synthetic picks optimistic for weak events.
+  sKeepProb: null
+  pickProb: null
+
+# Depth diagnostics (LOC-04, hq.locate.diagnostics): stage "locate" writes diagnostics.md with the
+# lane doc's table (rows 1-7), each with a result computed from the run and a conclusion.
+diagnostics:
+  # Row 2 (datum mixing): noise-free P and S picks from the exact 1D layered times at every used
+  # station, for a synthetic event at each elevM below (m ASL) at (eM, nM) (ENU m), located by the
+  # run's own locator and tables. Passes when |elevM error| and the horizontal error stay within
+  # passTolM (LOC-02's noise-free depth-bias bound).
+  datumCheck:
+    eM: 0.0
+    nM: 0.0
+    elevM: [-3500.0, -1500.0, 500.0]
+    passTolM: 50.0
+  minSForDepth: 3 # row 4 compares events with nS >= this against nS < this (lane doc)
+  # Fewest events (row 4) or picks (rows 5-7) a group needs before a row draws a conclusion from
+  # it; below this the row says it can't conclude and gives the counts.
+  minGroupSize: 5
+  # Rows 4 and 5: one group's spread (median vErrM, residual MAD) counts as degraded when it
+  # exceeds the other's by more than this factor.
+  degradationRatio: 1.5
+  # Row 6: station-phase median residuals above this (s) are flagged; the lane doc asks for a
+  # written explanation of every static above 0.15 s (LOC-05).
+  stationResidualFlagS: 0.15
+  # Row 5: profiles whose Station.preprocessProfile starts with this are the borehole profiles the
+  # row's suspect (borehole picks degraded by resampling) is about; signal.yaml names them so.
+  boreholeProfilePrefix: borehole
+  # Row 7: the amplitude (s) of a residual ~ a + b cos(az) + c sin(az) fit above this counts as
+  # an azimuthal trend (1D misses lateral structure; LOC-07).
+  trendFlagS: 0.05
+  # Row 7, at the public catalog hypocentres: a mislocated catalog epicentre alone gives P and S
+  # trends whose amplitude ratio (S/P) is about the model's Vp/Vs at the source depth, since both
+  # scale with the horizontal slowness at the source. A ratio above that Vp/Vs times this factor
+  # counts as S-heavy, which a slow/fast lateral contrast gives and a catalog mislocation does not.
+  # The margin covers the scatter of amplitudes fitted to a few events.
+  trendSPRatioExcess: 1.3
+  # Travel-time table error vs the exact layered time (s) at a located hypocentre above this
+  # counts as exposure to the tables' cell-mean interface bias (LOC-02: up to ~14 ms for S just
+  # below shallow interfaces).
+  tableErrorFlagS: 0.005
+
+# Station statics (LOC-05, hq.locate.statics): one additive term per station and phase, applied in
+# the locator (tPred = origin time + table time + static). Every static above
+# diagnostics.stationResidualFlagS gets a written explanation in diagnostics.md.
+statics:
+  # selfConsistent: the lane doc's method, inside locate(). referenceEvents: terms at the public
+  # regional catalog's hypocentres of the matched events (needs matches.parquet in the run dir:
+  # locate -> match -> locate -> match -> tier); without it locate runs with no statics.
+  mode: referenceEvents
+  # selfConsistent: median residual per station-phase over the used picks of well-constrained
+  # events, subtracted, every event relocated; iterations times; each static capped at +/- capS.
+  iterations: 3
+  capS: 0.3
+  minEvents: 5
+  wellConstrained: # depthOnEdge events and truncated PDFs (null hErrM) never count
+    minStations: 8
+    minS: 3
+    maxGapDeg: 180.0
+  # referenceEvents: residuals at each reference hypocentre (the catalog's, fixed; origin time by
+  # the locator's weighted median), term = median over reference events, alternated with the
+  # origin times polishIterations times (median polish). A station-phase with fewer than
+  # minReferenceEvents reference events gets 0 (nEvents in statics.parquet shows it). Every
+  # reference event is relocated with terms computed without it: folds null = leave-one-out,
+  # k = k-fold (folds dealt round-robin in catalog origin-time order). Unmatched candidate events
+  # use the terms from every reference event.
+  minReferenceEvents: 3
+  # The lateral-structure terms exceed selfConsistent's 0.3 s cap by design (LOC-04 row 7: S
+  # delays near 1 s at the catalog hypocentres), so this cap is set from the data: above the
+  # largest consistent term (small MAD over its events), so it clips none of the lateral
+  # structure, and still bounding a term from a station with systematically wrong picks.
+  # diagnostics.md reports, per run, the largest uncapped term, its MAD, the largest MAD of any
+  # term and how many terms the cap clips; recheck the value there when the data change.
+  # Provenance of 1.0 s (LOC-05, full-day run of 2026-09-26): largest uncapped term 0.875 s,
+  # largest term MAD 0.083 s, none clipped.
+  referenceCapS: 1.0
+  folds: null
+  polishIterations: 3
+  # Evidence rules for the written explanation of each static above
+  # diagnostics.stationResidualFlagS (hq.locate.statics.explain_terms).
+  explain:
+    neighbours: 3 # nearest other stations whose median term is compared (same phase)
+    # ...counting only stations at most this far (m, epicentral) from the station: a station
+    # farther away samples other near-surface structure and can't stand in for this one's.
+    neighbourMaxDistM: 8000.0
+    lateralFraction: 0.5 # same sign and at least this share of the term: lateral structure
+    minRatioTermS: 0.05 # S/P term ratio only when |P term| >= this (s)
+    ratioBand: 1.3 # factor around the model's Vp/Vs (path) and around 1 (equal delays)
+    # An early term at a station farther than this (m) from the events' median epicentre: the
+    # sources sit in the layer model's half-space (top -610 m ASL), so the ray length in it grows
+    # with distance, and the layer file marks the half-space as extrapolation. About 4x the
+    # synthetic zone's deepest point below the half-space top. A hypothesis: another station that
+    # far with a same-phase term later than diagnostics.stationResidualFlagS contradicts it, and
+    # the term then counts as unexplained unless other evidence holds.
+    farStationM: 15000.0
+  sigmaFlagRatio: 1.5
 
 # Public regional catalog (stage "catalog", hq.match.catalog, MATCH-01).
 catalog:
@@ -250,7 +346,8 @@ associator:
     maxSeedErrorS: 0.05
   # Sweep (docs/lanes/H2 -> Association): every combination of these values, all other knobs as
   # above. sweep.parquet (SweepPoint: located candidates, recoveredPublic, tierA) is written by
-  # LOC-06's tier stage, which runs the sweep with its locate/match/tier evaluator. enabled: true
+  # LOC-06's tier stage when tiering.sweep.enabled, which runs the sweep with its locate/match/tier
+  # evaluator. This enabled: true
   # also runs it in stage associate, only to log and record associated counts per point: one
   # PyOcto run per (minPickProb, nSPicks) pair beyond the configured one, several minutes on a
   # full day at the permissive points, so it is off by default.
@@ -311,3 +408,139 @@ matching:
     # Picks inside these windows pin the origin to within about a window width (a few s) plus the
     # travel-time change of a mislocation, so 10 s only drops candidates that cannot be this event.
     maxCandidateDtS: 10.0
+
+# Quality tiers (stage "tier", hq.tier, LOC-06). Thresholds are never set here: they are quantiles
+# of the matched set M (located candidate events with a public regional catalog match in
+# matches.parquet), recomputed on every run and stored with their source quantile and the size of
+# M in ProcessingRun.tiering. Metrics: nStations, nP, nS (higher is better); rmsS, hErrM, vErrM,
+# gapDeg (lower is better), all from SeismicEvent.quality.
+# Fixed by design and recorded with the thresholds, not knobs:
+# - A bar is an actual matched event's value: sort the events of M with a value on the metric from
+#   best to worst and take the ceil((1 - q) * n)-th, n their count (numpy's inverted_cdf on the
+#   lower-is-better side), so at least (1 - q) of them meets or beats the bar. Boundary equality
+#   passes. matchedSet.meetingEveryBar records how many matched events meet every bar at once.
+# - A null hErrM or vErrM (truncated PDF) fails A and B on that metric. Bars on those metrics come
+#   from the matched events with a value (nUsed, nNull recorded), so a null never loosens a bar.
+# - Focal depth for the nearest-station rule is the event's depth below the sensor of its
+#   epicentrally nearest station with a pick used in the final location (sensorElevM - elevM, a
+#   borehole's depth included; an event at or above that sensor fails the rule), from
+#   arrivals.parquet and stations.parquet. A caller without them (the docs/02 3-argument call)
+#   falls back to depthKm * 1000 = run.refSurfaceElevM - elevM; tiering.rules records which.
+# Caveat recorded with every run: public regional catalog events are the larger ones, so bars
+# drawn from them are conservative for small events.
+tiering:
+  # Per tier, the share q of M allowed on the worse side of each bar: the bar is p(100q) for
+  # higher-is-better metrics and p(100(1 - q)) for lower-is-better ones. A: 0.25 is "at least as
+  # good as the 25th-percentile-worst matched event" (>= p25, <= p75), so each Strict bar is met
+  # by at least three-quarters of the recovered public events with a value on that metric (each
+  # metric separately; fewer meet all of them). B: 0.0 is the worst matched event.
+  # B must not exceed A (checked), so every Tier A event also meets the B bars.
+  quantiles:
+    A: 0.25
+    B: 0.0
+  # Tier A also needs its nearest station with a pick used in the final location within this
+  # many focal depths, epicentral: quality.minEpiDistM <= factor * focal depth (above; the lane
+  # doc's depth-gate fallback, "a station within about 1-2x the focal depth"). Tier A also needs
+  # depthOnEdge false and, when locate_flags.parquet exists, mapOnVolumeTop false (z = 0 collapse).
+  strictNearestStationFactor: 2.0
+  # Deriving bars from fewer matched events than this (or, on hErrM/vErrM, fewer with a value)
+  # fails the stage instead of inventing bars: at 10 the p75 bar is the 8th-best matched event,
+  # so at most two matched events lie beyond it.
+  minMatched: 10
+  # Stored vs recomputed geometry must agree within this (m) or the stage fails: every event's
+  # depthKm vs (run.refSurfaceElevM - elevM) / 1000, and quality.minEpiDistM vs the distance to the
+  # nearest used station recomputed from stations.parquet. Far above float round-off, far below
+  # any distance that changes a tier; a table from another run section or frame is off by metres.
+  consistencyTolM: 0.001
+  # Association sweep over associator.sweep's grid (associate -> locate -> match -> tiers at every
+  # point, Tier A counted with the bars derived from the configured run so points compare), written
+  # to sweep.parquet (SweepPoint). One PyOcto run per (minPickProb, nSPicks) pair and one full
+  # location per point, so hours on a full day: off by default; the stage logs each point's
+  # runtime and an ETA. Disabled, the stage removes a sweep.parquet left by an earlier tier run
+  # (its Tier A counts used that run's bars), as stage associate does.
+  sweep:
+    enabled: false
+
+# Local magnitude (stage "magnitude", hq.magnitude, MAG-01), calibrated on the matched public
+# regional catalog events of ONE magnitude type:
+#   station magnitude  M_ij = a log10(A_ij) + b log10(R_ij) + c + s_j
+#   event magnitude    median of its station magnitudes (type "ML_cal", docs/02)
+# A_ij: peak of the horizontal vector amplitude sqrt(h1^2 + h2^2) of the simulated Wood-Anderson
+# trace (mm) in the S window; rotation-invariant, so borehole 1/2 components of unknown azimuth
+# need no rotation. R_ij: hypocentral distance (km) from the located hypocentre to the sensor
+# (ENU, sensorElevM included). Fixed by design and recorded with every run, not knobs: response
+# removal in the sensor's own input units (evalresp DISP, VEL or ACC, water level there), then
+# integration to displacement and the Wood-Anderson response; the S and P
+# anchors are the observed picks used in the final location, else the predicted times from
+# arrivals.parquet; station terms carry a ridge constraint (fit.stationTermRidge); leave-one-event-
+# out refits without each calibration event and predicts it; sigma is the normalized MAD
+# (1.4826 x MAD) of the event's station magnitudes.
+magnitude:
+  # The catalog carries ml (amplitude based) and md (duration based) on the showcase day; they are
+  # different scales and are never mixed. ml: more matched events, and it measures what this model
+  # measures (a peak amplitude). Every other type is left out of the calibration (counted).
+  calibrationMagType: ml
+  # docs/03 magnitude kill switch (~0.4): above this leave-one-event-out MAE the stage writes
+  # magnitude.json but leaves every events.parquet magnitude null (logged).
+  maxLooMae: 0.4
+  minStations: 3
+  minCalibrationEvents: 10
+  minSnr: 3.0
+  # Each station's windows are read from the cache in groups spanning at most this long, so a
+  # 1000 Hz station-day (about 1 GB in memory) is never loaded at once.
+  readChunkS: 3600.0
+  window:
+    sPreS: 0.5
+    sPostS: 3.0
+    noiseLenS: 3.0
+    noiseGapS: 0.5
+    padS: 2.0
+  response:
+    # One band for every station, so amplitudes compare across 100/200/1000 Hz sensors: flat
+    # from f2 to f3, cosine tapers to 0 at f1 and f4, then the Wood-Anderson response (flat to
+    # displacement above 1/periodS). f4 must lie below the lowest Nyquist of a used station
+    # (checked per station). The high-pass at f2 is above the Wood-Anderson corner on purpose:
+    # below a few Hz the accelerometers' and 1000 Hz sensors' displacement noise hides the S
+    # waves of the smallest events. On the showcase day raising f2 from 1 to 4 Hz left the
+    # leave-one-event-out MAE unchanged and cut the share of below-minSnr windows among the
+    # smallest events (the record's magnitudes.censoring table), i.e. less SNR censoring.
+    # The water level acts on the response in the sensor's own units: on an accelerometer's or a
+    # 1000 Hz sensor's response expressed as displacement it would clip (high-pass) the band
+    # itself, differently at each station. A station whose native response still falls more
+    # than waterLevelDb below its maximum inside [f2, f3] has a narrower band there: logged and
+    # recorded (amplitudes.perStation.*.waterLevelClipHz).
+    preFiltHz: [2.0, 4.0, 35.0, 45.0]
+    waterLevelDb: 60.0
+    # H1's rate probe keeps the served rate; a StationXML epoch describing another rate (UU.FORU:
+    # 200 Hz response, 100 Hz data) cannot deconvolve the data, so the station is excluded.
+    rateRelTol: 1.0e-4
+  # A window whose raw horizontal counts reach maxFraction of fullScaleCounts anywhere in its
+  # processed span is "clipped" (never a magnitude). 2^23: the full scale of a 24-bit digitizer;
+  # the record keeps each station's largest |counts| as a share of it (maxFullScaleFraction),
+  # which shows whether a station's digitizer exceeds it.
+  saturation:
+    fullScaleCounts: 8388608.0
+    maxFraction: 0.95
+  # Uhrhammer & Collins (1990) Wood-Anderson constants (T0 0.8 s, h 0.7, V 2080). The gain only
+  # shifts c; it is recorded so log10(A) values can be reproduced.
+  woodAnderson:
+    periodS: 0.8
+    damping: 0.7
+    gain: 2080.0
+  fit:
+    loss: soft_l1                     # robust on the observations; the ridge stays quadratic
+    fScaleMag: 0.3                    # residual (magnitude units) where soft_l1 turns linear
+    # 1.0: Richter's definition (M changes one unit per decade of amplitude). A fitted a is pulled
+    # below 1 by amplitude scatter within events (regression dilution), which compresses the
+    # magnitudes of events smaller than the calibration set; null fits it anyway.
+    amplitudeSlope: 1.0
+    # Ridge on the station terms (objective + stationTermRidge x sum of squared terms; with the
+    # free intercept c they also sum to zero at the optimum). 1.0 = (residual sd / station-term
+    # sd)^2 with both about fScaleMag, a prior, not a bound: the fitted terms are in the record
+    # (fit.stationTerms). b is NOT identified by the calibration set: its events cluster, so each
+    # station's distance barely changes between them (fit.bIdentification.withinStationLogRSd),
+    # and this ridge decides how much of the between-station distance spread goes to b instead
+    # of to the terms. b follows this knob and fit.loss as much as the data, and the
+    # leave-one-event-out MAE cannot test it; magnitudes far from the calibration events rest on it.
+    stationTermRidge: 1.0
+    minStationObs: 5
