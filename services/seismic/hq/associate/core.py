@@ -657,6 +657,7 @@ def record(acfg: AssociatorConfig, setup: Setup, picks: pd.DataFrame) -> dict[st
                 "velocity_model": {
                     "class": "StationSpecificVelocityModel1D",
                     **velocity_kwargs(acfg, setup),
+                    "path": setup.tables.relative_directory,  # absolute path: log only
                 },
             },
         },

@@ -115,13 +115,21 @@ class TableSet:
     max_s_time_in_volume_s: float  # largest S time from any station to any point of the volume
     build_runtime_s: float
 
+    @property
+    def relative_directory(self) -> str:
+        """``directory`` relative to the cache root (machine-independent, for the record)."""
+        return (CACHE_SUBDIR / self.directory.name).as_posix()
+
     def to_record(self) -> dict[str, Any]:
+        # No absolute path and no cache state: run.json must not depend on the machine
+        # (and it reaches the public bundle); both are in the log.
         return {
             "format": FORMAT,
             "builderVersion": BUILDER_VERSION,
-            "directory": str(self.directory),
+            "directory": self.relative_directory,
+            "directoryRelativeTo": "cache_dir (data/cache), or a temporary directory when "
+            "associate() runs without cache_dir",
             "key": self.key,
-            "reusedFromCache": not self.built,
             **self.spec.to_record(),
             "modelTopElevM": self.model_top_elev_m,
             "rowsAboveModelTop": "repeat the top layer's velocities (PyOcto's n_padding is shared "

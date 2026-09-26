@@ -8,6 +8,7 @@ false picks. Offline and seeded.
 
 import inspect
 import itertools
+import json
 import math
 import time
 from pathlib import Path
@@ -523,8 +524,6 @@ def test_record_holds_every_pyocto_argument(world: dict[str, Any]) -> None:
     assert rec["picks"]["nIn"] == len(world["picks"])
     assert rec["picks"]["tMinS"] == world["picks"]["t"].min()
     assert rec["picks"]["tMaxS"] == world["picks"]["t"].max()
-    import json
-
     json.dumps(rec)  # ProcessingRun.associator is JSON
 
 
@@ -785,7 +784,8 @@ def test_stage_writes_tables_record_and_counts_sweep(
     assert params["sweep"]["grid"] == grid(seis.associator)
     assert next(p["candidates"] for p in params["sweep"]["points"]) >= N_EVENTS
     assert "LOC-06" in params["sweep"]["note"] and not params["sweep"]["sweepTableWritten"]
-    assert Path(params["tables"]["directory"]).is_relative_to(ctx.cache_dir / "ttgrids")
+    assert (ctx.cache_dir / params["tables"]["directory"]).is_dir()
+    assert str(ctx.cache_dir) not in json.dumps(params)  # no machine-specific path in run.json
 
     calls: list[int] = []
 
