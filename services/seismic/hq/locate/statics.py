@@ -365,14 +365,14 @@ def explain_terms(
             text.append(
                 f"Its nearest stations with a {ph} term ({', '.join(near_ids)}) have a median "
                 f"{near:+.3f} s: " + (
-                    "they share the delay, so it is lateral structure the 1D model can't hold "
-                    "(row 7), not a station fault." if lateral else "they don't share it.")
+                    "they share it, so it is lateral structure the 1D model can't hold (row 7), "
+                    "not a station fault." if lateral else "they don't share it.")
             )
         if has_ratio:
             text.append(
                 f"S/P term ratio {ratio:.2f} against the model's Vp/Vs {vpvs:.2f} at the sensor: "
-                + ("P and S slowed in proportion, a velocity anomaly along the path near the "
-                   "station." if path else
+                + (f"P and S {'slowed' if term > 0 else 'sped up'} in proportion, a velocity "
+                   "anomaly along the path near the station." if path else
                    "the anomaly is mostly in S, so the local Vp/Vs "
                    + ("is higher than the model's (as in unconsolidated sediment)." if term > 0
                       else "is lower than the model's (as in crystalline rock under the model's "
