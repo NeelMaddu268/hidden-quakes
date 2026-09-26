@@ -64,6 +64,9 @@ from hq.locate.locator import GRID3D
 from hq.locate.tt_grid import PHASES, layered_first_arrival
 from hq.locate.tt_grid3d import ground_elev_m, nearest_columns
 
+# H1's known-event windows in the run dir (stage locate reads the known ids from it).
+KNOWN_WINDOWS_FILE = "known/windows.json"
+
 if TYPE_CHECKING:
     from hq.locate import LocateDetails
     from hq.locate.statics import StaticsReport
@@ -264,11 +267,15 @@ def datum_check(inputs: DiagnosticsInputs) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+KNOWN_COLUMNS = ["catalogId", "dzM", "catalogZErrM", "distM", "catalogHErrM"]
+
+
 def _known_depths(comp: pd.DataFrame | None) -> pd.DataFrame:
-    """Known public events with a candidate: dz (ours minus catalog elevM) and catalog z error."""
+    """Known public events with a candidate: dz (ours minus catalog elevM) and the epicentral
+    offset, each with the catalog's stated error."""
     if comp is None:
-        return pd.DataFrame(columns=["catalogId", "dzM", "catalogZErrM"])
-    return comp[comp["known"] & comp["eventId"].notna()][["catalogId", "dzM", "catalogZErrM"]]
+        return pd.DataFrame(columns=KNOWN_COLUMNS)
+    return comp[comp["known"] & comp["eventId"].notna()][KNOWN_COLUMNS]
 
 
 def row_datum(inputs: DiagnosticsInputs, comp: pd.DataFrame | None = None) -> Row:
@@ -296,16 +303,28 @@ def row_datum(inputs: DiagnosticsInputs, comp: pd.DataFrame | None = None) -> Ro
     if len(known):
         z_err = known["catalogZErrM"].to_numpy(dtype=np.float64)
         within = np.abs(known["dzM"].to_numpy(dtype=np.float64)) <= z_err
+        within_h = known["distM"].to_numpy(dtype=np.float64) <= known["catalogHErrM"].to_numpy(
+            dtype=np.float64)
         evidence = (
             " Independent check: relocated minus public regional catalog elevM for the known "
             "events: " + ", ".join(
                 f"{r.catalogId} {r.dzM:+.0f} m (catalog depth error {_f(r.catalogZErrM)} m)"
                 for r in known.itertuples(index=False)
-            ) + f"; {int(within.sum())} of {len(known)} within the catalog's stated depth error."
+            ) + f"; {int(within.sum())} of {len(known)} within the catalog's stated depth error. "
+            "Horizontally (not a datum test; the LOC-04 acceptance 'within their catalog "
+            "uncertainty' has both halves): " + ", ".join(
+                f"{r.catalogId} {r.distM:.0f} m (catalog horizontal error {_f(r.catalogHErrM)} m)"
+                for r in known.itertuples(index=False)
+            ) + f"; {int(within_h.sum())} of {len(known)} within the catalog's stated horizontal "
+            "error."
         )
+    elif not inputs.known_ids:
+        evidence = (" No known public event was compared, so no independent datum check on this "
+                    f"run: {KNOWN_WINDOWS_FILE} (H1's known-event windows) is not in the run dir.")
     else:
         evidence = (" No known public event was compared, so no independent datum check on this "
-                    "run.")
+                    f"run: none of the known events in {KNOWN_WINDOWS_FILE} has a located "
+                    "candidate within the matching tolerances.")
     if worst_z <= dc.passTolM and worst_h <= dc.passTolM:
         conclusion = (
             "Not the cause within what this check tests: the locator reports elevM consistently "
@@ -929,9 +948,11 @@ def sigma_section(inputs: DiagnosticsInputs, pa: pd.DataFrame) -> list[str]:
            + ", ".join(ph for ph, a in zip(sorted(pa["phase"].unique()), above, strict=True) if a)
            + ", so those formal errors are too small even before model error")
         + "; the public regional catalog comparison below shows how far model error can move a "
-        "hypocentre. pickSigmaS is updated from the Tier A residual spread once LOC-06 assigns "
-        "tiers (lane doc, Locator step 2); until then compare formal errors only with formal "
-        "errors (synthetic noisy.medianFormalVErrM)."
+        "hypocentre. pickSigmaS is not updated from the residual spread in this run (the lane "
+        "doc's Locator step 2): the Station statics section compares the robust sigma with it "
+        "and flags only a ratio above statics.sigmaFlagRatio, and a config change is the lead's "
+        "call. Compare formal errors only with formal errors (synthetic "
+        "noisy.medianFormalVErrM)."
     )
     return lines
 
@@ -970,10 +991,18 @@ def synthetic_section(inputs: DiagnosticsInputs) -> list[str]:
         f"{_f(100 * (noisy['fracVWithinVErrM'] or math.nan))}% (v)."
     )
     lines.append("")
+    measured = stats.get("measured") or {}
+    typical = (
+        f" A real located event has a median of {measured['medianNStations']:g} stations and "
+        f"{measured['medianNS']:g} S picks, so these numbers describe an event recorded on every "
+        "station, like the best-recorded candidates, not a typical one."
+        if "medianNStations" in measured and "medianNS" in measured else ""
+    )
     lines.append(
         "The synthetic picks carry noise at pickSigmaS, below the observed residual spread (section "
-        "above), and a P pick at every station, and the test has no model error, so these errors "
-        "are optimistic for the real candidate events."
+        f"above), and a P pick at every one of the {params['nStations']} stations, and the test "
+        "has no model error, so these errors are optimistic for the real candidate events."
+        + typical
     )
     return lines
 
@@ -1212,10 +1241,13 @@ def catalog_section(
                 f"the catalog's stated horizontal uncertainty (median horizontal offset "
                 f"{have['distM'].median():.0f} m; median stated catalog horizontal error "
                 + (f"{stated.median():.0f} m" if len(stated) else "none stated") + "). "
-                + ("Row 7 found the cause before statics: with the statics removed, residuals at "
-                   "the catalog's hypocentres trend with azimuth beyond trendFlagS. The station "
-                   "terms now carry that lateral structure (Station statics section), so row 7 "
-                   "no longer shows it: absorbed, not absent." if lateral_before else
+                + ("Row 7 tested this before statics: with the statics removed, residuals at "
+                   "the catalog's hypocentres trend with azimuth beyond trendFlagS, consistent "
+                   f"with lateral structure {_model_label(inputs)} can't hold; the public "
+                   "catalog's own model and locations remain the alternative the test can't "
+                   "exclude. The station terms now carry whatever made that trend (Station "
+                   "statics section), so row 7 no longer shows it: absorbed, not absent."
+                   if lateral_before else
                    "Rows 1-7 flag no cause on this data, before or after statics.")
                 + (" With reference statics these offsets are not independent of the catalog "
                    "(Station statics section)." if inputs.statics.reference is not None else "")
@@ -1359,15 +1391,18 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
     lines += [
         ("Terms are relative delays: each event's origin time absorbs any constant shared by all "
          "its picks, so a term is a station-phase's delay against the event's weighted-median "
-         "pick, not an absolute time correction."), ""]
+         "pick, not an absolute time correction. Their common constant is not fixed by the data "
+         "(the polish starts from zero terms), and it moves every origin time by about the "
+         "same amount: the median dt of the public regional catalog comparison includes it. It "
+         "moves no location and no predicted arrival (tPred includes the static)."), ""]
     after_all = float(inputs.details.result.events["quality_rmsS"].median())
     prev = rep.previous_median_rms_s
     lines.append(
         f"Median rmsS over all {len(inputs.details.result.events)} located events with statics: "
-        f"{after_all:.3f} s" + (f"; the run dir's previous events_located.parquet, located "
-                                f"without statics: {prev:.3f} s." if prev is not None else
+        f"{after_all:.3f} s" + (f"; {rep.previous_median_rms_from}: {prev:.3f} s."
+                                if prev is not None else
                                 "; no no-statics events_located.parquet was in the run dir to "
-                                "compare with.")
+                                "compare with, and run.json held no value for this association.")
     )
     lines.append("")
     active = terms[terms["nEvents"] >= rep.min_events]
@@ -1459,7 +1494,8 @@ def _sigma_lines(rep: "StaticsReport", ratio_flag: float) -> list[str]:
             + ", ".join(f"{r.phase} over the {r.events} {r.robustSigmaS:.3f} s vs "
                         f"{r.configuredS:g} s" for r in above.itertuples(index=False))
             + f". Recommended locator.pickSigmaS (robust sigma of the {rep.sigma_events}): "
-            + ", ".join(f"{r.phase} {r.recommendedS:.3f} s" for r in cal.itertuples(index=False))
+            + ", ".join(f"{r.phase} {r.robustSigmaRoundedS:.3f} s"
+                        for r in cal.itertuples(index=False))
             + ". Not applied: the lead decides whether to change config. Until then hErrM / vErrM "
             "are formal errors at the configured sigma, smaller than this spread supports."
         )
