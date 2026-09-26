@@ -888,6 +888,12 @@ def sigma_section(inputs: DiagnosticsInputs, pa: pd.DataFrame) -> list[str]:
     return lines
 
 
+def _left_out(params: dict[str, Any]) -> str:
+    """The synthetic test's used stations left out for recording no pick in this run, if any."""
+    dropped = params.get("stationsWithoutPicks") or []
+    return f" (left out for recording no pick in this run: {', '.join(dropped)})" if dropped else ""
+
+
 def synthetic_section(inputs: DiagnosticsInputs) -> list[str]:
     """The stage's synthetic recovery test (synthetic.json) and the pick stats it used."""
     lines = ["## Synthetic recovery test (synthetic.json)", ""]
@@ -899,7 +905,8 @@ def synthetic_section(inputs: DiagnosticsInputs) -> list[str]:
     stats = params["pickStats"]
     noisy, clean = params["noisy"], params["noiseFree"]
     lines.append(
-        f"{rep.nEvents} synthetic events on the {params['nStations']} used stations, exact 1D "
+        f"{rep.nEvents} synthetic events on {params['nStations']} of the "
+        f"{len(inputs.details.stations)} used stations{_left_out(params)}, exact 1D "
         f"layered times plus Gaussian noise at pickSigmaS (P {rep.pickSigmaS['P']:g} s, S "
         f"{rep.pickSigmaS['S']:g} s); every station has a P pick, S kept with probability "
         f"{stats['sKeepProb']:.2f}, every pick at prob {stats['pickProb']:.2f} (source: "

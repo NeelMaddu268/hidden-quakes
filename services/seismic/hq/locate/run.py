@@ -4,7 +4,7 @@ Reads ``assoc_events.parquet``, ``assoc_picks.parquet``, the picks table the ass
 (``associator.picksTable``) and ``stations.parquet`` (its ``usedInRun`` stations), locates with
 the configured statics (``hq.locate.statics.locate_with_statics``) and the run's cache dir, then
 the synthetic recovery test
-(``hq.locate.synthetic``) on the same used stations and tables, and writes
+(``hq.locate.synthetic``) on the used stations that recorded picks (same tables), and writes
 ``events_located.parquet``, ``arrivals.parquet``, ``statics.parquet``, ``synthetic.json``
 (docs/02 §2), ``locate_flags.parquet`` (H2-internal, see ``hq.locate``) and ``diagnostics.md``
 (``hq.locate.diagnostics``). Null ``synthetic.sKeepProb`` / ``pickProb`` are measured from this
@@ -153,9 +153,10 @@ def reference_input(ctx: "RunContext") -> pd.DataFrame | None:
 def synthetic_stations(used: pd.DataFrame, picks: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """The used stations that recorded at least one pick in this run's picks table.
 
-    A usedInRun station with no picks at all (the data service served it nothing) would get
-    perfect synthetic picks and flatter the recovery test, so it is left out and named in the
-    run record (``synthetic.stationsWithoutPicks``).
+    A usedInRun station that recorded no pick in this run (for whatever reason: no data served,
+    a dead channel, a quiet window) would get perfect synthetic picks and flatter the recovery
+    test, so it is left out and named in the run record (``synthetic.stationsWithoutPicks``) and
+    in diagnostics.md.
     """
     with_picks = set(picks["stationId"].astype(str))
     keep = used["id"].astype(str).isin(with_picks).to_numpy()
@@ -168,9 +169,9 @@ def synthetic_stations(used: pd.DataFrame, picks: pd.DataFrame) -> tuple[pd.Data
 
 def synthetic_test(
     ctx: "RunContext", details: LocateDetails, picks: pd.DataFrame, stations: pd.DataFrame
-) -> tuple[SyntheticResult, list[str]]:
-    """The synthetic recovery test on the run's used stations that have picks, with measured
-    pick stats. Also returns the used stations left out for having no picks."""
+) -> SyntheticResult:
+    """The synthetic recovery test on the run's used stations that recorded picks, with measured
+    pick stats; ``params['stationsWithoutPicks']`` names the used stations left out."""
     cfg = ctx.config.seismology
     syn = cfg.synthetic
     stats = (
@@ -190,7 +191,9 @@ def synthetic_test(
         run=ctx.config.run,
         cache_dir=ctx.cache_dir,
     )
-    return run_synthetic(setup, geometry_label=ctx.run_id, pick_stats=stats), no_picks
+    result = run_synthetic(setup, geometry_label=ctx.run_id, pick_stats=stats)
+    result.params["stationsWithoutPicks"] = no_picks
+    return result
 
 
 def run(ctx: "RunContext") -> None:
@@ -212,7 +215,7 @@ def run(ctx: "RunContext") -> None:
                                   cache_dir=ctx.cache_dir, reference=reference,
                                   previous_events=previous)
     details = outcome.details
-    synthetic, synthetic_no_picks = synthetic_test(ctx, details, picks, stations)
+    synthetic = synthetic_test(ctx, details, picks, stations)
     catalog_path = ctx.path(CATALOG_TABLE)
     quakeml_path = ctx.path(CATALOG_QUAKEML)
     catalog = _read(catalog_path, "catalog") if catalog_path.is_file() else None
@@ -257,6 +260,8 @@ def run(ctx: "RunContext") -> None:
     rep = outcome.report
     counts = {
         **details.counts, "syntheticEvents": synthetic.report.nEvents,
+        "syntheticStations": int(synthetic.params["nStations"]),
+        "syntheticStationsWithoutPicks": len(synthetic.params["stationsWithoutPicks"]),
         "staticsPass": rep.pass_number,
         "staticsReferenceEvents": 0 if rep.reference is None else len(rep.reference),
         "staticsNonZero": int((rep.terms["staticS"] != 0.0).sum()),
@@ -269,7 +274,6 @@ def run(ctx: "RunContext") -> None:
         "synthetic": {
             "report": synthetic.report.model_dump(mode="json"),
             **{k: v for k, v in synthetic.params.items() if k not in SYNTHETIC_PARAMS_SKIPPED},
-            "stationsWithoutPicks": synthetic_no_picks,
         },
         "input": {
             "picksTable": cfg.associator.picksTable,
