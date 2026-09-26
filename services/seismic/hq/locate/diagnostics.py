@@ -9,20 +9,31 @@ says so and gives the counts. Rows (docs/lanes/H2-seismology.md, "Diagnostics fo
    not at ``sensorElevM`` fails the row.
 2. Datum check: noise-free P and S picks from the exact 1D layered times at every used station
    for synthetic events at ``diagnostics.datumCheck`` (known elevM), located by the run's locator
-   and tables; errors above ``passTolM`` fail the row.
+   and tables; errors above ``passTolM`` fail the row. The check uses the run's own model, sensor
+   elevations and tables, so it tests the locator's elevM bookkeeping only; the known public
+   events' depth offsets (catalog comparison) are the independent datum evidence the row cites.
 3. PyOcto elevM (association) vs relocated elevM, per event, joined through ``assocId``.
 4. Formal ``vErrM`` and the elevM spread for ``nS >= minSForDepth`` vs ``nS < minSForDepth``.
-5. Residuals of the picks used in the locations, split by ``Station.preprocessProfile``: median
-   and MAD (unscaled, as the outlier pass) per profile and phase.
+5. Residuals split by ``Station.preprocessProfile``, per profile and phase: MAD (unscaled, as the
+   outlier pass) over every associated pick at the final location (before the outlier pass
+   removes any, so a noisy profile can't look clean by losing its worst picks), MAD over the used
+   picks, and the fraction the outlier pass dropped.
 6. Median residual per station and phase over used picks (input for LOC-05 statics).
 7. Residual trend: least squares ``r = a + b cos(az) + c sin(az)`` per phase over used picks
-   (az: station azimuth from the epicentre, grid north), and the per-station medians against
-   station position and ``sensorElevM`` (input for LOC-07).
+   (az: station azimuth from the epicentre, grid north), the per-station medians against station
+   position and ``sensorElevM``, and the outlier pass's drop fraction west vs east of the
+   epicentre (input for LOC-07). With the public catalog in the run dir, the same fit with the
+   hypocentre fixed at the catalog's; its S/P amplitude ratio against the model's Vp/Vs at the
+   source depths separates an S-heavy (structural) trend from what a mislocated catalog
+   epicentre alone would give. The test can't exclude the public catalog's own model and
+   locations as a cause, and the conclusion says so.
 
 Residuals are ``tObs - tPred`` (positive: the pick is later than the model predicts). Also
-reported: the travel-time tables' error against the exact layered times at the located
-hypocentres (the shallow-interface bias LOC-02 recorded per layer), and a comparison with the
-public regional catalog when the run dir holds it.
+reported: the pick sigma against the observed residual spread (``hErrM`` / ``vErrM`` are formal
+errors at that sigma, without model error), the synthetic recovery test when the stage ran it,
+the travel-time tables' error against the exact layered times at the located hypocentres (the
+shallow-interface bias LOC-02 recorded per layer), and a comparison with the public regional
+catalog when the run dir holds it.
 """
 
 import json
@@ -41,6 +52,7 @@ from hq.locate.tt_grid import PHASES, layered_first_arrival
 
 if TYPE_CHECKING:
     from hq.locate import LocateDetails
+    from hq.locate.synthetic import SyntheticResult
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +94,7 @@ class DiagnosticsInputs:
     catalog: pd.DataFrame | None = None  # catalog.parquet rows when present
     catalog_errors: pd.DataFrame | None = None  # catalog_uncertainties() when catalog.quakeml is
     known_ids: tuple[str, ...] | None = None  # known/windows.json ids when present
+    synthetic: "SyntheticResult | None" = None  # the stage's synthetic recovery test
 
 
 def _cell(text: str) -> str:
@@ -222,7 +235,14 @@ def datum_check(inputs: DiagnosticsInputs) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def row_datum(inputs: DiagnosticsInputs) -> Row:
+def _known_depths(comp: pd.DataFrame | None) -> pd.DataFrame:
+    """Known public events with a candidate: dz (ours minus catalog elevM) and catalog z error."""
+    if comp is None:
+        return pd.DataFrame(columns=["catalogId", "dzM", "catalogZErrM"])
+    return comp[comp["known"] & comp["eventId"].notna()][["catalogId", "dzM", "catalogZErrM"]]
+
+
+def row_datum(inputs: DiagnosticsInputs, comp: pd.DataFrame | None = None) -> Row:
     dc = inputs.cfg.diagnostics.datumCheck
     check = datum_check(inputs)
     worst_z = float(check["dzM"].abs().max())
@@ -241,11 +261,27 @@ def row_datum(inputs: DiagnosticsInputs) -> Row:
         f"events at (e {dc.eM:g}, n {dc.nM:g}) m: {per}. Largest abs(dz) {worst_z:.0f} m, largest "
         f"dh {worst_h:.0f} m (passTolM {dc.passTolM:g} m).{datum}"
     )
+    known = _known_depths(comp)
+    if len(known):
+        z_err = known["catalogZErrM"].to_numpy(dtype=np.float64)
+        within = np.abs(known["dzM"].to_numpy(dtype=np.float64)) <= z_err
+        evidence = (
+            " Independent check: relocated minus public regional catalog elevM for the known "
+            "events: " + ", ".join(
+                f"{r.catalogId} {r.dzM:+.0f} m (catalog depth error {_f(r.catalogZErrM)} m)"
+                for r in known.itertuples(index=False)
+            ) + f"; {int(within.sum())} of {len(known)} within the catalog's stated depth error."
+        )
+    else:
+        evidence = (" No known public event was compared, so no independent datum check on this "
+                    "run.")
     if worst_z <= dc.passTolM and worst_h <= dc.passTolM:
         conclusion = (
-            "Not the cause: station elevations (sensorElevM), travel-time tables and hypocentres "
-            "share one datum (elevM, m ASL); depth appears only as depthKm = (refSurfaceElevM - "
-            "elevM) / 1000 in the output."
+            "Not the cause within what this check tests: the locator reports elevM consistently "
+            "(synthetic picks from the run's own model, sensorElevM and tables come back at their "
+            "elevM; depth appears only as depthKm = (refSurfaceElevM - elevM) / 1000). It can't "
+            "detect a wrong datum in the layer file, in H1's sensor elevations or in the catalog "
+            "depths." + evidence
         )
     else:
         conclusion = (
@@ -373,42 +409,94 @@ def residual_stats(ua: pd.DataFrame, by: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=[*by, "n", "medianS", "madS", "rmsS"])
 
 
-def row_profiles(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> Row:
+def picked_arrivals(details: "LocateDetails", stations: pd.DataFrame) -> pd.DataFrame:
+    """Every arrival with a pick (used or outlier-dropped), with station profile and position.
+
+    Residuals are at the final location, so the dropped picks keep the residual that got them
+    dropped.
+    """
+    arr = details.result.arrivals
+    arr = arr[arr["pickId"].notna().to_numpy(dtype=bool)]
+    ev = details.result.events[["id", "enu_e"]].rename(columns={"id": "eventId", "enu_e": "evE"})
+    st = stations[["id", "enu_e", "preprocessProfile"]].rename(
+        columns={"id": "stationId", "enu_e": "stE"}
+    )
+    st = st.assign(stationId=st["stationId"].astype(str),
+                   preprocessProfile=st["preprocessProfile"].astype(str))
+    out = arr.assign(eventId=arr["eventId"].astype(str), stationId=arr["stationId"].astype(str),
+                     phase=arr["phase"].astype(str),
+                     used=arr["usedInLocation"].to_numpy(dtype=bool))
+    out = out.merge(ev.assign(eventId=ev["eventId"].astype(str)), on="eventId", how="left")
+    out = out.merge(st, on="stationId", how="left", validate="many_to_one")
+    return out.reset_index(drop=True)
+
+
+def profile_stats(pa: pd.DataFrame) -> pd.DataFrame:
+    """Per phase and profile: picks, used picks, drop fraction, MAD over all and over used."""
+    rows = []
+    for (phase, profile), g in pa.groupby(["phase", "preprocessProfile"], sort=True):
+        r = g["residualS"].to_numpy(dtype=np.float64)
+        used = g["used"].to_numpy(dtype=bool)
+        rows.append({"phase": phase, "preprocessProfile": profile, "nAll": int(r.size),
+                     "nUsed": int(used.sum()), "dropFraction": 1.0 - used.sum() / r.size,
+                     "madAllS": _mad(r), "madUsedS": _mad(r[used]),
+                     "medianUsedS": float(np.median(r[used])) if used.any() else math.nan})
+    return pd.DataFrame(rows, columns=["phase", "preprocessProfile", "nAll", "nUsed",
+                                       "dropFraction", "madAllS", "madUsedS", "medianUsedS"])
+
+
+def row_profiles(inputs: DiagnosticsInputs, pa: pd.DataFrame) -> Row:
     dcfg = inputs.cfg.diagnostics
-    stats = residual_stats(ua, ["phase", "preprocessProfile"])
+    stats = profile_stats(pa)
     if stats.empty:
-        return Row(5, "No used picks.", "Can't conclude on this data: nothing was located.")
+        return Row(5, "No associated picks.", "Can't conclude on this data: nothing was located.")
     result = "; ".join(
-        f"{r.phase} {r.preprocessProfile}: n {r.n}, median {r.medianS:+.3f} s, MAD {r.madS:.3f} s, "
-        f"rms {r.rmsS:.3f} s" for r in stats.itertuples(index=False)
-    ) + ". MAD is unscaled (as the outlier pass)."
+        f"{r.phase} {r.preprocessProfile}: {r.nUsed} of {r.nAll} picks used "
+        f"({r.dropFraction:.0%} dropped by the outlier pass), MAD {r.madAllS:.3f} s over all, "
+        f"{_f(r.madUsedS, '.3f')} s over used, median used {_f(r.medianUsedS, '+.3f')} s"
+        for r in stats.itertuples(index=False)
+    ) + (". MAD is unscaled (as the outlier pass); 'all' is every associated pick at the final "
+         "location, before the outlier pass drops any.")
     notes = []
     degraded = []
     for phase, g in stats.groupby("phase", sort=True):
-        ok = g[g["n"] >= dcfg.minGroupSize]
+        ok = g[g["nAll"] >= dcfg.minGroupSize]
         if len(ok) < 2:
             notes.append(
                 f"{phase}: only {len(ok)} profile(s) with >= minGroupSize {dcfg.minGroupSize} picks "
-                f"({', '.join(f'{p} n {n}' for p, n in zip(g['preprocessProfile'], g['n'], strict=True))})"
+                f"({', '.join(f'{p} n {n}' for p, n in zip(g['preprocessProfile'], g['nAll'], strict=True))})"
             )
             continue
-        best = ok.loc[ok["madS"].idxmin()]
+        best = ok.loc[ok["madAllS"].idxmin()]
         for r in ok.itertuples(index=False):
-            if best["madS"] > 0 and r.madS > dcfg.degradationRatio * float(best["madS"]):
-                degraded.append(f"{phase} {r.preprocessProfile} MAD {r.madS:.3f} s = "
-                                f"{r.madS / float(best['madS']):.1f}x {best['preprocessProfile']}")
+            if best["madAllS"] > 0 and r.madAllS > dcfg.degradationRatio * float(best["madAllS"]):
+                text = (f"{phase} {r.preprocessProfile} MAD {r.madAllS:.3f} s = "
+                        f"{r.madAllS / float(best['madAllS']):.1f}x {best['preprocessProfile']} "
+                        f"({r.dropFraction:.0%} vs {float(best['dropFraction']):.0%} dropped)")
+                degraded.append((str(r.preprocessProfile), text))
+    prefix = dcfg.boreholeProfilePrefix
+    bore = sorted({p for p in stats["preprocessProfile"] if p.startswith(prefix)})
+    bore_bad = sorted({p for p, _ in degraded if p.startswith(prefix)})
+    scope = (f"borehole profiles (preprocessProfile {prefix}*): {', '.join(bore) or 'none'}")
     if degraded:
+        verdict = (
+            f"borehole picks degraded ({', '.join(bore_bad)})" if bore_bad else
+            f"no borehole profile among them ({scope}), so this suspect does not explain it; "
+            "rows 6 and 7 look at station and lateral terms"
+        )
         conclusion = (
-            f"Degraded: {'; '.join(degraded)}. Set per-profile sigma (locator.profilePickSigmaS) "
-            "and ask H1 whether borehole-B picks those stations better."
+            f"Degraded: {'; '.join(t for _, t in degraded)} (MAD over all associated picks, so "
+            f"the outlier pass can't hide it); {verdict}. Set per-profile sigma "
+            "(locator.profilePickSigmaS) for those profiles"
+            + ("; ask H1 whether borehole-B picks those stations better." if bore_bad else ".")
         )
     elif notes and len(notes) == stats["phase"].nunique():
         conclusion = "Can't conclude on this data: " + "; ".join(notes) + "."
     else:
         conclusion = (
-            f"No profile's residual MAD exceeds {dcfg.degradationRatio:g}x the best profile's for "
-            "the same phase: resampling does not visibly degrade borehole picks at this level"
-            + (f" ({'; '.join(notes)})" if notes else "") + "."
+            f"No profile's MAD over all its associated picks exceeds {dcfg.degradationRatio:g}x "
+            f"the best profile's for the same phase ({scope}): resampling does not visibly degrade "
+            "borehole picks at this level" + (f" ({'; '.join(notes)})" if notes else "") + "."
         )
     return Row(5, result, conclusion)
 
@@ -524,9 +612,40 @@ def _flagged(az: pd.DataFrame, min_n: int, flag_s: float) -> pd.DataFrame:
     return ok[ok["amplitudeS"] > flag_s]
 
 
+def side_drop_text(pa: pd.DataFrame) -> str:
+    """Outlier-pass drop fraction per phase for stations west vs east of the epicentre."""
+    if pa.empty:
+        return ""
+    bits = []
+    for phase, g in pa.groupby("phase", sort=True):
+        east = (g["stE"] > g["evE"]).to_numpy(dtype=bool)
+        used = g["used"].to_numpy(dtype=bool)
+        parts = []
+        for label, mask in (("west", ~east), ("east", east)):
+            n = int(mask.sum())
+            parts.append(f"{label} {1.0 - used[mask].sum() / n:.0%} of {n}" if n else
+                         f"{label} none")
+        bits.append(f"{phase} " + ", ".join(parts))
+    return ("; outlier pass drop fraction by station side of the epicentre: "
+            + "; ".join(bits))
+
+
+def sp_ratio(inputs: DiagnosticsInputs, cat_az: pd.DataFrame,
+             at_catalog: pd.DataFrame) -> tuple[float, float, float]:
+    """(S/P trend amplitude ratio, model Vp/Vs at the median catalog source elevM, that elevM)."""
+    amp = cat_az.set_index("phase")["amplitudeS"]
+    if not {"P", "S"} <= set(amp.index) or not (amp["P"] > 0):
+        return math.nan, math.nan, math.nan
+    z = float(np.median(at_catalog["evElevM"].to_numpy(dtype=np.float64)))
+    model = inputs.details.locator.tables.model
+    vpvs = float(model.vp_at(z)) / float(model.vs_at(z))
+    return float(amp["S"] / amp["P"]), vpvs, z
+
+
 def row_trend(
     inputs: DiagnosticsInputs,
     ua: pd.DataFrame,
+    pa: pd.DataFrame,
     at_catalog: pd.DataFrame | None,
     comp: pd.DataFrame | None,
 ) -> Row:
@@ -543,18 +662,23 @@ def row_trend(
             f"{_f(r.gradientAzDeg)} deg, r(median, sensorElevM) {_f(r.corrWithSensorElevM, '+.2f')}"
             for r in pos.itertuples(index=False)
         )
+    result += side_drop_text(pa)
     cat_az = None
+    ratio = vpvs = src_z = math.nan
     if at_catalog is not None and len(at_catalog):
         cat_az = azimuth_fit(at_catalog)
         corr = {
             ph: float(np.corrcoef(g["residualS"], g["sensorElevM"])[0, 1]) if len(g) > 2 else math.nan
             for ph, g in at_catalog.groupby("phase", sort=True)
         }
+        ratio, vpvs, src_z = sp_ratio(inputs, cat_az, at_catalog)
         result += (
             f". With the hypocentre fixed at the public regional catalog's for the "
             f"{at_catalog['catalogId'].nunique()} compared event(s) (origin time by weighted "
             "median): " + _fit_text(cat_az) + "; r(residual, sensorElevM) "
             + ", ".join(f"{ph} {_f(v, '+.2f')}" for ph, v in corr.items())
+            + f"; S/P amplitude ratio {_f(ratio, '.2f')} vs the model's Vp/Vs "
+            f"{_f(vpvs, '.2f')} at the catalog's median source elevM {_f(src_z)} m"
         )
     result += ". Azimuths are grid (UTM) azimuths from the epicentre to the station."
     ours = _flagged(az, dcfg.minGroupSize, dcfg.trendFlagS)
@@ -574,10 +698,30 @@ def row_trend(
                 "not the early side")
             shift = (f" Our candidates sit a median {math.hypot(de, dn):.0f} m from the catalog's "
                      f"epicentres toward az {shift_az:.0f} deg, {side}.")
+        alternative = (
+            "The test fixes the public catalog's hypocentres, so the catalog's own velocity model "
+            "and locations remain a possible cause it can't exclude."
+        )
+        if math.isfinite(ratio) and ratio > vpvs * dcfg.trendSPRatioExcess:
+            verdict = (
+                f"Consistent with lateral structure the 1D model can't hold (near-surface or "
+                f"deeper): with the hypocentre at the public regional catalog's, residuals trend "
+                f"with azimuth ({listed}; above trendFlagS {dcfg.trendFlagS:g} s), and the trend "
+                f"is S-heavy: S/P amplitude ratio {ratio:.2f}, while a mislocated catalog "
+                f"epicentre alone would give about the model's Vp/Vs {vpvs:.2f} at the source "
+                f"depths (S-heavy above {dcfg.trendSPRatioExcess:g}x that)."
+            )
+        else:
+            verdict = (
+                f"Lateral structure or the public catalog's own locations: with the hypocentre at "
+                f"the catalog's, residuals trend with azimuth ({listed}; above trendFlagS "
+                f"{dcfg.trendFlagS:g} s), but the S/P amplitude ratio {_f(ratio, '.2f')} is not "
+                f"above {dcfg.trendSPRatioExcess:g}x the model's Vp/Vs {_f(vpvs, '.2f')}, which is "
+                "what a mislocated catalog epicentre alone would give; this test can't separate "
+                "the two."
+            )
         conclusion = (
-            f"Lateral structure the 1D model can't hold: with the hypocentre at the public regional "
-            f"catalog's, residuals trend with azimuth ({listed}; above trendFlagS "
-            f"{dcfg.trendFlagS:g} s).{shift} Fix: 3D grids (LOC-07), or station terms fixed at "
+            f"{verdict}{shift} {alternative} Fix: 3D grids (LOC-07), or station terms fixed at "
             "reference hypocentres (LOC-05)."
         )
     elif len(ours):
@@ -611,8 +755,8 @@ def catalog_hypocentre_residuals(
     """
     from hq.locate.locator import weighted_median
 
-    columns = ["catalogId", "eventId", "stationId", "phase", "residualS", "evE", "evN", "stE",
-               "stN", "sensorElevM"]
+    columns = ["catalogId", "eventId", "stationId", "phase", "residualS", "evE", "evN",
+               "evElevM", "stE", "stN", "sensorElevM"]
     if inputs.catalog is None or comp.empty:
         return pd.DataFrame(columns=columns)
     locator = inputs.details.locator
@@ -639,10 +783,84 @@ def catalog_hypocentre_residuals(
         parts.append(pd.DataFrame({
             "catalogId": r.catalogId, "eventId": r.eventId, "stationId": sid.to_numpy(),
             "phase": a["phase"].astype(str).to_numpy()[keep], "residualS": res[keep], "evE": e,
-            "evN": n, "stE": st.loc[sid, "enu_e"].to_numpy(), "stN": st.loc[sid, "enu_n"].to_numpy(),
+            "evN": n, "evElevM": z, "stE": st.loc[sid, "enu_e"].to_numpy(),
+            "stN": st.loc[sid, "enu_n"].to_numpy(),
             "sensorElevM": st.loc[sid, "sensorElevM"].to_numpy(),
         }))
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=columns)
+
+
+# --- pick sigma vs residual spread, synthetic test -----------------------------------------------
+
+
+def sigma_section(inputs: DiagnosticsInputs, pa: pd.DataFrame) -> list[str]:
+    """Configured pick sigma next to the observed residual spread; hErrM/vErrM are formal."""
+    lcfg = inputs.cfg.locator
+    lines = ["## Pick sigma vs observed residual spread (hErrM / vErrM are formal errors)", ""]
+    if pa.empty:
+        lines.append("No associated picks: no residual spread to compare with the pick sigma.")
+        return lines
+    parts = []
+    for phase, g in pa.groupby("phase", sort=True):
+        sigma = lcfg.pickSigmaS.P if phase == "P" else lcfg.pickSigmaS.S
+        r_used = g.loc[g["used"], "residualS"].to_numpy(dtype=np.float64)
+        r_all = g["residualS"].to_numpy(dtype=np.float64)
+        # Laplace scale (maximum likelihood): mean |r - median(r)|
+        scale = (float(np.mean(np.abs(r_used - np.median(r_used)))) if r_used.size
+                 else math.nan)
+        parts.append(
+            f"{phase}: pickSigmaS {sigma:g} s; used picks (n {r_used.size}) MAD "
+            f"{_f(_mad(r_used), '.3f')} s, mean abs deviation {_f(scale, '.3f')} s = "
+            f"{_f(scale / sigma, '.1f')}x sigma; all associated picks (n {r_all.size}) MAD "
+            f"{_f(_mad(r_all), '.3f')} s"
+        )
+    overrides = ", ".join(f"{k} P {v.P:g} / S {v.S:g} s"
+                          for k, v in sorted(lcfg.profilePickSigmaS.items())) or "none"
+    lines.append("; ".join(parts) + f". Per-profile sigma overrides: {overrides}.")
+    lines.append("")
+    lines.append(
+        "hErrM and vErrM in events_located.parquet are formal errors: the spread of the PDF "
+        "exp(-misfit) with each pick weighted by prob / pickSigmaS. They assume residuals on the "
+        "pickSigmaS scale and contain no model error. The used-pick residual spread above is "
+        "larger than pickSigmaS, so the formal errors are too small even before model error; the "
+        "public regional catalog comparison below shows how far model error can move a "
+        "hypocentre. pickSigmaS is updated from the Tier A residual spread once LOC-06 assigns "
+        "tiers (lane doc, Locator step 2); until then compare formal errors only with formal "
+        "errors (synthetic noisy.medianFormalVErrM)."
+    )
+    return lines
+
+
+def synthetic_section(inputs: DiagnosticsInputs) -> list[str]:
+    """The stage's synthetic recovery test (synthetic.json) and the pick stats it used."""
+    lines = ["## Synthetic recovery test (synthetic.json)", ""]
+    syn = inputs.synthetic
+    if syn is None:
+        lines.append("Not run with this report.")
+        return lines
+    rep, params = syn.report, syn.params
+    stats = params["pickStats"]
+    noisy, clean = params["noisy"], params["noiseFree"]
+    lines.append(
+        f"{rep.nEvents} synthetic events on the {params['nStations']} used stations, exact 1D "
+        f"layered times plus Gaussian noise at pickSigmaS (P {rep.pickSigmaS['P']:g} s, S "
+        f"{rep.pickSigmaS['S']:g} s); every station has a P pick, S kept with probability "
+        f"{stats['sKeepProb']:.2f}, every pick at prob {stats['pickProb']:.2f} (source: "
+        f"{stats['source']}). True errors (noisy): median h {rep.medianHErrM:.0f} m, median v "
+        f"{rep.medianVErrM:.0f} m, p90 v {rep.p90VErrM:.0f} m, median depth bias "
+        f"{rep.medianDepthBiasM:+.0f} m ({params['depthBiasSign']}); noise-free depth bias "
+        f"{clean['medianDepthBiasM']:+.0f} m. Formal errors (noisy): median hErrM "
+        f"{_f(noisy['medianFormalHErrM'])} m, vErrM {_f(noisy['medianFormalVErrM'])} m; true error "
+        f"within them for {_f(100 * (noisy['fracHWithinHErrM'] or math.nan))}% (h) and "
+        f"{_f(100 * (noisy['fracVWithinVErrM'] or math.nan))}% (v)."
+    )
+    lines.append("")
+    lines.append(
+        "The synthetic picks carry noise at pickSigmaS, below the observed residual spread (section "
+        "above), and a P pick at every station, and the test has no model error, so these errors "
+        "are a lower bound for the real candidate events."
+    )
+    return lines
 
 
 # --- table error exposure ------------------------------------------------------------------------
@@ -815,17 +1033,24 @@ def catalog_section(
     if len(have):
         within_h = have["withinH"].eq(True)
         within_z = have["withinZ"].eq(True)
+        stated_h = have["withinH"].notna()
+        no_h = int((~stated_h).sum())
+        no_z = int(have["withinZ"].isna().sum())
         lines.append(
             f"Median offsets over those {len(have)}: dt {have['dtS'].median():+.2f} s, de "
             f"{have['deM'].median():+.0f} m, dn {have['dnM'].median():+.0f} m, dz "
             f"{have['dzM'].median():+.0f} m. Within the catalog's stated horizontal uncertainty: "
             f"{int(within_h.sum())} of {len(have)}; depth: {int(within_z.sum())} of {len(have)}; "
-            f"both: {int((within_h & within_z).sum())} of {len(have)}."
+            f"both: {int((within_h & within_z).sum())} of {len(have)}"
+            + (f" (no stated horizontal error for {no_h}, no stated depth error for {no_z}; those "
+               "count as neither within nor outside)" if no_h or no_z else "") + ". 'Within' "
+            "compares the offset with the catalog's stated error alone; our formal hErrM / vErrM "
+            "(see the pick sigma section: formal, no model error) are not added."
         )
         lines.append("")
         lines.append("| catalogId | known | eventId | dt (s) | dist (m) | de (m) | dn (m) | dz (m) "
-                     "| our hErrM / vErrM (m) | catalog h / z err (m) | nSta / nP / nS | rmsS (s) "
-                     "| within catalog h / z |")
+                     "| our formal hErrM / vErrM (m) | catalog h / z err (m) | nSta / nP / nS | "
+                     "rmsS (s) | within catalog stated error h / z |")
         lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | "
                      "--- |")
         for r in have.itertuples(index=False):
@@ -837,23 +1062,28 @@ def catalog_section(
                 f"{r.withinZ} |"
             )
         lines.append("")
-        outside = int((~within_h).sum())
+        outside = int(have["withinH"].eq(False).sum())
         if outside and lateral:
             lines.append(
                 f"Conclusion: {outside} of {len(have)} compared events lie outside the catalog's "
                 f"horizontal uncertainty (median de {have['deM'].median():+.0f} m, dn "
-                f"{have['dnM'].median():+.0f} m). Row 7 flags the cause: with the hypocentre at "
-                "the catalog's, residuals trend with azimuth beyond trendFlagS (lateral structure "
-                "the 1D model can't hold; the row gives the shift direction)."
+                f"{have['dnM'].median():+.0f} m). Row 7 tests the cause: with the hypocentre at "
+                "the catalog's, residuals trend with azimuth beyond trendFlagS. Its S/P amplitude "
+                "ratio against the model's Vp/Vs tells whether that trend is S-heavy (consistent "
+                "with lateral structure the 1D model can't hold); the public catalog's own model "
+                "and locations remain the alternative the test can't exclude."
             )
         elif outside:
             lines.append(
                 f"Conclusion: {outside} of {len(have)} compared events lie outside the catalog's "
                 "horizontal uncertainty, and rows 1-7 flag no cause on this data."
             )
+        elif int(stated_h.sum()) == 0:
+            lines.append("Conclusion: the catalog states no horizontal uncertainty for the "
+                         "compared events, so none can be judged within or outside it.")
         else:
-            lines.append("Conclusion: every compared event lies within the catalog's stated "
-                         "horizontal uncertainty.")
+            lines.append(f"Conclusion: every compared event with a stated horizontal uncertainty "
+                         f"({int(stated_h.sum())} of {len(have)}) lies within it.")
     missing = comp[comp["eventId"].isna()]
     if len(missing):
         lines.append("")
@@ -867,6 +1097,7 @@ def catalog_section(
 
 def build_rows(inputs: DiagnosticsInputs) -> tuple[list[Row], dict[str, list[str]]]:
     ua = used_arrivals(inputs.details, inputs.details.stations)
+    pa = picked_arrivals(inputs.details, inputs.details.stations)
     comp = (
         compare_with_catalog(inputs.details.result.events, inputs.catalog,
                              inputs.catalog_errors, inputs.cfg, inputs.known_ids)
@@ -875,12 +1106,13 @@ def build_rows(inputs: DiagnosticsInputs) -> tuple[list[Row], dict[str, list[str
     at_catalog = catalog_hypocentre_residuals(inputs, comp) if comp is not None else None
     row1, stations_table = row_borehole(inputs)
     row6, medians_table = row_stations(inputs, ua)
-    rows = [row1, row_datum(inputs), row_pyocto(inputs), row_ns(inputs),
-            row_profiles(inputs, ua), row6, row_trend(inputs, ua, at_catalog, comp)]
+    rows = [row1, row_datum(inputs, comp), row_pyocto(inputs), row_ns(inputs),
+            row_profiles(inputs, pa), row6, row_trend(inputs, ua, pa, at_catalog, comp)]
     dcfg = inputs.cfg.diagnostics
     lateral = at_catalog is not None and len(at_catalog) > 0 and len(
         _flagged(azimuth_fit(at_catalog), dcfg.minGroupSize, dcfg.trendFlagS)) > 0
     return rows, {"stations": stations_table, "medians": medians_table,
+                  "sigma": sigma_section(inputs, pa), "synthetic": synthetic_section(inputs),
                   "tableErrors": table_error_section(inputs, ua),
                   "catalog": catalog_section(inputs, comp, lateral)}
 
@@ -907,7 +1139,9 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
         (
             "Every result below is computed by `hq.locate.diagnostics` from this run's tables and "
             "locator; thresholds are in seismology.yaml (`diagnostics`). Residual = tObs - tPred "
-            "over the picks used in the final locations."
+            "at the final location, over the picks used in it unless a row says it also counts "
+            "the picks the outlier pass dropped. hErrM / vErrM are formal errors (see the pick "
+            "sigma section)."
         ),
         "",
         "## Depth diagnostics (docs/lanes/H2-seismology.md)",
@@ -920,7 +1154,8 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
         test = test.format(k=inputs.cfg.diagnostics.minSForDepth)
         cells = [str(row.number), suspect, test, row.result, row.conclusion, fix]
         lines.append("| " + " | ".join(_cell(x) for x in cells) + " |")
-    lines += ["", *extra["tableErrors"], "", *extra["catalog"], "",
+    lines += ["", *extra["sigma"], "", *extra["synthetic"], "", *extra["tableErrors"], "",
+              *extra["catalog"], "",
               "## Appendix A: stations (row 1)", "", *extra["stations"], "",
               "## Appendix B: residuals per station and phase (row 6, input for LOC-05)", "",
               *extra["medians"], "",

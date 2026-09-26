@@ -5,8 +5,9 @@ Search volume (ENU metres around the run origin, elevM): ``e`` and ``n`` in
 (null: ``run.refSurfaceElevM``, the ground at the origin, because a 1D search has no DEM). Every
 grid is anchored at the volume's lower corner; the top is snapped down onto the fine lattice, so
 no hypocentre lies above the configured top. Where the ground in the volume lies below that top,
-hypocentres can still land above the local ground: this locator does not check them against a DEM
-(that check is LOC-04's and does not exist yet).
+hypocentres can still land above the local ground: this locator does not check them. ``locate``
+(LOC-04) flags them against the nearest used station's surfaceElevM (``locate_flags.parquet``,
+``aboveNearestStationSurface``); there is no DEM.
 
 Misfit at a node, over the picks in use:
     d_i = t_obs_i - T_i(node) - static_i

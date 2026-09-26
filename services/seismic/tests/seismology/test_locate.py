@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from hq_contracts.io import columns_for, dtypes_for, from_frame, read_table, write_table
-from hq_contracts.models import SeismicEvent
+from hq_contracts.models import SeismicEvent, SyntheticTest
 
 from hq.associate.result import EVENT_DTYPES as ASSOC_EVENT_DTYPES
 from hq.associate.result import PICK_DTYPES as ASSOC_PICK_DTYPES
@@ -40,11 +40,13 @@ EVENTS = (
 NO_PICK_STATION = "T.S09"  # no pick in the second event: predicted-only rows
 OUTLIER_STATION = "T.S05"
 UNUSED_STATION = ("T.X99", 30000.0, 0.0, 1600.0)  # usedInRun false, beyond the table reach
+SYNTHETIC_EVENTS = 2
 
 
 def _config(loc02: Any) -> SeismologyConfig:
     raw = loc02.test_config().model_dump(mode="json")
     raw["diagnostics"]["datumCheck"]["elevM"] = [-2000.0]  # one datum-check event keeps it fast
+    raw["synthetic"]["nEvents"] = SYNTHETIC_EVENTS  # the stage's synthetic test, kept small
     return SeismologyConfig.model_validate(raw)
 
 
@@ -202,6 +204,15 @@ def test_arrivals_and_statics_tables(located: LocateDetails) -> None:
     assert _dtypes(flags) == _want(FLAG_DTYPES)
     assert list(flags["eventId"]) == list(located.result.events["id"])
     assert list(flags["assocId"]) == list(located.assoc_ids)
+    # Local-ground proxy: the nearest used station's surfaceElevM (events at -2000 / -3200 m).
+    ev = located.result.events
+    st = located.stations
+    for row, surface in zip(ev.itertuples(index=False), flags["nearestStationSurfaceElevM"],
+                            strict=True):
+        k = int(np.argmin(np.hypot(st["enu_e"] - row.enu_e, st["enu_n"] - row.enu_n)))
+        assert surface == st["surfaceElevM"].iloc[k]
+    assert not flags["aboveNearestStationSurface"].any()
+    assert located.counts["eventsAboveNearestStationSurface"] == 0
     assert located.counts["events"] == len(EVENTS)
     assert located.velocity_model["name"] and located.record["locate"]["runId"] == RUN_ID
 
@@ -293,6 +304,21 @@ def test_stage_writes_tables_report_and_record(
     assert locator["counts"]["events"] == len(EVENTS)
     assert locator["params"]["method"] == "grid1d" and "diagnostics" in locator["params"]
 
+    # synthetic.json: the docs/02 SyntheticTest, from the run's used stations and pick stats.
+    synthetic = SyntheticTest.model_validate_json(ctx.path("synthetic.json").read_text("utf-8"))
+    assert synthetic.nEvents == SYNTHETIC_EVENTS == locator["counts"]["syntheticEvents"]
+    record = locator["params"]["synthetic"]
+    assert record["report"] == synthetic.model_dump(mode="json")
+    stats = record["pickStats"]
+    ev = located.result.events
+    assert stats["source"] == "measured from the run"
+    assert stats["sKeepProb"] == pytest.approx(float(np.median(ev["quality_nS"]
+                                                                / ev["quality_nStations"])))
+    probs = world["picks"].set_index("id").loc[[p for ids in ev["pickIds"] for p in ids], "prob"]
+    assert stats["pickProb"] == pytest.approx(float(probs.median()))
+    assert record["stationGeometry"]["stationIds"] == list(located.stations["id"])
+    assert record["stationGeometry"]["label"] == ctx.run_id
+
     report = ctx.path("diagnostics.md").read_text(encoding="utf-8")
     rows = {}
     for line in report.splitlines():
@@ -304,7 +330,12 @@ def test_stage_writes_tables_report_and_record(
         assert cells[3] and cells[4], f"row {number} lacks a result or a conclusion"
     assert rows[1][4].startswith("Not the cause")  # boreholes carry their depths
     assert rows[2][4].startswith("Not the cause")  # the datum check recovers the event
+    assert "No known public event was compared" in rows[2][4]
+    # Row 5 counts every associated pick: the planted P outlier sits in the 'surface' profile.
+    assert "P surface: " in rows[5][3] and "dropped by the outlier pass" in rows[5][3]
     assert "catalog.parquet is not in the run dir" in report
+    assert "## Pick sigma vs observed residual spread" in report
+    assert f"{SYNTHETIC_EVENTS} synthetic events on the {len(located.stations)} used" in report
 
 
 @pytest.mark.smoke
@@ -343,10 +374,74 @@ def test_catalog_comparison_and_row_seven_at_catalog_hypocentres(
     assert [line.split("|")[1].strip() for line in table] == ["pub0", "pub1"]
     assert all(line.rstrip(" |").endswith("True / True") for line in table)
     assert "No located candidate within tolerance for 1 public event(s): pub-far" in report
-    assert "every compared event lies within the catalog's stated horizontal uncertainty" in report
+    assert "every compared event with a stated horizontal uncertainty (2 of 2) lies within" in report
+    row2 = next(line for line in report.splitlines() if line.startswith("| 2 |"))
+    assert "Independent check" in row2 and "2 of 2 within the catalog's stated depth" in row2
     row7 = next(line for line in report.splitlines() if line.startswith("| 7 |"))
     assert "hypocentre fixed at the public regional catalog's for the 2 compared" in row7
     assert "Lateral structure" not in row7  # truth hypocentres: noise-level residuals only
+
+
+def _catalog(run: Any, shift_e_m: float) -> pd.DataFrame:
+    """Public-catalog rows at the truth hypocentres, moved ``shift_e_m`` east."""
+    rows = []
+    for k, (e, n, z, dt, *_) in enumerate(EVENTS):
+        lat, lon, _ = from_enu(e + shift_e_m, n, z - run.origin.elevM, run.origin)
+        rows.append({"id": f"pub{k}", "t": run.window_start_s + dt, "latitude": float(lat),
+                     "longitude": float(lon), "elevM": z, "depthKm": -z / 1000.0,
+                     "depthDatum": "km below sea level (test)", "mag": 1.0, "magType": "ml",
+                     "enu_e": e + shift_e_m, "enu_n": n, "enu_u": z - run.origin.elevM})
+    return pd.DataFrame(rows)
+
+
+@pytest.mark.smoke
+def test_row_seven_sp_ratio_separates_catalog_mislocation_from_structure(
+    world: dict[str, Any], located: LocateDetails
+) -> None:
+    """A mislocated catalog epicentre gives S/P ~ Vp/Vs; an S-heavy trend reads as structure."""
+    from hq.locate import diagnostics as dg
+
+    run, cfg = world["run"], world["cfg"]
+    catalog = _catalog(run, -1500.0)  # the "catalog" puts both events 1.5 km west of the truth
+    inputs = dg.DiagnosticsInputs(RUN_ID, run, cfg, world["stations"], located,
+                                  world["assoc"].events, catalog=catalog)
+    comp = dg.compare_with_catalog(located.result.events, catalog, None, cfg)
+    at_cat = dg.catalog_hypocentre_residuals(inputs, comp)
+    ratio, vpvs, _ = dg.sp_ratio(inputs, dg.azimuth_fit(at_cat), at_cat)
+    assert abs(ratio / vpvs - 1.0) < 0.15, (ratio, vpvs)  # pure mislocation: about Vp/Vs
+    ua = dg.used_arrivals(located, located.stations)
+    pa = dg.picked_arrivals(located, located.stations)
+    row = dg.row_trend(inputs, ua, pa, at_cat, comp)
+    assert row.conclusion.startswith("Lateral structure or the public catalog's own locations")
+    assert "can't exclude" in row.conclusion and "outlier pass drop fraction" in row.result
+
+    # Planted S-heavy trend (late to the east, S 4x P) at a fixed hypocentre: structure.
+    st = located.stations
+    az = np.arctan2(st["enu_e"], st["enu_n"]).to_numpy()
+    planted = pd.concat([
+        pd.DataFrame({"catalogId": "pub0", "eventId": located.result.events["id"].iloc[0],
+                      "stationId": st["id"], "phase": ph, "residualS": amp * np.sin(az),
+                      "evE": 0.0, "evN": 0.0, "evElevM": -2000.0, "stE": st["enu_e"],
+                      "stN": st["enu_n"], "sensorElevM": st["sensorElevM"]})
+        for ph, amp in (("P", 0.1), ("S", 0.4))
+    ], ignore_index=True)
+    ratio, vpvs, _ = dg.sp_ratio(inputs, dg.azimuth_fit(planted), planted)
+    assert ratio == pytest.approx(4.0) and ratio > vpvs * cfg.diagnostics.trendSPRatioExcess
+    row = dg.row_trend(inputs, ua, pa, planted, None)
+    assert row.conclusion.startswith("Consistent with lateral structure")
+    assert "can't exclude" in row.conclusion
+
+
+@pytest.mark.smoke
+def test_measured_pick_stats_need_located_events(world: dict[str, Any]) -> None:
+    from hq.locate.synthetic import measured_pick_stats, with_pick_stats
+
+    none = locate(empty_result(), world["picks"], world["stations"], world["cfg"], world["run"],
+                  cache_dir=world["cache"])
+    with pytest.raises(ValueError, match="no located events"):
+        measured_pick_stats(none.events, world["picks"])
+    filled = with_pick_stats(world["cfg"], {"sKeepProb": 0.5, "pickProb": 0.7})
+    assert (filled.synthetic.sKeepProb, filled.synthetic.pickProb) == (0.5, 0.7)
 
 
 # --- stage registry -------------------------------------------------------------------------------

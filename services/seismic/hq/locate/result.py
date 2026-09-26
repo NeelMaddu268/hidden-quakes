@@ -54,6 +54,9 @@ FLAG_DTYPES: dict[str, str] = {
     "vErrGridLimited": "bool",  # vErrM floored at one fine cell
     "nDroppedPicks": "int64",  # picks dropped by the outlier pass
     "outlierPassSkipped": "bool",  # dropping would have left fewer than locator.minPicks
+    # Local-ground proxy (no DEM): surfaceElevM of the epicentrally nearest usedInRun station.
+    "nearestStationSurfaceElevM": "float64",
+    "aboveNearestStationSurface": "bool",  # elevM above that proxy: hypocentre in the air
 }
 EVENTS_MODEL = "LocatedEvent"  # model names in the parquet metadata
 ARRIVALS_MODEL = "Arrival"
