@@ -16,13 +16,34 @@ export function verticalExaggerationOf(scene: Pick<SceneMeta, "verticalExaggerat
   return ve;
 }
 
+/** Scene x of an east offset (m): x = e / 1000. The one place the horizontal mapping lives. */
+export function eastMToSceneX(eM: number): number {
+  return eM / METERS_PER_UNIT;
+}
+
+/** Scene z of a north offset (m): z = −n / 1000 (north is −z). */
+export function northMToSceneZ(nM: number): number {
+  return -nM / METERS_PER_UNIT;
+}
+
+/** Inverse of `eastMToSceneX`. */
+export function sceneXToEastM(x: number): number {
+  return x * METERS_PER_UNIT;
+}
+
+/** Inverse of `northMToSceneZ`. */
+export function sceneZToNorthM(z: number): number {
+  return -z * METERS_PER_UNIT;
+}
+
+/** Scene y of an up offset from the origin (m): y = u / 1000 × verticalExaggeration. */
+export function upMToSceneY(uM: number, verticalExaggeration: number): number {
+  return (uM / METERS_PER_UNIT) * verticalExaggeration;
+}
+
 /** Scene position of an ENU point as a new tuple. Use `writeEnuToScene` in hot paths. */
 export function enuToScene(enu: Enu, verticalExaggeration = 1): [number, number, number] {
-  return [
-    enu.e / METERS_PER_UNIT,
-    (enu.u / METERS_PER_UNIT) * verticalExaggeration,
-    -enu.n / METERS_PER_UNIT,
-  ];
+  return [eastMToSceneX(enu.e), upMToSceneY(enu.u, verticalExaggeration), northMToSceneZ(enu.n)];
 }
 
 /** Writes the scene position of `enu` into `out[offset..offset+2]` (typed-array instance attributes). */
@@ -32,16 +53,16 @@ export function writeEnuToScene(
   out: Float32Array | number[],
   offset: number,
 ): void {
-  out[offset] = enu.e / METERS_PER_UNIT;
-  out[offset + 1] = (enu.u / METERS_PER_UNIT) * verticalExaggeration;
-  out[offset + 2] = -enu.n / METERS_PER_UNIT;
+  out[offset] = eastMToSceneX(enu.e);
+  out[offset + 1] = upMToSceneY(enu.u, verticalExaggeration);
+  out[offset + 2] = northMToSceneZ(enu.n);
 }
 
 /** Inverse of `enuToScene` (picking, tests). */
 export function sceneToEnu(x: number, y: number, z: number, verticalExaggeration = 1): Enu {
   return {
-    e: x * METERS_PER_UNIT,
-    n: -z * METERS_PER_UNIT,
+    e: sceneXToEastM(x),
+    n: sceneZToNorthM(z),
     u: (y / verticalExaggeration) * METERS_PER_UNIT,
   };
 }
@@ -51,7 +72,7 @@ export function elevMToSceneY(
   elevM: number,
   scene: Pick<SceneMeta, "originElevM" | "verticalExaggeration">,
 ): number {
-  return ((elevM - scene.originElevM) / METERS_PER_UNIT) * verticalExaggerationOf(scene);
+  return upMToSceneY(elevM - scene.originElevM, verticalExaggerationOf(scene));
 }
 
 /** Scene y of a display depth below the site surface: elevM = refSurfaceElevM − depthKm × 1000. */
