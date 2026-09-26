@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FILTER_LOOK, type FilterLook } from "../filters/fade";
 import { appearTimeOf, TIMELINE } from "../reveal/timeline";
+import { TIME_ALL } from "../time/clock";
 import type { CatalogEvent, SeismicEvent, Station } from "../types";
 import {
   buildSectionModel,
@@ -67,7 +68,7 @@ const W = 480, H = 260;
 const plot = sectionPlot(model, W, H);
 
 function state(over: Partial<SectionState> = {}, look: FilterLook = { ...FILTER_LOOK.all }): SectionState {
-  return { phase: "revealed", filter: "all", revealElapsedS: TIMELINE.endS, look, selectedIndex: -1, ...over };
+  return { phase: "revealed", filter: "all", revealElapsedS: TIMELINE.endS, timeNowRel: TIME_ALL, look, selectedIndex: -1, ...over };
 }
 function draw(s: SectionState) {
   const ctx = new RecordingCtx();
@@ -191,5 +192,45 @@ describe("sectionHit", () => {
     const s = { phase: "public" as const, filter: "public" as const, revealElapsedS: 0 };
     expect(sectionHit(model, plot, s, x1, y1, 3)).toBe("a");
     expect(sectionHit(model, plot, s, x2, y2, 10)).toBeNull();
+  });
+});
+
+describe("time mode in the depth section (WEB-06)", () => {
+  // The same records with distinct origin times (s since windowStart = 0): a 1000, b 2000, c 3000, d 4000; public p1 500, p2 3500.
+  const timed = events.map((e, i) => ({ ...e, t: (i + 1) * 1000 }));
+  const timedCatalog = catalog.map((c, i) => ({ ...c, t: i === 0 ? 500 : 3500 }));
+  const tm = buildSectionModel(timed, timedCatalog, stations, { refSurfaceElevM: REF }, 0);
+  const tp = sectionPlot(tm, W, H);
+  const drawAt = (now: number) => {
+    const ctx = new RecordingCtx();
+    drawSection(ctx, tm, tp, state({ timeNowRel: now }), style, W, H);
+    return ctx;
+  };
+  const east = (ctx: RecordingCtx, color: string) =>
+    ctx.fills.filter((f) => f.style === color).flatMap((f) => f.arcs.map((a) => +((a.x - tp.ox) / tp.k).toFixed(6))).sort((a, b) => a - b);
+
+  it("draws only events whose origin time has passed; TIME_ALL draws everything", () => {
+    expect(east(drawAt(2500), "amber")).toEqual([0, 1]); // a, b
+    expect(east(drawAt(2500), "white")).toEqual([0.05]); // p1
+    expect(east(drawAt(0), "amber")).toEqual([]);
+    expect(east(drawAt(0), "white")).toEqual([]);
+    expect(east(drawAt(TIME_ALL), "amber")).toEqual([-1, 0, 1, 2]);
+    expect(east(drawAt(TIME_ALL), "white")).toEqual([-3, 0.05]);
+  });
+
+  it("rings the selected event only once it is shown, and never picks a hidden one", () => {
+    const ring = (now: number) => {
+      const ctx = new RecordingCtx();
+      drawSection(ctx, tm, tp, state({ timeNowRel: now, selectedIndex: 1 }), style, W, H);
+      return ctx.strokes.filter((x) => x.style === "halo" && x.arcs.length === 1).length;
+    };
+    expect(ring(1500)).toBe(0);
+    expect(ring(2000)).toBe(1);
+    const x = tp.ox + 1 * tp.k;
+    const y = tp.oy + 3 * tp.k;
+    const s = { phase: "revealed" as const, filter: "all" as const, revealElapsedS: TIMELINE.endS };
+    expect(sectionHit(tm, tp, { ...s, timeNowRel: 1500 }, x, y, 10)).toBeNull();
+    expect(sectionHit(tm, tp, { ...s, timeNowRel: 2000 }, x, y, 10)).toBe("b");
+    expect(sectionHit(tm, tp, s, x, y, 10)).toBe("b"); // no time state: time mode off
   });
 });

@@ -1,6 +1,8 @@
 import { InstancedMesh, Matrix4, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { enuToScene } from "../coords";
+import { LOOK } from "../look";
+import { TIME_ALL } from "../time/clock";
 import { createEventUniforms, EVENT_FRAGMENT_SHADER, EVENT_VERTEX_SHADER, writeInstanceMatrices } from "./material";
 
 describe("writeInstanceMatrices", () => {
@@ -47,5 +49,24 @@ describe("createEventUniforms", () => {
   it("rejects an empty or inverted pixel clamp (GLSL clamp is undefined when lo > hi)", () => {
     expect(() => createEventUniforms({ color: "#FFFFFF", size: 0.06, minPx: 20, maxPx: 18 })).toThrow(/minPx/);
     expect(() => createEventUniforms({ color: "#FFFFFF", size: 0.06, minPx: 0, maxPx: 18 })).toThrow(/minPx/);
+  });
+});
+
+describe("time mode in the event shader (WEB-06)", () => {
+  it("hides an instance until tNow reaches its time and lights recent ones in the token hue (no whitening)", () => {
+    expect(EVENT_VERTEX_SHADER).toContain("attribute float aTime;");
+    expect(EVENT_VERTEX_SHADER).toContain("float tShown = step(0.0, tAge);");
+    expect(EVENT_VERTEX_SHADER).toMatch(/vAlpha = [^;]*\* tShown \*/);
+    // The whitening mix is the reveal pop's alone: a recent amber event never turns white (public).
+    const whiten = EVENT_FRAGMENT_SHADER.match(/mix\(uColor, vec3\(1\.0\), ([^;]*)\);/);
+    expect(whiten).not.toBeNull();
+    expect(whiten![1]).not.toContain("vWarm");
+    expect(EVENT_FRAGMENT_SHADER).toContain("(1.0 + vBoost + vWarm)");
+  });
+
+  it("defaults to time mode off: every instance shown, none lit", () => {
+    const u = createEventUniforms({ color: "#FFB547", size: 0.06, minPx: 2, maxPx: 18 });
+    expect(u.uTimeNow.value).toBe(TIME_ALL);
+    expect(u.uTimeGlowS.value).toBe(LOOK.time.glowWindowS);
   });
 });

@@ -11,7 +11,7 @@ import type { CatalogEvent } from "../types";
  * - never before the reveal or under PUBLIC (the candidate layer is hidden);
  * - under STRICT only Tier A (B and C are faded to 0.05, which reads as hidden);
  * - while revealing, only once the instance has appeared on the reveal clock.
- * (Time mode's tNow does not gate the glyphs yet; when WEB-06 does, gate picking here too.)
+ * Time mode (WEB-06) gates separately: callers also require `shownAt(time, sceneFx.timeNowRel)`.
  */
 export function candidatePickable(
   phase: DemoPhase,
