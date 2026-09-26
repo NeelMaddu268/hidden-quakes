@@ -755,6 +755,19 @@ class SeismologyConfig(BaseModel):
         corner = math.hypot(vol.halfWidthM, vol.halfWidthM)
         if corner >= self.grids.rMaxM:
             raise ValueError("grids.rMaxM must exceed the search volume's half diagonal")
+        reasons, assoc = self.matching.reasons, self.associator
+        if reasons.minPickProb != assoc.minPickProb:
+            raise ValueError(
+                f"matching.reasons.minPickProb {reasons.minPickProb} must equal "
+                f"associator.minPickProb {assoc.minPickProb}: 'too few picks' counts the picks "
+                "the associator reads"
+            )
+        if reasons.minStations > assoc.minStations:
+            raise ValueError(
+                f"matching.reasons.minStations {reasons.minStations} must not exceed "
+                f"associator.minStations {assoc.minStations}: a public event picked on enough "
+                "stations for the associator would read 'too few picks'"
+            )
         zone = self.synthetic.zone
         reach = math.hypot(zone.centerEM, zone.centerNM) + zone.radiusM
         if reach > vol.halfWidthM or zone.bottomElevM < vol.bottomElevM:
