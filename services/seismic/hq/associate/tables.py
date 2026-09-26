@@ -57,7 +57,10 @@ from hq.locate.velocity import LayerModel
 
 log = logging.getLogger(__name__)
 
-FORMAT = "pyocto-0.2.0-station-specific-1d"  # PyOcto's reader this layout is written for
+# The PyOcto release whose table reader, z convention and constructor arguments this package was
+# checked against (its Python and C++ source). Another version fails at import (hq.associate.core).
+PYOCTO_VERSION = "0.2.0"
+FORMAT = f"pyocto-{PYOCTO_VERSION}-station-specific-1d"  # PyOcto's reader this layout is written for
 BUILDER_VERSION = 1  # bump when the builder changes what it writes
 CACHE_SUBDIR = Path("ttgrids") / "pyocto"
 HEADER = struct.Struct("=iid")  # nx, nz, delta_km, native order as PyOcto's fread expects
