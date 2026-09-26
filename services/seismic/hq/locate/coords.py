@@ -46,6 +46,11 @@ def _origin_utm(origin: Origin) -> tuple[float, float]:
     return float(x0), float(y0)
 
 
+def origin_utm(origin: Origin) -> tuple[float, float]:
+    """The origin's EPSG:32612 easting and northing (m): ``e = easting - x0``, ``n = northing - y0``."""
+    return _origin_utm(origin)
+
+
 def to_enu(
     lat: ArrayLike, lon: ArrayLike, elev_m: ArrayLike, origin: Origin
 ) -> tuple[FloatArray, FloatArray, FloatArray]:

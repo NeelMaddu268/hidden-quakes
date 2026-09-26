@@ -24,7 +24,8 @@ const DEG = Math.PI / 180;
 const VIEW_ANGLES: Record<CameraView, { azimuthDeg: number; elevationDeg: number }> = {
   // Surface view from the south-southeast, looking across and into the ground.
   oblique: { azimuthDeg: 28, elevationDeg: 30 },
-  // Low view from due south, just above the cloud's mid-depth: depth reads as height on screen.
+  // Low view from due south, level with the middle of the column from the site surface down to the
+  // deepest framed event: depth reads as height on screen, with the surface (0 km) in frame.
   side: { azimuthDeg: 0, elevationDeg: 4 },
   // Straight down, north up. Not exactly 90° so orbit controls keep a well-defined azimuth.
   plan: { azimuthDeg: 0, elevationDeg: 89.9 },
@@ -38,10 +39,16 @@ export function fitDistance(radius: number, aspect: number, fovDeg: number = CAM
   return (radius / Math.sin(Math.min(halfV, halfH))) * FRAME_MARGIN;
 }
 
-/** Where each preset looks. Oblique looks between the surface and the cloud so both are in frame. */
+/**
+ * Where each preset looks. Oblique looks between the surface and the cloud so both are in frame. Side
+ * looks at the middle of the whole column, site surface to deepest framed event, so a compact deep
+ * cluster (the real showcase: a column several km below the site) still shows the surface, the
+ * ruler's 0 km and the wellheads, instead of zooming onto the cluster alone.
+ */
 function presetTarget(view: CameraView, b: SceneBounds): Vec3 {
   const [cx, cy, cz] = b.center;
   if (view === "oblique") return [cx, (b.surfaceY + cy) / 2, cz];
+  if (view === "side") return [cx, (Math.max(b.surfaceY, b.max[1]) + b.min[1]) / 2, cz];
   return [cx, cy, cz];
 }
 
@@ -52,9 +59,9 @@ export function presetPose(
   fovDeg: number = CAMERA_FOV_DEG,
 ): CameraPose {
   const target = presetTarget(view, bounds);
-  // Frame a sphere around the target that holds every corner of the box; oblique extends the box
-  // up to the surface so the ground above the cloud is in frame too.
-  const yTop = view === "oblique" ? Math.max(bounds.max[1], bounds.surfaceY) : bounds.max[1];
+  // Frame a sphere around the target that holds every corner of the box; oblique and side extend the
+  // box up to the surface so the ground above the cloud is in frame too.
+  const yTop = view === "plan" ? bounds.max[1] : Math.max(bounds.max[1], bounds.surfaceY);
   let radius = bounds.radius;
   for (const x of [bounds.min[0], bounds.max[0]])
     for (const y of [bounds.min[1], yTop])

@@ -1,16 +1,18 @@
 SHELL := /bin/bash
 RUN ?=
+BUNDLE ?= apps/web/public/data/showcase
 
-.PHONY: help check check-copy check-py check-web contracts check-contracts mock run export api dev build offline publish-run fetch-run runs
+.PHONY: help check check-copy check-py check-web contracts check-contracts mock run export story api dev build offline publish-run fetch-run runs
 
 help:
-	@echo "make check                  typecheck + lint + smoke tests (run before every PR)"
+	@echo "make check                  typecheck + lint + smoke tests + copy check (run before every PR)"
 	@echo "make check-copy             flag numbers-as-facts and forbidden phrases in README, docs/demo and the shell"
 	@echo "make contracts              regenerate TS from the Python contracts"
 	@echo "make check-contracts        regenerate and fail if the committed TS/schema differ"
 	@echo "make mock                   regenerate the synthetic mock bundle in apps/web/public/data/mock"
 	@echo "make run [STAGES=a,b]       run the showcase pipeline; HQ_DATA_DIR=<dir> overrides <main checkout>/data"
 	@echo "make export RUN=<id>        export a run to apps/web/public/data/<mode>/ and validate the bundle"
+	@echo "make story [BUNDLE=<dir>]   fill the pitch and Devpost placeholders from a bundle into data/story/ (default bundle: showcase)"
 	@echo "make api                    run the live worker + API (services/api/config.yaml; ARGS='--port 8001')"
 	@echo "make api ARGS=freeze-snapshot  copy the last good live window into apps/web/public/data/snapshot/ (commit it)"
 	@echo "make dev                    run the web app locally (next dev)"
@@ -23,7 +25,7 @@ help:
 check: check-py check-web check-copy
 
 check-py:
-	@cd services/seismic && uv run ruff check . ../../packages/contracts/python ../../scripts/mock-fixture.py && { uv run pytest -q -m smoke; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 5 ]; }
+	@cd services/seismic && uv run ruff check . ../../packages/contracts/python ../../scripts/mock-fixture.py ../../scripts/render-story.py && uv run pytest -q -m smoke
 	@cd services/api && uv run ruff check . && uv run pytest -q -m smoke
 
 check-web:
@@ -49,6 +51,9 @@ export:
 	@test -n "$(RUN)" || { echo "usage: make export RUN=<runId>"; exit 1; }
 	@bash scripts/export-showcase.sh "$(RUN)"
 
+story:
+	@cd services/seismic && uv run python ../../scripts/render-story.py "$(abspath $(BUNDLE))"
+
 api:
 	@cd services/api && uv run hq-api $(ARGS)
 
@@ -62,17 +67,7 @@ offline:
 	bash scripts/serve-offline.sh $(if $(NO_BUILD),--no-build,)
 
 publish-run:
-	@set -e; \
-	test -n "$(RUN)" || { echo "usage: make publish-run RUN=<runId>"; exit 1; }; \
-	test -d "data/showcase/runs/$(RUN)" || { echo "no such run: data/showcase/runs/$(RUN)"; exit 1; }; \
-	tarball="$${TMPDIR:-/tmp}/run-$(RUN).tgz"; \
-	tar -czf "$$tarball" -C data/showcase/runs "$(RUN)"; \
-	if gh release view "run-$(RUN)" >/dev/null 2>&1; then \
-	  gh release upload "run-$(RUN)" "$$tarball" --clobber; \
-	else \
-	  gh release create "run-$(RUN)" "$$tarball" --prerelease --title "run $(RUN)" --notes "Pipeline run tables. Fetch with: make fetch-run RUN=$(RUN)"; \
-	fi; \
-	echo "published run-$(RUN)"
+	@bash scripts/publish-run.sh "$(RUN)" $(if $(FORCE),--force,)
 
 fetch-run:
 	@set -e; \

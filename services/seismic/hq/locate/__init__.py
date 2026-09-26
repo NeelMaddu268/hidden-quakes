@@ -16,10 +16,13 @@ Inputs
 Per event
     Its associated picks go through ``hq.locate.locator.Locator`` (coarse then fine grid search,
     weighted L1 with the origin time removed analytically, one outlier pass, PDF errors) on the
-    per-station 1D tables of the configured layer model (``hq.locate.tt_grid``). Tables are
-    cached under ``<cache_dir>/ttgrids/``; without ``cache_dir`` (the docs/02 call) they go to a
+    travel-time tables ``locator.method`` names: the per-station 1D tables of the configured layer
+    model (``grid1d``, ``hq.locate.tt_grid``) or the per-station 3D tables of the 3D model
+    (``grid3d``, ``hq.locate.tt_grid3d``; 1D tables for stations outside it). Tables are cached
+    under ``<cache_dir>/ttgrids/``; without ``cache_dir`` (the docs/02 call) grid1d tables go to a
     temporary directory kept for the life of the process, so repeated validation reruns in one
-    process build them once.
+    process build them once. grid3d reads the 3D model from ``<cache_dir>/velocity/``; without
+    ``cache_dir`` it uses the data dir's cache (``default_cache_dir``), where the model lives.
 
 Outputs (``hq.locate.result`` has the dtypes)
     ``events`` (``events_located.parquet``): ``SeismicEvent`` fields except ``tier``,
@@ -28,7 +31,7 @@ Outputs (``hq.locate.result`` has the dtypes)
     ``hq-<runId>-NNNNNN``, numbered from 000000 in origin-time order (ties: assocId); ``runId`` is
     ``run_id`` (the docs/02 call has none, so ``run.name`` stands in); ``source`` is
     ``hq-pipeline``; latitude/longitude come from ``hq.locate.coords.from_enu``; ``depthKm`` is
-    ``(run.refSurfaceElevM - elevM) / 1000``; ``quality.method`` is ``grid1d`` and
+    ``(run.refSurfaceElevM - elevM) / 1000``; ``quality.method`` is ``locator.method`` and
     ``quality.statics`` is true only when a used pick carried a non-zero static;
     ``meanPickProb`` is the mean ``prob`` of the picks used in the final location, which
     are ``pickIds``; ``revealOrder`` is -1.
@@ -85,7 +88,7 @@ from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
 from hq.locate.coords import from_enu, to_enu
 from hq.locate.locator import (
-    METHOD,
+    GRID3D,
     PICK_COLUMNS,
     EventLocation,
     Locator,
@@ -102,6 +105,7 @@ from hq.locate.result import (
     typed_frame,
 )
 from hq.locate.tt_grid import PHASES
+from hq.locate.tt_grid3d import Model3dSource
 from hq.locate.velocity import LayerModel, load_configured_model
 
 if TYPE_CHECKING:
@@ -131,6 +135,29 @@ PLACEHOLDER_TIER = "C"  # only to validate rows as SeismicEvent; tier columns ar
 Statics = Mapping[tuple[str, str], float]
 
 _process_cache: list[Path] = []  # the process-lifetime table cache when no cache_dir is given
+_data_cache_logged: list[Path] = []  # grid3d data caches already logged (default_cache_dir)
+
+
+def default_cache_dir(cfg: SeismologyConfig) -> Path:
+    """The table cache when the caller passes no ``cache_dir`` (the docs/02 call).
+
+    grid1d: a temporary directory kept for the life of the process. grid3d: the data dir's cache
+    as ``hq run`` resolves it (``hq.cli.resolve_data_dir``: ``$HQ_DATA_DIR``, else
+    ``<checkout root>/data``), because the 3D model file lives in its ``velocity/`` and the 3D
+    tables (minutes to build at 100 m) are shared through its ``ttgrids/3d/``. Raises when no
+    data dir resolves; a missing model file fails when the model is opened.
+    """
+    if cfg.locator.method != GRID3D:
+        return _process_cache_dir()
+    from hq.cli import resolve_data_dir  # H4's data-dir rule; imported here to avoid a cycle
+    from hq.runs import CACHE_DIRNAME
+
+    cache = resolve_data_dir(None, Path(__file__).resolve().parent) / CACHE_DIRNAME
+    if cache not in _data_cache_logged:
+        _data_cache_logged.append(cache)
+        log.warning("locate: no cache_dir given and locator.method is grid3d: the 3D model and "
+                    "the tables come from %s", cache)
+    return cache
 
 
 def _process_cache_dir() -> Path:
@@ -365,6 +392,7 @@ def locate_detailed(
     event_statics: Mapping[str, Statics] | None = None,
     static_events: Mapping[tuple[str, str], int] | None = None,
     model: LayerModel | None = None,
+    model3d: Model3dSource | None = None,
 ) -> LocateDetails:
     """``locate`` plus flags, the per-event locations, counts and the run record.
 
@@ -372,7 +400,8 @@ def locate_detailed(
     ``event_statics`` (keyed by assocId) gives those events their own map instead (LOC-05's
     held-out reference terms). ``static_events`` is the ``nEvents`` column of the statics table:
     how many events each static was estimated from (default: the located events that used a
-    pick of that station-phase). ``model`` replaces the configured layer file (tests).
+    pick of that station-phase). ``model`` replaces the configured layer file and ``model3d``
+    the configured 3D model file (tests).
     """
     started = time.perf_counter()
     rid = run.name if run_id is None else run_id
@@ -389,7 +418,8 @@ def locate_detailed(
         model=load_configured_model(cfg.velocity) if model is None else model,
         config=cfg,
         run=run,
-        cache_dir=Path(cache_dir) if cache_dir is not None else _process_cache_dir(),
+        cache_dir=Path(cache_dir) if cache_dir is not None else default_cache_dir(cfg),
+        model3d=model3d,
     )
     locator = build_locator(setup)
     located = (
@@ -494,7 +524,7 @@ def locate_detailed(
             "flagsTable": "locate_flags.parquet (H2-internal): " + ", ".join(FLAG_DTYPES),
             "stations": {"nUsed": len(used), "ids": locator.station_ids},
             "pickers": pickers,
-            "method": METHOD,
+            "method": locator.method,
         },
     }
     runtime = time.perf_counter() - started
@@ -529,15 +559,35 @@ def locate(
     *,
     run_id: str | None = None,
     cache_dir: Path | None = None,
+    statics: pd.DataFrame | None = None,
 ) -> LocateResult:
     """Locate every association event (docs/02 §5); see the module docstring.
 
     ``run_id`` (keyword only; the docs/02 call leaves it out, and ``run.name`` stands in) goes
     into event ids and ``runId``. ``cache_dir`` caches the travel-time tables under
-    ``<cache_dir>/ttgrids/``. Statics follow ``statics.mode`` (``hq.locate.statics``):
-    selfConsistent iterates them here; referenceEvents needs a match pass this call has no
-    access to, so it locates without statics (pass 1).
+    ``<cache_dir>/ttgrids/``. Without ``statics``, statics follow ``statics.mode``
+    (``hq.locate.statics``): selfConsistent iterates them here; referenceEvents needs a match
+    pass this call has no access to, so it locates without statics (pass 1).
+
+    ``statics`` (keyword only): a ``statics.parquet``-shaped table (``stationId``, ``phase``,
+    ``staticS``) of fixed station terms, applied additively to every event instead of
+    ``statics.mode``; station-phases not in it get 0. Validation reruns pass the showcase run's
+    own ``statics.parquet`` so their events are located, and so graded by the run's tier bars,
+    on the same scale as the run's events (REQ-H1-5).
     """
+    if statics is not None:
+        from hq.locate.statics import statics_map  # imports this package
+
+        missing = {"stationId", "phase", "staticS"} - set(statics.columns)
+        if missing:
+            raise ValueError(f"locate: statics table lacks columns {sorted(missing)}")
+        if statics["staticS"].isna().any():
+            raise ValueError("locate: statics table has null staticS values")
+        return locate_detailed(
+            assoc, picks, stations, cfg, run, run_id=run_id, cache_dir=cache_dir,
+            statics=statics_map(statics),
+        ).result
+
     from hq.locate.statics import locate_with_statics  # imports this package
 
     return locate_with_statics(

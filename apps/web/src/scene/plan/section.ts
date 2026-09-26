@@ -1,6 +1,7 @@
 // The plan view's depth section (WEB-07): every event projected onto grid east versus depth below the
 // site surface, drawn with Canvas2D. Model arrays are built once per bundle; drawing reads the shared
-// reveal clock, eased filter look and selection each frame and allocates nothing of its own. Depth is
+// reveal clock, time-mode "now" (WEB-06), eased filter look and selection each frame and allocates
+// nothing of its own. Depth is
 // always (refSurfaceElevM − elevM) / 1000 (sectionPoints); published catalog depths are never read.
 
 import { tierStyle } from "@hq/visualization";
@@ -9,8 +10,10 @@ import { candidateRevealUniform } from "../events/driver";
 import { buildCandidateInstances, TIER_INDEX } from "../events/instances";
 import type { FilterLook } from "../filters/fade";
 import { candidatePickable, publicSelectTargets } from "../picking/selection";
+import { shownAt, TIME_ALL } from "../time/clock";
 import type { CatalogEvent, SceneMeta, SeismicEvent, Station } from "../types";
-import { sectionFit, sectionPoints, type SectionFit, type SectionPoints } from "./geometry";
+import { FRAME_TRIM } from "../camera/bounds";
+import { sectionPoints, sectionStructureFit, type SectionFit, type SectionPoints } from "./geometry";
 
 export interface SectionModel {
   candidates: SectionPoints;
@@ -22,6 +25,9 @@ export interface SectionModel {
   candidateIds: readonly string[];
   candidateTier: Float32Array;
   candidateAppearAt: Float32Array;
+  /** Origin times, seconds since windowStart (time mode), for candidates and public events. */
+  candidateTime: Float32Array;
+  publicTime: Float32Array;
   /** For each public event, the candidate id clicking it selects (its matched event), or null. */
   publicTargets: readonly (string | null)[];
   indexById: ReadonlyMap<string, number>;
@@ -37,6 +43,8 @@ export function buildSectionModel(
 ): SectionModel {
   const points = sectionPoints(events, catalog, stations, scene);
   const inst = buildCandidateInstances(events, 1, windowStart);
+  const publicTime = new Float32Array(catalog.length);
+  for (let i = 0; i < catalog.length; i++) publicTime[i] = catalog[i].t - windowStart;
   const borehole = new Uint8Array(stations.length);
   for (let i = 0; i < stations.length; i++) borehole[i] = stations[i].kind === "borehole" ? 1 : 0;
   return {
@@ -48,6 +56,8 @@ export function buildSectionModel(
     candidateIds: inst.ids,
     candidateTier: inst.tiers,
     candidateAppearAt: inst.appearAt,
+    candidateTime: inst.times,
+    publicTime,
     publicTargets: publicSelectTargets(catalog, inst.indexById),
     indexById: inst.indexById,
   };
@@ -76,32 +86,95 @@ export interface SectionPlot {
   /** Axis ticks, computed once per layout (labels are derived numbers, never copy). */
   depthTicks: readonly Tick[];
   eastTicks: readonly Tick[];
+  /** What the frame is fitted to: Tier A and B candidates, or every event when there are none. */
+  framedOn: "structure" | "all";
 }
 
 const fmtKm = (v: number) => `${+v.toFixed(3)}`;
 
-/** True-scale fit of the whole population (no trimming) into the plot area of a `width × height` canvas. */
+/** Tier A and B candidates' section points: what the plan camera frames (Canvas → framingPositions). */
+function framedPoints(model: SectionModel): Float64Array {
+  const xy = model.candidates.xy;
+  let n = 0;
+  for (let i = 0; i < model.candidateTier.length; i++) if (model.candidateTier[i] <= TIER_INDEX.B) n++;
+  const out = new Float64Array(n * 2);
+  let j = 0;
+  for (let i = 0; i < model.candidateTier.length; i++) {
+    if (model.candidateTier[i] > TIER_INDEX.B) continue;
+    out[j++] = xy[i * 2];
+    out[j++] = xy[i * 2 + 1];
+  }
+  return out;
+}
+
+/** Every candidate and public event's section point, for the fallback frame. */
+function allPoints(model: SectionModel): Float64Array {
+  const a = model.candidates.xy;
+  const b = model.publicEvents.xy;
+  const out = new Float64Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+/**
+ * True-scale layout of a `width × height` canvas framed on the structure (Tier A and B, as the plan
+ * camera frames it), from the site surface down (sectionStructureFit). Events outside the frame are
+ * clipped by drawSection and counted by sectionOutside. Ticks cover the whole visible plot area.
+ */
 export function sectionPlot(model: SectionModel, width: number, height: number): SectionPlot {
   const P = SECTION_PAD;
   const w = width - P.left - P.right;
   const h = height - P.top - P.bottom;
-  const fit = sectionFit([model.candidates, model.publicEvents], [model.sensors, model.wellheads], w, h, P.inner);
+  const framed = framedPoints(model);
+  const fit = sectionStructureFit(framed, allPoints(model), w, h, P.inner, FRAME_TRIM);
   const ox = P.left + fit.offsetX;
   const oy = P.top + fit.offsetY;
   const k = fit.pxPerKm;
+  const d0 = (P.top - oy) / k;
+  const d1 = (P.top + h - oy) / k;
+  const e0 = (P.left - ox) / k;
+  const e1 = (P.left + w - ox) / k;
   const depthTicks: Tick[] = [];
-  const dStep = niceStep(fit.maxDepth - fit.minDepth || 1, 5);
-  for (let d = Math.ceil(fit.minDepth / dStep) * dStep; d <= fit.maxDepth + 1e-9; d += dStep) {
-    const at = oy + d * k;
-    if (at >= P.top - 0.5 && at <= P.top + h + 0.5) depthTicks.push({ at, label: fmtKm(d) });
+  const dStep = niceStep(d1 - d0 || 1, 5);
+  for (let d = Math.ceil(d0 / dStep) * dStep; d <= d1 + 1e-9; d += dStep) {
+    depthTicks.push({ at: oy + d * k, label: fmtKm(Math.abs(d) < 1e-9 ? 0 : d) });
   }
   const eastTicks: Tick[] = [];
-  const eStep = niceStep(fit.maxEast - fit.minEast || 1, 6);
-  for (let e = Math.ceil(fit.minEast / eStep) * eStep; e <= fit.maxEast + 1e-9; e += eStep) {
-    const at = ox + e * k;
-    if (at >= P.left - 0.5 && at <= P.left + w + 0.5) eastTicks.push({ at, label: fmtKm(e) });
+  const eStep = niceStep(e1 - e0 || 1, 6);
+  for (let e = Math.ceil(e0 / eStep) * eStep; e <= e1 + 1e-9; e += eStep) {
+    eastTicks.push({ at: ox + e * k, label: fmtKm(Math.abs(e) < 1e-9 ? 0 : e) });
   }
-  return { fit, x0: P.left, y0: P.top, w, h, ox, oy, k, depthTicks, eastTicks };
+  return { fit, x0: P.left, y0: P.top, w, h, ox, oy, k, depthTicks, eastTicks, framedOn: framed.length >= 2 ? "structure" : "all" };
+}
+
+/**
+ * How many events fall outside the plot area (their centers), per layer: the panel states this count,
+ * so framing on the structure never hides events without saying so.
+ */
+export function sectionOutside(model: SectionModel, plot: SectionPlot): { candidates: number; publicEvents: number } {
+  const count = (xy: Float64Array) => {
+    let n = 0;
+    for (let i = 0; i < xy.length; i += 2) {
+      const x = plot.ox + xy[i] * plot.k;
+      const y = plot.oy + xy[i + 1] * plot.k;
+      if (x < plot.x0 || x > plot.x0 + plot.w || y < plot.y0 || y > plot.y0 + plot.h) n++;
+    }
+    return n;
+  };
+  return { candidates: count(model.candidates.xy), publicEvents: count(model.publicEvents.xy) };
+}
+
+/** The header's accounting line: events whose centers fall outside the framed plot (counted, never hidden). */
+export function outsideText(outside: { candidates: number; publicEvents: number } | null): string {
+  if (!outside) return "";
+  const { candidates, publicEvents } = outside;
+  if (candidates === 0 && publicEvents === 0) return "Every event is inside this frame";
+  const parts: string[] = [];
+  if (candidates > 0) parts.push(`${candidates.toLocaleString("en-US")} candidate`);
+  if (publicEvents > 0) parts.push(`${publicEvents.toLocaleString("en-US")} public`);
+  const n = candidates + publicEvents;
+  return `${parts.join(" and ")} event${n === 1 ? "" : "s"} outside this frame`;
 }
 
 /** A "nice" tick step (1, 2 or 5 × 10^n km) giving about `target` ticks over `span` km. */
@@ -134,12 +207,18 @@ export interface Ctx2D {
   stroke(): void;
   fillText(text: string, x: number, y: number): void;
   setLineDash(segments: number[]): void;
+  save(): void;
+  restore(): void;
+  rect(x: number, y: number, w: number, h: number): void;
+  clip(): void;
 }
 
 export interface SectionState {
   phase: DemoPhase;
   filter: EventFilter;
   revealElapsedS: number;
+  /** Time mode "now", seconds since windowStart (scene/time/clock → timeNowRel); TIME_ALL when off. */
+  timeNowRel: number;
   look: Readonly<FilterLook>;
   selectedIndex: number;
 }
@@ -209,6 +288,13 @@ export function drawSection(
     ctx.fillText(t.label, t.at, y0 + h + 6);
   }
 
+  // Everything below is data: clip it to the plot area (events outside the structure frame are counted
+  // by sectionOutside and stated in the panel, not drawn over the axes).
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y0, w, h);
+  ctx.clip();
+
   // Site surface (depth 0), dashed.
   ctx.setLineDash(DASH);
   ctx.globalAlpha = 0.9;
@@ -250,13 +336,16 @@ export function drawSection(
     }
   }
 
-  // Public regional catalog: visible from the first frame at the layer's eased weight.
+  // Public regional catalog: visible from the first frame at the layer's eased weight (in time mode,
+  // once tNow reaches each event).
   const pub = model.publicEvents.xy;
+  const now = state.timeNowRel;
   if (state.look.publicLayer > 0.001) {
     ctx.globalAlpha = state.look.publicLayer;
     ctx.fillStyle = style.publicDot;
     ctx.beginPath();
     for (let i = 0; i < pub.length; i += 2) {
+      if (!shownAt(model.publicTime[i >> 1], now)) continue;
       const x = ox + pub[i] * k;
       const y = oy + pub[i + 1] * k;
       ctx.moveTo(x + SECTION_GLYPH.publicPx, y);
@@ -279,6 +368,7 @@ export function drawSection(
       ctx.beginPath();
       for (let i = 0; i < count; i++) {
         if (model.candidateTier[i] !== tier || model.candidateAppearAt[i] > clock) continue;
+        if (!shownAt(model.candidateTime[i], now)) continue;
         const x = ox + cand[i * 2] * k;
         const y = oy + cand[i * 2 + 1] * k;
         ctx.moveTo(x + r, y);
@@ -295,6 +385,7 @@ export function drawSection(
       ctx.beginPath();
       for (let i = 0; i < count; i++) {
         if (model.candidateTier[i] !== TIER_INDEX.A || model.candidateAppearAt[i] > clock) continue;
+        if (!shownAt(model.candidateTime[i], now)) continue;
         const x = ox + cand[i * 2] * k;
         const y = oy + cand[i * 2 + 1] * k;
         const hPx = err[i * 2] * k;
@@ -314,7 +405,7 @@ export function drawSection(
 
   // Selection ring (the drawer's event), shown whenever the event itself is drawn.
   const s = state.selectedIndex;
-  if (s >= 0 && s < count && state.phase !== "public" && model.candidateAppearAt[s] <= clock) {
+  if (s >= 0 && s < count && state.phase !== "public" && model.candidateAppearAt[s] <= clock && shownAt(model.candidateTime[s], now)) {
     ctx.globalAlpha = 1;
     ctx.strokeStyle = style.halo;
     ctx.lineWidth = 1.5;
@@ -326,6 +417,7 @@ export function drawSection(
     ctx.stroke();
     ctx.lineWidth = 1;
   }
+  ctx.restore();
   ctx.globalAlpha = 1;
 }
 
@@ -337,17 +429,19 @@ export function drawSection(
 export function sectionHit(
   model: SectionModel,
   plot: SectionPlot,
-  state: Pick<SectionState, "phase" | "filter" | "revealElapsedS">,
+  state: Pick<SectionState, "phase" | "filter" | "revealElapsedS"> & Partial<Pick<SectionState, "timeNowRel">>,
   x: number,
   y: number,
   thresholdPx: number,
 ): string | null {
   const { ox, oy, k } = plot;
+  const now = state.timeNowRel ?? TIME_ALL;
   let best: string | null = null;
   let bestD = thresholdPx * thresholdPx;
   const cand = model.candidates.xy;
   for (let i = 0; i < model.candidateIds.length; i++) {
     if (!candidatePickable(state.phase, state.filter, state.revealElapsedS, model.candidateTier[i], model.candidateAppearAt[i])) continue;
+    if (!shownAt(model.candidateTime[i], now)) continue;
     const dx = ox + cand[i * 2] * k - x;
     const dy = oy + cand[i * 2 + 1] * k - y;
     const d = dx * dx + dy * dy;
@@ -359,7 +453,7 @@ export function sectionHit(
   const pub = model.publicEvents.xy;
   for (let i = 0; i < model.publicTargets.length; i++) {
     const target = model.publicTargets[i];
-    if (!target) continue;
+    if (!target || !shownAt(model.publicTime[i], now)) continue;
     const dx = ox + pub[i * 2] * k - x;
     const dy = oy + pub[i * 2 + 1] * k - y;
     const d = dx * dx + dy * dy;

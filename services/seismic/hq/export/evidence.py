@@ -14,7 +14,7 @@ are sorted by ``epiDistM`` (nearest first), at most ``maxTraces``, and the file 
 import json
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -237,23 +237,41 @@ def build_evidence(
     source: WaveformSource,
     cache_dir: Path,
     make_snippet: Callable[..., WaveformSnippet | None] = snippet,
+    no_data_stations: Collection[str] = (),
 ) -> tuple[EventEvidence, bytes, dict[str, int]] | None:
     """The event's evidence and its file bytes, or None when no station yields a trace.
 
     Stations are tried nearest first until ``maxTraces`` traces exist, so a dropped near station
-    is replaced by the next one out. The counts say how many were tried and dropped.
+    is replaced by the next one out. Stations in ``no_data_stations`` (H1's download report says
+    the data centre served nothing for them, REQ-H3-11) are skipped without touching the cache,
+    so a genuine cache miss elsewhere still fails loudly. The counts say how many were tried,
+    dropped and skipped.
     """
     candidates = station_arrivals(event, arrivals, stations, picks)
     traces: list[WaveformSnippet] = []
     tried = 0
+    skipped = 0
     for sa in candidates:
         if len(traces) >= cfg.maxTraces:
             break
+        if sa.station.id in no_data_stations:
+            skipped += 1
+            log.info(
+                "evidence %s: %s served no data per the download report; skipped",
+                event.id,
+                sa.station.id,
+            )
+            continue
         tried += 1
         trace = make_snippet(sa, event.id, cfg, rounding, source, cache_dir)
         if trace is not None:
             traces.append(trace)
-    counts = {"stations": len(candidates), "tried": tried, "dropped": tried - len(traces)}
+    counts = {
+        "stations": len(candidates),
+        "tried": tried,
+        "dropped": tried - len(traces),
+        "skippedNoData": skipped,
+    }
     if not traces:
         log.warning(
             "evidence %s: none of %d station(s) with a predicted P has usable data; no file",

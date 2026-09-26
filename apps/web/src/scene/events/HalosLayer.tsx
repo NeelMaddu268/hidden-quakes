@@ -62,6 +62,7 @@ export function HalosLayer({ halos, surfaceY, depthFog, drive }: HalosLayerProps
     >
       <icosahedronGeometry args={[1, LOOK.halos.sphereDetail]}>
         <instancedBufferAttribute attach="attributes-aAppearAt" args={[halos.appearAt, 1]} />
+        <instancedBufferAttribute attach="attributes-aTime" args={[halos.times, 1]} />
       </icosahedronGeometry>
       <shaderMaterial
         ref={material}

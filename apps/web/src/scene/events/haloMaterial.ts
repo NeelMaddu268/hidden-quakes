@@ -5,6 +5,7 @@
 import { Color, type IUniform } from "three";
 import { LOOK } from "../look";
 import { TIMELINE } from "../reveal/timeline";
+import { TIME_ALL } from "../time/clock";
 
 export interface HaloUniforms {
   [name: string]: IUniform;
@@ -17,12 +18,16 @@ export interface HaloUniforms {
   /** Scene y of the site surface and fog density per scene unit, matching the event glyphs. */
   uSurfaceY: IUniform<number>;
   uDepthFog: IUniform<number>;
+  /** Time mode "now" (s since windowStart): a halo shows only once its event does. TIME_ALL = off. */
+  uTimeNow: IUniform<number>;
 }
 
 export const HALO_VERTEX_SHADER = /* glsl */ `
   attribute float aAppearAt;
+  attribute float aTime;
 
   uniform float uRevealElapsed;
+  uniform float uTimeNow;
   uniform float uPopS;
   uniform float uOpacity;
   uniform float uSurfaceY;
@@ -38,7 +43,7 @@ export const HALO_VERTEX_SHADER = /* glsl */ `
     float pop = clamp(age / max(uPopS, 1e-6), 0.0, 1.0) * step(0.0, age);
     vec4 center = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
     float fog = exp(-uDepthFog * max(0.0, uSurfaceY - center.y));
-    vAlpha = uOpacity * pop * fog;
+    vAlpha = uOpacity * pop * fog * step(aTime, uTimeNow);
 
     // Ellipsoid normal: the unit sphere's normal divided by the per-axis instance scale.
     vec3 scale = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
@@ -78,5 +83,6 @@ export function createHaloUniforms(color: string): HaloUniforms {
     uPopS: { value: TIMELINE.popS },
     uSurfaceY: { value: 0 },
     uDepthFog: { value: 0 },
+    uTimeNow: { value: TIME_ALL },
   };
 }

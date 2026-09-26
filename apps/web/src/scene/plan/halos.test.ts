@@ -7,7 +7,12 @@ const events = [
   { tier: "A" as const, quality: { hErrM: null, vErrM: 500 } },
   { tier: "A" as const, quality: { hErrM: 400, vErrM: 500 } },
 ];
-const candidates = { count: 4, positions: new Float32Array([1, -2, -3, 4, -5, -6, 7, -8, -9, 10, -11, -12]), appearAt: new Float32Array([1, 3, 4, 6]) };
+const candidates = {
+  count: 4,
+  positions: new Float32Array([1, -2, -3, 4, -5, -6, 7, -8, -9, 10, -11, -12]),
+  appearAt: new Float32Array([1, 3, 4, 6]),
+  times: new Float32Array([100, 200, 300, 400]),
+};
 
 describe("plan uncertainty", () => {
   it("retains horizontal-only Tier A errors and skips missing horizontal errors", () => {
@@ -16,6 +21,7 @@ describe("plan uncertainty", () => {
     expect([...h.eventIndex]).toEqual([0, 3]);
     expect([...h.positions]).toEqual([1, -2, -3, 10, -11, -12]);
     expect([...h.appearAt]).toEqual([1, 6]);
+    expect([...h.times]).toEqual([100, 400]); // a ring hides with its event in time mode
     expect(h.radii[0]).toBeCloseTo(.2); expect(h.radii[1]).toBeCloseTo(.4);
   });
   it("does not turn vertical exaggeration into horizontal uncertainty", () => {
@@ -33,7 +39,7 @@ describe("plan uncertainty", () => {
     expect(() => buildPlanHaloInstances(events, { ...candidates, positions: new Float32Array(1) })).toThrow(/out of step/);
   });
   it("supports an empty bundle", () => {
-    const h = buildPlanHaloInstances([], { count: 0, positions: new Float32Array(), appearAt: new Float32Array() });
+    const h = buildPlanHaloInstances([], { count: 0, positions: new Float32Array(), appearAt: new Float32Array(), times: new Float32Array() });
     expect(h.count).toBe(0); expect(h.tierAWithoutHalo).toBe(0);
   });
 });

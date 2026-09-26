@@ -3,9 +3,11 @@
 ``nEvents`` hypocentres are drawn uniformly in the configured zone (a vertical cylinder in ENU
 metres and elevM around the run origin; config values only, never catalog values) with origin
 times uniform in the run window. Every station gets a P pick; its S pick is kept with probability
-``sKeepProb``. Pick times are the exact 1D layered first-arrival times
-(``tt_grid.layered_first_arrival``, an independent forward model, so table discretisation error
-is part of what the test measures) plus Gaussian noise with the standard deviation the locator
+``sKeepProb``. Pick times are, for ``locator.method`` grid1d, the exact 1D layered first-arrival
+times (``tt_grid.layered_first_arrival``, an independent forward model, so table discretisation
+error is part of what the test measures); for grid3d, the locator's own tables (trilinear 3D
+tables, 1D tables for stations outside the 3D model), so the test measures the station geometry
+and the search, not the tables' error; plus Gaussian noise with the standard deviation the locator
 uses for that station and phase (``Locator.pick_sigma``: ``pickSigmaS``, or the station's
 ``profilePickSigmaS`` override). Every pick gets probability ``pickProb``. In seismology.yaml both
 may be null: stage ``locate`` then measures them from the run's located events
@@ -44,7 +46,15 @@ import pandas as pd
 from hq_contracts.models import SyntheticTest
 
 from hq.config.seismology import SeismologyConfig
-from hq.locate.locator import EventLocation, Locator, LocatorSetup, build_locator, locate_many
+from hq.locate.locator import (
+    GRID3D,
+    EventLocation,
+    Locator,
+    LocatorSetup,
+    build_locator,
+    locate_many,
+    with_model3d,
+)
 from hq.locate.tt_grid import PHASES, layered_first_arrival
 
 log = logging.getLogger(__name__)
@@ -166,7 +176,7 @@ def synthetic_picks(
 ) -> tuple[list[pd.DataFrame], list[pd.DataFrame]]:
     """Noisy and noise-free pick frames per event (same kept S picks in both).
 
-    The forward model is the tables' top-extended model; pick noise uses the locator's sigma for
+    The forward model is ``forward_model_text(locator)``; pick noise uses the locator's sigma for
     each station and phase.
     """
     cfg = setup.config
@@ -188,8 +198,10 @@ def synthetic_picks(
     for k, row in enumerate(stations.itertuples(index=False)):
         r = np.hypot(e - row.enu_e, n - row.enu_n)
         for ph in PHASES:
-            # Reciprocity: source at the sensor, receiver at each hypocentre.
-            tt[(k, ph)] = layered_first_arrival(model, ph, float(row.sensorElevM), r, elev)
+            if locator.method == GRID3D:
+                tt[(k, ph)] = locator.station_times(str(row.id), ph, e, n, elev)
+            else:  # reciprocity: source at the sensor, receiver at each hypocentre
+                tt[(k, ph)] = layered_first_arrival(model, ph, float(row.sensorElevM), r, elev)
     noisy: list[pd.DataFrame] = []
     clean: list[pd.DataFrame] = []
     t0 = truth["t0"].to_numpy()
@@ -212,6 +224,17 @@ def synthetic_picks(
         noisy.append(pd.DataFrame({**base, "t": frame["tNoisy"]}))
         clean.append(pd.DataFrame({**base, "t": frame["tExact"]}))
     return noisy, clean
+
+
+def forward_model_text(locator: Locator) -> str:
+    """What the synthetic picks' travel times come from, for the record."""
+    noise = ("plus Gaussian noise at the locator's sigma per station and phase (pickSigmaS or the "
+             "profilePickSigmaS override)")
+    if locator.method == GRID3D:
+        return ("the locator's own tables: 3D tables (trilinear) for stations on the 3D model, "
+                "1D tables for the others (no table error in the test), " + noise)
+    return ("exact 1D layered first arrivals (tt_grid.layered_first_arrival) on the tables' "
+            "top-extended velocity model, " + noise)
 
 
 def _nan_if_none(value: float | None) -> float:
@@ -290,6 +313,7 @@ def run_synthetic(
     ``measured_pick_stats``) is recorded when the config's sKeepProb / pickProb came from it.
     """
     started = time.perf_counter()
+    setup = with_model3d(setup)
     cfg = setup.config
     s_keep_prob, pick_prob = pick_probabilities(cfg)
     count = cfg.synthetic.nEvents if n_events is None else int(n_events)
@@ -330,9 +354,8 @@ def run_synthetic(
             "caveat": "every station gets a P pick, so the synthetic picks are optimistic for "
             "weak events",
         },
-        "forwardModel": "exact 1D layered first arrivals (tt_grid.layered_first_arrival) on the "
-        "tables' top-extended velocity model, plus Gaussian noise at the locator's sigma per "
-        "station and phase (pickSigmaS or the profilePickSigmaS override)",
+        "forwardModel": forward_model_text(locator),
+        "method": locator.method,
         "pickSigmaSByStation": {
             sid: {ph: locator.pick_sigma(sid, ph) for ph in PHASES} for sid in ids
         },
@@ -351,10 +374,10 @@ def run_synthetic(
         "nWorkers": min(cfg.locator.nWorkers, count),
     }
     log.info(
-        "synthetic test: %d events on %d stations (geometry %s) in %.1f s; noisy median h %.1f m, "
-        "v %.1f m, p90 v %.1f m, depth bias %+.1f m; noise-free depth bias %+.1f m; within hErrM "
-        "%s, within vErrM %s; %d noisy PDFs truncated",
-        count, len(stations), geometry_label, runtime, noisy_s["medianHErrM"],
+        "synthetic test (%s): %d events on %d stations (geometry %s) in %.1f s; noisy median h "
+        "%.1f m, v %.1f m, p90 v %.1f m, depth bias %+.1f m; noise-free depth bias %+.1f m; within "
+        "hErrM %s, within vErrM %s; %d noisy PDFs truncated",
+        locator.method, count, len(stations), geometry_label, runtime, noisy_s["medianHErrM"],
         noisy_s["medianVErrM"], noisy_s["p90VErrM"], noisy_s["medianDepthBiasM"],
         clean_s["medianDepthBiasM"], noisy_s["fracHWithinHErrM"], noisy_s["fracVWithinVErrM"],
         noisy_s["nPdfTruncated"],

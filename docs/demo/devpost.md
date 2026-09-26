@@ -24,11 +24,11 @@ Semi-transparent terrain, the geothermal reference outline, public points in whi
 
 ## Inspiration
 
-Enhanced geothermal is expanding around Milford, Utah. Operators and research teams see underground: dense downhole geophones and fiber arrays give them detailed pictures of the microseismicity that shows an engineered reservoir taking shape. The public gets the regional catalog, which lists a sparse slice of that activity. Microseismicity is also what induced-seismicity oversight (traffic-light protocols) is built on. We wanted to know how much of the underground picture the public seismic network is already hearing, and to show it in a way a non-seismologist can read in five seconds.
+Enhanced geothermal is expanding around Milford, Utah. Operators and research teams see underground: dense downhole geophones and fiber arrays give them detailed pictures of the microseismicity there. The public gets the public regional catalog, which lists a sparse slice of that activity. Microseismicity is also what the oversight of geothermal operations (traffic-light protocols) is built on. We wanted to know how much of the underground picture the public seismic network is already hearing, and to show it in a way a non-seismologist can read in five seconds.
 
 ## What it does
 
-The public regional catalog shows `<from meta.json: summary.publicCatalogCount>` earthquakes under Utah's geothermal frontier in the showcase window (`<from meta.json: run.windowLabel>`). We rebuilt the catalog from raw public seismometers with neural phase picking, multi-station association, relocation and quality tiers, and found `<from meta.json: summary.candidateCount>` candidate events, `<from meta.json: summary.strictQualityCount>` at strict quality, underground where the public view is nearly empty.
+The public regional catalog lists `<from meta.json: summary.publicCatalogCount>` events under Utah's geothermal frontier in the showcase window (`<from meta.json: run.windowLabel>`). We rebuilt the catalog from raw public seismometers with neural phase picking, multi-station association, relocation and quality tiers: `<from meta.json: summary.candidateCount>` candidate events, `<from meta.json: summary.strictQualityCount>` at strict quality, underground where the public view is nearly empty.
 
 Three interactions:
 
@@ -46,31 +46,32 @@ Two halves joined by files. A Python pipeline (`hq`) writes an immutable run dir
 - **Preprocess:** one profile per sensor type with explicit anti-aliasing, because the borehole sensors sample far faster than the surface ones and the picker expects one rate.
 - **Pick:** pretrained PhaseNet through SeisBench, weights chosen by an A/B on public-catalog events (`<from meta.json: run.pickerWeights>`). We trained nothing.
 - **Associate:** PyOcto turns single-station picks into events that agree across stations through a velocity model.
-- **Locate:** our own grid locator on a published FORGE velocity model from the DOE Geothermal Data Repository (`<from meta.json: run.velocityModel.name>`), with station statics, per-event uncertainty and a synthetic recovery test on the real station geometry.
+- **Locate:** our own grid locator (coarse-then-fine search over eikonal travel-time tables solved with scikit-fmm) on a published FORGE velocity model from the DOE Geothermal Data Repository (`<from meta.json: run.velocityModel.name>`), with station statics fitted on the recovered public events, per-event uncertainty and a synthetic recovery test on the real station geometry.
 - **Match and tier:** one-to-one matching against the public regional catalog (USGS ComCat, UUSS solutions). The recovered public events set the quality bar: each tier threshold is a quantile of that set, stored in the run.
-- **Magnitude:** a local magnitude calibrated on the matched public events, with leave-one-out error, kept only if that error is acceptable.
-- **Validate and export:** a null test, an STA/LTA baseline, Gutenberg–Richter, then a static bundle (`meta.json`, `events.json`, `validation.json`, evidence snippets) that the web app reads through a provider. Nothing on the demo path depends on a live service.
+- **Magnitude:** a local magnitude (`ML_cal`) calibrated on the matched public events of one catalog magnitude type, with a leave-one-out error reported next to a null-model error; the stage nulls every magnitude when its gate fails, so no magnitude on screen outlives a bad calibration.
+- **Validate and export:** a null test, an STA/LTA baseline, a Gutenberg–Richter curve whose public side counts only the catalog events of the calibration magnitude type, then a static bundle (`meta.json`, `events.json`, `validation.json`, evidence snippets) that the web app reads through a provider. Nothing on the demo path depends on a live service.
 
-The web app is Next.js with React Three Fiber: terrain baked from public elevation tiles, events as instanced points with error halos, borehole sensors drawn at their true depth, reference features from GDR well surveys and UGS layers with their sources cited. The shell renders no digit of its own: a test parses every text node and fails on a number. Every run records its full config; the Run details panel prints it verbatim.
+The web app is Next.js with React Three Fiber: terrain baked from public elevation tiles, events as instanced points with error halos, borehole sensors drawn at their true depth, reference features from GDR well surveys and UGS layers with their sources cited, a plan view with a true-scale depth section, an evidence drawer with the record section behind every dot, and a time scrubber that replays the window over a histogram of it. The shell renders no digit of its own: a test parses every text node and fails on a number. Every run records its full config; the Run details panel prints it verbatim.
 
 Four humans, one lane each (signal, seismology, visualization, platform), each running their own coding agents against a shared plan with frozen contracts and one owner per path.
 
 ## Validation
 
-Numbers below are copied from the Validation card of the deployed page, which reads them from the exported run.
+Numbers below are read from the exported run's `meta.json` and `validation.json` (the same fields the deployed page's Validation card renders).
 
 - Public-catalog recall: `<from meta.json: summary.recoveredCatalogCount>` of `<from meta.json: summary.publicCatalogCount>`; every miss is listed in the run.
 - Candidate events: `<from meta.json: summary.candidateCount>`, of which `<from meta.json: summary.additionalCount>` are not in the public catalog; `<from meta.json: summary.strictAdditionalCount>` of those pass the strict tier.
 - Median stations per event `<from meta.json: summary.medianStations>`; median travel-time residual `<from meta.json: summary.medianRmsS>` s.
 - Depth resolution of this station geometry, from the synthetic test: about ±`<from validation.json: synthetic.medianVErrM>` m.
 - Null test: with each station's timing scrambled and the same config, association yields about `<from validation.json: nullTest.meanChanceEvents>` chance events, versus `<from meta.json: summary.candidateCount>` with real timing.
-- Baseline (only if `summary.baseline` is present): at comparable quality, neural picking yields `<from meta.json: summary.baseline.gain>`× the strict events of STA/LTA.
-- Magnitudes (only if `validation.magnitude` is present): calibrated on `<from validation.json: magnitude.n>` matched public events, leave-one-out error ±`<from validation.json: magnitude.looMae>`.
+- Baseline, one of two sentences, both conditional (H1 is rescoring STA/LTA on the run's statics scale, so nothing is asserted until the run of record's `validation.json` is exported). Only if `summary.baseline` is present: at comparable quality, neural picking yields `<from meta.json: summary.baseline.gain>`× the strict events of STA/LTA. Otherwise, only if `validation.baseline` holds both `full` rows: at the strict tier, PhaseNet produced `<from validation.json: baseline[method=phasenet, associationProfile=full].tiers.A>` candidate events and STA/LTA produced `<from validation.json: baseline[method=stalta, associationProfile=full].tiers.A>`, through the same downstream code and the same tier bars. If neither holds, no baseline sentence.
+- Magnitudes (only if `validation.magnitude` is present): a local magnitude, `<from meta.json: run.matching.magnitude.calibrationMagType>`-calibrated `ML_cal`, fitted on `<from validation.json: magnitude.n>` matched public events of that one catalog magnitude type; leave-one-out error ±`<from validation.json: magnitude.looMae>` against a null-model error of ±`<from meta.json: run.matching.magnitude.leaveOneEventOut.nullModelMae>` (the error of a model that gives each event the mean magnitude of the others). `<from meta.json: run.matching.magnitude.magnitudes.belowCalibratedRange>` of the `<from meta.json: run.matching.magnitude.magnitudes.written>` candidate magnitudes lie below the calibrated range, so they are extrapolated and, near the detection limit, biased upward.
+- Gutenberg–Richter (only if `validation.gr` is present): the public curve counts only the catalog events of the calibration magnitude type; the recovered curve is `ML_cal`. The recovered curve continues below the public curve's completeness magnitude; its low end is extrapolated and censored, so we describe the curve and quote no b-value from it.
 
 ## Limits
 
-- **Candidate events, not verified earthquakes.** Each needs consistent picks across multiple stations; strict ones meet, on every quality metric, a bar that three-quarters of the recovered public-catalog events meet. We don't claim all of them are real, and there is no false-positive rate because there is no ground truth for events the public catalog lacks; the null test and the tiers are the proxies.
-- **Sparse public geometry.** Depth is the weakest dimension. Published catalogs from downhole arrays are far denser and sharper than ours; every halo is that event's own error, and we claim no fracture geometry.
+- **Candidate events, not verified earthquakes.** Each needs consistent picks across multiple stations; strict means every quality metric is within the range reached by three-quarters of the public events we recovered. We don't claim all of them are real, and there is no false-positive rate because there is no ground truth for events the public catalog lacks; the null test and the tiers are the proxies.
+- **Sparse public geometry.** Depth is the weakest dimension. Published catalogs from downhole arrays are far denser and sharper than ours; every halo is that event's own error, and we show depths as located without reading a geometry or a mechanism into their pattern (that would need relative relocation, which we did not run).
 - **No attribution.** Several operations share the region. We never name a cause for any event, and we never attribute seismicity to Utah FORGE, Cape Station or any operator.
 - **Pretrained picker.** PhaseNet weights are public and unchanged; site-specific training needs labels we don't have.
 - **One site, one window.** Config-driven, but run nowhere else yet.
@@ -78,7 +79,7 @@ Numbers below are copied from the Validation card of the deployed page, which re
 ## Challenges
 
 - **Borehole sample rates.** The borehole sensors sample far faster than the surface stations. We built per-sensor-type preprocessing profiles with explicit anti-aliasing and A/B'd a time-stretch variant to keep the high-frequency band, rather than resampling blindly.
-- **Depth credibility.** A sparse surface network trades depth against origin time. We required S picks and a near station for the strict tier, added station statics, measured depth resolution on synthetic events with the real geometry, and kept a plan-view hero ready in case the depth gate failed.
+- **Depth credibility.** A sparse surface network trades depth against origin time. We required S picks and a near station for the strict tier, added station statics, measured depth resolution on synthetic events with the real geometry, and kept a plan-view hero ready in case the depth gate failed. The Saturday depth call passed on amended criteria: the 3D hero stays, and we say nothing about what the pattern of depths means.
 - **Datums.** Public-catalog depths are relative to sea level, station elevations come from a DEM, borehole sensors sit far below their wellhead, and well surveys are published in survey feet on a state grid. One vertical convention (elevation above sea level, everywhere) and one horizontal one (UTM minus a fixed origin) made every comparison free.
 - **Honesty at hackathon speed.** Every number on screen had to come from data, so the shell carries no digits and the docs quote none; a test and a script enforce it.
 
@@ -106,7 +107,7 @@ Numbers below are copied from the Validation card of the deployed page, which re
 
 ## Built with
 
-Python, ObsPy, SeisBench (PhaseNet), PyOcto, scikit-fmm, SciPy, NumPy, pandas, PyArrow, PyProj, Pydantic, FastAPI, uv; TypeScript, Next.js, React, three.js, React Three Fiber, zustand, Vitest, pnpm; EarthScope FDSN services, USGS ComCat, USGS 3DEP, DOE Geothermal Data Repository, Utah Geological Survey.
+Pipeline (`services/seismic`, package `hq`): Python, ObsPy, SeisBench (pretrained PhaseNet), PyOcto, scikit-fmm, SciPy, NumPy, pandas, PyArrow, xarray, netCDF, PyProj, Pydantic, PyYAML, Requests, Matplotlib; uv, pytest, ruff. Live worker (`services/api`): FastAPI, Uvicorn. Contracts (`packages/contracts`): Pydantic models as the source of truth, JSON Schema, TypeScript generated with json-schema-to-typescript. Web app (`apps/web`): TypeScript, Next.js (static export), React, three.js, React Three Fiber, drei, react-postprocessing, zustand, Vitest, Testing Library, ESLint, pnpm; deployed on Vercel. Data: EarthScope FDSN services, USGS ComCat, USGS 3DEP elevations (AWS Terrain Tiles, Terrarium encoding), DOE Geothermal Data Repository, Utah Geological Survey.
 
 ## Links
 
@@ -134,7 +135,8 @@ Fill every placeholder from the exported run of record. `meta.json` and `validat
 | `<from meta.json: summary.strictAdditionalCount>` | `meta.json` → `summary.strictAdditionalCount` | always |
 | `<from meta.json: summary.medianStations>` | `meta.json` → `summary.medianStations` | always |
 | `<from meta.json: summary.medianRmsS>` | `meta.json` → `summary.medianRmsS` | always |
-| `<from meta.json: summary.baseline.gain>` | `meta.json` → `summary.baseline.gain` | only if `summary.baseline` is not null (VAL-01 writes it only when the gain holds in both association profiles); otherwise delete the sentence |
+| `<from meta.json: summary.baseline.gain>` | `meta.json` → `summary.baseline.gain` | only if `summary.baseline` is not null (VAL-01 writes it only when the gain holds in both association profiles); otherwise delete the sentence and fall back to the two strict counts below |
+| `<from validation.json: baseline[method=phasenet, associationProfile=full].tiers.A>` / `<from validation.json: baseline[method=stalta, associationProfile=full].tiers.A>` | `validation.json` → `baseline[]`: the `tiers.A` of the row with `method: "phasenet"` and of the row with `method: "stalta"`, both with `associationProfile: "full"` (the Validation card's "Strict events, PhaseNet vs STA/LTA" row) | only if both rows exist; used only when `summary.baseline` is null; otherwise delete the sentence |
 | `<from meta.json: run.windowLabel>` | `meta.json` → `run.windowLabel` | always |
 | `<from meta.json: run.pickerWeights>` | `meta.json` → `run.pickerWeights` | always |
 | `<from meta.json: run.velocityModel.name>` | `meta.json` → `run.velocityModel.name` | always (H2's dict; if the key is named differently, take the model name from `run.velocityModel`) |
@@ -142,6 +144,9 @@ Fill every placeholder from the exported run of record. `meta.json` and `validat
 | `<from validation.json: nullTest.meanChanceEvents>` | `validation.json` → `nullTest.meanChanceEvents` | only if `nullTest` is not null; otherwise delete the sentence |
 | `<from validation.json: magnitude.n>` | `validation.json` → `magnitude.n` | only if `magnitude` is not null and the magnitude kill switch did not fire; otherwise delete the sentence |
 | `<from validation.json: magnitude.looMae>` | `validation.json` → `magnitude.looMae` | same as above |
+| `<from meta.json: run.matching.magnitude.calibrationMagType>` | `meta.json` → `run.matching.magnitude.calibrationMagType` | same as above |
+| `<from meta.json: run.matching.magnitude.leaveOneEventOut.nullModelMae>` | `meta.json` → `run.matching.magnitude.leaveOneEventOut.nullModelMae` (`FYI-H2-7`) | same as above |
+| `<from meta.json: run.matching.magnitude.magnitudes.belowCalibratedRange>` / `<from meta.json: run.matching.magnitude.magnitudes.written>` | `meta.json` → `run.matching.magnitude.magnitudes.belowCalibratedRange` and `.written` | same as above |
 | `<from evidence/<heroEventId>.json: traces.length>` | `evidence/<scene.heroEventId>.json` → length of `traces` | always |
 | `<deployed URL>` | the production URL (`docs/deploy.md`) | always |
 | `<repo URL>` | the GitHub repository | always |

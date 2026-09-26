@@ -10,12 +10,16 @@ number of final events and of Tier A events per rerun are the "chance" counts; `
 carries their mean, the sample standard deviation (``n - 1``) of the event count, and the
 configuration that produced them. Same seed, same numbers.
 
-Tier A is counted against the run's own bars (``thresholds=``, REQ-H2-9): scrambled picks match
-almost no public event, so H2's ``assign_tiers`` could not derive bars from a rerun and never
-invents them. The reruns pass ``arrivals=`` and ``stations=`` too, so the nearest-station rule
-measures focal depth as stage ``tier`` does. What a rerun could not do (no station statics, no
-locate flags for the ``mapOnVolumeTop`` rule) is read back from the tiering record H2 returns
-and written to ``validation_notes.json`` (``hq.validate.notes``).
+Tier A is counted against supplied bars (``thresholds=``, REQ-H2-9): scrambled picks match
+almost no public event, so H2's ``assign_tiers`` could not derive bars from a shuffle and never
+invents them. The bars are the ones the stage hands in: the run's own ``ProcessingRun.tiering``
+by default (every rerun locates with the run's ``statics.parquet``, bound into ``locate`` by
+the stage, REQ-H1-5 option (a)), or with ``validate.yaml`` ``rerunBars: reference`` those H2
+derived from the PhaseNet ``full`` rerun through this same path (``hq.validate.reference``,
+option (b)). The reruns pass ``arrivals=`` and ``stations=`` too, so the nearest-station rule
+measures focal depth as stage ``tier`` does. What a rerun did and could not do (statics applied,
+no locate flags for the ``mapOnVolumeTop`` rule) is read back from the tiering record H2
+returns and written to ``validation_notes.json`` (``hq.validate.notes``).
 
 Pick ids are left as they are: they are the keys ``assoc_picks`` and ``arrivals`` refer to, and
 a shifted pick is still the same pick.
@@ -162,14 +166,17 @@ def _count_strict(events: pd.DataFrame) -> int:
 
 
 def require_thresholds(thresholds: Mapping[str, Any] | None, what: str) -> Mapping[str, Any]:
-    """The run's ``ProcessingRun.tiering`` with its ``thresholds`` record, or a loud error naming
-    H2's tier stage: the reruns tier against the run's own bars and never invent them."""
+    """A ``ProcessingRun.tiering``-shaped dict with its ``thresholds`` record (the run's own, or
+    the reference rerun's), or a loud error naming H2's tier stage: reruns tier against supplied
+    bars and never invent them."""
     record = thresholds.get("thresholds") if isinstance(thresholds, Mapping) else None
     if not isinstance(record, Mapping):
         raise ValidateError(
-            f"{what} needs the run's own tier bars (ProcessingRun.tiering['thresholds'], written "
-            "by H2's 'tier' stage, owner H2 Seismology) to count Tier A with; run stage tier "
-            "first. Bars are never invented for a rerun (REQ-H2-9)"
+            f"{what} needs tier bars (a ProcessingRun.tiering['thresholds'] record: the run's "
+            "own, written by H2's 'tier' stage, owner H2 Seismology, or the ones H2's "
+            "assign_tiers derived from the reference rerun) to count Tier A with; run stage tier "
+            "first, or leave validate.yaml rerunBars at 'reference'. Bars are never invented for "
+            "a rerun (REQ-H2-9)"
         )
     return thresholds
 
@@ -182,19 +189,23 @@ def rerun_pipeline(
     seismology_cfg: Any,
     run: RunSection,
     *,
-    thresholds: Mapping[str, Any],
+    thresholds: Mapping[str, Any] | None,
 ) -> Rerun:
     """``associate -> locate -> match -> assign_tiers`` on ``picks`` (docs/02 §5 calls, plus the
     REQ-H2-8/9 keywords): ``locate`` as bound by ``real_seismology_api`` and
-    ``assign_tiers(located.events, matched.matches, cfg, thresholds=<the run's tiering>,
+    ``assign_tiers(located.events, matched.matches, cfg, thresholds=<tiering dict>,
     arrivals=located.arrivals, stations=stations)``, ``stations`` being the table the rerun
-    located with.
+    located with. ``thresholds`` is a ``ProcessingRun.tiering``-shaped dict with the bars to
+    apply; ``None`` (the reference rerun only, ``hq.validate.reference``) leaves the keyword out
+    so H2 derives the bars from this rerun's own matched set, and H2's ``TierError`` (too few
+    matched events) propagates for the caller to name.
 
     A step that yields no events ends the rerun with empty tables and no tiering record: there
     is nothing to locate, match or tier, and the later steps are not asked to handle an empty
     frame. Any error the API raises propagates unchanged.
     """
-    require_thresholds(thresholds, "rerun_pipeline")
+    if thresholds is not None:
+        require_thresholds(thresholds, "rerun_pipeline")
     empty = Rerun(pd.DataFrame(columns=[EVENT_ID_COLUMN, TIER_COLUMN]),
                   pd.DataFrame(columns=[MATCH_EVENT_COLUMN]))  # fmt: skip
     assoc = api.associate(picks, stations, seismology_cfg, run)
@@ -204,11 +215,12 @@ def rerun_pipeline(
     if len(located.events) == 0:
         return empty
     matched = api.match(located.events, catalog, seismology_cfg)
+    bars: dict[str, Any] = {} if thresholds is None else {"thresholds": thresholds}
     tiered = api.assign_tiers(
         located.events,
         matched.matches,
         seismology_cfg,
-        thresholds=thresholds,
+        **bars,
         arrivals=located.arrivals,
         stations=stations,
     )
@@ -235,8 +247,10 @@ def null_shuffles(
 ) -> list[ShuffleOutcome]:
     """Every rerun of the null test, in order, each with its shifts and counts. ``p_only`` holds
     the associator overrides the p_only profile reruns with (``ValidateConfig.pOnlyAssociator``;
-    the config defaults when None); ``thresholds`` is the run's ``ProcessingRun.tiering`` with
-    the bars every rerun's Tier A is counted against (REQ-H2-9)."""
+    the config defaults when None); ``thresholds`` is a ``ProcessingRun.tiering``-shaped dict
+    with the bars every rerun's Tier A is counted against (REQ-H2-9): the run's own by default,
+    the reference rerun's with ``rerunBars: reference``. Never None: a shuffle cannot derive
+    bars."""
     require_thresholds(thresholds, "the null test")
     _require_columns(picks, PICK_COLUMNS, "picks")
     _require_columns(stations, (STATION_ID_COLUMN,), "stations")

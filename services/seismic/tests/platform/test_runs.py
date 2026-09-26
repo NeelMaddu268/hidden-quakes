@@ -154,8 +154,8 @@ def test_unknown_key_in_export_yaml_is_an_error(config_dir: Path) -> None:
 def test_unknown_nested_key_in_export_yaml_is_an_error(config_dir: Path) -> None:
     export = config_dir / "export.yaml"
     text = export.read_text()
-    assert "  preloadCount: 20" in text
-    export.write_text(text.replace("  preloadCount: 20", "  preloadCount: 20\n  nope: 1"))
+    assert "  padS: 1.0" in text
+    export.write_text(text.replace("  padS: 1.0", "  padS: 1.0\n  nope: 1"))
     with pytest.raises(ConfigError, match="nope"):
         load_config(config_dir)
 
