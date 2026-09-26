@@ -27,7 +27,8 @@ class CatalogConfig(BaseModel):
     eventTypes: Annotated[list[str], Field(min_length=1)] | None  # kept types; None = all
     minMagnitude: float | None  # FDSN minmagnitude; None = no limit
     maxMagnitude: float | None  # FDSN maxmagnitude; None = no limit
-    arrivalsProductType: str = Field(min_length=1)  # ComCat product with analyst picks/arrivals
+    # ComCat product carrying picks/arrivals (analyst picks only when the origin is manual)
+    arrivalsProductType: str = Field(min_length=1)
     datums: dict[str, CatalogDatum] = Field(min_length=1)  # per contributor, lowercase code
 
 

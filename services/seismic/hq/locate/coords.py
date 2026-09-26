@@ -1,7 +1,8 @@
 """Geographic <-> local ENU coordinates (docs/01 -> Conventions).
 
 ``e``, ``n`` are UTM zone 12N (EPSG:32612) metres minus the origin's UTM coordinates, so they are
-grid east/north, not true east/north (grid convergence is about 1.2 degrees at the showcase origin).
+grid east/north, not true east/north (grid convergence is about -1.18 degrees at the showcase
+origin: grid north lies west of true north).
 ``u = elevM - origin.elevM``. Both helpers are vectorized: they return float64 arrays shaped
 like the inputs (0-d for scalars).
 """

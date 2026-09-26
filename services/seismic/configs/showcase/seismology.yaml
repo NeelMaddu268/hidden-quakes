@@ -13,23 +13,24 @@ catalog:
   eventTypes: [earthquake]
   minMagnitude: null                  # no magnitude limit
   maxMagnitude: null
-  # ComCat product whose QuakeML carries the analyst picks and arrivals. The stage only counts which
-  # window events have it (one extra query); it never downloads the picks.
+  # ComCat product carrying picks/arrivals (analyst picks only when the origin is manual). The stage
+  # only counts which window events have it (one extra query); it never downloads the picks.
+  # A misspelled type makes ComCat answer "no data", so zero matches with kept events logs a WARNING.
   arrivalsProductType: phase-data
   # Depth datum per contributor, keyed by the preferred origin's catalog:datasource. An origin from a
   # contributor not listed here, or older than validFrom, fails the stage instead of being guessed.
   datums:
     uu:
-      # UUSS documents sea level as the depth datum since Oct 1, 2012. Cross-check: the takeoff
-      # angles UUSS publishes with its arrivals (phase-data product) fit hypocenters below sea level
-      # and contradict a 1.5 km ASL or local-surface datum.
+      # UUSS documents sea level as the depth datum since Oct 1, 2012 (Catalog Details page,
+      # "Format for Earthquake Summary Data", Depth column).
       surfaceElevM: 0.0               # m ASL; elevM = surfaceElevM - depth
       # UUSS gives the date without a time zone; start a day later so no ambiguous origin converts.
       validFrom: "2012-10-02T00:00:00Z"
       description: >-
-        km below sea level. UUSS: the depth datum is sea level for earthquakes from Oct 1, 2012 on
-        (1.5 km above sea level before that). ComCat: the depth datum depends on the contributing
+        km below sea level. UUSS Catalog Details, "Format for Earthquake Summary Data", Depth column:
+        the depth datum is sea level for earthquakes from Oct 1, 2012 on (1.5 km above sea level
+        before that in the Utah region). ComCat: the depth datum depends on the contributing
         network, and its QuakeML carries no datum field.
       sourceUrls:
-        - https://quake.utah.edu/regional-info/earthquake-catalogs/catalog-details
+        - https://quake.utah.edu/resources/catalog-details/
         - https://earthquake.usgs.gov/data/comcat/index.php#depth

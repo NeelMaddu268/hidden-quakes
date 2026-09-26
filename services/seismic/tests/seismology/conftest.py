@@ -28,7 +28,9 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
         raise RuntimeError("network access in an offline test")
 
     monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
     monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)  # DNS lookups leave the machine too
 
 
 @dataclass(frozen=True)
@@ -37,7 +39,7 @@ class StubConfig:
     seismology: SeismologyConfig
 
 
-@dataclass
+@dataclass(frozen=True)  # docs/02 §4: RunContext is frozen; records is appended to, never rebound
 class StubRunContext:
     run_id: str
     run_dir: Path
