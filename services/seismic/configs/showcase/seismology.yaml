@@ -416,9 +416,9 @@ tiering:
 # (ENU, sensorElevM included). Fixed by design and recorded with every run, not knobs: response
 # removal to displacement (evalresp, output DISP) then the Wood-Anderson response; the S and P
 # anchors are the observed picks used in the final location, else the predicted times from
-# arrivals.parquet; station terms sum to zero over the stations in the fit (a hard constraint);
-# leave-one-event-out refits without each calibration event and predicts it; sigma is the
-# normalized MAD (1.4826 x MAD) of the event's station magnitudes.
+# arrivals.parquet; station terms carry a ridge constraint (fit.stationTermRidge); leave-one-event-
+# out refits without each calibration event and predicts it; sigma is the normalized MAD
+# (1.4826 x MAD) of the event's station magnitudes.
 magnitude:
   # The catalog carries ml (amplitude based) and md (duration based) on the showcase day; they are
   # different scales and are never mixed. ml: more matched events, and it measures what this model
@@ -454,7 +454,15 @@ magnitude:
     damping: 0.7
     gain: 2080.0
   fit:
-    loss: soft_l1
-    fScaleMag: 0.3
-    amplitudeSlope: null
+    loss: soft_l1                     # robust on the observations; the ridge stays quadratic
+    fScaleMag: 0.3                    # residual (magnitude units) where soft_l1 turns linear
+    # 1.0: Richter's definition (M changes one unit per decade of amplitude). A fitted a is pulled
+    # below 1 by amplitude scatter within events (regression dilution), which compresses the
+    # magnitudes of events smaller than the calibration set; null fits it anyway.
+    amplitudeSlope: 1.0
+    # Ridge on the station terms, not sum-to-zero: the calibration events cluster, so each
+    # station's distance barely changes between events and free terms would absorb the distance
+    # dependence (b then takes the wrong sign). 1.0 = (residual sd / station-term sd)^2 with both
+    # about fScaleMag: site amplification within about a factor of 2.
+    stationTermRidge: 1.0
     minStationObs: 5

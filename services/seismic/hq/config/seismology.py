@@ -561,6 +561,9 @@ class MagnitudeFitConfig(BaseModel):
     fScaleMag: float = Field(gt=0)  # scipy f_scale: residual (magnitude units) where it turns
     # null fits a; a number fixes it (1.0 is the Richter definition: M scales with log10 A).
     amplitudeSlope: Annotated[float, Field(gt=0)] | None
+    # Ridge constraint on the station terms: the objective adds stationTermRidge * sum(s_j^2)
+    # (quadratic, outside the robust loss); (residual sd / station-term sd)^2 in Gaussian terms.
+    stationTermRidge: float = Field(gt=0)
     # A station gets a term only with at least this many calibration observations; stations with
     # fewer are left out of the fit and of every magnitude from it (logged).
     minStationObs: int = Field(ge=1)
