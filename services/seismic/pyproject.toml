@@ -38,6 +38,7 @@ packages = ["hq"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--import-mode=importlib"
 markers = ["smoke: fast offline tests (< 30 s per lane)"]
 
 [tool.ruff]

@@ -13,11 +13,11 @@ help:
 check: check-py check-web
 
 check-py:
-	@cd services/seismic && uv run ruff check . && { uv run pytest -q -m smoke; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 5 ]; }
+	@cd services/seismic && uv run ruff check . ../../packages/contracts/python && { uv run pytest -q -m smoke; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 5 ]; }
 
 check-web:
 	@if [ ! -d node_modules ]; then echo "check-web: run 'pnpm install' at the repo root first"; exit 1; fi; \
-	pnpm -r --if-present typecheck && pnpm -r --if-present lint
+	pnpm -r --if-present typecheck && pnpm -r --if-present lint && pnpm -r --if-present test
 
 contracts:
 	bash scripts/gen-contracts.sh
