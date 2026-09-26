@@ -325,10 +325,14 @@ baseline:
   minSMinusPS: 0.15
   maxSMinusPS: 5.0
   # Thresholds of picks_stalta.parquet; must be a point of the sweep grid, and the start of the
-  # coordinate search below. Provisional: the lane doc asks for the sweep point with the most Tier A
-  # events. A scored sweep logs its best Tier A point (ties keep this one) and warns while it differs
-  # from this one; copy it here once the scoring run is done (step 2 below). When every scored point
-  # has the same Tier A count the sweep names no best point and warns instead: nothing to copy.
+  # coordinate search below. The lane doc asks for the sweep point with the most Tier A events. A
+  # scored sweep logs its best Tier A point (ties keep this one) and warns while it differs from this
+  # one; copy it here once the scoring run is done (step 2 below). When every scored point has the
+  # same Tier A count the sweep names no best point and warns instead: nothing to copy.
+  # Final (SEIS-07/08): scored on the showcase run's statics scale (REQ-H1-5 option (a): H2's
+  # locate(statics=), the run's own tier bars) over the busiest 6 h block, the coordinate search gave
+  # the same Tier A count at every point it visited (pOn, sOn and off axes), so these values stay.
+  # The record is in docs/requests/H4.md REQ-H1-5 and the lane doc's Definition-of-done notes.
   chosen:
     pOn: 5.0
     pOff: 1.5
