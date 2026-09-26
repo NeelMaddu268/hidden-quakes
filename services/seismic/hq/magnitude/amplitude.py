@@ -21,7 +21,8 @@ each window and horizontal channel: linear detrend, cosine taper over ``padS`` a
 times ``preFiltHz``'s cosine taper, times the inverted displacement response (water level
 ``waterLevelDb``, as ObsPy's ``remove_response``), times the Wood-Anderson response
 ``gain * s^2 / (s^2 + 2 h w0 s + w0^2)``, inverse FFT, in mm. The response spectrum is evaluated
-once per channel, sample interval and FFT length (evalresp costs about a second at 1000 Hz).
+once per station, channel, sample interval and FFT length (evalresp costs about a second at
+1000 Hz).
 The amplitude is the peak of ``sqrt(h1^2 + h2^2)`` in the S window; the noise level is the same
 peak in the noise window, and a window is usable when their ratio is at least ``minSnr``.
 A window whose processing span is not covered by one continuous trace on both horizontals is a
@@ -410,14 +411,16 @@ def read_groups(starts: FloatArray, ends: FloatArray, chunk_s: float) -> list[np
 
 @dataclass
 class _Filters:
-    """Response filters per (channel, delta, nfft), evaluated once each."""
+    """Response filters per (station, channel, delta, nfft), evaluated once each."""
 
     cfg: MagnitudeConfig
-    cache: dict[tuple[str, float, int], ComplexArray] = field(default_factory=dict)
+    cache: dict[tuple[str, str, float, int], ComplexArray] = field(default_factory=dict)
     evaluations: int = 0
 
-    def get(self, cha: str, response: Response, delta: float, nfft: int) -> ComplexArray:
-        key = (cha, delta, nfft)
+    def get(
+        self, station_id: str, cha: str, response: Response, delta: float, nfft: int
+    ) -> ComplexArray:
+        key = (station_id, cha, delta, nfft)
         if key not in self.cache:
             self.cache[key] = response_filter(response, delta, nfft, self.cfg)
             self.evaluations += 1
@@ -458,7 +461,7 @@ def _measure_one(
         piece = tr.slice(UTCDateTime(t0), UTCDateTime(t1))
         delta = float(piece.stats.delta)
         npts = piece.stats.npts
-        filt = filters.get(cha, screen.responses[cha], delta, nfft_for(npts))
+        filt = filters.get(screen.stationId, cha, screen.responses[cha], delta, nfft_for(npts))
         pad = round(cfg.window.padS / delta)
         wa.append(to_wood_anderson(piece.data, filt, pad))
         if start is None:

@@ -43,6 +43,7 @@ from hq.magnitude import (
     event_magnitudes,
     fit_calibration,
     leave_one_event_out,
+    measure_amplitudes,
     plan_windows,
     screen_station,
 )
@@ -62,6 +63,7 @@ DAY = UTCDateTime("2026-09-10T00:00:00")
 T_DATA = DAY.timestamp + 3600.0  # first sample of every synthetic trace
 DATA_S = 900.0
 SENSITIVITY = 1.0e9  # counts per m of ground displacement (a flat displacement response)
+GAIN = {"T.A02": 4.0e9}  # one station with another gain: responses must not be shared
 WAVELET_HZ = 5.0
 TRUE_B, TRUE_C = 1.3, 0.4
 TRUE_TERMS = {"T.A01": 0.15, "T.A02": -0.1, "T.A03": 0.05, "T.A04": -0.1}
@@ -85,9 +87,13 @@ def _cfg(base: SeismologyConfig, **magnitude: Any) -> SeismologyConfig:
     return SeismologyConfig.model_validate(raw)
 
 
-def _flat_response(rate_hz: float | None) -> Response:
+def _gain(sid: str) -> float:
+    return GAIN.get(sid, SENSITIVITY)
+
+
+def _flat_response(rate_hz: float | None, gain: float = SENSITIVITY) -> Response:
     resp = Response.from_paz(
-        zeros=[], poles=[], stage_gain=SENSITIVITY, input_units="M", output_units="COUNTS"
+        zeros=[], poles=[], stage_gain=gain, input_units="M", output_units="COUNTS"
     )
     if rate_hz is not None:
         stage = resp.response_stages[0]
@@ -105,7 +111,7 @@ def _inventory(sid: str, response_rate: float | None) -> Inventory:
         Channel(
             code=cha, location_code="", latitude=38.5, longitude=-112.9, elevation=1650.0,
             depth=0.0, azimuth=az, dip=dip, sample_rate=SR, start_date=UTCDateTime(2020, 1, 1),
-            response=_flat_response(response_rate),
+            response=_flat_response(response_rate, _gain(sid)),
         )
         for cha, az, dip in (("HHZ", 0.0, -90.0), ("HHN", 0.0, 0.0), ("HHE", 90.0, 0.0))
     ]
@@ -151,6 +157,7 @@ class World:
         (self.cache_dir / "stationxml").mkdir(parents=True)
         self.mags = np.round(rng.permutation(np.linspace(0.6, 2.0, N_EVENTS)), 3)
         self.ids = [f"hq-test-run-{i:06d}" for i in range(N_EVENTS)]
+        self.true_log_a: dict[tuple[str, str], float] = {}
         self.t = T_DATA + 60.0 + 60.0 * np.arange(N_EVENTS)
         self.enu = [(rng.uniform(-800, 800), rng.uniform(-800, 800), -4000.0 - rng.uniform(0, 800))
                     for _ in range(N_EVENTS)]  # fmt: skip
@@ -175,8 +182,9 @@ class World:
                     })  # fmt: skip
                 log_a = (self.mags[i] - TRUE_B * math.log10(r_m / 1000.0) - TRUE_C
                          - TRUE_TERMS.get(sid, 0.0))  # fmt: skip
+                self.true_log_a[(eid, sid)] = log_a
                 disp_m = 10.0**log_a / (wa_gain * 1000.0)  # WA mm at 5 Hz -> ground m
-                north += SENSITIVITY * disp_m * _wavelet(t_axis - (t_s + 0.5))
+                north += _gain(sid) * disp_m * _wavelet(t_axis - (t_s + 0.5))
             response_rate = 2.0 * SR if sid == "T.BAD" else SR
             _inventory(sid, response_rate).write(
                 str(self.cache_dir / "stationxml" / f"{sid}.xml"), format="STATIONXML"
@@ -297,6 +305,37 @@ def test_response_removal_recovers_a_known_ground_displacement(
     middle = wa_mm[int(6 * SR) : int(14 * SR)]
     expected = disp * np.abs(wood_anderson_response(np.array([f0]), cfg.woodAnderson))[0] * 1000.0
     assert np.abs(middle).max() == pytest.approx(expected, rel=0.01)
+
+
+def test_measured_amplitudes_follow_the_truth_at_every_station(
+    world: World, run_section: RunSection, seismology_config: SeismologyConfig
+) -> None:
+    """Measured log10 A minus the planted one is one constant (the wavelet's peak factor) for
+    every event and station, whatever the station's gain; excluded stations are marked."""
+    cfg = _cfg(seismology_config, readChunkS=200.0).magnitude  # several reads per station
+    stations = read_table(world.path("stations.parquet"))
+    plan = plan_windows(
+        read_table(world.path("events.parquet")), read_table(world.path("arrivals.parquet")),
+        stations, cfg,
+    )  # fmt: skip
+    window = (run_section.window_start_s, run_section.window_end_s)
+    screens = {str(r["id"]): screen_station(r, cfg, window, cache_dir=world.cache_dir)
+               for _, r in stations.iterrows()}  # fmt: skip
+    result = measure_amplitudes(plan, screens, cfg, cache_dir=world.cache_dir)
+    table = result.table
+    ok = table[table["status"] == "ok"]
+    assert set(ok["stationId"]) == {"T.A01", "T.A02", "T.A03", "T.A04"}
+    assert len(ok) == 4 * N_EVENTS
+    assert set(table.loc[table["stationId"].isin(["T.BAD", "T.NOD"]), "status"]) == {
+        "stationExcluded"
+    }
+    offset = ok["logA"].to_numpy() - np.array(
+        [world.true_log_a[(e, s)] for e, s in zip(ok["eventId"], ok["stationId"], strict=True)]
+    )
+    assert np.ptp(offset) < 0.05  # a shared response would put T.A02 off by log10(4)
+    assert (ok["snr"] > cfg.minSnr).all()
+    assert result.record["responseEvaluations"] == 4 * 2  # one per station and horizontal
+    assert result.record["reads"] > 4
 
 
 def test_read_groups_span_at_most_the_chunk() -> None:
