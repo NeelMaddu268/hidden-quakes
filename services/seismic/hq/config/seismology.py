@@ -12,8 +12,11 @@ class CatalogDatum(BaseModel):
 
     surfaceElevM: float  # m ASL of the surface depths are measured from; elevM = this - depth
     validFrom: AwareDatetime  # origins earlier than this used another datum and are rejected
-    description: str = Field(min_length=1)  # what the published depth is relative to
-    sourceUrls: list[str] = Field(min_length=1)  # where that is documented
+    # Short statement of what the published depth is relative to; with sourceUrls[0] it becomes
+    # every row's CatalogEvent.depthDatum. description and all sourceUrls go to the run record.
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)  # the documented evidence for that datum
+    sourceUrls: list[str] = Field(min_length=1)  # where it is documented; the first is primary
 
 
 class CatalogConfig(BaseModel):

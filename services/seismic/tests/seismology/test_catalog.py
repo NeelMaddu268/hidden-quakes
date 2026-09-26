@@ -22,7 +22,7 @@ from obspy.clients.fdsn.header import FDSNException, FDSNNoDataException
 from obspy.core.event import Catalog
 from pydantic import ValidationError
 
-from hq.config.run import RunSection
+from hq.config.run import RunSection, epoch_s
 from hq.config.seismology import SeismologyConfig
 from hq.locate.coords import to_enu
 from hq.match import catalog as catalog_stage
@@ -53,6 +53,7 @@ DOCS02_TYPES = {
 }
 DOCS02_COLUMNS = list(DOCS02_TYPES)
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+NS_PER_S = 1_000_000_000
 
 
 def _utc(text: str) -> datetime:
@@ -67,6 +68,10 @@ def _with_datum(cfg: SeismologyConfig, **update: Any) -> SeismologyConfig:
     datum = cfg.catalog.datums["uu"].model_copy(update=update)
     catalog = cfg.catalog.model_copy(update={"datums": {"uu": datum}})
     return cfg.model_copy(update={"catalog": catalog})
+
+
+def _with_catalog(cfg: SeismologyConfig, **update: Any) -> SeismologyConfig:
+    return cfg.model_copy(update={"catalog": cfg.catalog.model_copy(update=update)})
 
 
 def _served(path: Path) -> Catalog:
@@ -104,7 +109,7 @@ def test_seismology_yaml_parses_and_rejects_unknown_keys(
         assert [e["type"] for e in exc.value.errors()] == ["extra_forbidden"]
 
 
-def test_query_uses_run_window_and_bbox_exactly(
+def test_query_uses_run_bbox_and_window_padded_to_whole_seconds(
     run_section: RunSection, seismology_config: SeismologyConfig
 ) -> None:
     params = catalog_stage.query_params(run_section, seismology_config.catalog)
@@ -116,9 +121,20 @@ def test_query_uses_run_window_and_bbox_exactly(
         "maxlongitude",
         "maxlatitude",
     }
-    # Integer nanoseconds from datetime arithmetic, independent of ObsPy's conversion.
+    # Whole-second bounds (the showcase run) are sent unchanged. Integer nanoseconds from datetime
+    # arithmetic, independent of ObsPy's conversion.
     for key, bound in (("starttime", run_section.windowStart), ("endtime", run_section.windowEnd)):
+        assert bound.microsecond == 0
         assert params[key].ns == (bound - EPOCH) // timedelta(microseconds=1) * 1000
+    # Sub-second bounds are padded outward: start floored, end ceiled, to whole seconds.
+    fractional = _with(
+        run_section,
+        windowStart=_utc("2026-09-10T00:00:00.999999Z"),
+        windowEnd=_utc("2026-09-10T02:00:00.000001Z"),
+    )
+    params = catalog_stage.query_params(fractional, seismology_config.catalog)
+    assert params["starttime"] == UTCDateTime("2026-09-10T00:00:00Z")
+    assert params["endtime"] == UTCDateTime("2026-09-10T02:00:01Z")
     assert (
         params["minlongitude"],
         params["minlatitude"],
@@ -158,14 +174,17 @@ def test_fixture_rows_every_field(
     assert counts["served"] == 3 and counts["kept"] == 3 and counts["manualOrigin"] == 3
     assert rows["t"].dtype == np.float64
 
+    datum = seismology_config.catalog.datums["uu"]
+    assert set(rows["depthDatum"]) == {f"{datum.label}; source: {datum.sourceUrls[0]}"}
+
     row = rows.set_index("id").loc[LATEST_ID]
     assert row["source"] == "UU via USGS ComCat"
     assert row["t"] == _utc("2026-09-10T23:42:53.300Z").timestamp()
     assert row["latitude"] == 38.512166666667
     assert row["longitude"] == -112.9005
     assert row["depthKm"] == 2.74
-    assert row["depthDatum"].startswith("km below sea level.")
-    assert "https://quake.utah.edu/resources/catalog-details/" in row["depthDatum"]
+    assert row["depthDatum"].startswith("km below sea level")
+    assert row["depthDatum"].endswith("https://quake.utah.edu/resources/catalog-details/")
     assert row["elevM"] == -2740.0  # datum surface 0 m ASL minus 2740 m
     assert row["mag"] == 1.34 and row["magType"] == "ml"
     e, n, _ = to_enu(row["latitude"], row["longitude"], row["elevM"], run_section.origin)
@@ -264,11 +283,16 @@ def _instant_where_epoch_conversions_disagree(start: datetime) -> datetime:
 def test_window_edges_are_exact_at_sub_second_instants(
     run_section: RunSection, seismology_config: SeismologyConfig, comcat_quakeml: Path
 ) -> None:
-    """An origin exactly on a window edge is judged by one epoch conversion on both sides."""
+    """An origin exactly on a window edge is judged by one epoch conversion on both sides.
+
+    ``t`` and ``RunSection.window_*_s`` both come from ``hq.config.run.epoch_s``, including at an
+    instant where ObsPy's own ``UTCDateTime.timestamp`` is one ulp low.
+    """
     instant = _instant_where_epoch_conversions_disagree(_utc("2026-09-10T23:42:53.300Z"))
     served = _served(comcat_quakeml)
     _by_id(served, LATEST_ID).preferred_origin().time = UTCDateTime(instant)
     cfg = seismology_config.catalog
+    assert epoch_s(UTCDateTime(instant).ns) == _with(run_section, windowEnd=instant).window_end_s
 
     rows, counts = catalog_stage.build_catalog(served, _with(run_section, windowEnd=instant), cfg)
     assert LATEST_ID not in set(rows["id"]) and counts["droppedAtOrAfterWindowEnd"] == 1
@@ -355,6 +379,57 @@ def test_manual_origin_count(
     assert counts["kept"] == 3 and counts["manualOrigin"] == 2
 
 
+def test_origin_without_evaluation_mode_is_not_manual(
+    run_section: RunSection, seismology_config: SeismologyConfig, comcat_quakeml: Path
+) -> None:
+    served = _served(comcat_quakeml)
+    _by_id(served, MIDDLE_ID).preferred_origin().evaluation_mode = None
+    assert catalog_stage.manual_origin_ids(served) == {LATEST_ID, EARLIEST_ID}
+    _, counts = catalog_stage.build_catalog(served, run_section, seismology_config.catalog)
+    assert counts["kept"] == 3 and counts["manualOrigin"] == 2
+
+
+def test_origin_exactly_at_datum_valid_from_is_kept(
+    run_section: RunSection, seismology_config: SeismologyConfig, comcat_quakeml: Path
+) -> None:
+    cfg = _with_datum(seismology_config, validFrom=_utc("2026-09-10T09:27:56.880Z"))
+    rows, _ = catalog_stage.build_catalog(_served(comcat_quakeml), run_section, cfg.catalog)
+    assert list(rows["id"]) == [EARLIEST_ID, MIDDLE_ID, LATEST_ID]
+
+
+def test_each_dropped_event_is_counted_once(
+    run_section: RunSection, seismology_config: SeismologyConfig, comcat_quakeml: Path
+) -> None:
+    """An event outside both the window and the bbox counts under the window reason only."""
+    served = _served(comcat_quakeml)
+    _by_id(served, LATEST_ID).preferred_origin().latitude = run_section.bbox[3] + 0.5
+    _by_id(served, EARLIEST_ID).preferred_origin().latitude = run_section.bbox[3] + 0.5
+    run = _with(run_section, windowEnd=_utc("2026-09-10T23:00:00Z"))
+    rows, counts = catalog_stage.build_catalog(served, run, seismology_config.catalog)
+    assert list(rows["id"]) == [MIDDLE_ID]
+    assert counts["droppedAtOrAfterWindowEnd"] == 1  # LATEST: after windowEnd and outside bbox
+    assert counts["droppedOutsideBbox"] == 1  # EARLIEST: in the window, outside bbox
+    dropped = sum(v for k, v in counts.items() if k.startswith("dropped"))
+    assert counts["served"] == 3 == dropped + counts["kept"]
+
+
+def test_counts_that_do_not_add_up_fail(
+    monkeypatch: pytest.MonkeyPatch,
+    run_section: RunSection,
+    seismology_config: SeismologyConfig,
+    comcat_quakeml: Path,
+) -> None:
+    real = catalog_stage.select_in_run
+
+    def double_counting(df: pd.DataFrame, run: RunSection) -> tuple[pd.DataFrame, dict[str, int]]:
+        rows, counts = real(df, run)
+        return rows, {**counts, "droppedOutsideBbox": counts["droppedOutsideBbox"] + 1}
+
+    monkeypatch.setattr(catalog_stage, "select_in_run", double_counting)
+    with pytest.raises(ValueError, match="do not add up"):
+        catalog_stage.build_catalog(_served(comcat_quakeml), run_section, seismology_config.catalog)
+
+
 # ---------------------------------------------------------------- fail loudly
 
 
@@ -384,6 +459,34 @@ def test_magnitude_without_type_fails(
     served = _served(comcat_quakeml)
     _by_id(served, LATEST_ID).preferred_magnitude().magnitude_type = None
     with pytest.raises(ValueError, match=f"{LATEST_ID}: preferred magnitude has no type"):
+        catalog_stage.build_catalog(served, run_section, seismology_config.catalog)
+
+
+def test_magnitude_without_value_fails(
+    run_section: RunSection, seismology_config: SeismologyConfig, comcat_quakeml: Path
+) -> None:
+    served = _served(comcat_quakeml)
+    _by_id(served, LATEST_ID).preferred_magnitude().mag = None
+    with pytest.raises(ValueError, match=f"{LATEST_ID}: preferred magnitude has no value"):
+        catalog_stage.build_catalog(served, run_section, seismology_config.catalog)
+
+
+@pytest.mark.parametrize("attr", ["latitude", "longitude"])
+def test_origin_without_position_fails(
+    attr: str, run_section: RunSection, seismology_config: SeismologyConfig, comcat_quakeml: Path
+) -> None:
+    served = _served(comcat_quakeml)
+    setattr(_by_id(served, LATEST_ID).preferred_origin(), attr, None)
+    with pytest.raises(ValueError, match=f"{LATEST_ID}: preferred origin lacks time or position"):
+        catalog_stage.build_catalog(served, run_section, seismology_config.catalog)
+
+
+def test_event_without_type_fails(
+    run_section: RunSection, seismology_config: SeismologyConfig, comcat_quakeml: Path
+) -> None:
+    served = _served(comcat_quakeml)
+    _by_id(served, MIDDLE_ID).event_type = None
+    with pytest.raises(ValueError, match=f"event {MIDDLE_ID} has no QuakeML type"):
         catalog_stage.build_catalog(served, run_section, seismology_config.catalog)
 
 
@@ -488,12 +591,14 @@ def test_stage_writes_both_files_and_records(
     run_section: RunSection,
     seismology_config: SeismologyConfig,
     comcat_quakeml: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     fake = FakeClient(comcat_quakeml, with_product={LATEST_ID, EARLIEST_ID})
     _use(monkeypatch, fake)
     ctx = make_ctx(run_section)
 
-    catalog_stage.run(ctx)
+    with caplog.at_level(logging.INFO, logger=catalog_stage.__name__):
+        catalog_stage.run(ctx)
 
     raw = ctx.path("catalog.quakeml").read_bytes()
     assert raw == comcat_quakeml.read_bytes()
@@ -528,15 +633,41 @@ def test_stage_writes_both_files_and_records(
         "withArrivalsProduct": 2,
         "withArrivalsProductManual": 2,
     }
-    params = record["params"]
+    # One namespaced key, so ProcessingRun.matching.catalog can't collide with the match stage.
+    assert set(record["params"]) == {"catalog"}
+    params = record["params"]["catalog"]
+    assert set(params) == {
+        "providerUrl",
+        "query",
+        "windowStart",
+        "windowEnd",
+        "windowEndExclusive",
+        "noDataFromProvider",
+        "idsWithArrivalsProduct",
+        "quakemlSha256",
+        "config",
+    }
+    assert params["providerUrl"] == FakeClient.base_url
     assert params["quakemlSha256"] == hashlib.sha256(raw).hexdigest()
     assert params["query"]["minlongitude"] == run_section.bbox[0]
     assert params["query"]["starttime"] == str(UTCDateTime(run_section.windowStart))
+    assert params["windowStart"] == run_section.windowStart.isoformat()
+    assert params["windowEnd"] == run_section.windowEnd.isoformat()
     assert params["windowEndExclusive"] is True
     assert params["noDataFromProvider"] is False
     assert params["idsWithArrivalsProduct"] == sorted([EARLIEST_ID, LATEST_ID])
-    assert params["eventTypes"] == ["earthquake"]
+    # Every knob once, inside config (eventTypes [earthquake], lead decision 2).
     assert params["config"] == seismology_config.catalog.model_dump(mode="json")
+    assert params["config"]["eventTypes"] == ["earthquake"]
+
+    # The stage summary (rule 12): kept and served counts, the window and the runtime.
+    (summary,) = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.INFO and r.getMessage().startswith("catalog: 3 events kept of 3")
+    ]
+    assert run_section.windowStart.isoformat() in summary.getMessage()
+    assert re.search(r"in \d+\.\d s$", summary.getMessage())
 
 
 def test_arrivals_counts_only_kept_rows_and_manual_origins(
@@ -568,7 +699,7 @@ def test_arrivals_counts_only_kept_rows_and_manual_origins(
     assert counts["manualOrigin"] == 1
     assert counts["withArrivalsProduct"] == 2
     assert counts["withArrivalsProductManual"] == 1
-    assert record["params"]["idsWithArrivalsProduct"] == sorted([EARLIEST_ID, MIDDLE_ID])
+    assert record["params"]["catalog"]["idsWithArrivalsProduct"] == sorted([EARLIEST_ID, MIDDLE_ID])
 
 
 def test_no_product_on_kept_events_warns(
@@ -628,9 +759,10 @@ def test_empty_window_writes_empty_outputs_and_records_no_data(
         "withArrivalsProduct": 0,
         "withArrivalsProductManual": 0,
     }
-    assert record["params"]["noDataFromProvider"] is True
-    assert record["params"]["idsWithArrivalsProduct"] == []
-    assert record["params"]["quakemlSha256"] == hashlib.sha256(first).hexdigest()
+    params = record["params"]["catalog"]
+    assert params["noDataFromProvider"] is True
+    assert params["idsWithArrivalsProduct"] == []
+    assert params["quakemlSha256"] == hashlib.sha256(first).hexdigest()
     assert any(r.levelno == logging.WARNING and "no data" in r.getMessage() for r in caplog.records)
 
     # Identical query, identical bytes: the empty document has no random id or creation time.
@@ -676,20 +808,37 @@ def test_failed_rerun_leaves_previous_pair_untouched(
     assert ctx.records == []
 
 
+def _nan_depth(text: str) -> str:
+    return text.replace("<depth>\n     <value>2740</value>", "<depth>\n     <value>NaN</value>", 1)
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (lambda text: _first_event_without(text, "depth"), "no depth"),
+        # With every column nullable, ObsPy's reader is what keeps a NaN out of the table.
+        (_nan_depth, "not a finite floating point value"),
+    ],
+    ids=["no-depth", "nan-depth"],
+)
 def test_malformed_data_on_rerun_leaves_previous_pair_untouched(
+    edit: Any,
+    message: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     make_ctx: Any,
     run_section: RunSection,
     comcat_quakeml: Path,
 ) -> None:
-    broken = tmp_path / "no_depth.quakeml"
-    broken.write_text(_first_event_without(comcat_quakeml.read_text("utf-8"), "depth"), "utf-8")
+    text = comcat_quakeml.read_text("utf-8")
+    broken = tmp_path / "broken.quakeml"
+    broken.write_text(edit(text), "utf-8")
+    assert broken.read_text("utf-8") != text
     _use(monkeypatch, FakeClient(broken, with_product=set()))
     ctx = make_ctx(run_section)
     previous = _write_previous_pair(ctx)
 
-    with pytest.raises(ValueError, match="no depth"):
+    with pytest.raises(ValueError, match=message):
         catalog_stage.run(ctx)
 
     assert {name: ctx.path(name).read_bytes() for name in previous} == previous
@@ -702,3 +851,191 @@ def test_no_event_with_product_counts_zero(
     fake = FakeClient(comcat_quakeml, with_product=None)
     params = catalog_stage.query_params(run_section, seismology_config.catalog)
     assert catalog_stage.ids_with_product(fake, params, "phase-data") == set()  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------- provider quirks
+
+
+def _only_events(text: str, keep: set[str]) -> str:
+    """The QuakeML text with every ``<event>`` block not in ``keep`` removed."""
+
+    def block(match: re.Match[str]) -> str:
+        tag = re.match(
+            r'  <event [^>]*catalog:eventsource="(\w+)" catalog:eventid="(\w+)"', match[0]
+        )
+        assert tag is not None
+        return match[0] if tag[1] + tag[2] in keep else ""
+
+    return re.sub(r"  <event .*?</event>\n", block, text, flags=re.DOTALL)
+
+
+class ComCatLikeClient(FakeClient):
+    """Serves only what ComCat serves: it truncates ``starttime`` and ``endtime`` to the whole
+    second and returns origins with ``trunc(starttime) <= time <= trunc(endtime)``.
+
+    That behaviour was checked against ComCat's /count endpoint with the showcase bbox and
+    uu80155911 (22:23:28.740Z): endtime 22:23:28.999 -> 0, endtime 22:23:29 -> 1,
+    starttime 22:23:28.999 -> 1, starttime 22:23:29 -> 0.
+    """
+
+    def get_events(self, **kwargs: Any) -> Catalog | None:
+        if "filename" not in kwargs:
+            return super().get_events(**kwargs)
+        self.calls.append(kwargs)
+        start, end = (
+            UTCDateTime(ns=kwargs[key].ns // NS_PER_S * NS_PER_S)
+            for key in ("starttime", "endtime")
+        )
+        keep = {
+            catalog_stage.comcat_id(ev)
+            for ev in _served(self.quakeml)
+            if start <= ev.preferred_origin().time <= end
+        }
+        Path(kwargs["filename"]).write_text(
+            _only_events(self.quakeml.read_text("utf-8"), keep), "utf-8"
+        )
+        return None
+
+
+def test_fractional_window_bounds_are_padded_to_what_comcat_serves(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_ctx: Any,
+    run_section: RunSection,
+    comcat_quakeml: Path,
+) -> None:
+    """An origin in [floor(windowEnd), windowEnd) is served and kept; exact bounds apply after."""
+    t_middle = _utc("2026-09-10T22:23:28.740Z")
+    # MIDDLE is 0.21 s before a fractional windowEnd in the same whole second.
+    run = _with(
+        run_section,
+        windowStart=t_middle - timedelta(seconds=1),
+        windowEnd=_utc("2026-09-10T22:23:28.950Z"),
+    )
+    fake = ComCatLikeClient(comcat_quakeml, with_product=set())
+    # Control: sent unpadded, these bounds get nothing from ComCat.
+    unpadded = tmp_path / "unpadded.quakeml"
+    fake.get_events(
+        filename=str(unpadded),
+        starttime=UTCDateTime(run.windowStart),
+        endtime=UTCDateTime(run.windowEnd),
+    )
+    assert len(_served(unpadded)) == 0
+    fake.calls.clear()
+    _use(monkeypatch, fake)
+
+    ctx = make_ctx(run)
+    catalog_stage.run(ctx)
+
+    query = fake.calls[0]
+    assert query["starttime"] == UTCDateTime("2026-09-10T22:23:27Z")
+    assert query["endtime"] == UTCDateTime("2026-09-10T22:23:29Z")
+    (record,) = ctx.records
+    assert record["counts"]["served"] == 1 and record["counts"]["kept"] == 1
+    assert list(pq.read_table(ctx.path("catalog.parquet")).column("id").to_pylist()) == [MIDDLE_ID]
+    params = record["params"]["catalog"]
+    assert params["query"]["endtime"] == str(UTCDateTime("2026-09-10T22:23:29Z"))
+    assert params["windowEnd"] == run.windowEnd.isoformat()
+
+    # Start side: MIDDLE is 0.16 s before a fractional windowStart in the same second. ComCat
+    # serves it (it truncates starttime); the exact bound drops it and counts it.
+    run = _with(run_section, windowStart=_utc("2026-09-10T22:23:28.900Z"))
+    ctx = make_ctx(run)
+    catalog_stage.run(ctx)
+    counts = ctx.records[0]["counts"]
+    assert counts["droppedBeforeWindowStart"] == 1
+    assert MIDDLE_ID not in set(pq.read_table(ctx.path("catalog.parquet")).column("id").to_pylist())
+
+
+def _with_event_type(text: str, event_id: str, event_type: str) -> str:
+    """Replace the event-level ``<type>earthquake</type>`` of one event block."""
+    start = text.rindex("  <event ", 0, text.index(f'catalog:eventid="{event_id[2:]}"'))
+    end = text.index("</event>", start)
+    block = text[start:end].replace("<type>earthquake</type>", f"<type>{event_type}</type>", 1)
+    assert block != text[start:end]
+    return text[:start] + block + text[end:]
+
+
+def test_event_type_obspy_cannot_parse_is_counted_by_its_raw_type(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_ctx: Any,
+    run_section: RunSection,
+    comcat_quakeml: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ComCat can serve a type outside QuakeML 1.2 (e.g. "Rock Slide"); ObsPy skips that event."""
+    edited = tmp_path / "rock_slide.quakeml"
+    edited.write_text(
+        _with_event_type(comcat_quakeml.read_text("utf-8"), MIDDLE_ID, "Rock Slide"), "utf-8"
+    )
+    with pytest.warns(UserWarning, match="does not comply"):
+        assert len(_served(edited)) == 2  # the reader drops it, with only a warning
+    _use(monkeypatch, FakeClient(edited, with_product=set()))
+    ctx = make_ctx(run_section)
+
+    with pytest.warns(UserWarning), caplog.at_level(logging.INFO, logger=catalog_stage.__name__):
+        catalog_stage.run(ctx)
+
+    counts = ctx.records[0]["counts"]
+    assert counts["served"] == 3 and counts["droppedEventType"] == 1 and counts["kept"] == 2
+    assert any(
+        MIDDLE_ID in r.getMessage() and "'Rock Slide'" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_event_obspy_cannot_parse_fails_when_it_would_be_kept(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_ctx: Any,
+    run_section: RunSection,
+    seismology_config: SeismologyConfig,
+    comcat_quakeml: Path,
+) -> None:
+    edited = tmp_path / "rock_slide.quakeml"
+    edited.write_text(
+        _with_event_type(comcat_quakeml.read_text("utf-8"), MIDDLE_ID, "Rock Slide"), "utf-8"
+    )
+    _use(monkeypatch, FakeClient(edited, with_product=set()))
+    ctx = make_ctx(run_section, _with_catalog(seismology_config, eventTypes=None))
+    previous = _write_previous_pair(ctx)
+
+    with pytest.warns(UserWarning), pytest.raises(ValueError, match=f"event {MIDDLE_ID}"):
+        catalog_stage.run(ctx)
+
+    assert {name: ctx.path(name).read_bytes() for name in previous} == previous
+    assert _no_part_files(ctx.run_dir)
+
+
+# ---------------------------------------------------------------- reading the table back
+
+
+def test_null_strings_read_back_as_nan_like_every_run_table(
+    tmp_path: Path,
+    run_section: RunSection,
+    seismology_config: SeismologyConfig,
+    comcat_quakeml: Path,
+) -> None:
+    """Pins how a null comes back: NaN through pandas (never pd.NA), None through pyarrow."""
+    served = _served(comcat_quakeml)
+    event = _by_id(served, MIDDLE_ID)
+    event.magnitudes = []
+    event.preferred_magnitude_id = None
+    rows, _ = catalog_stage.build_catalog(served, run_section, seismology_config.catalog)
+    path = tmp_path / "catalog.parquet"
+    catalog_stage._write_table(rows, path)
+
+    default_str = pd.Series(["x", None]).dtype  # pandas' default string dtype (missing = NaN)
+    string_columns = [c for c, t in DOCS02_TYPES.items() if t == pa.string()]
+    for frame in (rows, pd.read_parquet(path), pq.read_table(path).to_pandas()):
+        for column in string_columns:
+            dtype = frame[column].dtype
+            assert isinstance(dtype, pd.StringDtype) and dtype.na_value is default_str.na_value
+        middle = frame.set_index("id").loc[MIDDLE_ID]
+        for value in (middle["magType"], middle["matchedEventId"]):
+            assert pd.isna(value) and value is not pd.NA  # NaN: pd.isna, never `is None`
+    assert pd.read_parquet(path)["magType"].dtype == default_str
+
+    records = pq.read_table(path).to_pylist()
+    assert all(r["matchedEventId"] is None for r in records)
+    assert next(r for r in records if r["id"] == MIDDLE_ID)["magType"] is None

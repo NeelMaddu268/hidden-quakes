@@ -4,8 +4,10 @@ Queries the FDSN event service named in ``seismology.yaml`` (ComCat, which carri
 solutions), saves the raw QuakeML exactly as served, and writes ``CatalogEvent`` rows (docs/02 §1)
 with the published depth converted to ``elevM`` using the contributor's documented datum.
 
-Window semantics: ``windowStart`` inclusive, ``windowEnd`` exclusive. FDSN ``endtime`` is
-inclusive, so an origin exactly at ``windowEnd`` is served and then dropped (and counted) here.
+Window semantics: ``windowStart`` inclusive, ``windowEnd`` exclusive. ComCat ignores fractional
+seconds in ``starttime``/``endtime`` (it truncates both to the whole second, and ``endtime`` is
+inclusive at whole seconds), so the query is padded outward to whole seconds and the exact bounds
+are applied here; every event served but outside them is dropped, logged and counted.
 
 An empty window is a valid result: when the provider answers "no data" (HTTP 204) to the main
 query, the stage writes a fixed empty QuakeML document and a zero-row table, and records
@@ -19,12 +21,14 @@ import json
 import logging
 import os
 import time
+import xml.etree.ElementTree as ET
 from collections import Counter
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -33,7 +37,7 @@ from obspy.clients.fdsn import Client
 from obspy.clients.fdsn.header import FDSNNoDataException
 from obspy.core.event import Catalog, Event, ResourceIdentifier
 
-from hq.config.run import RunSection
+from hq.config.run import RunSection, epoch_s
 from hq.config.seismology import CatalogConfig
 from hq.locate.coords import to_enu
 
@@ -49,21 +53,23 @@ TABLE_NAME = "catalog.parquet"
 _M_PER_KM = 1000.0  # unit conversion; QuakeML depths are metres
 
 # docs/02 §2: CatalogEvent flattened (enu -> enu_e, enu_n, enu_u), field order as in the model.
+# Every field nullable, as hq_contracts.io.write_table writes them; event_to_row is the guard that
+# required values are present (and ObsPy's reader rejects non-finite ones).
 _CATALOG_SCHEMA = pa.schema(
     [
-        pa.field("id", pa.string(), nullable=False),
-        pa.field("source", pa.string(), nullable=False),
-        pa.field("t", pa.float64(), nullable=False),
-        pa.field("latitude", pa.float64(), nullable=False),
-        pa.field("longitude", pa.float64(), nullable=False),
-        pa.field("depthKm", pa.float64(), nullable=False),
-        pa.field("depthDatum", pa.string(), nullable=False),
-        pa.field("elevM", pa.float64(), nullable=False),
+        pa.field("id", pa.string()),
+        pa.field("source", pa.string()),
+        pa.field("t", pa.float64()),
+        pa.field("latitude", pa.float64()),
+        pa.field("longitude", pa.float64()),
+        pa.field("depthKm", pa.float64()),
+        pa.field("depthDatum", pa.string()),
+        pa.field("elevM", pa.float64()),
         pa.field("mag", pa.float64()),
         pa.field("magType", pa.string()),
-        pa.field("enu_e", pa.float64(), nullable=False),
-        pa.field("enu_n", pa.float64(), nullable=False),
-        pa.field("enu_u", pa.float64(), nullable=False),
+        pa.field("enu_e", pa.float64()),
+        pa.field("enu_n", pa.float64()),
+        pa.field("enu_u", pa.float64()),
         pa.field("matchedEventId", pa.string()),
     ]
 )
@@ -74,34 +80,44 @@ _ROW_COLUMNS = [
 _SCHEMA_VERSION = "1.0"  # docs/02 SCHEMA_VERSION
 _MODEL_NAME = "CatalogEvent"
 # In-memory column types, so the frame itself carries the docs/02 types (any writer, zero rows,
-# all-null columns). StringDtype("python") converts to Arrow string, not large_string.
-_STRING = pd.StringDtype("python")
+# all-null columns). Strings use pandas' default ``str`` semantics (a missing value is NaN, as in
+# every other run table read back with pandas) with python storage, which converts to Arrow
+# string, not large_string.
+_STRING = pd.StringDtype("python", na_value=np.nan)
 _FRAME_DTYPES: dict[str, Any] = {
     f.name: _STRING if pa.types.is_string(f.type) else "float64" for f in _CATALOG_SCHEMA
 }
 
 _PART_SUFFIX = ".part"  # temporary output name while the stage runs; see run()
 _ANALYST_MODE = "manual"  # QuakeML EvaluationMode of an analyst-reviewed origin
+_QUAKEML_BED = "{http://quakeml.org/xmlns/bed/1.2}"  # QuakeML 1.2 BED namespace
+_ANSS_CATALOG = "{http://anss.org/xmlns/catalog/0.1}"  # ANSS catalog:* attribute namespace
 # Fixed publicID of the empty document written for a no-data answer (ObsPy would draw a random
 # one), so an identical query gives byte-identical output.
 _NO_DATA_PUBLIC_ID = "smi:local/hq/catalog/no-data"
 
 
-def _epoch_s(value: UTCDateTime | datetime) -> float:
-    """Epoch seconds UTC through ObsPy's conversion, for origin times and window bounds alike.
+def _floor_second(instant: datetime) -> datetime:
+    return instant.replace(microsecond=0)
 
-    ``UTCDateTime.timestamp`` and ``datetime.timestamp()`` can differ by one ulp at sub-second
-    instants; taking both sides of a comparison from one conversion keeps the window edges exact.
-    """
-    return float(UTCDateTime(value).timestamp)
+
+def _ceil_second(instant: datetime) -> datetime:
+    floor = instant.replace(microsecond=0)
+    return floor if floor == instant else floor + timedelta(seconds=1)
 
 
 def query_params(run: RunSection, cfg: CatalogConfig) -> dict[str, Any]:
-    """FDSN event-query arguments: the run window and bbox exactly, plus the configured limits."""
+    """FDSN event-query arguments: the run bbox, the run window padded outward to whole seconds,
+    and the configured limits.
+
+    ComCat truncates ``starttime`` and ``endtime`` to the whole second and treats ``endtime`` as
+    inclusive, so an unpadded fractional ``windowEnd`` would never serve origins in
+    ``[floor(windowEnd), windowEnd)``. ``select_in_run`` applies the exact bounds afterwards.
+    """
     min_lon, min_lat, max_lon, max_lat = run.bbox
     params: dict[str, Any] = {
-        "starttime": UTCDateTime(run.windowStart),
-        "endtime": UTCDateTime(run.windowEnd),  # inclusive on the server; see select_in_run
+        "starttime": UTCDateTime(_floor_second(run.windowStart)),
+        "endtime": UTCDateTime(_ceil_second(run.windowEnd)),
         "minlongitude": min_lon,
         "minlatitude": min_lat,
         "maxlongitude": max_lon,
@@ -186,6 +202,50 @@ def comcat_id(event: Event) -> str:
     return _anss_attr(event, "eventsource") + _anss_attr(event, "eventid")
 
 
+def raw_event_types(raw: bytes) -> list[tuple[str, str | None]]:
+    """(ComCat id, ``<type>`` text) of every ``<event>`` in a QuakeML document, in document order.
+
+    Read from the bytes, independently of ObsPy, whose reader skips an event whose type is not a
+    QuakeML 1.2 EventType value with only a UserWarning.
+    """
+    events: list[tuple[str, str | None]] = []
+    for element in ET.fromstring(raw).iter(f"{_QUAKEML_BED}event"):
+        source = element.get(f"{_ANSS_CATALOG}eventsource")
+        number = element.get(f"{_ANSS_CATALOG}eventid")
+        if not source or not number:
+            raise ValueError(
+                f"served event {element.get('publicID')} has no catalog:eventsource/eventid"
+            )
+        type_element = element.find(f"{_QUAKEML_BED}type")
+        events.append((source + number, None if type_element is None else type_element.text))
+    return events
+
+
+def read_served(path: Path, cfg: CatalogConfig) -> tuple[Catalog, Counter[str]]:
+    """Parse the saved QuakeML and account for every ``<event>`` element in it.
+
+    ObsPy's reader skips an event whose type is outside the QuakeML 1.2 EventType enum (ComCat can
+    serve e.g. "Rock Slide" verbatim). A skipped event whose raw type ``cfg.eventTypes`` would drop
+    anyway is returned in the Counter, by raw type, to be counted as ``droppedEventType``; any
+    other skipped event raises, since it would belong in the table.
+    """
+    served = read_events(str(path), format="QUAKEML")
+    parsed = Counter(comcat_id(event) for event in served)
+    skipped: Counter[str] = Counter()
+    for event_id, event_type in raw_event_types(path.read_bytes()):
+        if parsed[event_id] > 0:
+            parsed[event_id] -= 1
+            continue
+        if cfg.eventTypes is None or event_type in cfg.eventTypes:
+            raise ValueError(
+                f"event {event_id} (type {event_type!r}) was served, but ObsPy's QuakeML reader "
+                "skipped it, so it cannot be converted"
+            )
+        skipped[str(event_type)] += 1
+        log.info("dropping %s: event type %r (not a QuakeML 1.2 event type)", event_id, event_type)
+    return served, skipped
+
+
 def filter_event_types(catalog: Catalog, cfg: CatalogConfig) -> tuple[list[Event], Counter[str]]:
     """Keep events whose QuakeML type is in ``cfg.eventTypes``; count the rest by type."""
     if cfg.eventTypes is None:
@@ -207,7 +267,8 @@ def event_to_row(event: Event, cfg: CatalogConfig) -> dict[str, Any]:
     """One ``CatalogEvent`` row (without ENU) from the preferred origin and magnitude.
 
     Fails loudly on a missing preferred origin, position, time or depth, and on a contributor or
-    origin time the configured depth datums do not cover.
+    origin time the configured depth datums do not cover. (ObsPy's reader already rejects a
+    non-finite number.)
     """
     event_id = comcat_id(event)
     origin = event.preferred_origin()
@@ -241,13 +302,13 @@ def event_to_row(event: Event, cfg: CatalogConfig) -> dict[str, Any]:
     return {
         "id": event_id,
         "source": f"{contributor.upper()} via {cfg.providerLabel}",
-        "t": _epoch_s(origin.time),
+        "t": epoch_s(origin.time.ns),
         "latitude": float(origin.latitude),
         "longitude": float(origin.longitude),
         # Below the contributor's datum (sea level for UU), as published. Not comparable to
         # SeismicEvent.depthKm, which is below run.refSurfaceElevM; compare elevM instead.
         "depthKm": depth_m / _M_PER_KM,
-        "depthDatum": f"{datum.description} Sources: {', '.join(datum.sourceUrls)}",
+        "depthDatum": f"{datum.label}; source: {datum.sourceUrls[0]}",
         "elevM": datum.surfaceElevM - depth_m,
         "mag": None if magnitude is None else float(magnitude.mag),
         "magType": None if magnitude is None else magnitude.magnitude_type,
@@ -257,8 +318,8 @@ def event_to_row(event: Event, cfg: CatalogConfig) -> dict[str, Any]:
 def select_in_run(df: pd.DataFrame, run: RunSection) -> tuple[pd.DataFrame, dict[str, int]]:
     """Keep rows with ``windowStart <= t < windowEnd`` inside ``run.bbox`` (edges inclusive)."""
     min_lon, min_lat, max_lon, max_lat = run.bbox
-    before = df["t"] < _epoch_s(run.windowStart)
-    at_or_after_end = df["t"] >= _epoch_s(run.windowEnd)
+    before = df["t"] < run.window_start_s
+    at_or_after_end = df["t"] >= run.window_end_s
     in_time = ~before & ~at_or_after_end
     in_box = df["longitude"].between(min_lon, max_lon) & df["latitude"].between(min_lat, max_lat)
     counts = {
@@ -277,13 +338,24 @@ def select_in_run(df: pd.DataFrame, run: RunSection) -> tuple[pd.DataFrame, dict
 
 
 def build_catalog(
-    catalog: Catalog, run: RunSection, cfg: CatalogConfig
+    catalog: Catalog,
+    run: RunSection,
+    cfg: CatalogConfig,
+    skipped_by_reader: Counter[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """Served events -> ``CatalogEvent`` rows for the run, sorted by ``t``, plus filter counts.
 
-    Columns carry the docs/02 types (float64, string) even with zero rows or all-null columns.
-    ``manualOrigin`` counts kept rows whose preferred origin is analyst-reviewed.
+    ``skipped_by_reader`` holds served events ObsPy could not parse, by type (``read_served``);
+    they count as served and as ``droppedEventType``. Every served event is either kept or counted
+    under exactly one ``dropped*`` reason, which is checked. ``manualOrigin`` counts kept rows
+    whose preferred origin is analyst-reviewed.
+
+    Columns carry the docs/02 types (float64, string) even with zero rows or all-null columns. A
+    missing value is NaN in string columns as in float columns (pandas' default ``str`` dtype, and
+    what catalog.parquet reads back as): test it with ``pd.isna``, never ``is None`` or truthiness,
+    or read rows through ``hq_contracts.io.from_frame``, which turns it into None.
     """
+    skipped = skipped_by_reader or Counter()
     events, dropped_types = filter_event_types(catalog, cfg)
     rows = pd.DataFrame([event_to_row(event, cfg) for event in events], columns=_ROW_COLUMNS)
     rows = rows.astype({name: _FRAME_DTYPES[name] for name in _ROW_COLUMNS})
@@ -294,14 +366,17 @@ def build_catalog(
     rows = rows.sort_values(["t", "id"], kind="stable").reset_index(drop=True)
     e, n, u = to_enu(rows["latitude"], rows["longitude"], rows["elevM"], run.origin)
     rows["enu_e"], rows["enu_n"], rows["enu_u"] = e, n, u
-    rows["matchedEventId"] = pd.Series(pd.NA, index=rows.index, dtype=_STRING)
+    rows["matchedEventId"] = pd.Series(np.nan, index=rows.index, dtype=_STRING)
     counts = {
-        "served": len(catalog),
-        "droppedEventType": sum(dropped_types.values()),
+        "served": len(catalog) + skipped.total(),
+        "droppedEventType": dropped_types.total() + skipped.total(),
         **dropped,
         "kept": len(rows),
         "manualOrigin": int(rows["id"].isin(manual_origin_ids(events)).sum()),
     }
+    accounted = counts["kept"] + sum(v for k, v in counts.items() if k.startswith("dropped"))
+    if accounted != counts["served"]:
+        raise ValueError(f"catalog counts do not add up to the served events: {counts}")
     return rows[_CATALOG_SCHEMA.names], counts
 
 
@@ -349,8 +424,8 @@ def run(ctx: "RunContext") -> None:
             )
             quakeml_part.write_bytes(empty_quakeml(client.base_url, params))
         raw = quakeml_part.read_bytes()
-        served = read_events(str(quakeml_part), format="QUAKEML")
-        rows, counts = build_catalog(served, run_cfg, cfg)
+        served, skipped = read_served(quakeml_part, cfg)
+        rows, counts = build_catalog(served, run_cfg, cfg, skipped)
 
         with_product = (
             set() if no_data else ids_with_product(client, params, cfg.arrivalsProductType)
@@ -392,17 +467,19 @@ def run(ctx: "RunContext") -> None:
         STAGE,
         runtime_s=runtime_s,
         counts=counts,
+        # Namespaced: the stage's params merge into ProcessingRun.matching, which the match stage
+        # shares, so they land under matching.catalog and cannot collide with its keys.
         params={
-            "provider": cfg.provider,
-            "providerUrl": client.base_url,
-            "query": json_query(params),
-            "windowEndExclusive": True,
-            "noDataFromProvider": no_data,
-            "eventTypes": cfg.eventTypes,
-            "arrivalsProductType": cfg.arrivalsProductType,
-            "idsWithArrivalsProduct": kept_with_product,
-            "datums": {k: v.model_dump(mode="json") for k, v in cfg.datums.items()},
-            "config": cfg.model_dump(mode="json"),
-            "quakemlSha256": hashlib.sha256(raw).hexdigest(),
+            "catalog": {
+                "providerUrl": client.base_url,
+                "query": json_query(params),  # as sent: bounds padded outward to whole seconds
+                "windowStart": run_cfg.windowStart.isoformat(),  # exact bounds applied to rows
+                "windowEnd": run_cfg.windowEnd.isoformat(),
+                "windowEndExclusive": True,
+                "noDataFromProvider": no_data,
+                "idsWithArrivalsProduct": kept_with_product,
+                "quakemlSha256": hashlib.sha256(raw).hexdigest(),
+                "config": cfg.model_dump(mode="json"),  # every catalog knob, recorded once
+            }
         },
     )
