@@ -34,13 +34,15 @@ def _strip_property_titles(node: object) -> None:
 
 
 def bundle_schema() -> dict:
-    schema = Bundle.model_json_schema()
+    """JSON schema of everything, in serialization mode: Python always writes defaulted fields,
+    so the TS marks them required (``isSynthetic: boolean``, not ``isSynthetic?: boolean``)."""
+    schema = Bundle.model_json_schema(mode="serialization")
     defs = schema.setdefault("$defs", {})
     # Every model is reachable from Bundle today; keep this loop so an unreachable one still exports.
     for model in ALL_MODELS:
         if model is Bundle or model.__name__ in defs:
             continue
-        sub = TypeAdapter(model).json_schema()
+        sub = TypeAdapter(model).json_schema(mode="serialization")
         defs.update(sub.pop("$defs", {}))
         defs[model.__name__] = sub
     for name, sub in defs.items():
