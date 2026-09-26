@@ -1,0 +1,25 @@
+# name: forge_1d_gdr1613_ver1
+# model: Utah FORGE 1D P- and S-wave velocity model from a joint hypocenter/velocity inversion of DAS microseismic picks, 2023 16A/16B circulation test (GDR resource "Velocity Model Ver1.csv", the model used for the locations in that submission's event catalog)
+# citation: Vera Rodriguez, I., Wolpert, J., Podrasky, D., Coleman, T., Maldaner, C., Ma, Y., Chamarczuk, M., Becker, M., & Ajo-Franklin, J. (2024). Utah FORGE 3-2417: DAS Microseismic Event Catalog from the 16A/16B Circulation Test, 2023 [Data set]. Geothermal Data Repository, Rice University. https://doi.org/10.15121/2376139
+# url: https://gdr.openei.org/submissions/1613
+# sourceFile: https://gdr.openei.org/files/1613/Inverted_1D_VelocityModel.csv
+# sourceSha256: 806cfad01f65cf9f2dac3376a1bdc458f3bedaf65e359c3e2815e28d249dd994
+# retrieved: 2026-09-25
+# license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), as stated on the GDR 1613 submission page
+# sourceColumns: TVDSS (m), vp (m/s), vs (m/s)
+# sourceDatum: TVDSS is true vertical depth below mean sea level, positive down, so negative values lie above sea level. The velocity file only labels the column "TVDSS (m)" and does not define it. Evidence: (1) the same submission's event catalog (FORGE_DAS_event_catalogue_circulation.csv) uses the same "TVDSS (m)" column, and the methods report (FOGMORE_MEQ_Circulation2023.pdf, p. 4, Results) gives the located microseismicity a "depth range of 570 m to 750 m from mean sea level", which matches that column (5th-95th percentile 584-746 m); (2) the final relocated catalog from the same team (GDR 1739, Header_Description.txt) defines its depth column as hypocentral depth from mean sea level; (3) Vp and Vs increase with TVDSS overall, which only holds if TVDSS increases downward.
+# layerConvention: each source row is the top of one layer carrying that layer's constant Vp and Vs; the deepest row is the top of a half-space. The source file does not state this. Evidence: the methods report (p. 4, Results) describes eight layers 130-580 m thick with Vp/Vs from 1.63 to 2.2, and the file has eight rows whose seven gaps are 130-582 m with Vp/Vs 1.63-2.16; reading the rows as layer bottoms instead would put the whole first layer above the ground (1692.7 m ASL over the event-cloud centroid, USGS 3DEP 1 m via EPQS) and the submission's own events (TVDSS 576-871 m) below the base of the model.
+# conversion: topElevM = -TVDSS, in m above mean sea level with up positive. vpMPerS and vsMPerS are the source vp and vs unchanged (the source is already in m/s, so no unit conversion was needed). No value was edited, smoothed or resampled.
+# units: topElevM in m above mean sea level (up positive); vpMPerS and vsMPerS in m/s
+# datum: topElevM is the top of each layer in metres above mean sea level (up positive), converted as elevM = -TVDSS from the source's true vertical depth below mean sea level; the deepest layer is a half-space.
+# notes: The model was inverted from DAS picks in wells 16B(78)-32 and 78B-32 on events about 2.3-2.4 km below the ground near those wells, so it is best constrained along those well paths. The same team later located these events with a dipping-layer 3D model from 2024 data instead, after the 1D locations disagreed with surface-network locations (Vera Rodriguez et al., SGW 2025, in GDR 1739); that 3D model is not published as a file.
+# verified: true
+topElevM,vpMPerS,vsMPerS
+1800,2296,1163
+1595,2600,1203
+1227,3097,1808
+1027,4319,2339
+445,5272,2444
+315,5113,3138
+-217,5615,3374
+-610,5521,3334
