@@ -8,8 +8,8 @@ of" an event. Two clips, both configured in ``signal.yaml`` -> ``sonify``:
   (``picks.parquet``, any phase) inside it (ties: station id order).
 - ``hero``: ``preS`` + ``postS`` around the bundle's hero event (``meta.json`` ->
   ``scene.heroEventId``, origin time from ``events.json``), at the nearest station of
-  ``stationKind`` (epicentral ENU distance, ties: id order) whose vertical channel covers at least
-  ``minCoverageFraction`` of the window.
+  ``stationKind`` (epicentral ENU distance, ties: id order) whose source Nyquist is above the
+  clip's band and whose vertical channel covers at least ``minCoverageFraction`` of the window.
 
 Rendering, per clip. The audio's samples are real-axis samples played ``speed`` times faster, so
 the real-axis rate is ``r = audioRateHz / speed`` and the band must stay below ``r / 2``.
@@ -17,30 +17,37 @@ the real-axis rate is ``r = audioRateHz / speed`` and the band must stay below `
 1. ``read_window`` (raw counts, ``padS`` beyond each window end), vertical channel only.
 2. Each gap-separated segment on its own: detrend, taper, zero-phase Butterworth bandpass
    (``bandHz``, real Hz), then ``scipy.signal.resample_poly`` to ``r`` (rational up / down, its
-   own anti-alias FIR). Segments too short for the bandpass's edge padding are dropped and counted.
+   own anti-alias FIR), keeping only output samples at or before the segment's last input sample.
+   Segments too short for the bandpass's edge padding are dropped and counted.
 3. Every segment is placed on a zero timeline of ``round(window * r)`` samples at its true time
    (nearest output sample). Gaps and missing data at the window ends are never touched, so they are
    exact digital silence: nothing is interpolated, bridged or zero-filled inside a segment.
 4. Level: the ``levelPercentile`` of ``|x|`` over samples that hold data is the reference (0 dB).
-5. Compression: a soft-knee downward compressor (``thresholdDb``, ``ratio``, ``kneeDb``) on a
-   look-ahead envelope, a centred running maximum of ``|x|`` (``envelopeHoldMs``) smoothed by a
-   centred Hann window (``envelopeSmoothMs``). The gain is smooth and starts to fall just before a
-   loud onset, so onsets are not let through first and clamped later; small events come up
-   relative to large ones and keep their shape.
+5. Compression: a soft-knee downward compressor (``thresholdDb``, ``ratio``, ``kneeDb``) on a peak
+   envelope: the peak of ``|x|`` over the next ``lookaheadMs``, released exponentially (time
+   constant ``releaseMs``), then averaged over the past ``lookaheadMs``. The envelope never falls
+   below ``|x|``, so onsets are not let through first and clamped later, and the gain can start
+   to fall at most ``lookaheadMs`` before a loud onset, so the record just before an arrival (and
+   an emergent arrival's first motion) keeps its level. Small events come up relative to large
+   ones and keep their shape.
 6. A raised-cosine fade of ``edgeFadeMs`` at both edges of every placed segment (gaps and window
    ends do not click), then peak normalization to ``peakDbfs``.
 7. Checks, raising on failure: no sample above the peak target, silence exactly zero, duration
    equal to ``window / speed`` within one audio sample.
 8. Mono OGG (Vorbis) and MP3 (constant bitrate) through python-soundfile, which is not a project
-   dependency: run with ``uv run --with soundfile``. The Ogg stream serial is rewritten to
-   ``oggStreamSerial`` (libsndfile draws a random one) so re-encodes are byte-identical, the MP3
-   frame headers are checked for the configured bitrate, both files are decoded back and checked
-   for clipping, and each must stay under ``maxBytes``. A JSON manifest sits next to them.
+   dependency: run with ``uv run --with soundfile==0.14.0`` (the encoder that produced the
+   delivered bytes; its and libsndfile's versions are recorded in the manifest). The Ogg stream
+   serial is rewritten to ``oggStreamSerial`` (libsndfile draws a random one) so re-encodes are
+   byte-identical, and the MP3 frame headers are checked for the configured bitrate. Both files are
+   decoded back and must have exactly the rendered length and a true peak (``truePeakOversample``
+   times oversampled) at or below ``maxTruePeakDbtp``; each must stay under ``maxBytes``. A JSON
+   manifest sits next to them.
 
 CLI::
 
-    uv run --with soundfile python -m hq.preprocess.sonify --run-dir <run> --bundle-dir <bundle>
-        --config-dir configs/showcase --cache-dir <cache> --out-dir <dir> [--clip hour|hero|all]
+    uv run --with soundfile==0.14.0 python -m hq.preprocess.sonify --run-dir <run>
+        --bundle-dir <bundle> --config-dir configs/showcase --cache-dir <cache> --out-dir <dir>
+        [--clip hour|hero|all]
 
 It writes nothing but ``<fileStem>.{ogg,mp3,json}`` under ``--out-dir``.
 """
@@ -105,15 +112,23 @@ HOUR_RULE = (
 )
 HERO_RULE = (
     "The bundle's hero event (meta.json scene.heroEventId); the nearest station of stationKind "
-    "used in the run by epicentral distance (ties: station id order) whose vertical channel "
-    "covers at least minCoverageFraction of the window; preS before and postS after the origin."
+    "used in the run by epicentral distance (ties: station id order) whose source Nyquist is "
+    "above the clip's band and whose vertical channel covers at least minCoverageFraction of the "
+    "window; preS before and postS after the origin."
 )
 COMPRESSION_DESCRIPTION = (
-    "Soft-knee downward compressor on a look-ahead envelope (centred running maximum of |x| "
-    "over envelopeHoldMs, smoothed by a centred Hann window of envelopeSmoothMs, audio ms). "
-    "Levels in dB relative to the levelPercentile of |x| over samples with data. Gain is "
-    "(1/ratio - 1) x (level - thresholdDb) above the knee, quadratic inside it."
+    "Soft-knee downward compressor on a peak envelope: the peak of |x| over the next "
+    "lookaheadMs, released exponentially (falls by 1/e per releaseMs), then averaged over the "
+    "past lookaheadMs (audio ms). The envelope never falls below |x|, and the gain can start to "
+    "fall at most lookaheadMs before the sample that drives it. Levels in dB relative to the "
+    "levelPercentile of |x| over samples with data. Gain is (1/ratio - 1) x (level - thresholdDb) "
+    "above the knee, quadratic inside it."
 )
+FILTER_DOMAIN = "real ground-motion Hz, before the speed-up; audioBandHz is where it plays"
+# The encoder that produced the delivered bytes. Not a knob: other versions still encode, the
+# manifest records the versions actually used, and a mismatch is logged as a warning.
+SOUNDFILE_PIN = "0.14.0"
+UV_COMMAND = f"uv run --with soundfile=={SOUNDFILE_PIN} python -m hq.preprocess.sonify"
 
 _DB = 20.0  # amplitude decibels: 20 log10
 _MS_PER_S = 1000.0
@@ -210,17 +225,37 @@ def nearest_station_with_data(
     north_m: float,
     coverage: Callable[[str, str], float],
     min_coverage: float,
+    band_high_hz: float,
     cfg: SonifyConfig,
 ) -> tuple[str, str, float, float]:
     """(station id, channel, epicentral m, coverage) of the nearest eligible station with data.
 
-    Ordered by epicentral ENU distance, ties by id. ``coverage(station_id, channel)`` returns the
-    fraction of the window its vertical channel covers; the first at or above ``min_coverage`` wins.
+    Ordered by epicentral ENU distance, ties by id. A station whose source Nyquist
+    (``sampleRateHz / 2``) is not above ``band_high_hz`` cannot carry the band and is skipped
+    (logged). ``coverage(station_id, channel)`` returns the fraction of the window its vertical
+    channel covers; the first at or above ``min_coverage`` wins.
     """
     elig = eligible_stations(stations, cfg)
     dist = np.hypot(elig["enu_e"].to_numpy() - east_m, elig["enu_n"].to_numpy() - north_m)
-    order = sorted(zip(dist.tolist(), elig["id"].tolist(), elig["channels"].tolist(), strict=True))
-    for dist_m, sid, channels in order:
+    order = sorted(
+        zip(
+            dist.tolist(),
+            elig["id"].tolist(),
+            elig["channels"].tolist(),
+            elig["sampleRateHz"].tolist(),
+            strict=True,
+        )
+    )
+    for dist_m, sid, channels, rate_hz in order:
+        if rate_hz / 2.0 <= band_high_hz:
+            log.info(
+                "sonify: %s at %.0f m skipped: %g Hz source cannot carry a band to %g Hz",
+                sid,
+                dist_m,
+                rate_hz,
+                band_high_hz,
+            )
+            continue
         channel = vertical_channel(sid, list(channels), cfg.component)
         frac = coverage(sid, channel)
         log.info("sonify: %s %s at %.0f m covers %.3f of the window", sid, channel, dist_m, frac)
@@ -259,6 +294,7 @@ class Timeline:
     samples: FloatArray
     covered: BoolArray
     runs: tuple[tuple[int, int], ...]  # [lo, hi) sample ranges that hold data, ascending
+    seedId: str  # NET.STA.LOC.CHA of the one channel rendered
     realRateHz: float
     sourceRateHz: float
     nSegments: int  # gap-separated segments read (after joining abutting pieces)
@@ -332,9 +368,12 @@ def build_timeline(
             seg, cfg.detrend, cfg.taper.type, cfg.taper.maxPercentage, cfg.taper.maxLengthS
         )
         filtered = sps.sosfiltfilt(sos, seg.data)
+        # resample_poly returns ceil(npts * up / down) samples; the last may sit past the last
+        # input sample (its FIR reads the zero padding), so keep only those at or before it.
+        keep = (seg.stats.npts - 1) * up // down + 1
         resampled = sps.resample_poly(
             filtered, up, down, window=("kaiser", cfg.resample.kaiserBeta)
-        )
+        )[:keep]
         first = round((seg.stats.starttime.timestamp - t0) * rate_out)
         lo, hi = max(first, reach, 0), min(first + resampled.size, n)
         if hi <= lo:
@@ -362,6 +401,7 @@ def build_timeline(
         samples=out,
         covered=covered,
         runs=tuple(runs),
+        seedId=next(iter(ids)),
         realRateHz=rate_out,
         sourceRateHz=source_hz,
         nSegments=len(segments),
@@ -385,13 +425,30 @@ def ms_to_samples(ms: float, audio_rate_hz: int) -> int:
     return max(1, round(ms / _MS_PER_S * audio_rate_hz))
 
 
-def envelope(x_abs: FloatArray, hold_n: int, smooth_n: int) -> FloatArray:
-    """Centred running maximum over ``hold_n`` samples, smoothed by a centred Hann of ``smooth_n``."""
-    held = ndimage.maximum_filter1d(x_abs, size=hold_n, mode="constant", cval=0.0)
-    window = np.hanning(smooth_n + 2)[1:-1]  # no zero end points
-    window /= window.sum()
-    smoothed: FloatArray = sps.fftconvolve(held, window, mode="same")
-    return np.maximum(smoothed, 0.0)  # FFT round-off can dip a hair below zero in silence
+def envelope(x_abs: FloatArray, lookahead_n: int, release_n: int) -> FloatArray:
+    """Peak envelope with a look-ahead of ``lookahead_n`` samples and an exponential release.
+
+    1. ``peak[n] = max |x[n .. n + L]|``: the attack sees at most ``L`` samples ahead.
+    2. ``held[n] = max over k <= n of peak[k] * exp(-(n - k) / R)``: instant attack, exponential
+       release (computed in closed form as a running maximum in the log domain).
+    3. ``env[n] = mean(held[n - L .. n])``: the attack becomes a ramp over the ``L`` samples before
+       the onset instead of a step. Every ``held[k]`` in that average covers ``x[n]``, so
+       ``env[n] >= |x[n]|``, and ``env`` cannot rise more than ``L`` samples before ``x`` does.
+    """
+    size = lookahead_n + 1
+    peak = ndimage.maximum_filter1d(
+        x_abs, size=size, mode="constant", cval=0.0, origin=-(size // 2)
+    )
+    decay = np.arange(x_abs.size, dtype=np.float64) / release_n
+    with np.errstate(divide="ignore"):  # log(0) = -inf in silence: exp(-inf) = 0, as wanted
+        log_peak = np.log(peak)
+    held = np.exp(np.maximum.accumulate(log_peak + decay) - decay)
+    # origin (size - 1) // 2 puts the window on [n - L, n]; "nearest" repeats held[0] before the
+    # start, which covers x[0 .. L], so the bound holds at the first samples too.
+    smoothed: FloatArray = ndimage.uniform_filter1d(
+        held, size=size, mode="nearest", origin=(size - 1) // 2
+    )
+    return np.maximum(smoothed, 0.0)
 
 
 def compressor_gain_db(level_db: FloatArray, comp: SonifyCompressor) -> FloatArray:
@@ -413,8 +470,8 @@ def compress(x: FloatArray, level: float, comp: SonifyCompressor, audio_rate_hz:
     normalized = x / level
     env = envelope(
         np.abs(normalized),
-        ms_to_samples(comp.envelopeHoldMs, audio_rate_hz),
-        ms_to_samples(comp.envelopeSmoothMs, audio_rate_hz),
+        ms_to_samples(comp.lookaheadMs, audio_rate_hz),
+        ms_to_samples(comp.releaseMs, audio_rate_hz),
     )
     gain_db = np.zeros_like(env)
     live = env > 0.0
@@ -471,13 +528,19 @@ def render_clip(
     return Rendered(audio=audio, timeline=timeline, levelCounts=level)
 
 
-def signal_report(audio: FloatArray, covered: BoolArray) -> dict[str, float]:
-    """Peak and RMS in dBFS and the fraction of samples with no data."""
+def true_peak(x: FloatArray, oversample: int) -> float:
+    """Largest ``|x|`` after ``oversample`` x ``resample_poly`` upsampling (inter-sample peaks)."""
+    return float(np.max(np.abs(sps.resample_poly(x, oversample, 1))))
+
+
+def signal_report(audio: FloatArray, covered: BoolArray, oversample: int) -> dict[str, float]:
+    """Peak, true peak and RMS in dBFS and the fraction of samples with no data."""
     peak = float(np.max(np.abs(audio)))
     rms = float(np.sqrt(np.mean(audio**2)))
     rms_data = float(np.sqrt(np.mean(audio[covered] ** 2))) if covered.any() else 0.0
     return {
         "peakDbfs": _dbfs(peak),
+        "truePeakDbtp": _dbfs(true_peak(audio, oversample)),
         "rmsDbfs": _dbfs(rms),
         "rmsDataDbfs": _dbfs(rms_data),
         "silentFraction": float(1.0 - covered.mean()),
@@ -497,10 +560,28 @@ def _soundfile() -> ModuleType:
     except ImportError as exc:
         raise SoundfileMissingError(
             "hq.preprocess.sonify encodes OGG and MP3 with python-soundfile, which is not a "
-            "project dependency: run it with `uv run --with soundfile python -m "
-            "hq.preprocess.sonify ...`"
+            f"project dependency: run it with `{UV_COMMAND} ...`"
         ) from exc
     return soundfile
+
+
+def encoder_versions() -> dict[str, str]:
+    """python-soundfile and libsndfile versions (libsndfile bundles the Vorbis and LAME coders)."""
+    sf = _soundfile()
+    versions = {
+        "library": "python-soundfile",
+        "soundfile": str(sf.__version__),
+        "libsndfile": str(sf.__libsndfile_version__),
+    }
+    if versions["soundfile"] != SOUNDFILE_PIN:
+        log.warning(
+            "sonify: python-soundfile %s, not the pinned %s: the audio bytes (and their sha256) "
+            "may differ from a render with `%s`",
+            versions["soundfile"],
+            SOUNDFILE_PIN,
+            UV_COMMAND,
+        )
+    return versions
 
 
 def _ogg_crc_table() -> tuple[int, ...]:
@@ -632,16 +713,25 @@ def encode_mp3(
     return data
 
 
-def decode_check(data: bytes, audio_rate_hz: int) -> dict[str, float | int]:
-    """Decode an encoded file; raise if its rate is wrong or it would clip (|x| > full scale)."""
+def decode_check(
+    data: bytes, render: SonifyRender, frames: int, oversample: int
+) -> dict[str, float | int]:
+    """Decode an encoded file; raise unless it has the rendered rate and length and its true peak
+    stays at or below ``maxTruePeakDbtp`` (codec overshoot and player resampling headroom)."""
     sf = _soundfile()
     decoded, rate = sf.read(io.BytesIO(data), dtype="float64", always_2d=False)
-    if rate != audio_rate_hz:
-        raise RuntimeError(f"decoded rate {rate} Hz, expected {audio_rate_hz} Hz")
+    if rate != render.audioRateHz:
+        raise RuntimeError(f"decoded rate {rate} Hz, expected {render.audioRateHz} Hz")
+    if decoded.ndim != 1 or decoded.shape[0] != frames:
+        raise RuntimeError(f"decoded {decoded.shape} samples, rendered {frames} (mono)")
     peak = float(np.max(np.abs(decoded)))
-    if peak > 1.0:  # full scale: a decoder or player clips above it
-        raise RuntimeError(f"decoded peak {peak} is above full scale: lower peakDbfs")
-    return {"frames": int(decoded.shape[0]), "peakDbfs": _dbfs(peak)}
+    tp = true_peak(decoded, oversample)
+    if _dbfs(tp) > render.maxTruePeakDbtp:
+        raise RuntimeError(
+            f"decoded true peak {_dbfs(tp):.2f} dBTP is above maxTruePeakDbtp "
+            f"{render.maxTruePeakDbtp}: lower peakDbfs"
+        )
+    return {"frames": int(decoded.shape[0]), "peakDbfs": _dbfs(peak), "truePeakDbtp": _dbfs(tp)}
 
 
 # --- clips ------------------------------------------------------------------------------------------
@@ -700,7 +790,13 @@ def select_hero(inputs: RunInputs, cfg: SonifyConfig, cache_dir: Path) -> HeroSe
         return coverage_fraction(station_id, channel, start, end, cache_dir=cache_dir)
 
     station_id, channel, dist_m, frac = nearest_station_with_data(
-        inputs.stations, event.enu.e, event.enu.n, coverage, cfg.hero.minCoverageFraction, cfg
+        inputs.stations,
+        event.enu.e,
+        event.enu.n,
+        coverage,
+        cfg.hero.minCoverageFraction,
+        cfg.hero.render.bandHz[1],
+        cfg,
     )
     return HeroSelection(event.id, event.t, start, end, station_id, channel, dist_m, frac)
 
@@ -740,6 +836,7 @@ def build_manifest(
     files: dict[str, dict[str, Any]],
     selection: dict[str, Any],
     extra: dict[str, Any],
+    encoder: dict[str, str],
 ) -> dict[str, Any]:
     """The keys H3 reads first (``stationId`` ... ``source``), then provenance and checks."""
     tl = rendered.timeline
@@ -753,9 +850,12 @@ def build_manifest(
         "sampleRateHz": render.audioRateHz,
         "filterHz": [render.bandHz[0], render.bandHz[1]],
         "source": SOURCE,
+        "filterDomain": FILTER_DOMAIN,
+        "audioBandHz": [render.bandHz[0] * render.speed, render.bandHz[1] * render.speed],
         "note": NOTE,
         "clip": clip,
         "runId": run_id,
+        "seedId": tl.seedId,
         **extra,
         "durationS": rendered.audio.size / render.audioRateHz,
         "windowS": t1 - t0,
@@ -781,8 +881,11 @@ def build_manifest(
             },
             "edgeFadeMs": render.edgeFadeMs,
             "peakDbfs": render.peakDbfs,
+            "maxTruePeakDbtp": render.maxTruePeakDbtp,
+            "truePeakOversample": cfg.truePeakOversample,
         },
         "files": files,
+        "encoder": encoder,
         "generator": GENERATOR,
     }
 
@@ -805,14 +908,19 @@ def write_clip(
     """Render, encode, check and write one clip; returns (manifest, signal report)."""
     started = perf_counter()
     rendered = render_clip(st, t0, t1, render, cfg)
+    encoder = encoder_versions()
     ogg = encode_ogg(rendered.audio, render, cfg.oggStreamSerial)
     mp3 = encode_mp3(rendered.audio, render)
-    report: dict[str, Any] = signal_report(rendered.audio, rendered.timeline.covered)
+    report: dict[str, Any] = signal_report(
+        rendered.audio, rendered.timeline.covered, cfg.truePeakOversample
+    )
     files: dict[str, dict[str, Any]] = {}
     for ext, data in (("ogg", ogg), ("mp3", mp3)):
         if len(data) >= render.maxBytes:
             raise RuntimeError(f"{render.fileStem}.{ext} is {len(data)} bytes, over maxBytes")
-        report[f"{ext}Decoded"] = decode_check(data, render.audioRateHz)
+        report[f"{ext}Decoded"] = decode_check(
+            data, render, rendered.audio.size, cfg.truePeakOversample
+        )
         files[ext] = _file_entry(f"{render.fileStem}.{ext}", data)
     files["ogg"]["nominalBitrateBps"] = vorbis_nominal_bitrate(ogg)
     files["ogg"]["vorbisQuality"] = render.oggQuality
@@ -830,6 +938,7 @@ def write_clip(
         files=files,
         selection=selection,
         extra=extra,
+        encoder=encoder,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{render.fileStem}.ogg").write_bytes(ogg)
@@ -948,7 +1057,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m hq.preprocess.sonify",
         description="Sped-up audio renderings of cached public waveforms (SEIS-09). "
-        "Needs python-soundfile: uv run --with soundfile python -m hq.preprocess.sonify ...",
+        f"Needs python-soundfile: {UV_COMMAND} ...",
     )
     parser.add_argument("--run-dir", type=Path, required=True, help="runs/<id> (read only)")
     parser.add_argument(

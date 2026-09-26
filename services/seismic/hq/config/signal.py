@@ -635,19 +635,21 @@ MPEG1_L3_BITRATES_KBPS = (32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 2
 
 
 class SonifyCompressor(_Section):
-    """Soft-knee downward compressor driven by a look-ahead (zero-phase) envelope.
+    """Soft-knee downward compressor driven by a peak envelope with a short look-ahead.
 
     Levels are dB relative to the clip's robust level (``levelPercentile`` of ``|x|`` over the
-    samples that hold data). The envelope is a centred running maximum of ``|x|`` over
-    ``envelopeHoldMs``, smoothed by a centred Hann window of ``envelopeSmoothMs`` (audio ms), so
-    the gain starts to fall just before a loud onset instead of letting it through first.
+    samples that hold data). The envelope is the peak of ``|x|`` over the next ``lookaheadMs``,
+    released exponentially (time constant ``releaseMs``), then averaged over the past
+    ``lookaheadMs`` (audio ms). It never falls below ``|x|`` (onsets are not let through first
+    and clamped later), and the gain can start to fall at most ``lookaheadMs`` before the sample
+    that drives it, so the record just before an arrival keeps its level.
     """
 
     thresholdDb: float  # compression starts here (middle of the knee)
     ratio: float = Field(ge=1.0)  # dB in above the threshold per dB out
     kneeDb: float = Field(ge=0.0)  # width of the soft knee around the threshold
-    envelopeHoldMs: float = Field(gt=0.0)  # audio ms
-    envelopeSmoothMs: float = Field(gt=0.0)  # audio ms
+    lookaheadMs: float = Field(gt=0.0)  # audio ms: attack look-ahead and its smoothing
+    releaseMs: float = Field(gt=0.0)  # audio ms: the envelope falls by 1/e per releaseMs
 
 
 class SonifyRender(_Section):
@@ -661,6 +663,7 @@ class SonifyRender(_Section):
     levelPercentile: float = Field(gt=0.0, le=100.0)  # robust level: this percentile of |x|
     compressor: SonifyCompressor
     peakDbfs: float = Field(lt=0.0)  # final peak normalization; no sample above it
+    maxTruePeakDbtp: float = Field(le=0.0)  # decoded OGG / MP3: oversampled peak at most this
     oggQuality: float = Field(ge=0.0, le=1.0)  # Vorbis quality (x10 = oggenc -q)
     mp3BitrateKbps: int  # constant bitrate
     maxBytes: int = Field(gt=0)  # each encoded file must stay below this
@@ -676,6 +679,11 @@ class SonifyRender(_Section):
             raise ValueError(f"audioRateHz must be an MPEG-1 rate {MPEG1_SAMPLE_RATES_HZ}")
         if self.mp3BitrateKbps not in MPEG1_L3_BITRATES_KBPS:
             raise ValueError(f"mp3BitrateKbps must be one of {MPEG1_L3_BITRATES_KBPS}")
+        if self.maxTruePeakDbtp < self.peakDbfs:
+            raise ValueError(
+                f"{self.fileStem}: maxTruePeakDbtp {self.maxTruePeakDbtp} is below peakDbfs "
+                f"{self.peakDbfs}: every encode would fail"
+            )
         low, high = self.bandHz
         nyquist = self.realRateHz / 2.0
         if not 0.0 < low < high < nyquist:
@@ -724,6 +732,7 @@ class SonifyConfig(_Section):
     joinMisalignmentSamples: float = Field(gt=0.0, lt=0.5)  # abutting pieces within this join
     resample: SonifyResample
     oggStreamSerial: int = Field(ge=0, lt=2**32)  # fixed Ogg serial so re-encodes are identical
+    truePeakOversample: int = Field(ge=2)  # decoded files are oversampled this much for the peak
     busiestHour: SonifyBusiestHour
     hero: SonifyHero
 
