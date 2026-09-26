@@ -198,12 +198,15 @@ def _dt_km(dt: float, dist: float) -> str:
     return f"dt {dt:+.2f} s, {dist / 1000.0:.2f} km"
 
 
-def no_candidate_reason(tol: Tolerance, nearest: tuple[float, float] | None) -> str:
-    """``no candidate within 2 s / 5 km (nearest: dt +3.40 s, 7.90 km)``.
+def no_candidate_reason(tol: Tolerance, lowest: tuple[float, float] | None) -> str:
+    """``no candidate within 2 s / 5 km (lowest-cost located event: dt +3.40 s, 7.90 km)``.
 
-    "nearest" is the located event with the lowest cost ``|dt| / dtScaleS + d / distScaleM``.
+    The lowest-cost located event minimises ``|dt| / dtScaleS + d / distScaleM``; it can be far
+    from the public event in time or space.
     """
-    detail = "no located events" if nearest is None else f"nearest: {_dt_km(*nearest)}"
+    detail = (
+        "no located events" if lowest is None else f"lowest-cost located event: {_dt_km(*lowest)}"
+    )
     return f"{REASONS['noCandidate']} {tol.label()} ({detail})"
 
 

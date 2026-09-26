@@ -23,9 +23,10 @@ check that fails gives the reason:
 7. ``location`` (stations, picks, ``events_located.pickIds``): the located events within
    ``maxCandidateDtS`` of the public origin that carry in-window picks from ``minStations``
    stations are this event's associated candidates. If any exists, the reason is "located out of
-   tolerance" with the nearest (lowest-cost) one; if none does and check 6 ran, it is
+   tolerance" with the lowest-cost one; if none does and check 6 ran, it is
    "associated, not located".
-8. Otherwise the ``match`` reason stays: "no candidate within ..." with the nearest located event.
+8. Otherwise the ``match`` reason stays: "no candidate within ..." with the lowest-cost located
+   event.
 
 In-window picks
     A station's in-window picks are its P picks inside its P window and its S picks inside its S
@@ -529,7 +530,7 @@ def _evidence_reason(base: str, ev: pd.Series, i: int, ctx: _Context) -> str:
         best = int(np.argmin(ctx.tol.cost(ctx.offsets.dt[i, cols], ctx.offsets.dist[i, cols])))
         eid, j = candidates[best], int(cols[best])
         return (
-            f"{REASONS['locatedOutOfTolerance']} {ctx.tol.label()} (nearest associated "
+            f"{REASONS['locatedOutOfTolerance']} {ctx.tol.label()} (lowest-cost associated "
             f"candidate {eid}: dt {ctx.offsets.dt[i, j]:+.2f} s, "
             f"{ctx.offsets.dist[i, j] / 1000.0:.2f} km; picks in the expected arrival windows "
             f"from {per_event[eid]} stations)"
