@@ -169,6 +169,8 @@ def _errors(truth: pd.DataFrame, located: list[EventLocation], prefix: str) -> p
             f"{prefix}VErrM": [_nan_if_none(loc.v_err_m) for loc in located],
             f"{prefix}PdfTruncated": [loc.pdf_truncated for loc in located],
             f"{prefix}DepthOnEdge": [loc.depth_on_edge for loc in located],
+            f"{prefix}MapOnVolumeTop": [loc.map_on_volume_top for loc in located],
+            f"{prefix}MapOnVolumeBottom": [loc.map_on_volume_bottom for loc in located],
             f"{prefix}NDropped": [len(loc.dropped_pick_ids) for loc in located],
             f"{prefix}NS": [loc.n_s for loc in located],
             f"{prefix}RmsS": [loc.rms_s for loc in located],
@@ -203,6 +205,8 @@ def _summary(df: pd.DataFrame, prefix: str) -> dict[str, float | int | None]:
         "medianFormalVErrM": median(df[f"{prefix}VErrM"]),
         "nPdfTruncated": int(df[f"{prefix}PdfTruncated"].sum()),
         "nDepthOnEdge": int(df[f"{prefix}DepthOnEdge"].sum()),
+        "nMapOnVolumeTop": int(df[f"{prefix}MapOnVolumeTop"].sum()),
+        "nMapOnVolumeBottom": int(df[f"{prefix}MapOnVolumeBottom"].sum()),
         "nEventsWithDroppedPicks": int((df[f"{prefix}NDropped"] > 0).sum()),
     }
 

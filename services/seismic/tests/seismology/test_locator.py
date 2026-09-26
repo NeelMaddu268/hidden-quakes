@@ -138,10 +138,13 @@ def _gaussian_box(
 
 
 def _summary(misfit: FloatArray, e: FloatArray, n: FloatArray, z: FloatArray, *,
-             scale: float = 1.0, top: bool = False, bottom: bool = False) -> PdfSummary:
+             scale: float = 1.0, top: bool = False, bottom: bool = False,
+             band: float = 0.0) -> PdfSummary:
+    """``top`` / ``bottom``: the box's top / bottom row is the volume's (else 10 km inside)."""
     return summarize_pdf(misfit, e, n, z, spacing_h_m=FINE, spacing_z_m=FINE, misfit_scale=scale,
-                         top_is_volume_top=top, bottom_is_volume_bottom=bottom, confidence=0.68,
-                         edge_fraction=0.05)
+                         volume_top_elev_m=z[-1] if top else z[-1] + 1e4,
+                         volume_bottom_elev_m=z[0] if bottom else z[0] - 1e4,
+                         map_face_band_m=band, confidence=0.68, edge_fraction=0.05)
 
 
 def test_pdf_of_a_gaussian_misfit_gives_the_expected_sigmas() -> None:
@@ -208,6 +211,16 @@ def test_broad_pdf_map_boundary_is_separate_from_contracted_face_mass_flag() -> 
     assert not interior.map_on_volume_top and not interior.depth_on_edge
     upside_down = _summary(misfit[peak:], e, n, z[peak:], bottom=True)
     assert upside_down.map_on_volume_bottom and not upside_down.depth_on_edge
+    # MAP one fine row below the volume top: only a band of at least one row catches it.
+    below = (misfit[: peak + 2], e, n, z[: peak + 2])
+    assert not _summary(*below, top=True).map_on_volume_top
+    assert _summary(*below, top=True, band=FINE).map_on_volume_top
+    assert not _summary(*below, top=True, band=FINE - 1.0).map_on_volume_top
+    assert not _summary(*below, top=False, band=4 * FINE).map_on_volume_top
+    with pytest.raises(ValueError, match="within the volume"):
+        summarize_pdf(*below, spacing_h_m=FINE, spacing_z_m=FINE, misfit_scale=1.0,
+                      volume_top_elev_m=z[peak], volume_bottom_elev_m=z[0] - 1e4,
+                      map_face_band_m=0.0, confidence=0.68, edge_fraction=0.05)
 
 
 # --- locator on the synthetic test geometry ---------------------------------------------------
@@ -285,11 +298,13 @@ def test_mad_branch_sets_the_outlier_threshold(
 def test_depth_on_edge_fires_at_the_volume_top(loc02: Any, locator: Locator, t0: float) -> None:
     top = locator.volume.top_elev_m
     loc = locator.locate(loc02.exact_picks(locator, 200.0, -400.0, top, t0))
-    assert loc.search["atVolumeTop"] and loc.search["mapOnVolumeTop"]
+    assert loc.search["atVolumeTop"] and loc.search["mapOnVolumeTop"] and loc.map_on_volume_top
+    assert not loc.map_on_volume_bottom
     assert loc.pdf.top_face_mass > 0.05
     assert loc.depth_on_edge and loc.quality()["depthOnEdge"]
     deep = locator.locate(loc02.exact_picks(locator, 200.0, -400.0, -2500.0, t0))
     assert not deep.depth_on_edge and not deep.search["atVolumeTop"]
+    assert not (deep.map_on_volume_top or deep.map_on_volume_bottom)
     assert deep.pdf.top_face_mass < 1e-4  # an interior face at the pdfCutoff contour
 
 
@@ -304,9 +319,25 @@ def test_broad_pdf_boundary_diagnostic_does_not_override_face_mass_flag(
         picks = loc02.exact_picks(locator, 200.0, -400.0, top + 300.0, t0, p_stations=six,
                                   s_stations=[], prob=0.15)
         loc = locator.locate(_noisy(picks, 300 + seed, 0.02, 0.04))
-        assert loc.search["mapOnVolumeTop"] and loc.elev_m == top
+        assert loc.search["mapOnVolumeTop"] and loc.map_on_volume_top and loc.elev_m == top
         assert loc.search["faceMass"]["top"] < locator.cfg.depthOnEdgeMassFraction
         assert not loc.depth_on_edge
+
+
+def test_map_on_volume_top_band_catches_a_map_just_below_the_top(
+    loc02: Any, loc_setup: LocatorSetup, locator: Locator, t0: float
+) -> None:
+    # A well-constrained source two fine rows under the volume top: its MAP is not on the top row.
+    top = locator.volume.top_elev_m
+    picks = loc02.exact_picks(locator, 200.0, -400.0, top - 2 * FINE, t0)
+    band = locator.cfg.mapOnVolumeFaceBandM
+    assert band >= 2 * FINE  # the showcase band (one fineStageSpacingM) reaches two rows
+    near = locator.locate(picks)
+    assert FINE <= top - near.elev_m <= band  # below the top row, inside the band
+    assert near.map_on_volume_top and near.search["mapOnVolumeTop"]
+    row_only = _with_locator_cfg(loc_setup, locator, mapOnVolumeFaceBandM=0.0).locate(picks)
+    assert row_only.elev_m == near.elev_m and not row_only.map_on_volume_top
+    assert locator.to_record()["uncertainty"]["mapOnVolumeFaceBandM"] == band
 
 
 def test_pdf_region_grows_past_the_first_fine_box_and_matches_brute_force(

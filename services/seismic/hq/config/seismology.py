@@ -176,6 +176,9 @@ class LocatorConfig(BaseModel):
     errConfidence: float
     # depthOnEdge: more than this PDF mass on the fine grid's top or bottom face.
     depthOnEdgeMassFraction: float = Field(gt=0, lt=1)
+    # mapOnVolumeTop / mapOnVolumeBottom (separate from depthOnEdge): the MAP node lies within this
+    # distance (m) of the search volume's top / bottom (0: only on the face row itself).
+    mapOnVolumeFaceBandM: float = Field(ge=0)
     nWorkers: int = Field(ge=1)  # processes for locate_many; results do not depend on it
     evalChunkNodes: int = Field(ge=1)  # nodes per misfit block (memory only; results unchanged)
     enuConsistencyTolM: float = Field(gt=0)  # |enu_u + origin elevM - sensorElevM| must be below

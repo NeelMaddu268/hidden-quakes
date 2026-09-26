@@ -63,6 +63,9 @@ def test_small_synthetic_run(smoke_setup: LocatorSetup, tmp_path: Path) -> None:
     assert report.p90VErrM >= report.medianVErrM
     noisy = result.params["noisy"]
     assert noisy["nPdfTruncated"] == 0
+    for summary, prefix in ((noisy, "noisy"), (clean, "clean")):  # zone well below the volume top
+        assert summary["nMapOnVolumeTop"] == int(result.events[f"{prefix}MapOnVolumeTop"].sum())
+        assert summary["nMapOnVolumeTop"] == summary["nMapOnVolumeBottom"] == 0
     assert 0.0 <= noisy["fracHWithinHErrM"] <= 1.0 and 0.0 <= noisy["fracVWithinVErrM"] <= 1.0
     params = result.params
     assert params["depthBiasSign"].startswith("elevM_true - elevM_located")
