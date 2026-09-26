@@ -83,8 +83,8 @@ catalog:
         - https://quake.ethz.ch/quakeml/Documents
 
 # Catalog matching (stage "match", hq.match, MATCH-02): one-to-one assignment of located events to
-# public-catalog events with scipy's linear_sum_assignment. Distance is epicentral, from the
-# horizontal ENU of both tables. Magnitude is never in the cost: magnitudes are calibrated on these
+# public regional catalog events with scipy's linear_sum_assignment. Distance is epicentral, from
+# the horizontal ENU of both tables. Magnitude is never in the cost: magnitudes are calibrated on these
 # same matches.
 matching:
   # cost = |dt| / dtScaleS + distance / distScaleM, summed over the chosen pairs and minimised
@@ -112,6 +112,10 @@ matching:
     # associated event on fewer than this many used stations gets that reason. 4 is the smallest
     # station count in the association sweep (lane doc), so no swept associator setting can form an
     # event below it. Known gap: not read from the associator's own minStations until LOC-03 merges.
+    # LOC-03 configures associator.minStations 5, so a public event picked on exactly 4 stations
+    # reads "picks not associated" where "below the associator's minimum" would be more useful. At
+    # the LOC-03 merge: read associator.minStations and minPickProb here (or validate that they
+    # agree) and record both side by side in ProcessingRun.matching.match.
     minStations: 4
     # Picks at or above this probability count for "too few picks"; picks below it (stored down to
     # 0.1) only turn that into "picks below threshold". 0.3 is LOC-03's working associator threshold
