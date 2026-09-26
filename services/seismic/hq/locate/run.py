@@ -4,7 +4,7 @@ Reads ``assoc_events.parquet``, ``assoc_picks.parquet``, the picks table the ass
 (``associator.picksTable``) and ``stations.parquet`` (its ``usedInRun`` stations), locates with
 the configured statics (``hq.locate.statics.locate_with_statics``) and the run's cache dir, then
 the synthetic recovery test
-(``hq.locate.synthetic``) on the same used stations and tables, and writes
+(``hq.locate.synthetic``) on the used stations that recorded picks (same tables), and writes
 ``events_located.parquet``, ``arrivals.parquet``, ``statics.parquet``, ``synthetic.json``
 (docs/02 §2), ``locate_flags.parquet`` (H2-internal, see ``hq.locate``) and ``diagnostics.md``
 (``hq.locate.diagnostics``). Null ``synthetic.sKeepProb`` / ``pickProb`` are measured from this
@@ -150,10 +150,28 @@ def reference_input(ctx: "RunContext") -> pd.DataFrame | None:
     )
 
 
+def synthetic_stations(used: pd.DataFrame, picks: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """The used stations that recorded at least one pick in this run's picks table.
+
+    A usedInRun station that recorded no pick in this run (for whatever reason: no data served,
+    a dead channel, a quiet window) would get perfect synthetic picks and flatter the recovery
+    test, so it is left out and named in the run record (``synthetic.stationsWithoutPicks``) and
+    in diagnostics.md.
+    """
+    with_picks = set(picks["stationId"].astype(str))
+    keep = used["id"].astype(str).isin(with_picks).to_numpy()
+    dropped = sorted(used.loc[~keep, "id"].astype(str))
+    kept = used[keep].reset_index(drop=True)
+    if kept.empty:
+        raise ValueError("synthetic test: no used station recorded a pick in this run")
+    return kept, dropped
+
+
 def synthetic_test(
     ctx: "RunContext", details: LocateDetails, picks: pd.DataFrame, stations: pd.DataFrame
 ) -> SyntheticResult:
-    """The synthetic recovery test on the run's used stations, with measured pick stats."""
+    """The synthetic recovery test on the run's used stations that recorded picks, with measured
+    pick stats; ``params['stationsWithoutPicks']`` names the used stations left out."""
     cfg = ctx.config.seismology
     syn = cfg.synthetic
     stats = (
@@ -162,6 +180,10 @@ def synthetic_test(
     )
     kind = stations.assign(id=stations["id"].astype(str)).set_index("id")["kind"].astype(str)
     used = details.stations.assign(kind=kind.reindex(details.stations["id"]).to_numpy())
+    used, no_picks = synthetic_stations(used, picks)
+    if no_picks:
+        log.warning("locate: synthetic test leaves out %d used station(s) with no picks: %s",
+                    len(no_picks), no_picks)
     setup = LocatorSetup(
         stations=used,
         model=load_configured_model(cfg.velocity),
@@ -169,7 +191,9 @@ def synthetic_test(
         run=ctx.config.run,
         cache_dir=ctx.cache_dir,
     )
-    return run_synthetic(setup, geometry_label=ctx.run_id, pick_stats=stats)
+    result = run_synthetic(setup, geometry_label=ctx.run_id, pick_stats=stats)
+    result.params["stationsWithoutPicks"] = no_picks
+    return result
 
 
 def run(ctx: "RunContext") -> None:
@@ -236,6 +260,8 @@ def run(ctx: "RunContext") -> None:
     rep = outcome.report
     counts = {
         **details.counts, "syntheticEvents": synthetic.report.nEvents,
+        "syntheticStations": int(synthetic.params["nStations"]),
+        "syntheticStationsWithoutPicks": len(synthetic.params["stationsWithoutPicks"]),
         "staticsPass": rep.pass_number,
         "staticsReferenceEvents": 0 if rep.reference is None else len(rep.reference),
         "staticsNonZero": int((rep.terms["staticS"] != 0.0).sum()),
