@@ -236,6 +236,7 @@ def _err(loc: EventLocation, e: float, n: float, z: float) -> tuple[float, float
     return math.hypot(loc.e_m - e, loc.n_m - n), abs(loc.elev_m - z)
 
 
+@pytest.mark.smoke  # LOC-02 acceptance in CI; shares the smoke locator fixture
 def test_noise_free_recovery(loc02: Any, locator: Locator, t0: float) -> None:
     truths = [(0.0, 0.0, -2000.0), (1300.0, -700.0, -1200.0), (-1500.0, 900.0, -4200.0),
               (400.0, 1800.0, -3100.0), (-900.0, -1600.0, -2600.0)]

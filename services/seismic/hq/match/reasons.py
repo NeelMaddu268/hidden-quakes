@@ -42,9 +42,12 @@ Expected arrival windows
     configured 1D model and ``T_P`` the P time along the straight ray through it (its top layer
     extended upward). The S window is the same with S. In that model every first arrival lies in
     the unpadded bracket: no path is shorter than ``R`` or faster than ``vMax``, and by Fermat's
-    principle the first arrival is never later than the straight ray. ``pad`` is ``arrivalPadS``
-    (public location and origin-time error, station delays, pick error). Windows are clipped to
-    the run window, and only stations with ``usedInRun`` count.
+    principle the first arrival is never later than the straight ray. When the run dir has a
+    ``statics.parquet`` (LOC-05), each station-phase's window moves by its term: the terms are
+    the delays the 1D model can't hold (up to ``statics.referenceCapS``, too large to budget in
+    the pad), and ``tPred`` carries them the same way. ``pad`` is ``arrivalPadS`` (public location and
+    origin-time error, the terms' common origin-time constant, pick error). Windows are clipped
+    to the run window, and only stations with ``usedInRun`` count.
 """
 
 from dataclasses import dataclass, field
@@ -68,6 +71,7 @@ GAP_COLUMNS = ("stationId", "channel", "gapStart", "gapEnd")
 PICK_COLUMNS = ("id", "stationId", "phase", "t", "prob")
 ASSOC_PICK_COLUMNS = ("assocId", "pickId")
 PUBLIC_COLUMNS = ("id", "t", "latitude", "longitude", "enu_e", "enu_n", "enu_u")
+STATIC_COLUMNS = ("stationId", "phase", "staticS")
 PHASES = ("P", "S")
 
 # Check name -> the evidence inputs it needs, in pipeline order.
@@ -87,8 +91,9 @@ class Evidence:
 
     stations: pd.DataFrame | None = None  # stations.parquet
     gaps: pd.DataFrame | None = None  # gaps.parquet
-    picks: pd.DataFrame | None = None  # picks.parquet
+    picks: pd.DataFrame | None = None  # associator.picksTable (picks.parquet)
     assoc_picks: pd.DataFrame | None = None  # assoc_picks.parquet
+    statics: pd.DataFrame | None = None  # statics.parquet: stationId, phase, staticS
 
 
 @dataclass(frozen=True, eq=False)
@@ -143,9 +148,28 @@ class ArrivalModel:
             "vpMaxMPerS": float(self.vp.max()),
             "vsMaxMPerS": float(self.vs.max()),
             "padS": pad_s,
-            "rule": "[t + R / vMax - pad, t + straight-ray time + pad] per phase, clipped to the "
-            "run window",
+            "rule": "[t + R / vMax + static - pad, t + straight-ray time + static + pad] per "
+            "phase (static: the station-phase's statics.parquet term, 0 without one), clipped to "
+            "the run window",
         }
+
+
+def station_delays(statics: pd.DataFrame | None, ids: NDArray[Any]) -> dict[str, FloatArray]:
+    """Per phase, each station's ``statics.parquet`` term in ``ids`` order (0 without one)."""
+    out = {phase: np.zeros(len(ids), dtype=np.float64) for phase in PHASES}
+    if statics is None:
+        return out
+    _require(statics, STATIC_COLUMNS, "statics")
+    values = pd.to_numeric(statics["staticS"], errors="raise").to_numpy(dtype=np.float64)
+    if not np.isfinite(values).all():
+        raise ValueError("statics: non-finite staticS")
+    keys = list(zip(statics["stationId"].astype(str), statics["phase"].astype(str), strict=True))
+    if len(set(keys)) != len(keys):
+        raise ValueError("statics: a station-phase appears twice")
+    term = dict(zip(keys, values.tolist(), strict=True))
+    for phase in PHASES:
+        out[phase] = np.array([term.get((str(sid), phase), 0.0) for sid in ids], dtype=np.float64)
+    return out
 
 
 def expected_windows(
@@ -354,6 +378,7 @@ class _Context:
     pad: float
     max_candidate_dt: float
     arrivals: ArrivalModel
+    delays: dict[str, FloatArray]  # per phase, each used station's static (stations.ids order)
     run: RunSection
 
 
@@ -428,6 +453,7 @@ def explain_unmatched(
             max_candidate_dt=reasons_cfg.maxCandidateDtS,
             arrivals=arrivals,
             run=run,
+            delays=station_delays(evidence.statics, stations.ids),
         )
     min_lon, min_lat, max_lon, max_lat = run.bbox
 
@@ -467,8 +493,8 @@ def _evidence_reason(base: str, ev: pd.Series, i: int, ctx: _Context) -> str:
     t = float(ev["t"])
     hypo = np.array([ev["enu_e"], ev["enu_n"], ev["enu_u"]], dtype=np.float64)
     ws, we = ctx.run.window_start_s, ctx.run.window_end_s
-    windows = {
-        phase: (np.maximum(lo, ws), np.minimum(hi, we))  # clipped; empty where start >= end
+    windows = {  # moved by each station's static; clipped; empty where start >= end
+        phase: (np.maximum(lo + ctx.delays[phase], ws), np.minimum(hi + ctx.delays[phase], we))
         for phase, (lo, hi) in expected_windows(
             t, hypo, st.enu, ctx.run.origin.elevM, ctx.arrivals, ctx.pad
         ).items()

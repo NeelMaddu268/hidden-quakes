@@ -51,6 +51,7 @@ import pyarrow.parquet as pq
 from hq_contracts.io import from_frame, read_table, write_table
 from hq_contracts.models import MagCalibration, SeismicEvent
 
+from hq.locate.provenance import stage_provenance
 from hq.magnitude.amplitude import (
     AMPLITUDE_UNITS,
     DISTANCE_UNITS,
@@ -590,6 +591,7 @@ def _run(ctx: RunContext, started: float) -> None:
         "stationsExcluded": excluded,
         "amplitudes": amps.record,
         "outputs": [EVENTS_TABLE, MAGNITUDE_JSON],
+        "provenance": stage_provenance(),
         "runtimeS": {
             "amplitudes": amps.record["runtimeS"],
             "fitAndLoo": round(fit_runtime, 3),

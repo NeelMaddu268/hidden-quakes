@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from hq_contracts.models import SourceRef as ContractSourceRef
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from numpy.typing import ArrayLike, NDArray
@@ -76,18 +77,20 @@ class LayerFileError(ValueError):
     """A layer file is malformed, incomplete or physically impossible."""
 
 
-# TODO(CONTRACT-01): replace with hq_contracts.models.SourceRef once it lands; keep the fields equal
-# to docs/02 until then (a smoke test checks them).
 @dataclass(frozen=True)
 class SourceRef:
-    """Where a model comes from. Same fields and meaning as ``SourceRef`` in docs/02."""
+    """Where a model comes from: docs/02 ``SourceRef``'s fields, as a frozen dataclass so the
+    frozen ``LayerModel`` holding it stays hashable and picklable; ``to_record`` goes through
+    ``hq_contracts.models.SourceRef``, so the record always validates against the contract."""
 
     citation: str
     url: str
     verified: bool  # taken from an authoritative source; the layer file's verifiedBasis says how
 
     def to_record(self) -> dict[str, Any]:
-        return {"citation": self.citation, "url": self.url, "verified": self.verified}
+        return ContractSourceRef(
+            citation=self.citation, url=self.url, verified=self.verified
+        ).model_dump(mode="json")
 
 
 @dataclass(frozen=True)

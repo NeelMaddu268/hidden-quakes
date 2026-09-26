@@ -574,6 +574,11 @@ def locate(
     ``statics.mode``; station-phases not in it get 0. Validation reruns pass the showcase run's
     own ``statics.parquet`` so their events are located, and so graded by the run's tier bars,
     on the same scale as the run's events (REQ-H1-5).
+
+    With ``locator.nWorkers`` above 1 the events are located in spawned worker processes, which
+    re-import the caller's ``__main__``: call this from a script whose top level is guarded by
+    ``if __name__ == "__main__":`` (the CLI entry points are), or the pool breaks
+    (``BrokenProcessPool``). The results do not depend on ``nWorkers``.
     """
     if statics is not None:
         from hq.locate.statics import statics_map  # imports this package
