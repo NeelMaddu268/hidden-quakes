@@ -24,7 +24,24 @@ export interface ValidationRow {
   id: RowId;
   label: string;
   value: string;
+  /** One short line under the row, for a value that must not be read against another row unqualified. */
+  note?: string;
 }
+
+/**
+ * Why the comparison's PhaseNet count can differ from "Strict events": the baseline rerun applies
+ * one statics table to every event, while the published run leaves each matched event out of its
+ * own statics (VAL-01 → `validation_notes.json`). Shown under the row so the two counts never sit
+ * on the card side by side without it.
+ */
+export const STRICT_COMPARE_NOTE = "Rerun with one statics table for every event; the count differs from the strict count above";
+
+/**
+ * Why the depth-resolution figure is an upper bound on what a typical candidate gets: the
+ * synthetic test records every event on every station, while a typical candidate has fewer
+ * stations and resolves less finely (H2's 5:50 PM Sat note). Shown under the row.
+ */
+export const DEPTH_NOTE = "Synthetic test with every event on every station; a typical candidate, on fewer stations, resolves less finely";
 
 /** Display precision per row (decimals shown), not a data threshold. */
 const DECIMALS = { count: 0, stations: 1, residual: 3, depth: 0, gain: 2, chance: 1 } as const;
@@ -70,6 +87,21 @@ export function baselineRan(rows: readonly Nullable<BaselineRow>[] | null | unde
 }
 
 /** The rows to show, in the lane doc's order; absent sources yield no row. */
+/**
+ * The line under "Chance associations": the value is a mean over the null test's timing
+ * scrambles, and how many of those reached the strict tier is the other half of the claim
+ * (H2, Sat evening). Every number comes from `validation.nullTest`; a missing field drops its
+ * clause rather than guessing.
+ */
+export function chanceNote(nullTest: Nullable<NonNullable<Validation["nullTest"]>> | null | undefined): string {
+  const n = nullTest?.nShuffles;
+  const strict = nullTest?.meanChanceStrict;
+  const scrambles = isFiniteNumber(n) ? `Mean of ${formatNumber(n, DECIMALS.count)} timing scrambles` : "Mean over timing scrambles";
+  if (!isFiniteNumber(strict)) return scrambles;
+  if (strict === 0) return `${scrambles}; none reached the strict tier`;
+  return `${scrambles}; about ${formatNumber(strict, DECIMALS.chance)} per scramble reached the strict tier`;
+}
+
 export function rows(summary: SummaryInput, validation: ValidationInput): ValidationRow[] {
   const s = summary ?? {};
   const v = validation ?? {};
@@ -93,7 +125,12 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
   }
   const medianVErrM = v.synthetic?.medianVErrM;
   if (isFiniteNumber(medianVErrM)) {
-    out.push({ id: "depth", label: "Depth resolution", value: `±${formatNumber(medianVErrM, DECIMALS.depth)} m` });
+    out.push({
+      id: "depth",
+      label: "Depth resolution",
+      value: `±${formatNumber(medianVErrM, DECIMALS.depth)} m`,
+      note: DEPTH_NOTE,
+    });
   }
   // Lane doc: the strict counts side by side whenever the full profile has both rows; the table
   // is the source, so the row also shows when STA/LTA's strict count is zero and no gain exists.
@@ -103,6 +140,7 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
       id: "strictCompare",
       label: "Strict events, PhaseNet vs STA/LTA",
       value: `${formatNumber(comparison.phasenet, DECIMALS.count)} vs ${formatNumber(comparison.stalta, DECIMALS.count)}`,
+      note: STRICT_COMPARE_NOTE,
     });
   }
   // Lane doc: "Baseline ran and gain > 1 in both profiles". The value is summary.baseline.gain;
@@ -117,6 +155,7 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
       id: "chance",
       label: "Chance associations",
       value: formatNumber(meanChanceEvents, DECIMALS.chance),
+      note: chanceNote(v.nullTest),
     });
   }
   return out;
