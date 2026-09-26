@@ -57,7 +57,7 @@ from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig, StaticsExplainConfig
 from hq.locate import (
     LocateDetails,
-    _process_cache_dir,
+    default_cache_dir,
     event_picks,
     locate_detailed,
     used_stations,
@@ -65,6 +65,7 @@ from hq.locate import (
 from hq.locate.coords import to_enu
 from hq.locate.locator import Locator, LocatorSetup, build_locator, weighted_median
 from hq.locate.tt_grid import PHASES
+from hq.locate.tt_grid3d import Model3dSource
 from hq.locate.velocity import LayerModel, load_configured_model
 
 if TYPE_CHECKING:
@@ -167,14 +168,9 @@ def catalog_residuals(
     phase, d, w`` with ``w = prob / sigma``, the catalog ids left out because their hypocentre
     lies outside the travel-time grid).
     """
-    grid = locator.tables.grid
-    st_e = stations["enu_e"].to_numpy(dtype=np.float64)
-    st_n = stations["enu_n"].to_numpy(dtype=np.float64)
     parts, skipped = [], []
     for r in pairs.itertuples(index=False):
-        reach = float(np.max(np.hypot(st_e - r.catalogE, st_n - r.catalogN)))
-        if not (grid.bottom_elev_m <= r.catalogElevM <= grid.top_elev_m
-                and reach <= grid.r_max_m):
+        if not locator.covers(r.catalogE, r.catalogN, r.catalogElevM):
             skipped.append(str(r.catalogId))
             continue
         f = frames[str(r.assocId)]
@@ -324,6 +320,78 @@ def _neighbour_median(
     return float(np.median(others["staticS"].to_numpy(dtype=np.float64)[near])), ids
 
 
+@dataclass(frozen=True)
+class ModelFacts:
+    """What ``explain_terms`` says about the travel-time model at one station."""
+
+    against: str  # the travel times the station's terms are relative to
+    vpvs: float  # the model's Vp/Vs at the sensor
+    above_top_m: float  # sensor above the model's own top (NaN: the model has no such top)
+    elevation: str  # the sentence placing the sensor against the model's top or ground
+    deep: str  # where a distant station's rays mostly run (the far-station hypothesis)
+
+
+DEEP_1D = "the model's half-space, which the layer file marks as extrapolation"
+
+
+def facts_1d(model: LayerModel, stations: pd.DataFrame,
+             against: str = "the 1D model") -> dict[str, ModelFacts]:
+    """Per station: the 1D layer model at its sensor (``model`` as the tables hold it: its
+    ``top_extension``, when set, says where the source model's own top was)."""
+    source_top = (model.top_extension.from_elev_m if model.top_extension is not None
+                  else model.top_of_model_elev_m)
+    out = {}
+    for sid, elev in zip(stations["id"].astype(str), stations["sensorElevM"].astype(float),
+                         strict=True):
+        above = elev - source_top
+        out[sid] = ModelFacts(
+            against=against,
+            vpvs=float(model.vp_at(elev)) / float(model.vs_at(elev)),
+            above_top_m=above,
+            elevation=f"Sensor at {elev:.0f} m ASL, " + (
+                f"{above:.0f} m above the velocity model's own top ({source_top:.0f} m ASL), "
+                "where its top layer is extended upward and stands in for whatever rock is there."
+                if above > 0 else f"{-above:.0f} m below the velocity model's own top."),
+            deep=DEEP_1D,
+        )
+    return out
+
+
+def facts_grid3d(locator: Locator, stations: pd.DataFrame) -> dict[str, ModelFacts]:
+    """Per station: the 3D model's column at a station with a 3D table (Vp/Vs at the sensor as
+    its table's near-receiver seed holds it; where the file puts the ground), the 1D facts at a
+    station on its 1D tables (outside the 3D model, or a constant column under fallback1d)."""
+    t3 = locator.tables3d
+    if t3 is None:
+        raise ValueError("facts_grid3d needs a grid3d locator")
+    out = facts_1d(locator.tables.model, stations,
+                   against="its 1D tables (no 3D table: 1D fallback)")
+    for sid, elev in zip(stations["id"].astype(str), stations["sensorElevM"].astype(float),
+                         strict=True):
+        if not t3.has(sid):
+            continue
+        col = t3.column_model_of(sid)
+        c = t3.columns[sid]
+        vp, vs = float(col.vp_at(elev)), float(col.vs_at(elev))
+        if c.kind == "basin" and c.ground_low_elev_m is not None:
+            where = (f"the 3D model's ground in its column lies between {c.ground_low_elev_m:.0f} "
+                     f"and {c.ground_high_elev_m:.0f} m ASL (Vp {vp:.0f}, Vs {vs:.0f} m/s at the "
+                     "sensor).")
+        elif c.kind == "constant":
+            where = (f"in a 3D model column that holds one velocity at every elevation (Vp "
+                     f"{vp:.0f}, Vs {vs:.0f} m/s): the file has no ground surface or basin data "
+                     "there, so the 3D times put basement rock right up to the sensor.")
+        else:
+            where = (f"in a 3D model column with no air value on top (Vp {vp:.0f}, Vs {vs:.0f} "
+                     "m/s at the sensor): the file marks no ground surface there.")
+        out[sid] = ModelFacts(
+            against="the 3D model", vpvs=vp / vs, above_top_m=math.nan,
+            elevation=f"Sensor at {elev:.0f} m ASL; " + where,
+            deep="the 3D model's basement, which the file holds at one velocity everywhere",
+        )
+    return out
+
+
 def explain_terms(
     terms: pd.DataFrame,
     stations: pd.DataFrame,
@@ -332,19 +400,24 @@ def explain_terms(
     flag_s: float,
     min_events: int,
     cfg: StaticsExplainConfig,
+    facts: Mapping[str, ModelFacts] | None = None,
 ) -> pd.DataFrame:
     """One row per static with ``|staticS| > flag_s``: its evidence and a written explanation.
+
+    ``facts`` says, per station, which travel times its terms are relative to and what that
+    model holds at the sensor (grid3d: ``facts_grid3d``); None: ``facts_1d(model, stations)``.
 
     Evidence, each computed from the terms, the station geometry and the model. Each verdict
     says what the term is consistent with; none proves a cause:
     - neighbours: the median term of the ``neighbours`` nearest other stations within
       ``neighbourMaxDistM`` with an estimated term (``nEvents >= min_events``, same phase).
       The same sign and at least ``lateralFraction`` of the term: nearby stations share the
-      delay, consistent with lateral structure the 1D model can't hold (diagnostics row 7)
+      delay, consistent with lateral structure the model can't hold (diagnostics row 7)
       rather than a station fault. The only verdict that draws on other stations' terms.
     - S/P: the station's S term over its P term (same sign, ``|P| >= minRatioTermS``) against
-      the model's Vp/Vs at the sensor. Within a factor ``ratioBand`` of it: P and S changed in
-      proportion, consistent with a velocity anomaly near the station. Above that: S changed
+      the model's Vp/Vs at the sensor (grid3d: in the station's 3D column, air handled as for its
+      table). Within a factor ``ratioBand`` of it: P and S changed in proportion, consistent
+      with a velocity anomaly near the station. Above that: S changed
       proportionally more than P, consistent with near-station rock whose Vp/Vs differs from the
       model's (slower and higher where late, as in unconsolidated sediment; faster and lower
       where early, as in crystalline rock under the model's sediment-like top layers); such rock
@@ -353,20 +426,21 @@ def explain_terms(
       same-sign ratios without a label (only ratios below ``1 / ratioBand`` or between
       ``ratioBand`` and ``Vp/Vs / ratioBand``), so they label consistency, not a tested cause.
     - distance: an early term at a station more than ``farStationM`` from ``centre`` (the
-      events' median epicentre): most of its ray length lies in the model's half-space, where
-      the sources sit and which the layer file marks as extrapolation, so a faster half-space
-      would make distant stations early. Another station beyond ``farStationM`` whose same-phase
-      term is late by more than ``flag_s`` contradicts that, and then the verdict is not far.
+      events' median epicentre): most of its ray length lies deep in the model (1D: the
+      half-space, where the sources sit and which the layer file marks as extrapolation; 3D: the
+      file's one-velocity basement), so faster rock there would make distant stations early.
+      Another station beyond ``farStationM`` whose same-phase term is late by more than
+      ``flag_s`` contradicts that, and then the verdict is not far.
     - elevation: the sensor against the source model's own top (above it the top layer is
-      extended upward and stands in for whatever rock is there); context, not a verdict.
+      extended upward and stands in for whatever rock is there; grid3d: where the station's 3D
+      column puts the ground, or that it has none); context, not a verdict.
     ``verdict``: the first of lateral / path / vpvs / timing / far that holds, else unexplained.
     """
     columns = ["stationId", "phase", "staticS", "nEvents", "neighbourMedianS", "neighbours",
                "spRatio", "modelVpVs", "distanceM", "sensorElevM", "aboveModelTopM",
                "farContradictedBy", "verdict", "explanation"]
     pos = stations.set_index(stations["id"].astype(str))
-    source_top = (model.top_extension.from_elev_m if model.top_extension is not None
-                  else model.top_of_model_elev_m)
+    at = facts_1d(model, stations) if facts is None else facts
     by_key = {(str(s), str(p)): float(v) for s, p, v in
               zip(terms["stationId"], terms["phase"], terms["staticS"], strict=True)}
     sids = terms["stationId"].astype(str)
@@ -384,7 +458,8 @@ def explain_terms(
         ratio = (s_term / p_term if abs(p_term) >= cfg.minRatioTermS and s_term * p_term > 0
                  else math.nan)
         elev = float(pos.loc[sid, "sensorElevM"])
-        vpvs = float(model.vp_at(elev)) / float(model.vs_at(elev))
+        here = at[sid]
+        vpvs = here.vpvs
         dist = float(np.hypot(pos.loc[sid, "enu_e"] - centre[0], pos.loc[sid, "enu_n"] - centre[1]))
         lateral = (math.isfinite(near) and np.sign(near) == np.sign(term)
                    and abs(near) >= cfg.lateralFraction * abs(term))
@@ -398,15 +473,15 @@ def explain_terms(
         verdict = next((name for name, hit in (("lateral", lateral), ("path", path),
                                                 ("vpvs", vpvs_differs), ("timing", timing),
                                                 ("far", far)) if hit), "unexplained")
-        above = elev - source_top
         side = "early" if term < 0 else "late"
-        text = [f"{ph} arrives {abs(term):.3f} s {side} against the 1D model (n {int(r.nEvents)})."]
+        text = [(f"{ph} arrives {abs(term):.3f} s {side} against {here.against} "
+                 f"(n {int(r.nEvents)}).")]
         if near_ids:
             text.append(
                 f"Its nearest stations with a {ph} term within "
                 f"{cfg.neighbourMaxDistM / 1000:g} km ({', '.join(near_ids)}) have a median "
                 f"{near:+.3f} s: " + (
-                    "they share it, consistent with lateral structure the 1D model can't hold "
+                    f"they share it, consistent with lateral structure {here.against} can't hold "
                     "(row 7) rather than a station fault." if lateral else "they don't share it.")
             )
         else:
@@ -434,8 +509,7 @@ def explain_terms(
         if far_hypothesis:
             head = (f"The station lies {dist / 1000:.1f} km from the events' median epicentre "
                     f"(more than {cfg.farStationM / 1000:g} km), so most of its ray length lies "
-                    "in the model's half-space, which the layer file marks as extrapolation; a "
-                    "faster half-space would make distant stations early.")
+                    f"in {here.deep}; faster rock there would make distant stations early.")
             if counter.empty:
                 text.append(head + f" No other station that far has a {ph} term later than "
                             f"+{flag_s:g} s, so the table doesn't contradict that; nothing here "
@@ -447,18 +521,13 @@ def explain_terms(
                                                           counter.itertuples(index=False),
                                                           strict=True))
                 text.append(head + f" This table contradicts that: {cites}.")
-        text.append(
-            f"Sensor at {elev:.0f} m ASL, "
-            + (f"{above:.0f} m above the velocity model's own top ({source_top:.0f} m ASL), where "
-               "its top layer is extended upward and stands in for whatever rock is there."
-               if above > 0 else f"{-above:.0f} m below the velocity model's own top.")
-        )
+        text.append(here.elevation)
         if verdict == "unexplained":
             text.append("No evidence here explains it: an unexplained static (depth gate).")
         rows.append({"stationId": sid, "phase": ph, "staticS": term, "nEvents": int(r.nEvents),
                      "neighbourMedianS": near, "neighbours": ",".join(near_ids),
                      "spRatio": ratio, "modelVpVs": vpvs, "distanceM": dist, "sensorElevM": elev,
-                     "aboveModelTopM": above,
+                     "aboveModelTopM": here.above_top_m,
                      "farContradictedBy": (",".join(counter["stationId"].astype(str))
                                            if far_hypothesis else ""),
                      "verdict": verdict, "explanation": " ".join(text)})
@@ -575,9 +644,11 @@ def _report(
     ev = details.result.events
     centre = ((float(ev["enu_e"].median()), float(ev["enu_n"].median())) if len(ev)
               else (0.0, 0.0))
-    explained = explain_terms(terms, details.stations, details.locator.tables.model, centre,
+    locator = details.locator
+    facts = None if locator.tables3d is None else facts_grid3d(locator, details.stations)
+    explained = explain_terms(terms, details.stations, locator.tables.model, centre,
                               cfg.diagnostics.stationResidualFlagS, min_events,
-                              cfg.statics.explain)
+                              cfg.statics.explain, facts)
     return StaticsReport(
         mode=mode, pass_number=pass_number, note=note, terms=terms, cap_s=cap_s,
         min_events=min_events, explanations=explained,
@@ -621,6 +692,7 @@ def locate_with_statics(
     reference: pd.DataFrame | None = None,
     previous_events: pd.DataFrame | None = None,
     model: LayerModel | None = None,
+    model3d: Model3dSource | None = None,
 ) -> StaticsOutcome:
     """Locate with the configured statics (see the module docstring).
 
@@ -630,7 +702,8 @@ def locate_with_statics(
     """
     started = time.perf_counter()
     scfg = cfg.statics
-    kw: dict[str, Any] = {"run_id": run_id, "cache_dir": cache_dir, "model": model}
+    kw: dict[str, Any] = {"run_id": run_id, "cache_dir": cache_dir, "model": model,
+                          "model3d": model3d}
     previous = _previous_rms(previous_events)
     if scfg.mode == SELF_CONSISTENT:
         details = locate_detailed(assoc, picks, stations, cfg, run, **kw)
@@ -676,7 +749,8 @@ def locate_with_statics(
         stations=used_stations(stations, run, cfg.locator.enuConsistencyTolM),
         model=load_configured_model(cfg.velocity) if model is None else model,
         config=cfg, run=run,
-        cache_dir=Path(cache_dir) if cache_dir is not None else _process_cache_dir(),
+        cache_dir=Path(cache_dir) if cache_dir is not None else default_cache_dir(cfg),
+        model3d=model3d,
     )
     check_same_association(reference, assoc.picks)
     locator = build_locator(setup)
