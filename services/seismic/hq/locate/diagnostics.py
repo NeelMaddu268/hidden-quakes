@@ -1224,6 +1224,10 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
                     str(int(h.nNonZero)), _f(h.maxAbsS, ".3f")]) for h in hist.itertuples()],
             "",
         ]
+    lines += [
+        ("Terms are relative delays: each event's origin time absorbs any constant shared by all "
+         "its picks, so a term is a station-phase's delay against the event's weighted-median "
+         "pick, not an absolute time correction."), ""]
     after_all = float(inputs.details.result.events["quality_rmsS"].median())
     prev = rep.previous_median_rms_s
     lines.append(
