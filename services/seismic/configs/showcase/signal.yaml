@@ -5,7 +5,19 @@
 stations: {}
 
 # --- SEIS-05: full-window download and cache ---------------------------------------------------------
-download: {}
+download:
+  client: EARTHSCOPE        # ObsPy FDSN client base (service.earthscope.org)
+  timeoutS: 180             # dataselect can stall for minutes before answering
+  chunkS: 3600              # one request per station per hour, epoch-aligned
+  padS: 300                 # +/- 5 min around the run window
+  maxWorkers: 6             # parallel (station, UTC day) units
+  maxRetries: 4             # retries per chunk on timeouts, 5xx and connection errors
+  backoffBaseS: 5           # retry k waits min(backoffBaseS * 2**k, backoffMaxS)
+  backoffMaxS: 120
+  provisionalLagS: 3600     # a chunk fetched less than this after its end is refetched later
+  minGapSamples: 1.5        # sample spacing above 1.5 intervals is a gap; below is jitter
+  maxGapFraction: 0.2       # Check A: useful = 3 components and gap fraction below this
+  minUsefulStations: 12     # Check A passes with at least this many useful stations
 
 # --- SEIS-02: known-event windows --------------------------------------------------------------------
 known: {}
