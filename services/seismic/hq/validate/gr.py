@@ -7,10 +7,11 @@ multiple, numpy's rounding):
 
 - ``mc_max_curvature``: the grid value whose bin holds the most magnitudes (the lowest one when
   several tie); the caller adds ``mcOffsetMag``.
-- "above Mc" means ``m >= Mc - w / 2``: the whole bin centred on Mc and everything above it.
+- "above Mc" means the whole bin centred on Mc and everything above it (bin membership by the
+  same nearest-grid rule, so the two agree at half-way values; numerically ``m >= Mc - w / 2``).
 - ``b_aki_utsu``: ``log10(e) / (mean(m) - (Mc - w / 2))`` over the magnitudes above Mc.
 - ``sigma_shi_bolt``: ``2.3 b^2 sqrt(sum((m_i - mean)^2) / (n (n - 1)))`` over the same set.
-- ``cumulative_counts``: for each bin edge, how many magnitudes are ``>=`` it.
+- ``cumulative_counts``: for each grid value in ``magBins``, how many magnitudes are ``>=`` it.
 
 ``gr_curve`` puts them together as a ``GRCurve``: ``magBins`` runs from the lowest to the highest
 magnitude of both sets on the grid; ``publicCum`` counts the public regional catalog's
@@ -70,9 +71,12 @@ def mc_max_curvature(mags: FloatArray, bin_width: float) -> float:
 
 
 def above_mc(mags: FloatArray, mc: float, bin_width: float) -> FloatArray:
-    """The magnitudes ``>= mc - bin_width / 2`` (the bin centred on Mc and up)."""
+    """The magnitudes in the bin centred on Mc and every bin above it: bin membership by
+    ``grid_index`` (nearest grid value, half-way to even), the same convention the Mc histogram
+    uses, so a magnitude exactly half-way between two bins is "above Mc" exactly when its bin
+    is. Numerically that is ``m >= mc - bin_width / 2`` except at those half-way values."""
     mags = as_magnitudes(mags)
-    return mags[mags >= mc - bin_width / 2.0]
+    return mags[grid_index(mags, bin_width) >= int(np.rint(mc / bin_width))]
 
 
 def b_aki_utsu(mags: FloatArray, mc: float, bin_width: float) -> float:
@@ -97,7 +101,9 @@ def sigma_shi_bolt(mags: FloatArray, b: float) -> float:
 
 
 def cumulative_counts(mags: FloatArray, bins: FloatArray) -> list[int]:
-    """For each bin edge, the number of magnitudes ``>=`` it."""
+    """For each entry of ``bins`` (grid values, i.e. bin centres, as ``mag_bins`` makes them),
+    the number of magnitudes ``>=`` that value: the plain cumulative count a reader can redo
+    from the magnitudes, not a binned one."""
     mags = as_magnitudes(mags)
     return [int((mags >= edge).sum()) for edge in bins]
 

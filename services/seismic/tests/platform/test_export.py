@@ -857,6 +857,21 @@ def test_validation_assembled_from_sidecars_when_validation_json_is_absent(
     assert "with sweep empty" in assembled[0]
     check_bundle(out_dir)
 
+    # With the run's G-R config the magnitude kill switch is applied to the sidecar gr.json
+    # again: a calibration that fails it drops the curve, as the validate stage would.
+    gr_cfg = ctx.config.validate.gr
+    failing = calibration.model_copy(update={"looMae": gr_cfg.maxLooMae + 0.1})
+    ctx.path("magnitude.json").write_text(failing.model_dump_json())
+    caplog.clear()
+    tables = load_run_tables(ctx.run_dir, gr_cfg=gr_cfg)
+    assert tables.validation is not None
+    assert tables.validation.gr is None and tables.validation.magnitude == failing
+    assert any("gr.json dropped" in r.getMessage() and "kill switch" in r.getMessage()
+               for r in caplog.records)  # fmt: skip
+    assert load_run_tables(ctx.run_dir).validation.gr == gr  # no config: sidecars as they are
+    assert load_run_tables(ctx.run_dir, gr_cfg=gr_cfg).validation_source.count("gr.json") == 0
+    ctx.path("magnitude.json").write_text(calibration.model_dump_json())
+    assert load_run_tables(ctx.run_dir, gr_cfg=gr_cfg).validation.gr == gr  # passes: kept
     # A corrupt sidecar fails loudly, naming the model it should hold.
     ctx.path("baseline.json").write_text("[{}]")
     with pytest.raises(ExportError, match="not a valid list of BaselineRow"):
@@ -1084,6 +1099,88 @@ def test_check_bundle_reports_every_problem(exported: Bundle, tmp_path: Path) ->
     (tmp_path / "empty").mkdir()
     with pytest.raises(BundleCheckError, match="missing files"):
         check_bundle(tmp_path / "empty")
+
+
+def test_check_bundle_verifies_a_claimed_baseline_gain_against_its_rows(
+    ctx: runs.RunContext, synthetic_run: SyntheticRun, tmp_path: Path
+) -> None:
+    """A claimed summary.baseline must be what the bundle's own validation.baseline rows give
+    under the shared rule; every way the claim can drift from the rows is a problem."""
+    ctx.path("validation.json").write_text(full_validation(gain_p_only=True).model_dump_json())
+    out_dir, _ = do_export(ctx, tmp_path / "ok" / "showcase", run=synthetic_run)
+    check_bundle(out_dir)
+    claim = read_json(out_dir / "meta.json")["summary"]["baseline"]
+    assert claim is not None
+
+    def broken_with(
+        name: str,
+        *,
+        rows: object = None,
+        summary_baseline: object = None,
+    ) -> list[str]:
+        broken = tmp_path / name
+        shutil.copytree(out_dir, broken)
+        if rows is not None:
+            validation = read_json(broken / "validation.json")
+            validation["baseline"] = rows
+            (broken / "validation.json").write_text(json.dumps(validation))
+        if summary_baseline is not None:
+            meta = read_json(broken / "meta.json")
+            meta["summary"]["baseline"] = summary_baseline
+            (broken / "meta.json").write_text(json.dumps(meta))
+        with pytest.raises(BundleCheckError) as info:
+            check_bundle(broken, mode="showcase")  # the copy's directory is not a mode name
+        return info.value.problems
+
+    good_rows = read_json(out_dir / "validation.json")["baseline"]
+
+    def rows_with(method: str, profile: str, a: int) -> list[dict]:
+        return [
+            {**r, "tiers": {**r["tiers"], "A": a}}
+            if (r["method"], r["associationProfile"]) == (method, profile)
+            else r
+            for r in good_rows
+        ]
+
+    partial = [r for r in good_rows if r["method"] == "phasenet"]
+    cases: dict[str, tuple[dict[str, object], str]] = {
+        "no-rows": ({"rows": []}, "no baseline rows"),
+        "partial-rows": ({"rows": partial}, "no (stalta, full) row"),
+        "duplicate-rows": ({"rows": good_rows + good_rows[:1]}, "several rows"),
+        "count-mismatch": (
+            {"summary_baseline": {**claim, "strictPhasenet": claim["strictPhasenet"] + 1}},
+            "summary.baseline.strictPhasenet",
+        ),
+        "p-only-no-gain": ({"rows": rows_with("stalta", "p_only", 6)}, "does not support"),
+        "stalta-no-strict": (
+            {
+                "rows": rows_with("stalta", "full", 0),
+                "summary_baseline": {**claim, "strictStalta": 0},
+            },
+            "does not support",
+        ),
+        "ratio": (
+            {"summary_baseline": {**claim, "gain": claim["gain"] + 1.0}},
+            "!= strictPhasenet",
+        ),
+        "profile": (
+            {"summary_baseline": {**claim, "associationProfile": "p_only"}},
+            "associationProfile",
+        ),
+    }
+    for name, (edits, needle) in cases.items():
+        problems = broken_with(name, **edits)
+        assert any(needle in p for p in problems), (name, problems)
+    # A bundle that claims nothing is not checked against the rows at all.
+    no_claim = tmp_path / "no-claim"
+    shutil.copytree(out_dir, no_claim)
+    meta = read_json(no_claim / "meta.json")
+    meta["summary"]["baseline"] = None
+    (no_claim / "meta.json").write_text(json.dumps(meta))
+    validation = read_json(no_claim / "validation.json")
+    validation["baseline"] = []
+    (no_claim / "validation.json").write_text(json.dumps(validation))
+    check_bundle(no_claim, mode="showcase")
 
 
 def test_load_config_accepts_the_new_knobs(config_dir: Path) -> None:

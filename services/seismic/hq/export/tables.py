@@ -33,9 +33,11 @@ from hq_contracts.models import (
     Validation,
 )
 
+from hq.config.validate import GRConfig
 from hq.export.errors import ExportError
 from hq.runs import read_run_json
 from hq.validate import sidecars
+from hq.validate.gr import gr_allowed
 from hq.validate.sidecars import (
     BASELINE_JSON,
     GR_JSON,
@@ -132,10 +134,15 @@ def select_picks(df: pd.DataFrame, ids: set[str], path: Path) -> dict[str, Pick]
     return picks
 
 
-def _load_validation(run_dir: Path) -> tuple[Validation | None, str]:
+def _load_validation(run_dir: Path, gr_cfg: GRConfig | None) -> tuple[Validation | None, str]:
     """``validation.json`` when the validate stage wrote it; otherwise the ``Validation`` the
     sidecars can make (``synthetic.json`` is required, the rest fill what exists), or ``None``
-    when even H2's synthetic test is missing. The second value names the sources for the log."""
+    when even H2's synthetic test is missing. The second value names the sources for the log.
+
+    With ``gr_cfg`` (the run's ``validate.yaml`` G-R section) the docs/03 magnitude kill switch
+    is applied again to a sidecar ``gr.json``: a ``magnitude.json`` whose ``looMae`` exceeds
+    ``maxLooMae`` drops the curve, as the validate stage would. ``None`` keeps whatever the
+    sidecars say (callers without a run config)."""
     validation = sidecars.VALIDATION.read(run_dir, ExportError)
     if validation is not None:
         return validation, VALIDATION_JSON
@@ -159,6 +166,14 @@ def _load_validation(run_dir: Path) -> tuple[Validation | None, str]:
     baseline: list[BaselineRow] = sidecars.BASELINE.read(run_dir, ExportError) or []
     gr: GRCurve | None = sidecars.GR.read(run_dir, ExportError)
     magnitude: MagCalibration | None = sidecars.MAGNITUDE.read(run_dir, ExportError)
+    if gr is not None and gr_cfg is not None and not gr_allowed(magnitude, gr_cfg):
+        log.warning(
+            "export: %s dropped from the assembled validation: the magnitude kill switch "
+            "(docs/03) fails on %s and the validate stage has not rerun",
+            GR_JSON,
+            MAGNITUDE_JSON,
+        )
+        gr = None
     for present, name in (
         (null_test is not None, NULL_TEST_JSON),
         (bool(baseline), BASELINE_JSON),
@@ -198,8 +213,10 @@ def _load_validation(run_dir: Path) -> tuple[Validation | None, str]:
     return validation, " + ".join(sources)
 
 
-def load_run_tables(run_dir: Path) -> RunTables:
-    """Read and cross-check every exporter input in ``run_dir``."""
+def load_run_tables(run_dir: Path, *, gr_cfg: GRConfig | None = None) -> RunTables:
+    """Read and cross-check every exporter input in ``run_dir``. ``gr_cfg`` (the run's
+    ``validate.yaml`` G-R section) re-applies the magnitude kill switch to a sidecar
+    ``gr.json`` when ``validation.json`` is absent; see ``_load_validation``."""
     run_dir = Path(run_dir)
     run = read_run_json(run_dir)
     stations = read_models(_require(run_dir, STATIONS_TABLE), Station)
@@ -236,7 +253,7 @@ def load_run_tables(run_dir: Path) -> RunTables:
     pick_ids = {pid for e in events for pid in e.pickIds}
     pick_ids |= {p for p in (str_or_none(v) for v in arrivals["pickId"]) if p is not None}
     picks = select_picks(picks_df, pick_ids, picks_path)
-    validation, validation_source = _load_validation(run_dir)
+    validation, validation_source = _load_validation(run_dir, gr_cfg)
     log.info(
         "export: read run %s: %d stations, %d catalog events, %d events, %d matches, "
         "%d arrivals, %d picks, validation from %s",

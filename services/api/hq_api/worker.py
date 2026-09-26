@@ -182,7 +182,7 @@ class LiveWorker:
     ) -> tuple[WindowRecord, ServedWindow]:
         """Export the finished run, measure latency, write the snapshot, load what to serve."""
         cfg = self.config
-        tables = load_run_tables(run.run_dir)
+        tables = load_run_tables(run.run_dir, gr_cfg=run.config.validate.gr)
         export_cfg = run.config.export.model_copy(update={"modes": [LIVE_MODE, SNAPSHOT_MODE]})
         bundle_dir = self.bundles_dir / run.run_id
         result = export_bundle(
