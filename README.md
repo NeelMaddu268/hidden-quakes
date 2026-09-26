@@ -16,7 +16,7 @@ That prompt makes your agent the lead for your lane. For extra parallel sessions
 
 ```
 CLAUDE.md                          shared rules every agent follows (AGENTS.md links to it)
-Makefile                           make check · make publish-run · make fetch-run · make runs
+Makefile                           make check · make export · make publish-run · make fetch-run · make runs
 .github/CODEOWNERS                 who owns which paths
 .github/pull_request_template.md   what every PR must show before it merges
 docs/
