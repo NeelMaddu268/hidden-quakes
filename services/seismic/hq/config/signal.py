@@ -280,6 +280,33 @@ PreprocessProfile = Annotated[
 ]
 
 
+class ChunkConfig(_Section):
+    """Hour-scale tiling of a picking window (``hq.preprocess.chunks``), shared by both pickers.
+
+    ``[t0, t1)`` is cut into keep intervals on multiples of ``lengthS`` since the epoch. Each
+    is read with ``overlapS`` extra real seconds on both sides and preprocessed on its own, and
+    a picker keeps only the picks inside its keep interval. ``edgeProbeS`` extends every read a
+    little further so a real data edge can be told apart from the chunk's own cut.
+    """
+
+    lengthS: float = Field(gt=0.0)  # keep interval length, real seconds
+    overlapS: float = Field(gt=0.0)  # extra real seconds read before and after each keep interval
+    minOverlapS: float = Field(gt=0.0)  # floor for overlapS (edge effects must stay outside keep)
+    edgeProbeS: float = Field(gt=0.0)  # must exceed one input sample interval (checked per trace)
+
+    @model_validator(mode="after")
+    def _check(self) -> "ChunkConfig":
+        if self.overlapS < self.minOverlapS:
+            raise ValueError(
+                f"chunks.overlapS {self.overlapS} is below chunks.minOverlapS {self.minOverlapS}"
+            )
+        if self.edgeProbeS >= self.overlapS:
+            raise ValueError(
+                f"chunks.edgeProbeS {self.edgeProbeS} must be below overlapS {self.overlapS}"
+            )
+        return self
+
+
 class PreprocessConfig(_Section):
     """Per-sensor-type preprocessing profiles that turn raw counts into 100 Hz model input."""
 
@@ -294,6 +321,7 @@ class PreprocessConfig(_Section):
     componentRename: dict[str, str]
     modelComponents: str = Field(min_length=1)
     profiles: dict[str, PreprocessProfile] = Field(min_length=1)
+    chunks: ChunkConfig
 
     @model_validator(mode="after")
     def _check(self) -> "PreprocessConfig":
@@ -412,6 +440,24 @@ class PickerABConfig(_Section):
     checkB: CheckBConfig
 
 
+class PickerRunConfig(_Section):
+    """Full-window picking (``hq.pick.run``, SEIS-06): how the station tasks are executed.
+
+    The picks depend on the chunking (``preprocess.chunks``), the weights and the thresholds.
+    ``workers`` and the finish order do not change them (results are assembled in station order);
+    ``torchThreadsPerWorker`` gave identical picks at 1, 3 and 12 threads when checked, which torch
+    does not guarantee in general. ``onCacheMiss`` decides whether a station with nothing cached stops the
+    stage or is reported with zero picks.
+    """
+
+    workers: int = Field(ge=1)  # station-parallel worker processes (spawned); 1 runs in-process
+    torchThreadsPerWorker: int = Field(ge=1)  # torch intra-op threads in each worker
+    # A usedInRun station with no cached file at all (manifest-only "nodata" stations count as
+    # cached). "error": the stage stops before any picking and names every such station.
+    # "report": the station gets zero picks and says why in pick_report.json.
+    onCacheMiss: Literal["error", "report"]
+
+
 class PickerConfig(_Section):
     """PhaseNet weights, thresholds and gap-edge handling."""
 
@@ -424,12 +470,15 @@ class PickerConfig(_Section):
     weightsByProfile: dict[str, str]
     pThreshold: float = Field(gt=0.0, le=1.0)
     sThreshold: float = Field(gt=0.0, le=1.0)
-    gapEdgeS: float = Field(ge=0.0)  # real s; picks this close to a block edge are dropped
+    # Real s. The A/B drops picks this close to a block edge; the full-window run (hq.pick.run)
+    # drops picks this close to a raw data edge (a gap, or where the cached data stops).
+    gapEdgeS: float = Field(ge=0.0)
     batchSize: int = Field(ge=1)
     torchThreads: int = Field(ge=1)
     seed: int
     seisbench: SeisbenchArgs
     ab: PickerABConfig
+    run: PickerRunConfig
 
     @model_validator(mode="after")
     def _check(self) -> "PickerConfig":

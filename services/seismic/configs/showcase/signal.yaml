@@ -154,6 +154,22 @@ preprocess:
       maxRateHz: 1000.0
       bandpassHz: [5.0, 400.0]   # real Hz; at 1000 Hz input the model sees 0.5-40 Hz
       bandpassCorners: 4
+  # Full-window picking reads the cache one chunk at a time (hq.preprocess.chunks), so PhaseNet
+  # (SEIS-06) and STA/LTA (SEIS-07) see identical preprocessed traces. [t0, t1) is tiled into keep
+  # intervals; each is read with overlapS extra on both sides, preprocessed on its own, and a
+  # picker keeps only the picks inside the keep interval (the rest belong to the neighbour).
+  chunks:
+    lengthS: 3600.0          # keep intervals sit on multiples of this since the epoch (hours),
+                             # clipped to the window, so a sub-window run reproduces the full run's chunks
+    overlapS: 60.0           # real s read before and after every keep interval, then discarded
+    minOverlapS: 30.0        # overlapS may not go below this. Edge effects inside the overlap are:
+                             # taper (maxLengthS 1 s) + zero-phase filter settling (well under 1 s for
+                             # these filters) + half a PhaseNet window (3001 samples = 15 s of model time,
+                             # at most 15 s real) + the STA/LTA warm-up (the LTA window, a few s) = about
+                             # 22 s, rounded up to 30 s
+    edgeProbeS: 1.0          # every read reaches this much further, so data that continues past a chunk
+                             # cut is told apart from a real data edge (gap, or data start/end). Must
+                             # exceed one input sample interval (checked per trace) and stay below overlapS
 
 # --- SEIS-04 / SEIS-06: PhaseNet picking -------------------------------------------------------------
 picker:
@@ -168,7 +184,8 @@ picker:
     borehole-B: instance
   pThreshold: 0.1                          # store everything >= 0.1; H2 filters later
   sThreshold: 0.1
-  gapEdgeS: 1.0                            # real s; picks this close to a block edge are dropped
+  gapEdgeS: 1.0                            # real s; picks this close to a block edge (A/B) or to a
+                                           # raw data edge (full window, hq.pick.run) are dropped
   batchSize: 256
   torchThreads: 4
   seed: 0
@@ -178,6 +195,21 @@ picker:
     blinding: [250, 250]                   # samples with no output at each block edge; sum <= overlap
     strict: true
     flexibleHorizontalComponents: false    # for_picking already renamed 1/2 to N/E
+  run:                                     # SEIS-06 full-window picking (hq.pick.run). The profile per
+                                           # station is stations.parquet's preprocessProfile: to adopt an
+                                           # A/B variant (known/ab.json), change stations.profiles and
+                                           # rerun the inventory; the stage warns while they disagree
+    workers: 6                             # station-parallel worker processes (spawned; each loads its
+                                           # model once per weights); 1 runs in-process. Does not change
+                                           # the picks: results are assembled in station order
+    torchThreadsPerWorker: 3               # torch intra-op threads per worker: 6 x 3 = 18 of 24 logical
+                                           # cores. picker.torchThreads stays the single-process A/B value.
+                                           # 1, 3 and 12 threads gave identical picks when checked; torch
+                                           # does not promise that in general
+    onCacheMiss: error                     # usedInRun station with no cached file at all: error (stop
+                                           # before any picking, listing every such station) | report
+                                           # (zero picks, reason in pick_report.json). Manifest-only
+                                           # (nodata) stations count as cached: "no data in window"
   ab:
     profileVariants:
       borehole-A: [borehole-B]
