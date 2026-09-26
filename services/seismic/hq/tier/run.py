@@ -79,6 +79,9 @@ def _read(path: Path, what: str) -> pd.DataFrame:
 
 def check_depth(events: pd.DataFrame, run: RunSection) -> None:
     """``depthKm`` must equal ``(refSurfaceElevM - elevM) / 1000`` (docs/02) for this run."""
+    missing = [c for c in ("id", "elevM", "depthKm") if c not in events.columns]
+    if missing:
+        raise TierError(f"events_located lacks columns {missing}")
     elev = events["elevM"].to_numpy(dtype=np.float64)
     expected = (run.refSurfaceElevM - elev) / 1000.0
     stored = events["depthKm"].to_numpy(dtype=np.float64)
