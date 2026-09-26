@@ -51,19 +51,23 @@ with a PhaseNet event's.
 
 Sweep. Grid ``sweep.pOn x sweep.sOn x sweep.offLevels`` (one off level for both phases). For
 every point the stage records ``nP``, ``nS`` and ``nStations`` (stations with any pick). With
-``sweep.scoreWithH2`` every point is also run through H2's ``associate``/``locate``/``match``/
-``assign_tiers`` (docs/02 section 5), one full H2 run per point with the default association
-config, logged per point, and scored as ``candidates``, ``recoveredPublic`` and ``tierA``. Any
-H2 error then stops the stage (``picks_stalta.parquet`` is already written). Caveat for the
-comparison: H2's ``assign_tiers`` derives Tier A thresholds from each pick set's own matched
-events, so ``tierA`` is not measured on one fixed yardstick across grid points or against
-PhaseNet; whether the sweep should reuse the PhaseNet run's tiering thresholds is for H2 and H4
-to settle. Until H2's API is merged ``evaluate_with_h2`` raises ``H2PipelineMissingError``; the
-stage catches only that, logs a WARNING and writes the three scores as null. docs/02's
+``sweep.scoreMode`` ``all`` (every point) or ``coordinate`` (a coordinate descent from
+``baseline.chosen``), points are also scored through H2's pipeline exactly as H4's VAL-01
+scores a ``BaselineRow`` (``hq.baseline.score``: the run's own tier bars, profile ``full``), and
+the PhaseNet ``picks.parquet`` of the same stations and window is scored once the same way as
+the reference. Scoring needs the run's ``ProcessingRun.tiering``, which stage ``tier`` writes
+after this stage in pipeline order: it is for a rerun of this stage on a run that went through
+``tier``, and without those bars the stage fails before it picks anything. While H2's modules
+are not importable the stage logs a WARNING and writes every score as null. docs/02's
 ``SweepPoint`` has non-null ints, so the file is written with model name ``BaselineSweep``:
-SweepPoint's columns (``params`` as JSON text, the io flattening rule for dicts) plus ``nP``,
-``nS``, ``nStations``. Once scored, the stage logs the best Tier A point (ties: first in grid
-order) and warns while it differs from ``baseline.chosen``.
+SweepPoint's columns (``params`` as JSON text, the io flattening rule for dicts), the rest of the
+point's ``BaselineRow`` (``tierB``, ``tierC``, ``medianRmsS``, ``medianStations``; every score
+null where a point was not scored) and ``nP``, ``nS``, ``nStations``. The reference row, the
+best Tier A point, the search path and the rerun notes go to ``baseline_reference.json`` and
+into ``ctx.record`` (``sweepScoring``); an unscored run removes a stale
+``baseline_reference.json``. The stage logs the best Tier A point (ties: ``baseline.chosen``,
+then grid order) and warns while it differs from ``baseline.chosen``. Any H2 error stops the
+stage (``picks_stalta.parquet`` is already written).
 
 Failures. A station with nothing cached (``CacheMissError`` on its first read) has no picks and
 the reason is reported. Any other error for a station (conflicting overlapping pieces, a rate its
@@ -82,12 +86,12 @@ import json
 import logging
 import sys
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, get_args
 
 import numpy as np
 import numpy.typing as npt
@@ -97,6 +101,21 @@ from obspy import Trace, UTCDateTime
 from obspy.signal.trigger import recursive_sta_lta, trigger_onset
 from scipy import signal as sps
 
+from hq.baseline.score import (
+    REFERENCE_FILE,
+    Coords,
+    Runner,
+    ScoreMode,
+    ScorePlan,
+    SweepScorer,
+    SweepScores,
+    TieringProvider,
+    make_runner,
+    prepare_scoring,
+    reference_picks,
+    score_sweep,
+    scoring_record,
+)
 from hq.config.run import RunSection
 from hq.config.signal import (
     BaselineBandpass,
@@ -115,6 +134,9 @@ from hq.preprocess.chunks import (
     pick_is_kept,
 )
 
+if TYPE_CHECKING:
+    from hq_contracts.models import BaselineRow
+
 log = logging.getLogger(__name__)
 
 STAGE = "baseline"  # registry name, ctx.record() key and the key params nest under
@@ -122,18 +144,21 @@ PICKER = "stalta"  # docs/02 Pick.picker for this baseline: a contract value, no
 PICKS_FILE = "picks_stalta.parquet"
 SWEEP_FILE = "baseline_sweep.parquet"
 SWEEP_MODEL = "BaselineSweep"  # SweepPoint's ints can't be null (see module docstring)
-SWEEP_SCORE_COLUMNS = ("candidates", "recoveredPublic", "tierA")
+# SweepPoint's scores, then the rest of the point's BaselineRow; all null when not scored.
+SWEEP_SCORE_DTYPES: dict[str, str] = {
+    "candidates": "Int64",
+    "recoveredPublic": "Int64",
+    "tierA": "Int64",
+    "tierB": "Int64",
+    "tierC": "Int64",
+    "medianRmsS": "float64",
+    "medianStations": "float64",
+}
+SWEEP_SCORE_COLUMNS = tuple(SWEEP_SCORE_DTYPES)
 SWEEP_COLUMNS = ("params", *SWEEP_SCORE_COLUMNS, "nP", "nS", "nStations")
-H2_MISSING_MESSAGE = "H2 pipeline not merged; sweep has pick counts only"
+SCORE_MODES: tuple[str, ...] = get_args(ScoreMode)
 PHASES = ("P", "S")
 
-# H2's library API (docs/02 section 5), imported lazily.
-_H2_API = (
-    ("hq.associate", "associate"),
-    ("hq.locate", "locate"),
-    ("hq.match", "match"),
-    ("hq.tier", "assign_tiers"),
-)
 _STATION_COLUMNS = ("id", "channels", "preprocessProfile", "usedInRun")
 
 FloatArray = npt.NDArray[np.float64]
@@ -142,13 +167,17 @@ Triggers = tuple[FloatArray, FloatArray]  # (onset, end) real times, sorted by o
 
 
 class StageContext(Protocol):
-    """The parts of H4's ``RunContext`` (docs/02 section 4) this stage uses."""
+    """The parts of H4's ``RunContext`` (docs/02 section 4) this stage uses; scoring the sweep
+    also reads ``read_run().tiering`` unless ``run_baseline`` gets ``tiering=``."""
+
+    @property
+    def run_id(self) -> str: ...
 
     @property
     def cache_dir(self) -> Path: ...
 
     @property
-    def config(self) -> Any: ...  # RunConfig: .run, .signal (and .seismology once H2 lands)
+    def config(self) -> Any: ...  # RunConfig: .run, .signal, .seismology
 
     def path(self, name: str) -> Path: ...
 
@@ -184,6 +213,10 @@ class GridPoint:
 
     def params(self) -> dict[str, float]:
         return {"pOn": self.pOn, "pOff": self.pOff, "sOn": self.sOn, "sOff": self.sOff}
+
+    def coords(self) -> Coords:
+        """(pOn, sOn, off): the axes the scoring search moves along (off serves both phases)."""
+        return (self.pOn, self.sOn, self.pOff)
 
 
 def sweep_grid(cfg: BaselineConfig) -> list[GridPoint]:
@@ -643,86 +676,6 @@ def pick_station(
     return res
 
 
-# --- H2 evaluation -----------------------------------------------------------------------------------
-
-
-class H2PipelineMissingError(RuntimeError):
-    """H2's associate/locate/match/assign_tiers (docs/02 section 5) are not importable yet."""
-
-
-@dataclass(frozen=True)
-class H2Pipeline:
-    associate: Callable[..., Any]
-    locate: Callable[..., Any]
-    match: Callable[..., Any]
-    assign_tiers: Callable[..., Any]
-
-
-@dataclass(frozen=True)
-class SweepScores:
-    candidates: int
-    recoveredPublic: int
-    tierA: int
-
-
-def load_h2_pipeline() -> H2Pipeline:
-    """H2's four library functions; ``H2PipelineMissingError`` if any is not merged.
-
-    A module that exists but fails to import for another reason (a missing dependency, a bug)
-    raises its own error: only a missing H2 module or function counts as "not merged".
-    """
-    found: dict[str, Callable[..., Any]] = {}
-    missing: list[str] = []
-    for module_name, attr in _H2_API:
-        try:
-            module = importlib.import_module(module_name)
-        except ModuleNotFoundError as exc:
-            if exc.name != module_name:
-                raise
-            missing.append(module_name)
-            continue
-        fn = getattr(module, attr, None)
-        if callable(fn):
-            found[attr] = fn
-        else:
-            missing.append(f"{module_name}.{attr}")
-    if missing:
-        raise H2PipelineMissingError(f"{H2_MISSING_MESSAGE} (missing: {', '.join(missing)})")
-    return H2Pipeline(**found)
-
-
-def evaluate_with_h2(
-    picks_df: pd.DataFrame,
-    stations_df: pd.DataFrame,
-    ctx: StageContext,
-    *,
-    h2: H2Pipeline | None = None,
-    catalog: pd.DataFrame | None = None,
-) -> SweepScores:
-    """Associate, locate, match and tier one pick set with H2's pipeline (docs/02 section 5).
-
-    ``candidates``: located events; ``recoveredPublic``: public catalog events matched to one;
-    ``tierA``: Tier A events. Raises ``H2PipelineMissingError`` until H2's API is merged. Pass
-    ``h2`` and ``catalog`` to reuse them across calls (the sweep loads each once).
-    """
-    pipeline = load_h2_pipeline() if h2 is None else h2
-    if catalog is None:
-        from hq_contracts.io import read_table
-
-        catalog = read_table(ctx.path("catalog.parquet"))
-    seismology = ctx.config.seismology
-    run_section = ctx.config.run
-    assoc = pipeline.associate(picks_df, stations_df, seismology, run_section)
-    located = pipeline.locate(assoc, picks_df, stations_df, seismology, run_section)
-    matched = pipeline.match(located.events, catalog, seismology)
-    tiers = pipeline.assign_tiers(located.events, matched.matches, seismology)
-    return SweepScores(
-        candidates=len(located.events),
-        recoveredPublic=int(matched.matches["eventId"].notna().sum()),
-        tierA=int((tiers.events["tier"] == "A").sum()),
-    )
-
-
 # --- tables ------------------------------------------------------------------------------------------
 
 
@@ -770,105 +723,103 @@ def sweep_rows(results: Sequence[StationResult], k: int) -> list[tuple[float, st
     return rows
 
 
+def score_cells(row: BaselineRow | None) -> dict[str, Any]:
+    """A point's ``BaselineRow`` as sweep columns (every one null when not scored)."""
+    if row is None:
+        return dict.fromkeys(SWEEP_SCORE_COLUMNS)
+    return {
+        "candidates": row.candidates,
+        "recoveredPublic": row.recoveredPublic,
+        "tierA": row.tiers.A,
+        "tierB": row.tiers.B,
+        "tierC": row.tiers.C,
+        "medianRmsS": row.medianRmsS,
+        "medianStations": row.medianStations,
+    }
+
+
 def sweep_frame(
     results: Sequence[StationResult],
     grid: Sequence[GridPoint],
-    scores: Sequence[SweepScores | None],
+    rows: Sequence[BaselineRow | None],
 ) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
+    """``baseline_sweep.parquet``: one row per grid point, in grid order."""
+    out: list[dict[str, Any]] = []
     for k, point in enumerate(grid):
-        n_p = sum(r.sweepP[k].size for r in results)
-        n_s = sum(r.sweepS[k].size for r in results)
-        n_st = sum(1 for r in results if r.sweepP[k].size + r.sweepS[k].size)
-        sc = scores[k]
-        rows.append(
+        out.append(
             {
                 "params": json.dumps(point.params(), sort_keys=True),
-                "candidates": None if sc is None else sc.candidates,
-                "recoveredPublic": None if sc is None else sc.recoveredPublic,
-                "tierA": None if sc is None else sc.tierA,
-                "nP": n_p,
-                "nS": n_s,
-                "nStations": n_st,
+                **score_cells(rows[k]),
+                "nP": sum(r.sweepP[k].size for r in results),
+                "nS": sum(r.sweepS[k].size for r in results),
+                "nStations": sum(1 for r in results if r.sweepP[k].size + r.sweepS[k].size),
             }
         )
-    df = pd.DataFrame(rows, columns=list(SWEEP_COLUMNS))
-    return df.astype(
-        {
-            "candidates": "Int64",
-            "recoveredPublic": "Int64",
-            "tierA": "Int64",
-            "nP": "int64",
-            "nS": "int64",
-            "nStations": "int64",
-        }
-    )
+    df = pd.DataFrame(out, columns=list(SWEEP_COLUMNS))
+    return df.astype({**SWEEP_SCORE_DTYPES, "nP": "int64", "nS": "int64", "nStations": "int64"})
 
 
-def score_sweep(
+def score_points(
+    plan: ScorePlan,
     results: Sequence[StationResult],
     grid: Sequence[GridPoint],
-    stations_df: pd.DataFrame,
     cfg: BaselineConfig,
-    ctx: StageContext,
-) -> list[SweepScores | None]:
-    """H2 scores per grid point, or nulls: scoring switched off, or H2 not merged (WARNING)."""
-    if not cfg.sweep.scoreWithH2:
-        log.info("baseline sweep: baseline.sweep.scoreWithH2 is false; scores are null")
-        return [None] * len(grid)
-    try:
-        h2 = load_h2_pipeline()
-    except H2PipelineMissingError as exc:
-        log.warning(
-            "baseline sweep: %s; candidates, recoveredPublic and tierA are null for all %d "
-            "grid points",
-            exc,
-            len(grid),
-        )
-        return [None] * len(grid)
-    from hq_contracts.io import read_table
-
-    catalog = read_table(ctx.path("catalog.parquet"))
-    scores: list[SweepScores | None] = []
-    for k, point in enumerate(grid):
-        began = perf_counter()
-        picks = picks_frame(sweep_rows(results, k), cfg.prob)
-        sc = evaluate_with_h2(picks, stations_df, ctx, h2=h2, catalog=catalog)
-        log.info(
-            "baseline sweep %d/%d %s: %d picks -> %d candidates, %d recovered public, "
-            "%d Tier A in %.1f s",
-            k + 1,
-            len(grid),
-            point.params(),
-            len(picks),
-            sc.candidates,
-            sc.recoveredPublic,
-            sc.tierA,
-            perf_counter() - began,
-        )
-        scores.append(sc)
-    return scores
+    station_ids: Sequence[str],
+    window: tuple[float, float],
+    runner: Runner | None,
+) -> SweepScores:
+    """Score the sweep (``hq.baseline.score``); a point's picks are built only when it is sent."""
+    scorer = SweepScorer(
+        shared=plan.shared,
+        runner=make_runner(cfg.sweep.scoreWorkers) if runner is None else runner,
+        coords=[g.coords() for g in grid],
+        params=[g.params() for g in grid],
+        point_picks=lambda k: picks_frame(sweep_rows(results, k), cfg.prob),
+        reference_picks=reference_picks(plan.phasenet_picks, station_ids, *window),
+    )
+    chosen = list(grid).index(chosen_point(cfg))
+    return score_sweep(plan.mode, chosen, cfg.sweep.maxPasses, scorer)
 
 
-def best_point(grid: Sequence[GridPoint], scores: Sequence[SweepScores | None]) -> int | None:
-    """Index of the grid point with the most Tier A events (first in grid order on ties)."""
-    scored = [(sc.tierA, -k) for k, sc in enumerate(scores) if sc is not None]
-    if not scored:
-        return None
-    return -max(scored)[1]
-
-
-def report_best(grid: Sequence[GridPoint], k: int | None, chosen: GridPoint) -> None:
-    if k is None:
+def report_best(grid: Sequence[GridPoint], scores: SweepScores | None) -> None:
+    if scores is None:
         return
-    best = grid[k]
-    log.info("baseline sweep: most Tier A events at %s", best.params())
+    best, chosen = grid[scores.best], grid[scores.chosen]
+    best_row, chosen_row = scores.best_row, scores.rows[scores.chosen]
+    log.info(
+        "baseline sweep (%s): most Tier A events (%d) at %s over %d scored point(s) in %.1f s; "
+        "PhaseNet reference: %d Tier A of %d candidates",
+        scores.mode,
+        best_row.tiers.A,
+        best.params(),
+        scores.scored,
+        scores.runtimeS,
+        scores.reference.row.tiers.A,
+        scores.reference.row.candidates,
+    )
     if best != chosen:
         log.warning(
-            "baseline sweep: baseline.chosen %s is not the best Tier A point %s; copy it into "
-            "signal.yaml if the comparison should use the baseline's best thresholds",
+            "baseline sweep: baseline.chosen %s (Tier A %s) is not the best Tier A point %s; copy "
+            "it into signal.yaml if the comparison should use the baseline's best thresholds",
             chosen.params(),
+            "not scored" if chosen_row is None else chosen_row.tiers.A,
             best.params(),
+        )
+
+
+def write_reference(ctx: StageContext, record: Mapping[str, Any] | None) -> None:
+    """``baseline_reference.json`` when scored; else remove a stale one (it would describe
+    another sweep than the ``baseline_sweep.parquet`` written now)."""
+    path = Path(ctx.path(REFERENCE_FILE))
+    if record is not None:
+        from hq.runs import write_text_atomic
+
+        write_text_atomic(path, json.dumps(record, indent=2) + "\n")
+        return
+    if path.is_file():
+        path.unlink()
+        log.warning(
+            "baseline: removed %s from an earlier scored sweep; this sweep is unscored", path
         )
 
 
@@ -925,17 +876,19 @@ def format_station_table(results: Sequence[StationResult]) -> str:
 
 
 def format_sweep_table(sweep_df: pd.DataFrame) -> str:
-    lines = [
-        f"{'params':<50} {'nP':>7} {'nS':>7} {'nSta':>5} {'cand':>5} {'recov':>5} {'tierA':>5}"
-    ]
-    for row in sweep_df.itertuples(index=False):
-        cells = [
-            "null" if pd.isna(v) else str(int(v))
-            for v in (row.candidates, row.recoveredPublic, row.tierA)
-        ]
+    ints = ("candidates", "recoveredPublic", "tierA", "tierB", "tierC")
+    head = (
+        f"{'params':<50} {'nP':>7} {'nS':>7} {'nSta':>5} {'cand':>5} {'recov':>5} {'A':>5} "
+        f"{'B':>5} {'C':>5} {'rmsS':>6}"
+    )
+    lines = [head]
+    for row in sweep_df.to_dict("records"):
+        cells = ["null" if pd.isna(row[c]) else str(int(row[c])) for c in ints]
+        rms = "null" if pd.isna(row["medianRmsS"]) else f"{row['medianRmsS']:.3f}"
         lines.append(
-            f"{row.params:<50} {row.nP:>7} {row.nS:>7} {row.nStations:>5} "
-            f"{cells[0]:>5} {cells[1]:>5} {cells[2]:>5}"
+            f"{row['params']:<50} {row['nP']:>7} {row['nS']:>7} {row['nStations']:>5} "
+            + " ".join(f"{c:>5}" for c in cells)
+            + f" {rms:>6}"
         )
     return "\n".join(lines)
 
@@ -949,6 +902,7 @@ class BaselineResult:
     picks: pd.DataFrame
     sweep: pd.DataFrame
     counts: dict[str, int]
+    scores: SweepScores | None = None
 
 
 def _map_stations(
@@ -975,19 +929,25 @@ _TOTALLED = (
 
 
 def record_params(
-    signal: SignalConfig, grid: Sequence[GridPoint], best: int | None
+    signal: SignalConfig,
+    grid: Sequence[GridPoint],
+    scores: SweepScores | None,
+    scoring: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """``ctx.record`` params, nested under the stage key (H4, REQ-H1-2: keys never collide).
 
     ``baseline.*`` from signal.yaml, plus what else decides the picks: the shared gap-edge
-    distance and chunking, and the best Tier A sweep point once the sweep is scored.
+    distance and chunking; once the sweep is scored, the best Tier A point and ``sweepScoring``
+    (the contents of ``baseline_reference.json``: mode, PhaseNet reference row, best and chosen
+    rows, search path, rerun notes).
     """
     return {
         STAGE: {
             **signal.baseline.model_dump(mode="json"),
             "pickerGapEdgeS": gap_edge_s(signal),
             "preprocessChunks": signal.preprocess.chunks.model_dump(mode="json"),
-            "sweepBestTierA": None if best is None else grid[best].params(),
+            "sweepBestTierA": None if scores is None else grid[scores.best].params(),
+            "sweepScoring": None if scoring is None else dict(scoring),
         }
     }
 
@@ -999,11 +959,19 @@ def run_baseline(
     t1: float | None = None,
     station_ids: Sequence[str] | None = None,
     read_window: ReadWindow | None = None,
+    score_mode: ScoreMode | None = None,
+    write_picks: bool = True,
+    tiering: TieringProvider | None = None,
+    runner: Runner | None = None,
 ) -> BaselineResult:
     """Pick every usedInRun station (or ``station_ids``) over the run window (or [t0, t1)).
 
-    Writes ``picks_stalta.parquet`` and ``baseline_sweep.parquet``, prints the per-station and
-    sweep tables and calls ``ctx.record("baseline", ...)``.
+    Writes ``picks_stalta.parquet`` (not with ``write_picks=False``: the CLI's
+    ``--score-only``) and ``baseline_sweep.parquet``, scores the sweep in ``score_mode``
+    (default ``baseline.sweep.scoreMode``) and writes ``baseline_reference.json`` when it does,
+    prints the per-station and sweep tables and calls ``ctx.record("baseline", ...)``.
+    ``tiering`` returns the run's ``ProcessingRun.tiering`` (default ``ctx.read_run().tiering``);
+    ``runner`` scores the points (default: ``baseline.sweep.scoreWorkers`` processes).
     """
     from hq_contracts.io import read_table, write_table
 
@@ -1011,18 +979,27 @@ def run_baseline(
     signal: SignalConfig = ctx.config.signal
     b = signal.baseline
     check_config(signal)
+    mode: ScoreMode = b.sweep.scoreMode if score_mode is None else score_mode
+    if mode not in SCORE_MODES:
+        raise ValueError(f"score mode {mode!r} is not one of {SCORE_MODES}")
+    if not write_picks and mode == "none":
+        raise ValueError("score-only needs a score mode other than none: nothing would be written")
     run_section: RunSection = ctx.config.run
     t0 = run_section.window_start_s if t0 is None else t0
     t1 = run_section.window_end_s if t1 is None else t1
     stations_df = read_table(ctx.path("stations.parquet"))
     rows = station_rows(stations_df, station_ids)
     grid = sweep_grid(b)
+    plan = prepare_scoring(ctx, mode, stations_df, tiering)  # a run that can't be scored fails now
     log.info(
-        "baseline: %d stations over [%s, %s), %d sweep points, %d worker(s), gapEdgeS %.2f s",
+        "baseline: %d stations over [%s, %s), %d sweep points (score mode %s, %d scoring "
+        "worker(s)), %d picking worker(s), gapEdgeS %.2f s",
         len(rows),
         UTCDateTime(t0),
         UTCDateTime(t1),
         len(grid),
+        mode if plan is not None else "none",
+        b.sweep.scoreWorkers,
         b.maxWorkers,
         gap_edge_s(signal),
     )
@@ -1034,12 +1011,26 @@ def run_baseline(
 
     results = _map_stations(rows, work, b.maxWorkers)
     picks = picks_frame(chosen_rows(results), b.prob)
-    write_table(picks, ctx.path(PICKS_FILE), "Pick")
-    scores = score_sweep(results, grid, stations_df, b, ctx)
-    sweep = sweep_frame(results, grid, scores)
+    if write_picks:
+        write_table(picks, ctx.path(PICKS_FILE), "Pick")
+    else:
+        log.info("baseline: score only; %s is left as it is", ctx.path(PICKS_FILE))
+    scores = (
+        None
+        if plan is None
+        else score_points(plan, results, grid, b, [r.id for r in rows], (t0, t1), runner)
+    )
+    sweep = sweep_frame(results, grid, [None] * len(grid) if scores is None else scores.rows)
     write_table(sweep, ctx.path(SWEEP_FILE), SWEEP_MODEL)
-    best = best_point(grid, scores)
-    report_best(grid, best, chosen_point(b))
+    scoring = (
+        None
+        if scores is None or plan is None
+        else scoring_record(
+            scores, [g.params() for g in grid], plan.shared.thresholds, b.sweep.scoreWorkers
+        )
+    )
+    write_reference(ctx, scoring)
+    report_best(grid, scores)
 
     chunk_totals = ChunkStats()
     totals: Counter[str] = Counter()
@@ -1055,15 +1046,18 @@ def run_baseline(
         **{key: int(totals[key]) for key in _TOTALLED},
         **chunk_totals.as_counts(),
         "sweepPoints": len(grid),
-        "sweepScored": sum(1 for s in scores if s is not None),
+        "sweepScored": 0 if scores is None else scores.scored,
     }
+    if scores is not None:
+        counts["sweepBestTierA"] = scores.best_row.tiers.A
+        counts["phasenetReferenceTierA"] = scores.reference.row.tiers.A
     print(format_station_table(results))
     print(format_sweep_table(sweep))
     runtime_s = perf_counter() - began
     log.info(
         "baseline: %d P and %d S picks on %d of %d stations; %d near-gap-edge drops, %d S lost "
         "to a P near an edge, %d onsets inside warm-up spans; %d sweep points (%d scored); "
-        "wrote %s and %s in %.1f s",
+        "wrote %s%s%s in %.1f s",
         counts["nP"],
         counts["nS"],
         counts["stationsWithPicks"],
@@ -1073,12 +1067,18 @@ def run_baseline(
         counts["suppressedWarmupP"] + counts["suppressedWarmupS"],
         counts["sweepPoints"],
         counts["sweepScored"],
-        PICKS_FILE,
+        f"{PICKS_FILE} and " if write_picks else "",
         SWEEP_FILE,
+        f" and {REFERENCE_FILE}" if scoring is not None else "",
         runtime_s,
     )
-    ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params=record_params(signal, grid, best))
-    return BaselineResult(stations=results, picks=picks, sweep=sweep, counts=counts)
+    ctx.record(
+        STAGE,
+        runtime_s=runtime_s,
+        counts=counts,
+        params=record_params(signal, grid, scores, scoring),
+    )
+    return BaselineResult(stations=results, picks=picks, sweep=sweep, counts=counts, scores=scores)
 
 
 def run(ctx: StageContext) -> None:
@@ -1106,6 +1106,12 @@ class _CliContext:
 
     def path(self, name: str) -> Path:
         return self.run_dir / name
+
+    def read_run(self) -> Any:
+        """The run's ``run.json`` (``ProcessingRun``): scoring reads its tier bars."""
+        from hq.runs import read_run_json
+
+        return read_run_json(self.run_dir)
 
     def record(
         self,
@@ -1156,6 +1162,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--stations", help="comma-separated station ids (default: all usedInRun)")
     parser.add_argument("--start", help="ISO UTC start (default: windowStart from run.yaml)")
     parser.add_argument("--end", help="ISO UTC end, exclusive (default: windowEnd from run.yaml)")
+    parser.add_argument(
+        "--score-mode",
+        choices=SCORE_MODES,
+        help="override baseline.sweep.scoreMode (scoring needs the run's tier bars in run.json)",
+    )
+    parser.add_argument(
+        "--score-only",
+        action="store_true",
+        help=f"recompute the triggers and score the sweep, but leave {PICKS_FILE} as it is",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(
         level=logging.INFO,
@@ -1167,12 +1183,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         cache_dir=args.cache_dir,
         config=_cli_config(args.config_dir),
     )
+    mode = args.score_mode or ctx.config.signal.baseline.sweep.scoreMode
+    if args.score_only and mode == "none":
+        parser.error("--score-only needs a score mode other than none (--score-mode)")
     ids = [s.strip() for s in args.stations.split(",") if s.strip()] if args.stations else None
     run_baseline(
         ctx,
         t0=UTCDateTime(args.start).timestamp if args.start else None,
         t1=UTCDateTime(args.end).timestamp if args.end else None,
         station_ids=ids,
+        score_mode=mode,
+        write_picks=not args.score_only,
     )
     return 0
 
