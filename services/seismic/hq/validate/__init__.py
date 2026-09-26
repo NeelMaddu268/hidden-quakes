@@ -113,7 +113,12 @@ def read_sweep(run_dir: Path) -> list[SweepPoint]:
     """H2's ``sweep.parquet`` when the associate stage wrote it, else an empty list."""
     path = run_dir / SWEEP_TABLE
     if not path.is_file():
-        log.info("validate: no %s in %s; Validation.sweep stays empty", SWEEP_TABLE, run_dir)
+        log.warning(
+            "validate: no %s in %s (written by H2's associate stage); Validation.sweep stays "
+            "empty and the sweep plot has nothing to show",
+            SWEEP_TABLE,
+            run_dir,
+        )
         return []
     return read_models(path, SweepPoint)
 
