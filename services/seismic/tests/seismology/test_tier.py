@@ -13,7 +13,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
-from hq_contracts.io import columns_for, dtypes_for, from_frame, read_models, to_frame, write_table
+from hq_contracts.io import (
+    columns_for,
+    dtypes_for,
+    from_frame,
+    read_models,
+    read_table,
+    to_frame,
+    write_table,
+)
 from hq_contracts.models import Pick, SeismicEvent, SweepPoint
 
 from hq.config.run import RunSection
@@ -514,13 +522,39 @@ def test_event_picks_carry_event_and_residual(cfg: SeismologyConfig) -> None:
 # --- stage ----------------------------------------------------------------------------------------
 
 
+def catalog_for(events: pd.DataFrame, matches: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Public events ``matches`` could have come from: each matched one ``dtS`` earlier and
+    ``distM`` west of its event. Returns (catalog, matches with ``dtS`` / ``distM`` recomputed
+    from the two tables as stage match computes them)."""
+    ev = events.set_index("id")
+    rows = []
+    for r in matches.itertuples(index=False):
+        if pd.isna(r.eventId):
+            rows.append({"id": r.catalogId, "t": T0 - 3600.0, "enu_e": 0.0, "enu_n": 0.0})
+            continue
+        x = ev.loc[r.eventId]
+        rows.append({"id": r.catalogId, "t": x["t"] - r.dtS, "enu_e": x["enu_e"] - r.distM,
+                     "enu_n": x["enu_n"]})
+    catalog = pd.DataFrame(rows)
+    matched = matches["eventId"].notna().to_numpy()
+    x = ev.loc[matches.loc[matched, "eventId"]]
+    c = catalog.set_index("id").loc[matches.loc[matched, "catalogId"]]
+    out = matches.copy()
+    out.loc[matched, "dtS"] = x["t"].to_numpy() - c["t"].to_numpy()
+    out.loc[matched, "distM"] = np.hypot(x["enu_e"].to_numpy() - c["enu_e"].to_numpy(),
+                                         x["enu_n"].to_numpy() - c["enu_n"].to_numpy())
+    return catalog, out
+
+
 def write_run(ctx: Any, *, flags: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
     events, matches, _ = seeded_world()
+    catalog, matches = catalog_for(events, matches)
     final = assign_tiers(events, matches, ctx.config.seismology).events
     picks, arrivals = picks_and_arrivals(final)
     write_table(stations_for(events), ctx.path("stations.parquet"), "Station")
     write_table(events, ctx.path("events_located.parquet"), "LocatedEvent")
     write_table(matches, ctx.path("matches.parquet"), "Match")
+    write_table(catalog, ctx.path("catalog.parquet"), "CatalogEvent")
     write_table(arrivals, ctx.path("arrivals.parquet"), "Arrival")
     write_table(picks, ctx.path(ctx.config.seismology.associator.picksTable), "Pick")
     if flags:
@@ -570,6 +604,32 @@ def test_stage_checks_depth_against_the_run_section(
     write_run(other, flags=False)
     with pytest.raises(TierError, match="depthKm"):
         stage.run(other)
+
+
+def test_stage_refuses_matches_written_for_other_locations(
+    make_ctx: Any, run: RunSection, cfg: SeismologyConfig
+) -> None:
+    stage = importlib.import_module("hq.tier.run")
+    ctx = make_ctx(run, cfg)
+    events, matches = write_run(ctx, flags=False)
+    catalog = read_table(ctx.path("catalog.parquet"))
+    tol_m = cfg.tiering.consistencyTolM
+    stage.check_matches_current(events, matches, catalog, tol_m)  # as matched: passes
+    first = events["id"] == matches["eventId"].dropna().iloc[0]
+    # Relocated after the match (LOC-05 statics pass 2): a new origin time, or a new epicentre.
+    for moved in (events.assign(t=events["t"].where(~first, events["t"] + 0.01)),
+                  events.assign(enu_e=events["enu_e"].where(~first, events["enu_e"] + 50.0))):
+        with pytest.raises(TierError, match="stale"):
+            stage.check_matches_current(moved, matches, catalog, tol_m)
+    write_table(moved, ctx.path("events_located.parquet"), "LocatedEvent")
+    with pytest.raises(TierError, match="rerun stage match"):
+        stage.run(ctx)
+    assert not ctx.path("events.parquet").exists()
+    with pytest.raises(TierError, match="missing from catalog.parquet"):
+        stage.check_matches_current(events, matches, catalog.iloc[1:], tol_m)
+    ctx.path("catalog.parquet").unlink()
+    with pytest.raises(TierError, match="catalog.parquet is absent"):
+        stage.run(ctx)
 
 
 @pytest.mark.parametrize("first", [None, "hq.tier.run"])
@@ -655,7 +715,6 @@ def test_stage_writes_sweep_parquet_when_enabled(
     stage = importlib.import_module("hq.tier.run")
     ctx = make_ctx(run, cfg_with(cfg, sweep={"enabled": True}))
     write_run(ctx)
-    write_table(pd.DataFrame({"id": ["x"]}), ctx.path("catalog.parquet"), "CatalogEvent")
     statics = pd.DataFrame({"stationId": ["T.E0000", "T.E0000"], "phase": ["P", "S"],
                             "staticS": [0.0, -0.12], "nEvents": [3, 3]})
     write_table(statics, ctx.path("statics.parquet"), "StationStatic")

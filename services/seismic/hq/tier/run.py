@@ -9,6 +9,11 @@ the nearest-station rule measures depth below the nearest used station's sensor)
 ``hq.tier.picks.event_picks``, and writes ``events.parquet`` (final ``SeismicEvent`` rows) and
 ``event_picks.parquet`` (docs/02 §2).
 
+``matches.parquet`` must have been written for this ``events_located.parquet``
+(``check_matches_current`` against ``catalog.parquet``): stage ``locate``'s reference-statics pass
+(LOC-05) relocates every event after a match, and the match from before it would put the
+pre-statics offsets into ``catalogMatch``. A stale one fails the stage: rerun stage match first.
+
 With ``tiering.sweep.enabled`` it also runs the association sweep (``hq.tier.sweep``, with the
 bars just derived and the run's ``statics.parquet``) and writes ``sweep.parquet``; disabled, it
 removes a ``sweep.parquet`` left by an earlier tier run, whose Tier A counts used that run's bars
@@ -37,7 +42,7 @@ from hq_contracts.io import read_table, to_frame, write_table
 from hq_contracts.models import Pick, SeismicEvent, SweepPoint
 
 from hq.config.run import RunSection
-from hq.tier import Thresholds, TierError, assign_tiers
+from hq.tier import Thresholds, TierError, assign_tiers, matched_rows
 from hq.tier.picks import event_picks
 
 if TYPE_CHECKING:
@@ -69,6 +74,9 @@ INPUT_MODELS = {
     "statics": "StationStatic",
 }
 STATIC_COLUMNS: tuple[str, ...] = ("stationId", "phase", "staticS")
+# |t_event - t_catalog - matches.dtS| above this means matches.parquet was written for another
+# events_located.parquet (parquet keeps float64 exactly; this only absorbs float round-off).
+ROUNDOFF_S = 1e-6
 
 
 def _part(path: Path) -> Path:
@@ -100,6 +108,46 @@ def check_depth(events: pd.DataFrame, run: RunSection, tol_m: float) -> None:
             f"{bad.size} located events have depthKm != (refSurfaceElevM {run.refSurfaceElevM} "
             f"- elevM) / 1000 within {tol_m} m, e.g. {events['id'].iloc[k]}: {stored[k]} vs "
             f"{expected[k]}; events_located.parquet was written with another run section"
+        )
+
+
+def check_matches_current(
+    events_located: pd.DataFrame, matches: pd.DataFrame, catalog: pd.DataFrame, tol_m: float
+) -> None:
+    """Refuse a ``matches`` table written for other located events than ``events_located``.
+
+    Every matched row's ``dtS`` must equal ``t_event - t_catalog`` within ``ROUNDOFF_S`` and its
+    ``distM`` the ENU epicentral distance within ``tol_m`` (``tiering.consistencyTolM``), as stage
+    match computes them (``hq.match``). Stage locate's reference-statics pass (LOC-05) moves
+    every event after a match, so the match from before it fails here.
+    """
+    rows = matched_rows(matches, events_located["id"].astype(str))
+    ev = events_located.set_index(events_located["id"].astype(str))
+    if not ev.index.is_unique:
+        raise TierError("events_located: duplicate ids")
+    missing = [c for c in ("id", "t", "enu_e", "enu_n") if c not in catalog.columns]
+    if missing:
+        raise TierError(f"{CATALOG_TABLE} lacks columns {missing}")
+    cat = catalog.set_index(catalog["id"].astype(str))
+    unknown = sorted(set(rows["catalogId"]) - set(cat.index))
+    if unknown:
+        raise TierError(f"matches name public events missing from {CATALOG_TABLE}: {unknown[:5]}")
+    e, c = ev.loc[rows["eventId"]], cat.loc[rows["catalogId"]]
+    dt = e["t"].to_numpy(dtype=np.float64) - c["t"].to_numpy(dtype=np.float64)
+    dist = np.hypot(e["enu_e"].to_numpy(dtype=np.float64) - c["enu_e"].to_numpy(dtype=np.float64),
+                    e["enu_n"].to_numpy(dtype=np.float64) - c["enu_n"].to_numpy(dtype=np.float64))
+    stored_dt = rows["dtS"].to_numpy(dtype=np.float64)
+    stored_dist = rows["distM"].to_numpy(dtype=np.float64)
+    bad = np.flatnonzero(~((np.abs(dt - stored_dt) <= ROUNDOFF_S)
+                           & (np.abs(dist - stored_dist) <= tol_m)))
+    if bad.size:
+        k = int(bad[0])
+        raise TierError(
+            f"{MATCHES_TABLE} is stale: {bad.size} matched event(s) have another origin time or "
+            f"epicentre in {EVENTS_LOCATED_TABLE} than when matched, e.g. {rows['eventId'].iloc[k]}"
+            f": dtS {stored_dt[k]:+.6f} s stored vs {dt[k]:+.6f} s now, distM {stored_dist[k]:.3f} "
+            f"vs {dist[k]:.3f} m (stage locate relocated them, e.g. the LOC-05 statics pass 2): "
+            "rerun stage match, then tier"
         )
 
 
@@ -187,6 +235,12 @@ def run(ctx: "RunContext") -> None:
     log.info("tier: %d located candidate events, %d matches rows, %d arrivals, %d picks from %s",
              len(events_located), len(matches), len(arrivals), len(picks), picks_path)
     check_depth(events_located, ctx.config.run, cfg.tiering.consistencyTolM)
+    catalog_path = ctx.path(CATALOG_TABLE)
+    if not catalog_path.is_file():
+        raise TierError(f"{catalog_path} is absent: {MATCHES_TABLE} can't be checked against the "
+                        "public events it was matched from; rerun stage catalog and match")
+    check_matches_current(events_located, matches, _read(catalog_path, "catalog"),
+                          cfg.tiering.consistencyTolM)
 
     result = assign_tiers(
         events_located, matches, cfg, flags=flags, arrivals=arrivals, stations=stations
@@ -248,7 +302,10 @@ def run(ctx: "RunContext") -> None:
             "picks": cfg.associator.picksTable,
             "stations": STATIONS_TABLE,
             "flags": FLAGS_TABLE if flags is not None else None,
+            "catalog": CATALOG_TABLE,
         },
+        "matchesChecked": "every matched row's dtS / distM equals what events_located and "
+        "catalog give now (a match from before stage locate's statics pass 2 is refused)",
         "outputs": [p.name for p in tables],
         "eventPicks": "one Pick per id in each final event's pickIds (picks used in the final "
         "location); eventId set, residualS from arrivals.parquet",
