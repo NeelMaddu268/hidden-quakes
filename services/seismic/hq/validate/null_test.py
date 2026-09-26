@@ -25,7 +25,7 @@ import pandas as pd
 from hq_contracts.models import NullTest
 
 from hq.config.run import RunSection
-from hq.config.validate import AssociationProfile, NullTestConfig
+from hq.config.validate import AssociationProfile, NullTestConfig, POnlyAssociatorConfig
 from hq.validate.errors import ValidateError
 from hq.validate.lanes import SeismologyApi
 
@@ -53,6 +53,32 @@ def _require_columns(df: pd.DataFrame, columns: tuple[str, ...], what: str) -> N
     missing = [c for c in columns if c not in df.columns]
     if missing:
         raise ValidateError(f"{what} lacks columns {missing}; docs/02 §2 lists {list(columns)}")
+
+
+def profile_config(
+    seismology_cfg: Any, profile: AssociationProfile, overrides: POnlyAssociatorConfig
+) -> Any:
+    """The ``SeismologyConfig`` a profile's rerun uses: the run's own for ``full``; for
+    ``p_only`` a copy whose associator carries ``overrides`` (REQ-H2-7: the run's associator
+    requires S picks, so P-only picks would associate nothing)."""
+    if profile == "full":
+        return seismology_cfg
+    if profile == "p_only":
+        associator = getattr(seismology_cfg, "associator", None)
+        if associator is None or not hasattr(associator, "model_copy"):
+            raise ValidateError(
+                "the p_only profile needs SeismologyConfig.associator (H2 Seismology) to copy "
+                f"with {overrides.model_dump()}; got {type(seismology_cfg).__name__}"
+            )
+        patched = associator.model_copy(update=overrides.model_dump())
+        log.info(
+            "profile p_only: associator overrides %s (run values nSPicks %s, nPAndSPicks %s)",
+            overrides.model_dump(),
+            getattr(associator, "nSPicks", None),
+            getattr(associator, "nPAndSPicks", None),
+        )
+        return seismology_cfg.model_copy(update={"associator": patched})
+    raise ValidateError(f"unknown association profile {profile!r}")  # unreachable via config
 
 
 def select_profile(picks: pd.DataFrame, profile: AssociationProfile) -> pd.DataFrame:
@@ -129,11 +155,15 @@ def null_shuffles(
     seismology_cfg: Any,
     run: RunSection,
     cfg: NullTestConfig,
+    p_only: POnlyAssociatorConfig | None = None,
 ) -> list[ShuffleOutcome]:
-    """Every rerun of the null test, in order, each with its shifts and counts."""
+    """Every rerun of the null test, in order, each with its shifts and counts. ``p_only`` holds
+    the associator overrides the p_only profile reruns with (``ValidateConfig.pOnlyAssociator``;
+    the config defaults when None)."""
     _require_columns(picks, PICK_COLUMNS, "picks")
     _require_columns(stations, (STATION_ID_COLUMN,), "stations")
     selected = select_profile(picks, cfg.profile)
+    seismology_cfg = profile_config(seismology_cfg, cfg.profile, p_only or POnlyAssociatorConfig())
     station_ids = sorted(set(selected["stationId"].astype(str)))
     known = set(stations[STATION_ID_COLUMN].astype(str))
     unknown = sorted(set(station_ids) - known)
@@ -209,6 +239,9 @@ def run_null_test(
     seismology_cfg: Any,
     run: RunSection,
     cfg: NullTestConfig,
+    p_only: POnlyAssociatorConfig | None = None,
 ) -> NullTest:
     """The null test end to end: ``nShuffles`` seeded reruns summarized as a ``NullTest``."""
-    return summarize(null_shuffles(picks, stations, catalog, api, seismology_cfg, run, cfg), cfg)
+    return summarize(
+        null_shuffles(picks, stations, catalog, api, seismology_cfg, run, cfg, p_only), cfg
+    )

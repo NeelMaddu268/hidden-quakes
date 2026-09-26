@@ -95,7 +95,7 @@ TABLE_WRITERS: dict[str, tuple[str, str]] = {
     STATIONS_TABLE: ("inventory", H1),
     CATALOG_TABLE: ("catalog", H2),
     EVENTS_TABLE: ("tier", H2),
-    SWEEP_TABLE: ("associate", H2),
+    SWEEP_TABLE: ("tier", H2),  # FYI-H2-3: the sweep needs locate/match/tier, so tier writes it
     SYNTHETIC_JSON: ("locate", H2),
     MAGNITUDE_JSON: ("magnitude", H2),
 }
@@ -188,11 +188,11 @@ def read_magnitude(run_dir: Path) -> MagCalibration | None:
 
 
 def read_sweep(run_dir: Path) -> list[SweepPoint]:
-    """H2's ``sweep.parquet`` when the associate stage wrote it, else an empty list."""
+    """H2's ``sweep.parquet`` when the tier stage wrote it (FYI-H2-3), else an empty list."""
     path = run_dir / SWEEP_TABLE
     if not path.is_file():
         log.warning(
-            "validate: no %s in %s (written by H2's associate stage); Validation.sweep stays "
+            "validate: no %s in %s (written by H2's tier stage, LOC-06); Validation.sweep stays "
             "empty and the sweep plot has nothing to show",
             SWEEP_TABLE,
             run_dir,
@@ -277,7 +277,14 @@ def validate_run(ctx: "RunContext", api: SeismologyApi | None = None) -> Validat
 
     # VAL-02: chance associations.
     null_test = run_null_test(
-        picks, stations, catalog, api, seismology_cfg, ctx.config.run, cfg.nullTest
+        picks,
+        stations,
+        catalog,
+        api,
+        seismology_cfg,
+        ctx.config.run,
+        cfg.nullTest,
+        cfg.pOnlyAssociator,
     )
     sidecars.NULL_TEST.write(ctx.run_dir, null_test)
 
@@ -301,6 +308,7 @@ def validate_run(ctx: "RunContext", api: SeismologyApi | None = None) -> Validat
             seismology_cfg,
             ctx.config.run,
             cfg.baseline,
+            cfg.pOnlyAssociator,
         )
     sidecars.BASELINE.write(ctx.run_dir, baseline)
     gain = baseline_gain(baseline, cfg.baseline)

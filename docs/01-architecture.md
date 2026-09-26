@@ -23,13 +23,13 @@ Every stage is a function `run(ctx: RunContext) -> None` that reads and writes f
 | inventory | H1 | `hq.ingest.inventory` | config | `stations.parquet` (+ StationXML in `data/cache/stationxml/`) |
 | catalog | H2 | `hq.match.catalog` | config | `catalog.parquet`, `catalog.quakeml` |
 | download | H1 | `hq.ingest.download` | `stations.parquet` | `gaps.parquet` (+ mseed in `data/cache/mseed/`) |
-| pick | H1 | `hq.pick` | cache, stations | `picks.parquet`, `known/` (known-event windows, record sections) |
-| baseline | H1 | `hq.baseline` | cache, stations | `picks_stalta.parquet`, `baseline_sweep.parquet` |
-| associate | H2 | `hq.associate` | picks, stations | `assoc_events.parquet`, `assoc_picks.parquet`, `sweep.parquet` |
-| locate | H2 | `hq.locate` | assoc, picks, stations, grids | `events_located.parquet`, `residuals.parquet`, `statics.parquet`, `synthetic.json` |
-| match | H2 | `hq.match` | located events, catalog | `matches.parquet`, `match_sensitivity.parquet` |
-| tier | H2 | `hq.tier` | located events, matches | `events.parquet` (final `SeismicEvent` rows) |
-| magnitude | H2 | `hq.magnitude` | events, cache | updates `events.parquet`, `magnitude.json` |
+| pick | H1 | `hq.pick.run` | cache, stations | `picks.parquet`, `known/` (known-event windows, record sections) |
+| baseline | H1 | `hq.baseline.run` | cache, stations | `picks_stalta.parquet`, `baseline_sweep.parquet` |
+| associate | H2 | `hq.associate.run` | picks, stations | `assoc_events.parquet`, `assoc_picks.parquet` |
+| locate | H2 | `hq.locate.run` | assoc, picks, stations, grids | `events_located.parquet`, `residuals.parquet`, `statics.parquet`, `synthetic.json` |
+| match | H2 | `hq.match.run` | located events, catalog | `matches.parquet`, `match_sensitivity.parquet` |
+| tier | H2 | `hq.tier.run` | located events, matches | `events.parquet` (final `SeismicEvent` rows), `sweep.parquet` (association sweep rerun through locate, match and tier) |
+| magnitude | H2 | `hq.magnitude.run` | events, cache | updates `events.parquet`, `magnitude.json` |
 | validate | H4 | `hq.validate` | everything above | `validation.json` |
 | export | H4 | `hq.export` | everything above + cache | `apps/web/public/data/<mode>/` |
 
