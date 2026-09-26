@@ -1,16 +1,20 @@
 // Where the depth-section panel sits in plan view, as a pure function of the viewport (CSS px), so the
 // panel, the plan camera's framing and the tests all agree. The shell (H4) owns the overlay: title at
-// top-left, counters and filter pills top-right, mode pills bottom-left, REVEAL centered low (14vh),
-// modal panels centered; the evidence drawer (H3) is the right edge at clamp(420px, 40vw, 720px). The
-// left edge between the title and the mode pills is free, so the panel docks there.
+// top-left with the Run details button under it, counters and filter pills top-right, the validation
+// panel (after the reveal) and the mode pills bottom-left, REVEAL centered low (14vh), modal panels
+// centered; the evidence drawer (H3) is the right edge at clamp(420px, 40vw, 720px). The left column
+// between the Run details button and the validation panel is free, so the panel docks there.
 
 export const SECTION_LAYOUT = Object.freeze({
   /** The shell's --shell-inset. */
   inset: 24,
-  /** Clears the title + mode label block (and the SYNTHETIC banner's extra 2rem). */
+  /** Clears the title, mode label and Run details button (with the SYNTHETIC banner's extra 2rem). */
   top: 136,
-  /** Clears the mode pills row at the bottom-left. */
-  bottomReserve: 88,
+  /**
+   * Clears the bottom-left stack: mode pills plus the validation panel (shell/validation: bottom
+   * 24px + 2.75rem, at most ~7 rows ≈ 210px tall) and a gap.
+   */
+  bottomReserve: 300,
   /** Gap kept between the panel and the evidence drawer. */
   drawerGap: 24,
   widthFrac: 0.34,
