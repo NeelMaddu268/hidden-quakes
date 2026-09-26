@@ -10,20 +10,28 @@ Flow for one setting of the knobs:
    ``picksFromUnusedStations``; a pick from a station missing from the table always fails.
 2. PyOcto with ``StationSpecificVelocityModel1D`` tables built from the layer model
    (``hq.associate.tables``), stations at ``sensorElevM``, in the frame of ``hq.associate.frame``.
-3. Duplicate merge: events whose origin times differ by at most ``mergeWithinS`` and that share at
-   least ``mergeMinSharedFraction`` of the smaller event's picks become one (transitively). The
-   member with the most picks (then the earlier, then the lower PyOcto index) keeps its origin;
-   the others add the picks of station-phases it lacks.
+3. Duplicate merge. PyOcto itself first deletes the smaller of two events sharing more than
+   ``maxPickOverlap`` picks (C++ ``deduplicate_events``, no time condition, not counted here).
+   Then, pairwise: events are taken in rank order (most picks, then earlier, then lower PyOcto
+   index); each event not yet merged keeps its origin and absorbs every later-ranked event whose
+   origin time is within ``mergeWithinS`` of its own and that shares at least
+   ``mergeMinSharedFraction`` of the smaller event's picks with it (not transitively). Absorbed
+   events add the picks of station-phases the primary lacks; those picks keep the residual PyOcto
+   computed for the absorbed event's hypocentre.
 3b. Run window: events whose origin time lies outside ``[windowStart, windowEnd)`` (run.yaml; the
    public catalog uses the same bounds) are dropped and counted. PyOcto places an origin before
    its first arrival, so in-window picks can form an event up to one S travel time before
    ``windowStart``. Their picks are then free for the other events in step 4. The bbox is not
    applied here (the search volume extends ``volume.horizontalMarginM`` beyond it); association
    locations are preliminary, so that bound belongs after location.
-4. Shared picks: a pick still in two events stays with the one where its PyOcto residual is
-   smallest in magnitude (ties: more picks, earlier, lower index).
-5. Minimums: every event is recounted and must meet PyOcto's pick minimums and ``minStations``.
-6. Output: ``elevM = -z * 1000``, latitude/longitude from ``(x, y) * 1000`` through
+4. Shared picks and minimums: events that fail PyOcto's pick minimums or ``minStations`` even with
+   all their picks are dropped. Then a pick still in two events stays with the one where its
+   PyOcto residual is smallest in magnitude (ties: more picks, earlier, lower index), and events
+   are recounted against the minimums. If some now fail (they lost shared picks), only the
+   lowest-ranked of them (fewest picks, then later, then higher index) is dropped, its picks go
+   back to the other events that held them, and the resolution runs again, until none fails. So
+   a pick is never lost to an event that is then dropped.
+5. Output: ``elevM = -z * 1000``, latitude/longitude from ``(x, y) * 1000`` through
    ``hq.locate.coords``, ``assocId`` numbered in origin-time order.
 """
 
@@ -398,34 +406,28 @@ def merge_duplicates(
     """Merge duplicate events (module docstring, step 3). Returns events, assignments, n merged."""
     if events.empty:
         return events, assign, 0
-    picks_of = {eid: set(g) for eid, g in assign.groupby("eid")["pickId"]}
-    n_picks = {int(eid): len(picks_of.get(eid, ())) for eid in events["eid"]}
-    order = events.sort_values(["t", "eid"], kind="stable")
-    eids = order["eid"].to_numpy(dtype=np.int64)
-    times = order["t"].to_numpy(dtype=np.float64)
-    parent = {int(e): int(e) for e in eids}
-
-    def find(a: int) -> int:
-        while parent[a] != a:
-            parent[a] = parent[parent[a]]
-            a = parent[a]
-        return a
-
-    for i in range(len(eids)):
-        a = int(eids[i])
-        for j in range(i + 1, len(eids)):
-            if times[j] - times[i] > within_s:
-                break
-            b = int(eids[j])
+    picks_of = {int(eid): set(g) for eid, g in assign.groupby("eid")["pickId"]}
+    t_of = {int(e): float(t) for e, t in zip(events["eid"], events["t"], strict=True)}
+    n_picks = {e: len(picks_of.get(e, ())) for e in t_of}
+    rank = {e: (-n_picks[e], t_of[e], e) for e in t_of}
+    by_time = sorted(t_of, key=lambda e: (t_of[e], e))
+    times = np.array([t_of[e] for e in by_time], dtype=np.float64)
+    owner: dict[int, int] = {}
+    groups: dict[int, list[int]] = {}
+    for a in sorted(t_of, key=lambda e: rank[e]):
+        if a in owner:
+            continue
+        owner[a] = a
+        groups[a] = [a]
+        lo = int(np.searchsorted(times, t_of[a] - within_s, side="left"))
+        hi = int(np.searchsorted(times, t_of[a] + within_s, side="right"))
+        for b in by_time[lo:hi]:
+            if b in owner:  # a itself, or ranked before a
+                continue
             shared = len(picks_of.get(a, set()) & picks_of.get(b, set()))
             if shared and shared >= min_shared_fraction * min(n_picks[a], n_picks[b]):
-                parent[find(a)] = find(b)
-
-    t_of = dict(zip(events["eid"].astype(int), events["t"], strict=True))
-    groups: dict[int, list[int]] = {}
-    for e in eids:
-        groups.setdefault(find(int(e)), []).append(int(e))
-    rank = {e: (-n_picks[e], t_of[e], e) for e in n_picks}
+                owner[b] = a
+                groups[a].append(b)
     keep_rows: list[pd.DataFrame] = []
     keep_events: list[int] = []
     merged = 0
@@ -454,7 +456,7 @@ def merge_duplicates(
 def resolve_shared_picks(
     events: pd.DataFrame, assign: pd.DataFrame
 ) -> tuple[pd.DataFrame, int]:
-    """Keep every pick in one event only (module docstring, step 4). Returns rows, n removed."""
+    """Keep every pick in one event only (smallest |residual|). Returns rows, n removed."""
     if assign.empty:
         return assign, 0
     size = assign.groupby("eid")["pickId"].transform("size")
@@ -498,13 +500,10 @@ def pick_counts(assign: pd.DataFrame) -> pd.DataFrame:
     return counts.astype("int64")
 
 
-def apply_minimums(
+def minimum_checks(
     events: pd.DataFrame, assign: pd.DataFrame, acfg: AssociatorConfig
-) -> tuple[pd.DataFrame, pd.DataFrame, int, int]:
-    """Drop events below PyOcto's minimums or ``minStations`` after the merge and resolution.
-
-    Returns events, assignments, the number dropped for PyOcto's minimums and for minStations.
-    """
+) -> tuple["pd.Series[bool]", "pd.Series[bool]"]:
+    """Per event (index eid): meets PyOcto's pick minimums; meets ``minStations``."""
     counts = pick_counts(assign).reindex(events["eid"], fill_value=0)
     pyocto_ok = (
         (counts["nPicks"] >= acfg.nPicks)
@@ -512,13 +511,53 @@ def apply_minimums(
         & (counts["nS"] >= acfg.nSPicks)
         & (counts["nPS"] >= acfg.nPAndSPicks)
     )
-    station_ok = counts["nStations"] >= acfg.minStations
-    keep = counts.index[pyocto_ok & station_ok]
+    return pyocto_ok, counts["nStations"] >= acfg.minStations
+
+
+def apply_minimums(
+    events: pd.DataFrame, assign: pd.DataFrame, acfg: AssociatorConfig
+) -> tuple[pd.DataFrame, pd.DataFrame, int, int]:
+    """Drop events below PyOcto's minimums or ``minStations``.
+
+    Returns events, assignments, the number dropped for PyOcto's minimums and for minStations.
+    """
+    pyocto_ok, station_ok = minimum_checks(events, assign, acfg)
+    keep = pyocto_ok.index[pyocto_ok & station_ok]
     dropped_pyocto = int((~pyocto_ok).sum())
     dropped_stations = int((pyocto_ok & ~station_ok).sum())
     out_events = events[events["eid"].isin(keep)].reset_index(drop=True)
     out_assign = assign[assign["eid"].isin(keep)].reset_index(drop=True)
     return out_events, out_assign, dropped_pyocto, dropped_stations
+
+
+def resolve_with_minimums(
+    events: pd.DataFrame, assign: pd.DataFrame, acfg: AssociatorConfig
+) -> tuple[pd.DataFrame, pd.DataFrame, int, int, int]:
+    """Shared picks and minimums until stable (module docstring, step 4).
+
+    Returns events, assignments, shared picks removed, and the events dropped for PyOcto's
+    minimums and for ``minStations``.
+    """
+    # An event's own rows never change below (only other events' rows leave), so an event that
+    # passes here with all its picks keeps passing that check.
+    events, held, low_pyocto, low_stations = apply_minimums(events, assign, acfg)
+    n_held = held.groupby("eid").size()
+    while True:
+        kept, shared = resolve_shared_picks(events, held)
+        pyocto_ok, station_ok = minimum_checks(events, kept, acfg)
+        failing = events[~(pyocto_ok & station_ok).reindex(events["eid"]).to_numpy()]
+        if failing.empty:
+            return events, kept, shared, low_pyocto, low_stations
+        worst = int(
+            failing.assign(_n=failing["eid"].map(n_held))
+            .sort_values(["_n", "t", "eid"], ascending=[True, False, False], kind="stable")
+            .iloc[0]["eid"]
+        )
+        low_pyocto += int(not pyocto_ok[worst])
+        low_stations += int(bool(pyocto_ok[worst]))
+        # the dropped event's picks go back to the other events that held them
+        events = events[events["eid"] != worst].reset_index(drop=True)
+        held = held[held["eid"] != worst].reset_index(drop=True)
 
 
 def to_result(events: pd.DataFrame, assign: pd.DataFrame, origin: Origin) -> AssocResult:
@@ -563,14 +602,13 @@ def to_result(events: pd.DataFrame, assign: pd.DataFrame, origin: Origin) -> Ass
 def finish(
     raw: RawAssociation, acfg: AssociatorConfig, setup: Setup
 ) -> tuple[AssocResult, dict[str, int]]:
-    """Steps 3-6 on PyOcto's output; returns the result and its counts."""
+    """Steps 3-5 on PyOcto's output; returns the result and its counts."""
     started = time.perf_counter()
     events, assign, merged = merge_duplicates(
         raw.events, raw.assignments, acfg.mergeWithinS, acfg.mergeMinSharedFraction
     )
     events, assign, outside = drop_outside_window(events, assign, setup.window_s)
-    assign, shared = resolve_shared_picks(events, assign)
-    events, assign, low_pyocto, low_stations = apply_minimums(events, assign, acfg)
+    events, assign, shared, low_pyocto, low_stations = resolve_with_minimums(events, assign, acfg)
     result = to_result(events, assign, setup.origin)
     counts = {
         "picksIn": raw.picks_in,
@@ -649,13 +687,18 @@ def record(acfg: AssociatorConfig, setup: Setup, picks: pd.DataFrame) -> dict[st
         "postprocess": {
             "mergeWithinS": acfg.mergeWithinS,
             "mergeMinSharedFraction": acfg.mergeMinSharedFraction,
-            "mergeRule": "origin times within mergeWithinS and shared picks >= fraction of the "
-            "smaller event's picks, transitively; the member with most picks keeps its origin",
+            "pyoctoDeduplication": "PyOcto deletes the smaller of two events sharing more than "
+            "max_pick_overlap picks before this merge (no time condition, not counted here)",
+            "mergeRule": "pairwise against a primary taken in rank order (most picks, earlier, "
+            "lower index): origin times within mergeWithinS and shared picks >= fraction of the "
+            "smaller event's picks; not transitive; absorbed picks keep the absorbed event's "
+            "PyOcto residual",
             "sharedPickRule": "a pick in two events stays with the smaller |PyOcto residual| "
             "(ties: more picks, earlier, lower index)",
             "minStations": acfg.minStations,
-            "minimumsReapplied": "nPicks, nPPicks, nSPicks, nPAndSPicks and minStations after the "
-            "merge and the shared-pick rule",
+            "minimumsReapplied": "nPicks, nPPicks, nSPicks, nPAndSPicks and minStations before "
+            "and after the shared-pick rule; an event dropped there returns its picks to the "
+            "other events holding them and the rule reruns until no event is dropped",
         },
         "tables": setup.tables.to_record(),
         "velocityModel": setup.velocity_model,

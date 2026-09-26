@@ -30,6 +30,7 @@ from hq.associate.core import (
     prepared,
     require_pyocto,
     resolve_shared_picks,
+    resolve_with_minimums,
     run_pyocto,
 )
 from hq.associate.frame import (
@@ -569,7 +570,7 @@ def test_duplicate_merge() -> None:
 
 
 @pytest.mark.smoke
-def test_duplicate_merge_is_transitive_and_keeps_one_pick_per_station_phase() -> None:
+def test_duplicate_merge_keeps_one_pick_per_station_phase() -> None:
     events = _events([(0, 10.0), (1, 10.2), (2, 10.4)])
     assign = _assign(
         [(0, "A:P:1", 0.0), (0, "B:P:1", 0.0), (0, "C:P:1", 0.0)]
@@ -580,6 +581,47 @@ def test_duplicate_merge_is_transitive_and_keeps_one_pick_per_station_phase() ->
     assert merged == 2 and list(out_e["eid"]) == [1]  # most picks keeps the origin
     got = dict(zip(out_a["station"], out_a["pickId"], strict=True))
     assert got == {"A": "A:P:1", "B": "B:P:1", "C": "C:P:2", "D": "D:P:1"}  # primary's C pick
+
+
+@pytest.mark.smoke
+def test_duplicate_merge_is_pairwise_not_transitive() -> None:
+    """0 ~ 1 and 1 ~ 2, but 0 and 2 are 0.8 s apart: 1 joins 0 (ranked first), 2 stays."""
+    events = _events([(0, 10.0), (1, 10.4), (2, 10.8)])
+    assign = _assign(
+        [(0, f"A{i}:P:1", 0.0) for i in range(5)]
+        + [(1, "A3:P:1", 0.0), (1, "A4:P:1", 0.0), (1, "B0:P:1", 0.0), (1, "B1:P:1", 0.0)]
+        + [(2, "B0:P:1", 0.0), (2, "B1:P:1", 0.0)] + [(2, f"C{i}:P:1", 0.0) for i in range(3)]
+    )
+    out_e, out_a, merged = merge_duplicates(events, assign, 0.5, 0.5)
+    assert merged == 1 and list(out_e["eid"]) == [0, 2]
+    assert set(out_a.loc[out_a["eid"] == 0, "station"]) == {"A0", "A1", "A2", "A3", "A4", "B0",
+                                                             "B1"}
+
+
+@pytest.mark.smoke
+def test_shared_pick_never_lost_to_an_event_that_is_then_dropped(world: dict[str, Any]) -> None:
+    """B wins pick x from A (smaller residual) but loses y to C and is dropped: x returns to A.
+
+    Resolving before the minimums would leave A with 4 stations, below minStations 5.
+    """
+    acfg = world["base"].associator.model_copy(
+        update={"minStations": 5, "nPicks": 4, "nPPicks": 2, "nSPicks": 1, "nPAndSPicks": 0}
+    )
+    events = _events([(0, 10.0), (1, 11.0), (2, 12.0)])
+    assign = _assign(
+        [(0, f"S{i}:P:a", 0.1) for i in range(1, 6)] + [(0, "S1:S:a", 0.1)]  # A: 5 stations
+        + [(1, "S5:P:a", 0.0), (1, "T1:P:b", 0.0), (1, "T2:P:b", 0.0), (1, "T3:P:b", 0.0),
+           (1, "T4:S:b", 0.2)]  # B: 5 stations with x = S5:P:a and y = T4:S:b
+        + [(2, f"U{i}:P:c", 0.0) for i in range(1, 6)] + [(2, "T4:S:b", 0.0)]  # C: wins y
+    )
+    events_out, kept, shared, low_pyocto, low_stations = resolve_with_minimums(
+        events, assign, acfg
+    )
+    assert list(events_out["eid"]) == [0, 2]
+    assert kept.loc[kept["pickId"] == "S5:P:a", "eid"].tolist() == [0]
+    assert kept.loc[kept["pickId"] == "T4:S:b", "eid"].tolist() == [2]
+    assert low_pyocto + low_stations == 1 and shared == 0
+    assert not kept["pickId"].duplicated().any()
 
 
 @pytest.mark.smoke
