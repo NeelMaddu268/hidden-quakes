@@ -24,7 +24,7 @@ from hq_contracts.io import from_frame, read_table, to_frame, write_models
 
 from hq import cli, runs
 from hq.config.run import RunSection
-from hq.config.validate import NullTestConfig
+from hq.config.validate import NullTestConfig, POnlyAssociatorConfig
 from hq.validate import (
     NULL_TEST_JSON,
     VALIDATION_JSON,
@@ -36,6 +36,7 @@ from hq.validate import (
 from hq.validate import run as validate_stage
 from hq.validate.null_test import (
     null_shuffles,
+    profile_config,
     rerun_pipeline,
     select_profile,
     shift_picks,
@@ -245,6 +246,7 @@ class FakeSeismologyApi:
         default_factory=lambda: {"associate": 0, "locate": 0, "match": 0, "assign_tiers": 0}
     )
     phases_seen: set[str] = field(default_factory=set)
+    cfgs_seen: list[Any] = field(default_factory=list)  # the SeismologyConfig each associate got
 
     def _tick(self, name: str) -> None:
         self.calls[name] += 1
@@ -256,6 +258,7 @@ class FakeSeismologyApi:
     ) -> FakeAssocResult:
         self._tick("associate")
         self.phases_seen.update(picks["phase"].astype(str))
+        self.cfgs_seen.append(cfg)
         p = picks[picks["phase"] == "P"].sort_values(["t", "id"]).reset_index(drop=True)
         s = picks[picks["phase"] == "S"]
         t = p["t"].to_numpy(dtype=np.float64)
@@ -532,6 +535,25 @@ def test_p_only_profile_feeds_p_picks_only(
         null_cfg(nShuffles=2, profile="p_only"),
     )
     assert api.phases_seen == {"P"}
+    # REQ-H2-7: the p_only reruns carry the associator overrides; the run's config is untouched.
+    run_assoc = ctx.config.seismology.associator
+    assert api.cfgs_seen and all(c is not ctx.config.seismology for c in api.cfgs_seen)
+    assert {(c.associator.nSPicks, c.associator.nPAndSPicks) for c in api.cfgs_seen} == {(0, 0)}
+    assert {c.associator.nPPicks for c in api.cfgs_seen} == {run_assoc.nPPicks}
+    assert ctx.config.seismology.associator is run_assoc
+    full_api = FakeSeismologyApi()
+    run_null_test(
+        picks,
+        synthetic.stations_frame,
+        synthetic.catalog_frame,
+        full_api,
+        ctx.config.seismology,
+        section,
+        null_cfg(nShuffles=2, profile="full"),
+    )
+    assert all(c is ctx.config.seismology for c in full_api.cfgs_seen)
+    with pytest.raises(ValidateError, match="associator"):
+        profile_config(object(), "p_only", POnlyAssociatorConfig())
 
 
 def test_api_errors_propagate_unchanged(

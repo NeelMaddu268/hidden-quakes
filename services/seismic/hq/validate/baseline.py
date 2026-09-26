@@ -33,7 +33,12 @@ import pandas as pd
 from hq_contracts.models import BaselineGain, BaselineRow, TierCounts
 
 from hq.config.run import RunSection
-from hq.config.validate import ASSOCIATION_PROFILES, AssociationProfile, BaselineConfig
+from hq.config.validate import (
+    ASSOCIATION_PROFILES,
+    AssociationProfile,
+    BaselineConfig,
+    POnlyAssociatorConfig,
+)
 from hq.validate.errors import ValidateError
 from hq.validate.lanes import SeismologyApi
 from hq.validate.null_test import (
@@ -42,6 +47,7 @@ from hq.validate.null_test import (
     STRICT_TIER,
     TIER_COLUMN,
     _require_columns,
+    profile_config,
     select_profile,
 )
 
@@ -135,9 +141,11 @@ def run_baseline(
     seismology_cfg: Any,
     run: RunSection,
     cfg: BaselineConfig,
+    p_only: POnlyAssociatorConfig | None = None,
 ) -> list[BaselineRow]:
     """The baseline table: for each method (PhaseNet, then STA/LTA) and each profile in
-    ``cfg.profiles`` (in that order), the picks the profile selects go through the pipeline."""
+    ``cfg.profiles`` (in that order), the picks the profile selects go through the pipeline
+    with the profile's config (``p_only`` reruns carry the associator overrides, REQ-H2-7)."""
     _require_columns(stations, (STATION_ID_COLUMN,), "stations")
     known = set(stations[STATION_ID_COLUMN].astype(str))
     for name, picks in ((PHASENET, picks_phasenet), (STALTA, picks_stalta)):
@@ -160,7 +168,8 @@ def run_baseline(
         for profile in cfg.profiles:
             started = time.perf_counter()
             selected = select_profile(picks, profile)
-            events, matches = rerun_tables(selected, stations, catalog, api, seismology_cfg, run)
+            profile_cfg = profile_config(seismology_cfg, profile, p_only or POnlyAssociatorConfig())
+            events, matches = rerun_tables(selected, stations, catalog, api, profile_cfg, run)
             row = summarize_row(method, profile, events, matches)
             rows.append(row)
             log.info(

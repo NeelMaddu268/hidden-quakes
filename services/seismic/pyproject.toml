@@ -2,11 +2,11 @@
 name = "hq"
 version = "0.1.0"
 description = "Hidden Quakes seismic pipeline"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
   "obspy>=1.5",
   "seisbench",
-  "pyocto",
+  "pyocto>=0.2.0",
   "scikit-fmm",
   "scipy",
   "numpy",
