@@ -11,9 +11,10 @@ Conventions (also returned by ``conventions()`` for the run record):
   ``prod_i s / (2 b_i)`` cancels in the normalisation: node masses are
   ``exp(-s * (misfit - min misfit))`` divided by their sum, so they add up to 1. ``s`` changes the
   formal errors only; the hypocentre is the least-misfit node whatever ``s`` is.
-- **Calibration.** For Gaussian pick noise with standard deviation sigma and ``s = 1``, the PDF's
-  standard deviation is sqrt(2/pi)^(1/2) = 0.893 times the L1 estimate's scatter, so the "68%"
-  errors cover about 63% (the synthetic test measures it). ``s = sqrt(2/pi)`` would calibrate them.
+- **Calibration.** How well the "68%" errors cover the true errors depends on the pick noise and
+  the station geometry, so it is measured, not assumed: the synthetic test records the coverage
+  (``fracHWithinHErrM``, ``fracVWithinVErrM``) for the geometry it ran on. ``s`` stays 1 unless
+  that measurement says otherwise.
 - **Moments.** The PDF mean and 3x3 covariance of ``(e, n, elevM)`` are taken over the node masses.
 - **vErrM** is the standard deviation of the vertical marginal (a 68% half-width in 1D).
 - **hErrM** is the semi-major axis of the horizontal marginal's confidence ellipse at
@@ -214,9 +215,8 @@ def conventions(
         "(weighted median), uniform prior over the fine nodes; normalised to sum to 1 over the "
         "evaluated fine nodes. Formal errors only: the hypocentre is the least-misfit node",
         "pdfMisfitScale": misfit_scale,
-        "calibration": "with Gaussian pick noise and pdfMisfitScale 1 the PDF sd is 0.893 x the "
-        "estimate's scatter (the 68% errors cover ~63%); sqrt(2/pi) = 0.798 calibrates it; the "
-        "synthetic test records the measured coverage (fracHWithinHErrM, fracVWithinVErrM)",
+        "calibration": "coverage of the 68% errors is measured, not assumed: the synthetic test "
+        "records it (fracHWithinHErrM, fracVWithinVErrM) for the geometry it ran on",
         "vErrM": "standard deviation of the vertical marginal (68% in 1D)",
         "hErrM": "sqrt(chi2_2(errConfidence) * lambda_max): semi-major axis of the horizontal "
         "marginal's confidence ellipse, lambda_max the largest eigenvalue of the 2x2 horizontal "
