@@ -517,3 +517,15 @@ def test_fresh_interpreter_submodule_first(first: str) -> None:
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          cwd=Path(__file__).resolve().parents[2], check=False)
     assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr[-2000:]
+
+
+@pytest.mark.smoke
+def test_synthetic_stations_drop_used_stations_without_picks() -> None:
+    from hq.locate.run import synthetic_stations
+
+    used = pd.DataFrame({"id": ["XX.A", "XX.B", "XX.C"], "kind": ["surface"] * 3})
+    picks = pd.DataFrame({"stationId": ["XX.A", "XX.C", "XX.C"]})
+    kept, dropped = synthetic_stations(used, picks)
+    assert list(kept["id"]) == ["XX.A", "XX.C"] and dropped == ["XX.B"]
+    with pytest.raises(ValueError, match="no used station"):
+        synthetic_stations(used, picks.iloc[0:0])

@@ -150,10 +150,27 @@ def reference_input(ctx: "RunContext") -> pd.DataFrame | None:
     )
 
 
+def synthetic_stations(used: pd.DataFrame, picks: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """The used stations that recorded at least one pick in this run's picks table.
+
+    A usedInRun station with no picks at all (the data service served it nothing) would get
+    perfect synthetic picks and flatter the recovery test, so it is left out and named in the
+    run record (``synthetic.stationsWithoutPicks``).
+    """
+    with_picks = set(picks["stationId"].astype(str))
+    keep = used["id"].astype(str).isin(with_picks).to_numpy()
+    dropped = sorted(used.loc[~keep, "id"].astype(str))
+    kept = used[keep].reset_index(drop=True)
+    if kept.empty:
+        raise ValueError("synthetic test: no used station recorded a pick in this run")
+    return kept, dropped
+
+
 def synthetic_test(
     ctx: "RunContext", details: LocateDetails, picks: pd.DataFrame, stations: pd.DataFrame
-) -> SyntheticResult:
-    """The synthetic recovery test on the run's used stations, with measured pick stats."""
+) -> tuple[SyntheticResult, list[str]]:
+    """The synthetic recovery test on the run's used stations that have picks, with measured
+    pick stats. Also returns the used stations left out for having no picks."""
     cfg = ctx.config.seismology
     syn = cfg.synthetic
     stats = (
@@ -162,6 +179,10 @@ def synthetic_test(
     )
     kind = stations.assign(id=stations["id"].astype(str)).set_index("id")["kind"].astype(str)
     used = details.stations.assign(kind=kind.reindex(details.stations["id"]).to_numpy())
+    used, no_picks = synthetic_stations(used, picks)
+    if no_picks:
+        log.warning("locate: synthetic test leaves out %d used station(s) with no picks: %s",
+                    len(no_picks), no_picks)
     setup = LocatorSetup(
         stations=used,
         model=load_configured_model(cfg.velocity),
@@ -169,7 +190,7 @@ def synthetic_test(
         run=ctx.config.run,
         cache_dir=ctx.cache_dir,
     )
-    return run_synthetic(setup, geometry_label=ctx.run_id, pick_stats=stats)
+    return run_synthetic(setup, geometry_label=ctx.run_id, pick_stats=stats), no_picks
 
 
 def run(ctx: "RunContext") -> None:
@@ -191,7 +212,7 @@ def run(ctx: "RunContext") -> None:
                                   cache_dir=ctx.cache_dir, reference=reference,
                                   previous_events=previous)
     details = outcome.details
-    synthetic = synthetic_test(ctx, details, picks, stations)
+    synthetic, synthetic_no_picks = synthetic_test(ctx, details, picks, stations)
     catalog_path = ctx.path(CATALOG_TABLE)
     quakeml_path = ctx.path(CATALOG_QUAKEML)
     catalog = _read(catalog_path, "catalog") if catalog_path.is_file() else None
@@ -248,6 +269,7 @@ def run(ctx: "RunContext") -> None:
         "synthetic": {
             "report": synthetic.report.model_dump(mode="json"),
             **{k: v for k, v in synthetic.params.items() if k not in SYNTHETIC_PARAMS_SKIPPED},
+            "stationsWithoutPicks": synthetic_no_picks,
         },
         "input": {
             "picksTable": cfg.associator.picksTable,
