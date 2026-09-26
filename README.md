@@ -16,7 +16,7 @@ Our contribution is product, pipeline, public access and visual explainability, 
 4. **E** opens the evidence drawer on the hero event (the strict event located with the most stations; any other dot is a click away): a record section sorted by distance, neural P and S picks, and the arrival times the final location implies. Agreement between the two is what makes a dot an event.
 5. The **Validation** card and **Run details** (D) show the run's own checks and the full `ProcessingRun` config verbatim. Every row hides itself when its source field is missing, so nothing on screen is ever typed in.
 
-Keyboard map: Space (next beat), R (reset), S (strict), T (time), E (evidence), P (plan/oblique), D (run details), Esc (close).
+Keyboard map: Space (next beat: reveal, then strict, then time), R (reset), S (strict / all), T (time), E (evidence on the hero event), P (plan / oblique), D (run details), Esc (close).
 
 ## Pipeline
 
@@ -85,7 +85,7 @@ A **candidate event** is a set of picks that agree across multiple stations thro
 
 | Tier | Filter pill | Meaning |
 | --- | --- | --- |
-| A | STRICT | Every quality metric within the range reached by three-quarters of the recovered public events (each bar is set per metric; `ProcessingRun.tiering.matchedSet.meetingEveryBar.A` over `matchedSet.n` is the share that meets every bar at once); depth not pinned to a grid edge; a station close enough to constrain depth |
+| A | STRICT | Every quality metric within the range reached by three-quarters of the public events we recovered (each bar is set per metric; `ProcessingRun.tiering.matchedSet.meetingEveryBar.A` over `matchedSet.n` is the share that meets every bar at once); depth not pinned to a grid edge; a station close enough to constrain depth |
 | B | (ALL) | On every metric, no worse than the worst recovered public event |
 | C | (ALL) | Associated and located, but outside that range |
 
@@ -98,13 +98,13 @@ Everything below is computed by the pipeline and written to `validation.json` an
 | Check | What it does | Bundle field | Claim it licenses | Kill switch |
 | --- | --- | --- | --- | --- |
 | Catalog recall | One-to-one matching of candidates against the public regional catalog for the exact window; every miss is listed | `summary.recoveredCatalogCount` / `publicCatalogCount`, `summary.unmatchedPublicIds` | "Using only public waveforms, we recovered X of N public events" | Poor recall after reasonable debugging ends the science track |
-| Synthetic depth test | Synthetic events on the real station geometry, located with the same code; reports median horizontal and vertical error and depth bias | `validation.synthetic` (`medianVErrM`, `p90VErrM`, `medianDepthBiasM`) | "This station geometry resolves depth to about ±V m" | Depth: too many strict events pinned to the grid top, or a nonphysical vertical distribution → no structure claims; plan view becomes the hero |
+| Synthetic depth test | Synthetic events on the real station geometry, located with the same code; reports median horizontal and vertical error and depth bias | `validation.synthetic` (`medianVErrM`, `p90VErrM`, `medianDepthBiasM`) | "This station geometry resolves depth to about ±V m" | Depth: too many strict events pinned to the grid top, or a nonphysical vertical distribution → plan view becomes the hero and the copy describes no pattern in the depths. The Saturday depth call passed on amended criteria (`docs/lanes/H2-seismology.md`, "Depth call"), so the 3D hero with depths stays; that licenses showing depths as located, not reading anything into their pattern (that would need relative relocation, which did not run) |
 | Null test | Reruns of associate → locate → match → tier with each station's picks time-shifted, same config, seeded | `validation.nullTest` (`meanChanceEvents`, `meanChanceStrict`) | "Chance associations on time-scrambled picks: about M" | Reported as is |
-| Baseline comparison | Two pickers (PhaseNet, STA/LTA) × two association profiles (`full`, `p_only`) through the same downstream code | `validation.baseline`, `summary.baseline.gain` (present only when the gain holds in both profiles) | "At comparable quality, neural picking yields G× more strict events" | STA/LTA within a comparable fraction of PhaseNet's strict count → drop the claim, keep the table |
-| Gutenberg–Richter | Aki–Utsu b with Shi–Bolt sigma, Mc by maximum curvature plus an offset, public curve versus recovered curve | `validation.gr`, `validation.magnitude` (`n`, `looMae`) | "Magnitudes extend the trend below the public catalog's completeness" | Leave-one-out MAE above the configured cap → no magnitude sizing, no G-R |
+| Baseline comparison | Two pickers (PhaseNet, STA/LTA) × two association profiles (`full`, `p_only`) through the same downstream code | `validation.baseline`, `summary.baseline.gain` (present only when the gain holds in both profiles) | "At comparable quality, neural picking yields G× more strict events", only while `summary.baseline` exists; without it the card shows the two strict counts side by side from the `full` rows and asserts no gain. H1 is rescoring STA/LTA on the run's statics scale (`docs/requests/H4.md`, `REQ-H1-5`), so no baseline outcome is written anywhere in this repository | STA/LTA within a comparable fraction of PhaseNet's strict count → drop the claim, keep the table |
+| Gutenberg–Richter | Aki–Utsu b with Shi–Bolt sigma, Mc by maximum curvature plus an offset; the public curve counts only the catalog events of the calibration magnitude type (`run.matching.magnitude.calibrationMagType`), the recovered curve is the candidates' `ML_cal` | `validation.gr`, `validation.magnitude` (`n`, `looMae`), `run.matching.magnitude` (`leaveOneEventOut.nullModelMae`, `magnitudes.belowCalibratedRange`) | "Magnitudes extend the trend below the public catalog's completeness", always with the magnitude type named, `looMae` read next to the null-model error, and the note that most candidate magnitudes lie below the calibrated range (extrapolated; near the detection limit, biased upward) | Leave-one-out MAE above the configured cap → no magnitude sizing, no G-R |
 | Association sweep | Recall, candidates and strict count across the association grid; the knee is the chosen config | `validation.sweep` (plotted in Run details) | Why these thresholds | — |
 
-What we never claim: that operators lack better monitoring, that any event was missed by anyone, fracture geometry (at most "structure", and only if the depth gate passes), or a mechanism.
+What we never claim: that operators lack better monitoring, that any event was missed by anyone, what the pattern of candidate events means underground (we show depths and clustering as located and describe only what is on screen), or a mechanism.
 
 ## What this is not
 
