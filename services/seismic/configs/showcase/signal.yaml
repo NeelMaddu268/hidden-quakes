@@ -1,0 +1,205 @@
+# Signal lane config (H1). Parsed by hq.config.signal.SignalConfig; unknown keys are an error.
+# One block per ticket. Every pipeline knob of the signal lane lives here and is recorded in run.json.
+
+# --- SEIS-01: station inventory and channel selection ------------------------------------------------
+# Cache layout (fixed, shared with hq.ingest.cache): data/cache/stationxml/ holds the raw channel XML,
+# <Station.id>.xml response files for read_inventory, and the DEM and availability caches.
+stations:
+  query:
+    fdsnClient: EARTHSCOPE      # ObsPy >= 1.5 key for https://service.earthscope.org
+    timeoutS: 180
+    network: "*"
+    station: "*"
+    location: "*"
+    channel: "*"                # everything; the rules below decide what is usable
+    excludeNetworks: [SY]       # SY = synthetic seismograms, not recorded data
+    skipRestricted: true
+    retries: 3                  # station service: transport errors and timeouts only
+    backoffS: 5.0
+  channels:
+    verticalComponents: [Z]
+    horizontalPairs: [[N, E], ["1", "2"]]   # N/E preferred, else 1/2
+    # Velocity sensors, best first (band+instrument). Borehole geophones beat surface short period.
+    # Codes not listed (e.g. BH at 40 Hz, FH above 1000 Hz) have no preprocess profile anyway.
+    velocityCodes: [GH, GP, DH, DP, CH, CP, HH, HP, EH, EP, SH, SP]
+    # Accelerometers: only when the site (net.sta) has no usable velocity triplet.
+    accelerometerCodes: [GN, DN, CN, HN, EN]
+    componentDepthTolM: 1.0
+    locationDepthTolM: 5.0
+    coordTolM: 50.0
+  kind:
+    boreholeMinDepthM: 10.0
+    strongMotionInstrumentCodes: [N]
+    boreholeLookingCodes: [GH, GP, DH, DP]
+  # First match on sampleRateHz (inclusive). The ranges equal each profile's minRateHz/maxRateHz in
+  # the preprocess block (SEIS-03), so every station inventory accepts is one for_picking accepts.
+  # Triplets with no matching rule are dropped before ranking.
+  profiles:
+    - {minRateHz: 100, maxRateHz: 100, profile: surface-100}
+    - {minRateHz: 200, maxRateHz: 250, profile: surface-hi}
+    - {minRateHz: 500, maxRateHz: 1000, profile: borehole-A}
+  elevation:
+    # StationXML is inconsistent about whether station elevation is the surface or the sensor.
+    # Each chosen sensor's station elevation is checked against this DEM (USGS 3DEP via EPQS).
+    # The DEM cache file name carries a hash of demUrl, so another DEM never reuses these values.
+    demUrl: https://epqs.nationalmap.gov/v1/json
+    demTimeoutS: 30
+    demRetries: 3
+    demBackoffS: 2.0
+    demNoDataValue: -1000000
+    demCacheFile: surface_elev_dem.json
+    demKeyDecimals: 5
+    toleranceM: 15.0            # a reading matches when within this of the DEM
+    onAmbiguous: error          # deeper than toleranceM and neither reading matches
+    maxShallowMismatchM: 50.0   # shallow sensor off the DEM: flagged up to this, then:
+    onShallowMismatch: dem      # use the DEM as the ground surface (coordinates are trusted)
+  availability:
+    # The FDSN availability service is retired at EarthScope (404 / 410); MUSTANG daily
+    # percent_availability is the working source. Coverage is the overlap-weighted daily value,
+    # an estimate below one day; SEIS-05's measured gaps are the real answer.
+    url: https://service.earthscope.org/mustang/measurements/1/query
+    metric: percent_availability
+    timeoutS: 60
+    retries: 3
+    backoffS: 2.0
+    cacheFile: availability_mustang.json   # raw replies; delete it to re-query
+    onMissing: used             # no measurement (MUSTANG lag): coverage null, usedInRun true
+  rateCheck:
+    # StationXML can disagree with the data (an epoch saying 200 Hz that serves 100 Hz). The
+    # profile follows the rate, so each chosen triplet is probed with a few seconds of dataselect.
+    probeS: 5.0
+    probeOffsetsS: [0.0, 21600.0, 43200.0, 64800.0]   # first probe with data wins
+    relTol: 1.0e-4
+    timeoutS: 60
+    retries: 2
+    backoffS: 2.0
+    cacheFile: rate_probe.json  # probe results; delete it to re-probe
+    onMismatch: data            # use the served rate and its profile; flagged in the report
+    onNoData: metadata          # nothing served at any probe: keep the StationXML rate, flagged
+
+# --- SEIS-05: full-window download and cache ---------------------------------------------------------
+download:
+  client: EARTHSCOPE        # ObsPy FDSN client base (service.earthscope.org)
+  timeoutS: 180             # dataselect can stall for minutes before answering
+  chunkS: 3600              # one request per station per hour, epoch-aligned
+  padS: 300                 # +/- 5 min around the run window
+  maxWorkers: 6             # parallel (station, UTC day) units
+  maxRetries: 4             # retries per chunk on timeouts, 5xx and connection errors
+  backoffBaseS: 5           # retry k waits min(backoffBaseS * 2**k, backoffMaxS)
+  backoffMaxS: 120
+  provisionalLagS: 3600     # a chunk fetched less than this after its end is refetched later
+  minGapSamples: 1.5        # sample spacing above 1.5 intervals is a gap; below is jitter
+  maxGapFraction: 0.2       # Check A: useful = 3 components and gap fraction below this
+  minUsefulStations: 12     # Check A passes with at least this many useful stations
+
+# --- SEIS-02: known-event windows --------------------------------------------------------------------
+# Windows around the largest public-catalog events in the run window and bbox. They are read from
+# the shared waveform cache that SEIS-05's downloader fills; SEIS-02 never writes to the cache.
+# They feed Check B and the picker weight A/B (SEIS-04).
+known:
+  nEvents: 3            # largest public events by magnitude; ties go to the earlier origin time
+  preS: 120.0           # s before the catalog origin time (noise context ahead of the P arrival)
+  postS: 480.0          # s after it; preS + postS = 600 s, the ticket's 10-minute window
+  minGapSamples: 1.5    # a hole longer than (minGapSamples - 1) sample intervals is a gap, so one
+                        # missing sample is a gap and sub-sample jitter is not; same rule as SEIS-05
+  maxGapFraction: 0.2   # a station is usable only if its gappiest component misses <= 20 %
+  minStations: 8        # usable three-component stations a window needs to PASS
+  usedInRunOnly: true   # consider only stations.parquet rows with usedInRun = true
+
+# --- SEIS-03: preprocessing profiles -----------------------------------------------------------------
+# Counts stay counts (no response removal): PhaseNet normalizes internally. Gaps are never bridged
+# or filled; every gap-separated segment is processed on its own (abutting pieces are joined first).
+preprocess:
+  targetRateHz: 100.0        # PhaseNet input rate; every for_picking output trace has exactly this rate
+  rateRelTol: 1.0e-9         # relative tolerance when matching an input rate to targetRateHz * M / L
+  maxUpsampleFactor: 2       # largest L in rate * L / M = target (250 Hz: x2 then /5); more -> raise
+  minSegmentModelS: 31.0     # shorter segments are dropped and counted. Model seconds (real s x TimeMap
+                             # factor). PhaseNet's window is 3001 samples = 30 s at 100 Hz; SeisBench
+                             # cannot window a shorter segment and would drop or merge it on its own
+                             # (with only a warning), so drop it here where it is counted. +1 s slack
+  joinMisalignmentSamples: 0.01   # pieces of one channel that abut (or overlap identically) with sample
+                                  # grids this close, in input samples, are joined; conflicting overlaps raise
+  detrend: linear
+  taper:                     # per segment, ObsPy Trace.taper
+    type: hann
+    maxPercentage: 0.05
+    maxLengthS: 1.0
+  antiAlias:                 # Chebyshev II, zero-phase, before every decimation; edges x output Nyquist
+    passbandEdgeFraction: 0.8     # 40 Hz at 100 Hz output
+    stopbandEdgeFraction: 1.0     # 50 Hz at 100 Hz output: nothing that can fold survives
+    passbandLossDb: 1.0           # per pass
+    stopbandAttenuationDb: 60.0   # per pass (zero-phase applies it twice)
+  componentRename: {"1": "N", "2": "E"}   # borehole horizontals of uncertain orientation, on a copy
+  modelComponents: ZNE       # every output trace must end in one of these (seisbench order "ZNE")
+  profiles:
+    surface-100:             # 100 Hz surface channels: detrend, taper, no filter
+      method: passthrough
+      minRateHz: 100.0
+      maxRateHz: 100.0
+    surface-hi:              # 200-250 Hz surface channels
+      method: decimate
+      minRateHz: 200.0
+      maxRateHz: 250.0
+      lowpassHz: 40.0
+      lowpassCorners: 4
+    borehole-A:              # default for borehole geophones (~1000 Hz, also 500 Hz)
+      method: decimate
+      minRateHz: 500.0
+      maxRateHz: 1000.0
+      lowpassHz: 40.0
+      lowpassCorners: 4
+    borehole-B:              # experiment: bandpass, relabel as 100 Hz; picks return via TimeMap
+      method: stretch
+      minRateHz: 1000.0
+      maxRateHz: 1000.0
+      bandpassHz: [5.0, 400.0]   # real Hz; at 1000 Hz input the model sees 0.5-40 Hz
+      bandpassCorners: 4
+
+# --- SEIS-04 / SEIS-06: PhaseNet picking -------------------------------------------------------------
+picker:
+  model: seisbench.PhaseNet
+  weightsVersion: "2"                      # pinned; from_pretrained never queries the remote
+  candidateWeights: [instance, stead, original, scedc]
+  defaultWeights: instance                 # placeholder until known/ab.csv names the winners
+  weightsByProfile:                        # placeholders; copy the A/B winners in here
+    surface-100: instance
+    surface-hi: instance
+    borehole-A: instance
+    borehole-B: instance
+  pThreshold: 0.1                          # store everything >= 0.1; H2 filters later
+  sThreshold: 0.1
+  gapEdgeS: 1.0                            # real s; picks this close to a block edge are dropped
+  batchSize: 256
+  torchThreads: 4
+  seed: 0
+  seisbench:                               # passed verbatim to classify(); beats weight defaults
+    overlap: 1500
+    stacking: avg
+    blinding: [250, 250]                   # samples with no output at each block edge; sum <= overlap
+    strict: true
+    flexibleHorizontalComponents: false    # for_picking already renamed 1/2 to N/E
+  ab:
+    profileVariants:
+      borehole-A: [borehole-B]
+    minStationsForRho: 3
+    arrivalWindow:                         # picks that may belong to the event, vs catalog origin
+      preOriginS: 2.0                      # allowance before the catalog origin time
+      minVelocityMps: 2000.0               # latest pick: origin + hypoDist / this + postMarginS
+      postMarginS: 5.0
+    recordSection:
+      bandHz: [2.0, 20.0]
+      windowS: [-5.0, 30.0]
+      padS: 5.0
+      component: Z
+      widthIn: 10.0
+      heightPerTraceIn: 0.45
+      minHeightIn: 4.0
+      dpi: 120
+      traceHalfHeight: 0.45
+    checkB:
+      minStationsPS: 8
+      minRho: 0.8
+      minEventsPass: 3
+
+# --- SEIS-07: STA/LTA baseline -----------------------------------------------------------------------
+baseline: {}
