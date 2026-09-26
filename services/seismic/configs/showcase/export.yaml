@@ -29,6 +29,9 @@ evidence:
   # Evidence files the web app fetches up front: the hero plus the first N in reveal order.
   preloadCount: 20
 
+# Decimal places of the ENU metres written per feature point (survey reports print 0.01 ft).
+featureDecimals: 2
+
 # Geothermal reference features (FEAT-01): wells, a well pad and site outlines near the region,
 # context only. Each entry keeps its coordinates in the datum and unit it was published in, with
 # a "# source:" comment naming the page every number was read from, and a `source` block that
@@ -45,7 +48,10 @@ features:
     id: well-16a-78-32
     name: "Well 16A(78)-32 (Utah FORGE)"
     verified: false
-    crs: EPSG:26912  # NAD83 / UTM 12N; the 16A report names no datum, the 16B report (same pad) says NAD83 (HARN)
+    # NAD83(HARN) / UTM 12N in US survey feet: the 16A report prints UTM zone 12N feet without naming
+    # the datum; the 16B(78)-32 listing for the same pad (below) states NAD83 Utah HARN, and using
+    # the same datum for both wells keeps their relative position free of a datum artefact.
+    crs: EPSG:3742
     unit: usft  # the report prints "usft" for every length
     # source: https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/well_data/16A_survey.csv
     # "Platform reference point: Latitude (+N/S-) 13987645.19 usft, Departure (+E/W-) 1097896.92 usft"
@@ -68,10 +74,15 @@ features:
       readFrom: https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/well_data/16A_survey.csv
       note: >-
         The copy carries the full report header (client, field, well, survey count, reference
-        point, depth references, calculation method). The wellhead agrees with independent public
-        copies of the 16A(78)-32 wellhead position. Datum taken from the 16B(78)-32 report for
-        the same pad; the 16A report prints UTM zone 12N US-survey-foot coordinates without
-        naming it.
+        point, depth references, calculation method). Datum taken from the 16B(78)-32 listing
+        for the same pad (https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/well_data/16B_survey.csv,
+        header "GEODIC DATUM: NAD83 Utah - HARN"); the 16A report prints UTM zone 12N
+        US-survey-foot coordinates without naming it. The reference point converts to the same
+        wellhead latitude/longitude as two other public copies of the 16A(78)-32 wellhead:
+        https://raw.githubusercontent.com/mehulfollytobevice/well/main/data/seed/wells.csv
+        (lat 38.504013, lon -112.896407, attributed there to utahforge.com and OpenEI) and
+        https://raw.githubusercontent.com/cjhopp/scripts/master/python/experiment/FORGE_composite_3D.py
+        (ref_lat 38.50402147, ref_lon -112.8963897, UTM 334641.1891 E 4263443.693 N).
 
   # Deep deviated well 16B(78)-32: "16B(78)-32 Final Surveys" listing dated 6/26/2023.
   - kind: well
@@ -122,17 +133,22 @@ features:
         Utah Geological Survey, Utah_FORGE_Regional_wells (shapefile of wells in the Milford /
         Roosevelt Hot Springs area; its ArcGIS metadata records edits dated 2018-02-22), record
         "58-32", location certainty "GPS".
+      # No primary located: url is the copy that was read. The UGS publishes an interactive
+      # FORGE map (README of https://github.com/UGS-GIO/forgeApp names
+      # geology.utah.gov/apps/jay/tests/FORGE/), but it was unreachable, so it is not claimed as
+      # the source of this layer.
       url: https://github.com/d-chambers/forgery/tree/main/src/forgery/data/Utah_FORGE_regional_wells
+      primaryLocated: false
       accessedOn: 2026-09-26
       note: >-
-        Read from a copy of the UGS layer re-hosted in a public GitHub repository; the UGS
-        publication it was exported from was not located, so the location is approximate.
+        The UGS publication this layer was exported from was not located; read from a copy
+        re-hosted in a public GitHub repository, so the location is approximate.
 
   # Utah FORGE project area: the inner polygon of a Utah Geological Survey extent shapefile
   # ("Milford_FORGE_extent", created 2016-03-07, author Jay Hill, UGS, per its ArcGIS metadata).
   - kind: boundary
     id: boundary-forge-project-area
-    name: "Utah FORGE project area (UGS extent layer, 2016)"
+    name: "Utah FORGE project area"
     verified: false
     crs: EPSG:26912  # FORGE_extent.prj: NAD_1983_UTM_Zone_12N, metres
     unit: m
@@ -155,17 +171,19 @@ features:
         Utah Geological Survey (Jay Hill), Milford_FORGE_extent shapefile, 2016-03-07, polygon
         "FORGE project area". Metadata abstract: "This map shows the extent of the FORGE
         laboratory study area in Milford, UT."
+      # No primary located: url is the copy that was read (see the 58-32 entry).
       url: https://github.com/d-chambers/forgery/tree/main/src/forgery/data/FORGE_Extent
+      primaryLocated: false
       accessedOn: 2026-09-26
       note: >-
-        Read from a copy of the 2016 UGS layer re-hosted in a public GitHub repository; the UGS
-        publication it was exported from was not located and the outline may predate later site
-        changes, so it is approximate.
+        The UGS publication this 2016 layer was exported from was not located; read from a copy
+        re-hosted in a public GitHub repository, and the outline may predate later site changes,
+        so it is approximate.
 
   # Utah FORGE study area: the outer polygon of the same 2016 UGS extent shapefile.
   - kind: boundary
     id: boundary-forge-study-area
-    name: "Utah FORGE study area (UGS extent layer, 2016)"
+    name: "Utah FORGE study area"
     verified: false
     crs: EPSG:26912  # FORGE_extent.prj: NAD_1983_UTM_Zone_12N, metres
     unit: m
@@ -181,8 +199,10 @@ features:
       citation: >-
         Utah Geological Survey (Jay Hill), Milford_FORGE_extent shapefile, 2016-03-07, polygon
         "FORGE study area".
+      # No primary located: url is the copy that was read (see the 58-32 entry).
       url: https://github.com/d-chambers/forgery/tree/main/src/forgery/data/FORGE_Extent
+      primaryLocated: false
       accessedOn: 2026-09-26
       note: >-
-        Read from a copy of the 2016 UGS layer re-hosted in a public GitHub repository; the UGS
-        publication it was exported from was not located, so the outline is approximate.
+        The UGS publication this 2016 layer was exported from was not located; read from a copy
+        re-hosted in a public GitHub repository, so the outline is approximate.
