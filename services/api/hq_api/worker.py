@@ -11,6 +11,13 @@ The scheduler is an ``asyncio`` task: it fires a tick at startup and then every 
 seconds of wall time, each tick handing ``run_window_now`` to a single-thread executor so the
 API stays responsive. A tick that arrives while a window is still running is skipped and
 logged, never queued: the next tick runs a fresh window.
+
+``stop()`` (the app's lifespan shutdown, i.e. Ctrl-C) returns promptly even mid-window: the
+ticker and every tick task are cancelled, the executor is shut down without waiting and with
+its queued futures cancelled, and a window still running in its thread is *abandoned*: logged,
+and never committed when it finishes, so the state file records only windows the worker was
+alive to serve. The thread itself cannot be interrupted (the pipeline is synchronous); the
+process exit in ``hq_api.__main__`` does not wait for it.
 """
 
 import asyncio
@@ -80,8 +87,10 @@ class LiveWorker:
         self._swap_lock = threading.Lock()  # guards served/state swaps and reads
         self._executor: ThreadPoolExecutor | None = None
         self._ticker: asyncio.Task[None] | None = None
-        self._pending: set[asyncio.Future[WindowRecord | None]] = set()
+        self._tasks: set[asyncio.Task[WindowRecord | None]] = set()  # one per tick, until done
+        self._pending: set[asyncio.Future[WindowRecord | None]] = set()  # executor futures
         self._stop = asyncio.Event()
+        self._abandoned = threading.Event()  # set by stop(): a running window must not commit
         self.attempts = 0
         self.skipped = 0
         self.failures = 0
@@ -125,6 +134,11 @@ class LiveWorker:
     @property
     def running(self) -> bool:
         return self._run_lock.locked()
+
+    @property
+    def abandoned(self) -> bool:
+        """True once ``stop()`` ran while a window was still in its thread."""
+        return self._abandoned.is_set()
 
     def run_window_now(self) -> WindowRecord | None:
         """Process the current window; None (logged) when one is already running."""
@@ -174,6 +188,13 @@ class LiveWorker:
                 config=self.config.dump(),
             )
             served = None
+        if self._abandoned.is_set():
+            log.warning(
+                "live window %s: finished after shutdown (%s); abandoned, not committed",
+                window.label,
+                record.outcome,
+            )
+            return record
         self._commit(record, served)
         return record
 
@@ -338,6 +359,7 @@ class LiveWorker:
         if self._ticker is not None:
             raise RuntimeError("the live worker is already started")
         self._stop = asyncio.Event()
+        self._abandoned.clear()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hq-live")
         self._ticker = asyncio.create_task(self._tick_forever(), name="hq-live-ticker")
 
@@ -370,7 +392,9 @@ class LiveWorker:
                 )
             else:
                 loop = asyncio.get_running_loop()
-                task = loop.create_task(self.run_once())
+                task = loop.create_task(self.run_once(), name=f"hq-live-window-{due:.0f}")
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
                 task.add_done_callback(_log_task_error)
             due += every_s
             self.next_run_at = due
@@ -382,8 +406,11 @@ class LiveWorker:
         self.next_run_at = None
 
     async def stop(self) -> None:
-        """Stop the ticker. A window still running finishes in its thread and is committed;
-        the executor is released without waiting for it."""
+        """Stop the ticker and every tick task, and release the executor without waiting.
+
+        Returns promptly even while a window runs: that window is abandoned (its future is
+        cancelled, the thread finishes on its own and does not commit). Safe to call twice.
+        """
         self._stop.set()
         if self._ticker is not None:
             self._ticker.cancel()
@@ -392,12 +419,23 @@ class LiveWorker:
             except asyncio.CancelledError:
                 pass
             self._ticker = None
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        for future in list(self._pending):
+            future.cancel()  # a queued window never starts; a running one is abandoned below
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._pending.clear()
         if self.running:
+            self._abandoned.set()
             log.warning(
-                "live: a window is still running at shutdown; it finishes in the background"
+                "live: a window is still running at shutdown; abandoned: its thread finishes "
+                "on its own, its result is not committed, and exit does not wait for it"
             )
         if self._executor is not None:
-            self._executor.shutdown(wait=False)
+            self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
 
 
