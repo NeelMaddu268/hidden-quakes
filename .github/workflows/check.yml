@@ -17,6 +17,8 @@ jobs:
     timeout-minutes: 30
     env:
       NEXT_TELEMETRY_DISABLED: "1"
+      # Every `uv run` in the Makefile (services/seismic and services/api) stays on its lockfile.
+      UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -31,13 +33,18 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-          cache-dependency-glob: services/seismic/uv.lock
+          cache-dependency-glob: |
+            services/seismic/uv.lock
+            services/api/uv.lock
 
       - name: Install JS workspace
         run: pnpm install --frozen-lockfile
 
       - name: Install Python pipeline
         run: cd services/seismic && uv sync --frozen
+
+      - name: Install live worker (services/api, its own venv)
+        run: cd services/api && uv sync --frozen
 
       - name: make check
         run: make check
