@@ -81,6 +81,13 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
   }, [events]);
 
   useEffect(() => {
+    console.info(
+      `[scene] ${events.length} candidate events, ${halos.count} Tier A halos` +
+        (halos.tierAWithoutHalo ? `, ${halos.tierAWithoutHalo} Tier A without a 68% error (no halo)` : ""),
+    );
+  }, [events.length, halos]);
+
+  useEffect(() => {
     const issues = filterCountIssues(events, meta.summary);
     if (issues.length) console.error(`[scene] filter counts disagree with the summary: ${issues.join("; ")}`);
   }, [events, meta.summary]);
@@ -113,7 +120,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         depthFog={depthFogPerSceneUnit(ve)}
         renderOrder={1}
       />
-      <HalosLayer halos={halos} drive={driveHalos} />
+      <HalosLayer halos={halos} surfaceY={surfaceY} depthFog={depthFogPerSceneUnit(ve)} drive={driveHalos} />
       <CameraRig bounds={bounds} />
     </>
   );

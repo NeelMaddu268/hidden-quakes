@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { strictFadeOpacity } from "@hq/visualization";
+import { FILTER_LOOK } from "./fade";
 import { filterCountIssues, isCandidateShown, shownCandidateCount, shownCandidateIds } from "./selectors";
 
 // Test-local records: 5 A, 3 B, 2 C.
@@ -21,6 +23,18 @@ describe("filter selector", () => {
     expect(["A", "B", "C"].map((t) => isCandidateShown(t as "A", "strict"))).toEqual([true, false, false]);
     expect(["A", "B", "C"].map((t) => isCandidateShown(t as "A", "all"))).toEqual([true, true, true]);
     expect(["A", "B", "C"].map((t) => isCandidateShown(t as "A", "public"))).toEqual([false, false, false]);
+  });
+});
+
+describe("selector and renderer agree", () => {
+  it("counts a tier as shown exactly when the look draws it above the STRICT background weight", () => {
+    for (const filter of ["public", "all", "strict"] as const) {
+      const look = FILTER_LOOK[filter];
+      const drawn = { A: look.tierA, B: look.tierB, C: look.tierC };
+      for (const tier of ["A", "B", "C"] as const) {
+        expect(isCandidateShown(tier, filter)).toBe(look.candidates * drawn[tier] > strictFadeOpacity);
+      }
+    }
   });
 });
 

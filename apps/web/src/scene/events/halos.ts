@@ -8,6 +8,8 @@ import type { EventInstances } from "./instances";
 
 export interface HaloInstances {
   count: number;
+  /** Tier A events drawn without a halo because they lack a usable 68% error (logged by the scene). */
+  tierAWithoutHalo: number;
   /** Candidate instance index each halo belongs to (selection, picking). */
   eventIndex: Int32Array;
   /** Column-major 4×4 per halo: scale (h, v·VE, h) in km, then translation to the event. */
@@ -19,7 +21,15 @@ export interface HaloInstances {
 /** Tier A events with both 68% errors present and positive. */
 export function haloEligible(ev: Pick<SeismicEvent, "tier" | "quality">): boolean {
   const { hErrM, vErrM } = ev.quality;
-  return ev.tier === "A" && hErrM != null && vErrM != null && hErrM > 0 && vErrM > 0;
+  return (
+    ev.tier === "A" &&
+    hErrM != null &&
+    vErrM != null &&
+    Number.isFinite(hErrM) &&
+    Number.isFinite(vErrM) &&
+    hErrM > 0 &&
+    vErrM > 0
+  );
 }
 
 /**
@@ -35,7 +45,11 @@ export function buildHaloInstances(
     throw new Error(`halos: ${events.length} events but ${candidates.count} candidate instances`);
   }
   let count = 0;
-  for (const ev of events) if (haloEligible(ev)) count++;
+  let tierA = 0;
+  for (const ev of events) {
+    if (ev.tier === "A") tierA++;
+    if (haloEligible(ev)) count++;
+  }
   const eventIndex = new Int32Array(count);
   const matrices = new Float32Array(count * 16);
   const appearAt = new Float32Array(count);
@@ -57,5 +71,5 @@ export function buildHaloInstances(
     appearAt[j] = candidates.appearAt[i];
     j++;
   }
-  return { count, eventIndex, matrices, appearAt };
+  return { count, tierAWithoutHalo: tierA - count, eventIndex, matrices, appearAt };
 }

@@ -1,18 +1,22 @@
 // PUBLIC / ALL / STRICT (docs/02 EventFilter) as data: which candidate instances each filter shows,
 // and the consistency check between what the scene draws and what the shell's counters print.
 
+import { strictFadeOpacity } from "@hq/visualization";
 import type { EventFilter } from "../../state/demo";
 import type { AnalysisSummary, SeismicEvent } from "../types";
+import { FILTER_LOOK } from "./fade";
 
 /**
- * Does `filter` show a candidate of this tier at full weight? PUBLIC hides every candidate, ALL shows
- * every tier, STRICT shows Tier A only (B and C fade to `strictFadeOpacity`, which is background, not
- * "shown").
+ * Does `filter` show a candidate of this tier, after the reveal? Derived from the same look table the
+ * renderer draws with (FILTER_LOOK), so the count and the pixels can't drift apart. "Shown" means drawn
+ * above the STRICT background weight: B and C under STRICT stay faintly on screen at
+ * `strictFadeOpacity` as context, and are not counted, which is exactly what the shell's STRICT
+ * counter (`summary.strictQualityCount`) reports.
  */
 export function isCandidateShown(tier: SeismicEvent["tier"], filter: EventFilter): boolean {
-  if (filter === "public") return false;
-  if (filter === "all") return true;
-  return tier === "A";
+  const look = FILTER_LOOK[filter];
+  const tierOpacity = tier === "A" ? look.tierA : tier === "B" ? look.tierB : look.tierC;
+  return look.candidates * tierOpacity > strictFadeOpacity;
 }
 
 /** Ids of the candidate events a filter shows, in bundle order. */
