@@ -307,6 +307,65 @@ def map_positives(real: pd.DataFrame, run_dir: Path) -> tuple[pd.DataFrame, dict
     return out, report
 
 
+def part_summary(index: int, feats: pd.DataFrame) -> dict[str, Any]:
+    """A rerun's counts read back from its saved part (``--assemble-only``; no runtime)."""
+    tiers = feats["tier"].astype(str)
+    return {
+        "shuffle": index,
+        "nEvents": len(feats),
+        "nStrict": int((tiers == "A").sum()),
+        "tiers": {k: int(v) for k, v in tiers.value_counts().items()},
+        "runtimeS": None,
+    }
+
+
+def assemble(
+    results: dict[int, pd.DataFrame],
+    summaries: dict[int, dict[str, Any]],
+    inputs: Inputs,
+    run_dir: Path,
+    out_dir: Path,
+    wall_s: float | None,
+) -> None:
+    """``positives.parquet``, ``negatives.parquet`` and ``manifest.json`` from the reruns done."""
+    n_pub = inputs.null_cfg.nShuffles
+    positives, mapping = map_positives(results[REAL], run_dir)
+    negatives = pd.concat([results[i] for i in sorted(results) if i != REAL], ignore_index=True)
+    negatives["eventId"] = negatives["rerunEventId"]  # decoys have no canonical id
+    cols = [*META, *FEATURES]
+    positives[cols].to_parquet(out_dir / "positives.parquet", index=False)
+    negatives[cols].to_parquet(out_dir / "negatives.parquet", index=False)
+    published = [summaries[i] for i in range(n_pub) if i in summaries]
+    counts = np.array([s["nEvents"] for s in published], dtype=np.float64)
+    manifest = {
+        "runDir": str(run_dir),
+        "runId": inputs.run_id,
+        "nullTest": {
+            "nShuffles": n_pub,
+            "shiftS": inputs.null_cfg.shiftS,
+            "seed": inputs.null_cfg.seed,
+            "profile": inputs.null_cfg.profile,
+            "publishedIndicesDone": sorted(s["shuffle"] for s in published),
+            "meanChanceEvents": float(counts.mean()) if len(counts) else None,
+            "stdChanceEvents": float(counts.std(ddof=1)) if len(counts) > 1 else None,
+            "meanChanceStrict": float(np.mean([s["nStrict"] for s in published]))
+            if published
+            else None,
+            "totalChanceEvents": int(counts.sum()),
+        },
+        "extraShuffles": sorted(i for i in summaries if i >= n_pub),
+        "positives": mapping,
+        "nPositives": len(positives),
+        "nNegatives": len(negatives),
+        "features": list(FEATURES),
+        "meta": list(META),
+        "reruns": [summaries[i] for i in sorted(summaries)],
+        "wallS": wall_s,
+    }
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    log.info("wrote %d positives, %d negatives to %s", len(positives), len(negatives), out_dir)
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--run-dir", type=Path, required=True)
@@ -316,6 +375,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--workers", type=int, default=6)
     p.add_argument("--budget-min", type=float, default=40.0, help="stop adding extra shuffles")
     p.add_argument("--max-extra", type=int, default=200)
+    p.add_argument(
+        "--assemble-only", action="store_true", help="rebuild the outputs from the saved parts"
+    )
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     started = time.monotonic()
@@ -325,6 +387,13 @@ def main(argv: list[str] | None = None) -> None:
     parts.mkdir(parents=True, exist_ok=True)
     results: dict[int, pd.DataFrame] = {}
     summaries: dict[int, dict[str, Any]] = {}
+    if args.assemble_only:
+        for path in sorted(parts.glob("rerun_*.parquet")):
+            index = int(path.stem.removeprefix("rerun_"))
+            results[index] = pd.read_parquet(path)
+            summaries[index] = part_summary(index, results[index])
+        assemble(results, summaries, inputs, args.run_dir, args.out_dir, None)
+        return
     real_part = parts / f"rerun_{REAL:+05d}.parquet"
     if real_part.is_file() and (parts / "real_summary.json").is_file():  # resume
         results[REAL] = pd.read_parquet(real_part)
@@ -368,40 +437,8 @@ def main(argv: list[str] | None = None) -> None:
                          time.monotonic() - started)  # fmt: skip
             top_up()
 
-    positives, mapping = map_positives(results[REAL], args.run_dir)
-    negatives = pd.concat([results[i] for i in sorted(results) if i != REAL], ignore_index=True)
-    negatives["eventId"] = negatives["rerunEventId"]  # decoys have no canonical id
-    cols = [*META, *FEATURES]
-    positives[cols].to_parquet(args.out_dir / "positives.parquet", index=False)
-    negatives[cols].to_parquet(args.out_dir / "negatives.parquet", index=False)
-    published = [summaries[i] for i in range(n_pub)]
-    counts = np.array([s["nEvents"] for s in published], dtype=np.float64)
-    manifest = {
-        "runDir": str(args.run_dir),
-        "runId": inputs.run_id,
-        "nullTest": {
-            "nShuffles": n_pub,
-            "shiftS": inputs.null_cfg.shiftS,
-            "seed": inputs.null_cfg.seed,
-            "profile": inputs.null_cfg.profile,
-            "publishedIndices": [0, n_pub - 1],
-            "meanChanceEvents": float(counts.mean()),
-            "stdChanceEvents": float(counts.std(ddof=1)),
-            "meanChanceStrict": float(np.mean([s["nStrict"] for s in published])),
-            "totalChanceEvents": int(counts.sum()),
-        },
-        "extraShuffles": sorted(i for i in summaries if i >= n_pub),
-        "positives": mapping,
-        "nPositives": len(positives),
-        "nNegatives": len(negatives),
-        "features": list(FEATURES),
-        "meta": list(META),
-        "reruns": [summaries[i] for i in sorted(summaries)],
-        "wallS": round(time.monotonic() - started, 1),
-    }
-    (args.out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    log.info("wrote %d positives, %d negatives to %s in %.0f s", len(positives), len(negatives),
-             args.out_dir, time.monotonic() - started)  # fmt: skip
+    assemble(results, summaries, inputs, args.run_dir, args.out_dir,
+             round(time.monotonic() - started, 1))  # fmt: skip
 
 
 if __name__ == "__main__":
