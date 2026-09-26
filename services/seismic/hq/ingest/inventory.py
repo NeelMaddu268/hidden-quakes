@@ -1146,12 +1146,21 @@ def build_inventory(
         cov = station_coverage(coverage[c.id])
         if cov is None:
             used = cfg.availability.onMissing == "used"
+            note = ""
+            if used and rd.status == "nodata" and cfg.availability.onMissingNoProbeData == "unused":
+                # No availability measurement and nothing served at any rate probe: drop it, so
+                # the station doesn't enter geometry-dependent work (onMissingNoProbeData).
+                used = False
+                note = (
+                    "; no data at any rate probe either, so usedInRun False (onMissingNoProbeData)"
+                )
             flags.append(
                 {
                     "station": c.id,
                     "flag": (
                         f"no {cfg.availability.metric} measurement for the window; coverage "
                         f"unknown, usedInRun {used} (onMissing={cfg.availability.onMissing})"
+                        f"{note}"
                     ),
                 }
             )
@@ -1241,7 +1250,8 @@ def build_inventory(
         raise InventoryError(
             f"none of the {len(rows)} selected stations has data in the window "
             f"({counts['withData']} measured with data, {counts['noAvailabilityMeasurement']} "
-            f"unmeasured, onMissing={cfg.availability.onMissing})"
+            f"unmeasured, onMissing={cfg.availability.onMissing}, "
+            f"onMissingNoProbeData={cfg.availability.onMissingNoProbeData})"
         )
     report = {
         "stage": STAGE,
@@ -1316,7 +1326,7 @@ def finish(ctx: StageContext, result: InventoryResult, runtime_s: float) -> None
         STAGE,
         runtime_s=runtime_s,
         counts=result.counts,
-        params=cfg.stations.model_dump(mode="json"),
+        params={STAGE: cfg.stations.model_dump(mode="json")},  # nested: RUN-01 maps it to picker
     )
     logger.info("inventory stage finished in %.1f s", runtime_s)
 
