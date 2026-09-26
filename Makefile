@@ -1,11 +1,12 @@
 SHELL := /bin/bash
 RUN ?=
 
-.PHONY: help check check-py check-web contracts run publish-run fetch-run runs
+.PHONY: help check check-py check-web contracts check-contracts run publish-run fetch-run runs
 
 help:
 	@echo "make check                  typecheck + lint + smoke tests (run before every PR)"
 	@echo "make contracts              regenerate TS from the Python contracts"
+	@echo "make check-contracts        regenerate and fail if the committed TS/schema differ"
 	@echo "make run [STAGES=a,b]       run the showcase pipeline; HQ_DATA_DIR=<dir> overrides <main checkout>/data"
 	@echo "make publish-run RUN=<id>   share a run's tables with the team (GitHub release)"
 	@echo "make fetch-run RUN=<id>     download a teammate's run tables"
@@ -22,6 +23,9 @@ check-web:
 
 contracts:
 	bash scripts/gen-contracts.sh
+
+check-contracts: contracts
+	@git diff --exit-code -- packages/contracts && echo "contracts up to date"
 
 run:
 	@cd services/seismic && uv run hq run configs/showcase $(if $(STAGES),--stages $(STAGES),)

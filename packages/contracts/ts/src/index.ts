@@ -45,9 +45,9 @@ export interface CatalogEvent {
   id: string;
   latitude: number;
   longitude: number;
-  mag?: number | null;
-  magType?: string | null;
-  matchedEventId?: string | null;
+  mag: number | null;
+  magType: string | null;
+  matchedEventId: string | null;
   source: string;
   t: number;
 }
@@ -67,20 +67,20 @@ export interface Enu {
  * via the `definition` "SeismicEvent".
  */
 export interface SeismicEvent {
-  catalogMatch?: CatalogMatch | null;
+  catalogMatch: CatalogMatch | null;
   depthKm: number;
   elevM: number;
   enu: Enu;
   id: string;
   latitude: number;
   longitude: number;
-  magnitude?: Magnitude | null;
+  magnitude: Magnitude | null;
   meanPickProb: number;
   pickIds: string[];
   quality: LocationQuality;
   revealOrder: number;
   runId: string;
-  source?: string;
+  source: string;
   t: number;
   tier: Tier;
   tierReasons: string[];
@@ -99,7 +99,7 @@ export interface CatalogMatch {
  * via the `definition` "Magnitude".
  */
 export interface Magnitude {
-  sigma?: number | null;
+  sigma: number | null;
   type: string;
   value: number;
 }
@@ -141,12 +141,12 @@ export interface WaveformSnippet {
   channel: string;
   dt: number;
   epiDistM: number;
-  pickP?: number | null;
-  pickS?: number | null;
-  predP?: number | null;
-  predS?: number | null;
-  probP?: number | null;
-  probS?: number | null;
+  pickP: number | null;
+  pickS: number | null;
+  predP: number | null;
+  predS: number | null;
+  probP: number | null;
+  probS: number | null;
   samples: number[];
   stationId: string;
   t0: number;
@@ -190,7 +190,7 @@ export interface BundleMeta {
   mode: DataMode;
   run: ProcessingRun;
   scene: SceneMeta;
-  schemaVersion?: string;
+  schemaVersion: string;
   summary: AnalysisSummary;
 }
 /**
@@ -209,7 +209,7 @@ export interface ProcessingRun {
   createdAt: string;
   gitSha: string;
   id: string;
-  isSynthetic?: boolean;
+  isSynthetic: boolean;
   locator: {
     [k: string]: unknown;
   };
@@ -245,15 +245,15 @@ export interface ProcessingRun {
  */
 export interface SceneMeta {
   depthLabel: string;
-  heroEventId?: string | null;
-  isSynthetic?: boolean;
+  heroEventId: string | null;
+  isSynthetic: boolean;
   originElevM: number;
   originLat: number;
   originLon: number;
   projection: string;
   refSurfaceElevM: number;
   runId: string;
-  verticalExaggeration?: number;
+  verticalExaggeration: number;
 }
 /**
  * This interface was referenced by `Bundle`'s JSON-Schema
@@ -262,7 +262,7 @@ export interface SceneMeta {
 export interface AnalysisSummary {
   additional: TierCounts;
   additionalCount: number;
-  baseline?: BaselineGain | null;
+  baseline: BaselineGain | null;
   candidateCount: number;
   medianRmsS: number;
   medianStations: number;
@@ -303,14 +303,14 @@ export interface Station {
   id: string;
   kind: "surface" | "borehole" | "strong_motion";
   latitude: number;
-  location?: string;
+  location: string;
   longitude: number;
   network: string;
   preprocessProfile: string;
   sampleRateHz: number;
   sensorDepthM: number;
   sensorElevM: number;
-  staticsS?: {
+  staticsS: {
     [k: string]: number;
   };
   station: string;
@@ -323,9 +323,9 @@ export interface Station {
  */
 export interface Validation {
   baseline: BaselineRow[];
-  gr?: GRCurve | null;
-  magnitude?: MagCalibration | null;
-  nullTest?: NullTest | null;
+  gr: GRCurve | null;
+  magnitude: MagCalibration | null;
+  nullTest: NullTest | null;
   sweep: SweepPoint[];
   synthetic: SyntheticTest;
 }
@@ -347,11 +347,11 @@ export interface BaselineRow {
  * via the `definition` "GRCurve".
  */
 export interface GRCurve {
-  bSigma?: number | null;
-  bValue?: number | null;
+  bSigma: number | null;
+  bValue: number | null;
   magBins: number[];
-  mcPublic?: number | null;
-  mcRecovered?: number | null;
+  mcPublic: number | null;
+  mcRecovered: number | null;
   publicCum: number[];
   recoveredCum: number[];
 }
@@ -408,13 +408,13 @@ export interface SyntheticTest {
  * via the `definition` "Pick".
  */
 export interface Pick {
-  eventId?: string | null;
+  eventId: string | null;
   id: string;
   phase: Phase;
   picker: string;
   prob: number;
-  residualS?: number | null;
+  residualS: number | null;
   stationId: string;
   t: number;
-  weight?: number | null;
+  weight: number | null;
 }

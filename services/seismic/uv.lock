@@ -837,6 +837,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pydantic" },
+    { name = "typing-extensions" },
 ]
 
 [package.metadata]
@@ -844,6 +845,7 @@ requires-dist = [
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "typing-extensions", specifier = ">=4.6" },
 ]
 
 [[package]]
