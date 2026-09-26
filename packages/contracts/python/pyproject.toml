@@ -3,7 +3,7 @@ name = "hq-contracts"
 version = "0.1.0"
 description = "Hidden Quakes shared data contracts (source of truth for the generated TS)"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2", "pandas", "pyarrow"]
+dependencies = ["pydantic>=2", "pandas", "pyarrow", "typing_extensions>=4.6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -11,3 +11,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hq_contracts"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
