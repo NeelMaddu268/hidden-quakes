@@ -26,10 +26,8 @@ Conventions (also returned by ``conventions()`` for the run record):
 - **Face masses.** The PDF mass on each of the six faces of the evaluated fine region (one node
   layer each).
 - **depthOnEdge** is set when more than ``depthOnEdgeMassFraction`` of the mass lies on the fine
-  grid's top face or on its bottom face (each face checked on its own; docs/02), or when the MAP
-  node lies on the search volume's top or bottom face. The second rule catches a broad PDF pinned
-  against the volume top (the z = 0 collapse), whose top face row can hold less than 5% of the
-  mass because the mass is spread over many 25 m rows.
+  grid's top face or on its bottom face (each face checked on its own; docs/02). MAP positions
+  on a volume boundary are recorded separately, including broad PDFs with small face mass.
 - **Truncation.** The locator grows the evaluated region until no face that is not the volume's top
   or bottom face holds a node within ``pdfCutoff`` of the minimum. If a lateral volume face or the
   node budget (``maxPdfNodes``) stops it first, the PDF is truncated there: the locator reports
@@ -177,8 +175,6 @@ def summarize_pdf(
     depth_on_edge = (
         face_mass["top"] > edge_fraction
         or face_mass["bottom"] > edge_fraction
-        or on_top
-        or on_bottom
     )
     return PdfSummary(
         mean_e_m=float(e_axis[ie] + mu[0]),
@@ -217,7 +213,7 @@ def conventions(confidence: float, edge_fraction: float, misfit_scale: float) ->
         "chi2_2": chi2_2(confidence),
         "gridFloor": "lambda_max and the vertical variance are floored at spacing^2 / 12 (flagged)",
         "depthOnEdge": f"> {edge_fraction} of the mass on the evaluated fine grid's top face or on "
-        "its bottom face, or the MAP node on the search volume's top or bottom face",
+        "its bottom face; MAP boundary positions are separate diagnostics",
         "depthOnEdgeMassFraction": edge_fraction,
         "truncation": "the evaluated region grows until no face other than the volume's top or "
         "bottom holds a node within pdfCutoff of the minimum; if a lateral volume face or "
