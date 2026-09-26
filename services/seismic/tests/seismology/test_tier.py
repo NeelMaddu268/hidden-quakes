@@ -34,7 +34,7 @@ SEED = 20260926
 T0 = 1789000000.0  # epoch s; any fixed time
 N_MATCHED = 40
 N_UNMATCHED = 20
-REF = 1627.7  # run.yaml refSurfaceElevM; the tests check it against the fixture below
+REF = 1627.7  # reference surface elevation (m) of the pinned run section below
 
 pytestmark = pytest.mark.smoke
 
@@ -113,27 +113,56 @@ def cfg_with(cfg: SeismologyConfig, **tiering: Any) -> SeismologyConfig:
     return SeismologyConfig.model_validate(raw)
 
 
+# The tiering knobs and reference surface these tests assume, pinned so tuning seismology.yaml or
+# run.yaml does not turn them red.
+PINNED_TIERING: dict[str, Any] = {
+    "quantiles": {"A": 0.25, "B": 0.0},
+    "strictNearestStationFactor": 2.0,
+    "minMatched": 10,
+    "sweep": {"enabled": False},
+}
+
+
+@pytest.fixture
+def cfg(seismology_config: SeismologyConfig) -> SeismologyConfig:
+    return cfg_with(seismology_config, **PINNED_TIERING)
+
+
+@pytest.fixture
+def run(run_section: RunSection) -> RunSection:
+    return run_section.model_copy(update={"refSurfaceElevM": REF})
+
+
 def worst_side_rank_value(values: np.ndarray, better: str, q: float) -> float:
     """Independent statement of the bar: the ceil((1 - q) n)-th best value."""
     order = np.sort(values) if better == "lower" else np.sort(values)[::-1]
     return float(order[math.ceil((1 - q) * len(values)) - 1])
 
 
+def numpy_bar(values: np.ndarray, better: str, q: float) -> float:
+    """The bar by numpy's definition: ``inverted_cdf`` at 1 - q for lower-is-better metrics, and
+    its mirror for higher-is-better ones (the largest value at least 1 - q of M meet or beat)."""
+    if better == "lower":
+        return float(np.quantile(values, 1 - q, method="inverted_cdf"))
+    return float(-np.quantile(-values, 1 - q, method="inverted_cdf"))
+
+
 # --- bars -----------------------------------------------------------------------------------------
 
 
-def test_bars_are_quantiles_of_the_matched_set(seismology_config: SeismologyConfig) -> None:
+def test_bars_are_quantiles_of_the_matched_set(cfg: SeismologyConfig) -> None:
     events, matches, matched_ids = seeded_world()
-    result = assign_tiers(events, matches, seismology_config)
+    result = assign_tiers(events, matches, cfg)
     th = result.tiering["thresholds"]
     matched = events[events["id"].isin(matched_ids)]
-    q = seismology_config.tiering.quantiles
+    q = cfg.tiering.quantiles
     assert th["nMatched"] == N_MATCHED == result.tiering["matchedSet"]["n"]
     assert th["quantiles"] == {"A": q.A, "B": q.B}
     for metric in METRICS:
         values = matched[metric.column].to_numpy(dtype=np.float64)
         a, b = th["A"][metric.name], th["B"][metric.name]
         assert a["value"] == worst_side_rank_value(values, metric.better, q.A)
+        assert a["value"] == numpy_bar(values, metric.better, q.A)  # an external definition
         worst = values.min() if metric.better == "higher" else values.max()
         assert b["value"] == worst and b["label"] == "worst of matched"
         assert a["n"] == b["n"] == N_MATCHED
@@ -146,40 +175,40 @@ def test_bars_are_quantiles_of_the_matched_set(seismology_config: SeismologyConf
     shifted = events.copy()
     unmatched = ~shifted["id"].isin(matched_ids)
     shifted.loc[unmatched, "quality_rmsS"] = 9.0
-    assert assign_tiers(shifted, matches, seismology_config).tiering["thresholds"] == th
+    assert assign_tiers(shifted, matches, cfg).tiering["thresholds"] == th
 
 
-def test_boundary_equality_passes(seismology_config: SeismologyConfig) -> None:
+def test_boundary_equality_passes(cfg: SeismologyConfig) -> None:
     """Every matched event identical: each bar equals every value, and all of them pass A."""
     models = [event(k) for k in range(12)]
     extra = [event(12), event(13, rmsS=0.0501)]  # unmatched: on the bar, and just past it
     events = located(models + extra)
     matches = matches_for(events, [m.id for m in models])
-    out = assign_tiers(events, matches, seismology_config).events
+    out = assign_tiers(events, matches, cfg).events
     assert list(out["tier"]) == ["A"] * 13 + ["C"]  # past the worst matched event too
     assert out["tierReasons"].iloc[0][3] == "rmsS 0.050 <= 0.050 (A: p75 of matched, n=12)"
     reason = out["tierReasons"].iloc[13][3]
     assert reason.startswith("rmsS 0.0501 > 0.0500 (A: p75 of matched, n=12); > 0.0500 (B")
 
 
-def test_null_errors_fail_a_and_b(seismology_config: SeismologyConfig) -> None:
+def test_null_errors_fail_a_and_b(cfg: SeismologyConfig) -> None:
     models = [event(k) for k in range(12)]
     events = located(models + [event(12, hErrM=None), event(13, vErrM=None)])
     matches = matches_for(events, [m.id for m in models])
-    out = assign_tiers(events, matches, seismology_config).events
+    out = assign_tiers(events, matches, cfg).events
     assert list(out["tier"].iloc[12:]) == ["C", "C"]
     assert "hErrM null (no formal error): fails A and B" in out["tierReasons"].iloc[12]
     assert "vErrM null (no formal error): fails A and B" in out["tierReasons"].iloc[13]
 
 
 def test_null_error_in_the_matched_set_counts_as_worst(
-    seismology_config: SeismologyConfig,
+    cfg: SeismologyConfig,
 ) -> None:
     """One null hErrM among 12 matched: the A bar (p75) is finite, the B bar unbounded."""
     models = [event(k, hErrM=100.0 + 10 * k) for k in range(11)] + [event(11, hErrM=None)]
     events = located(models + [event(12, hErrM=5000.0)])
     matches = matches_for(events, [m.id for m in models])
-    result = assign_tiers(events, matches, seismology_config)
+    result = assign_tiers(events, matches, cfg)
     a, b = (result.tiering["thresholds"][t]["hErrM"] for t in ("A", "B"))
     assert a["value"] == 100.0 + 10 * 8  # rank ceil(0.75 * 12) = 9 of 12, null last
     assert b["value"] is None and b["unbounded"] and b["nNull"] == 1
@@ -194,15 +223,15 @@ def test_null_error_in_the_matched_set_counts_as_worst(
 # --- rules ----------------------------------------------------------------------------------------
 
 
-def test_depth_on_edge_and_map_on_top_exclude_tier_a(seismology_config: SeismologyConfig) -> None:
+def test_depth_on_edge_and_map_on_top_exclude_tier_a(cfg: SeismologyConfig) -> None:
     models = [event(k) for k in range(12)]
     events = located(models + [event(12, depthOnEdge=True), event(13)])
     matches = matches_for(events, [m.id for m in models])
     flags = pd.DataFrame({"eventId": events["id"], "mapOnVolumeTop": [False] * 13 + [True]})
-    without = assign_tiers(events, matches, seismology_config)
+    without = assign_tiers(events, matches, cfg)
     assert list(without.events["tier"].iloc[12:]) == ["B", "A"]  # no flags: MAP rule not applied
     assert not without.tiering["rules"]["A"]["mapOnVolumeTop"]["applied"]
-    with_flags = assign_tiers(events, matches, seismology_config, flags=flags)
+    with_flags = assign_tiers(events, matches, cfg, flags=flags)
     assert list(with_flags.events["tier"].iloc[12:]) == ["B", "B"]
     assert with_flags.tiering["rules"]["A"]["mapOnVolumeTop"]["applied"]
     reasons = with_flags.events["tierReasons"]
@@ -211,14 +240,14 @@ def test_depth_on_edge_and_map_on_top_exclude_tier_a(seismology_config: Seismolo
     assert len(reasons.iloc[0]) == len(METRICS)  # a Tier A event: one string per metric only
 
 
-def test_nearest_station_rule(seismology_config: SeismologyConfig) -> None:
-    factor = seismology_config.tiering.strictNearestStationFactor
+def test_nearest_station_rule(cfg: SeismologyConfig) -> None:
+    factor = cfg.tiering.strictNearestStationFactor
     models = [event(k, depth_m=3000.0, minEpiDistM=100.0) for k in range(12)]
     depth_m = event(12, depth_m=2000.0).depthKm * 1000.0  # focal depth as the rule computes it
     on_limit = event(12, depth_m=2000.0, minEpiDistM=factor * depth_m)
     past = event(13, depth_m=2000.0, minEpiDistM=factor * depth_m + 1.0)
     events = located(models + [on_limit, past])
-    out = assign_tiers(events, matches_for(events, [m.id for m in models]), seismology_config)
+    out = assign_tiers(events, matches_for(events, [m.id for m in models]), cfg)
     assert list(out.events["tier"].iloc[12:]) == ["A", "B"]
     assert out.events["tierReasons"].iloc[13][-1] == (
         f"nearest station 4001 m > {factor:g} x focal depth 2000 m (epicentral, depth below "
@@ -231,10 +260,10 @@ def test_nearest_station_rule(seismology_config: SeismologyConfig) -> None:
 # --- the final table ------------------------------------------------------------------------------
 
 
-def test_final_events_are_contract_shaped(seismology_config: SeismologyConfig,
+def test_final_events_are_contract_shaped(cfg: SeismologyConfig,
                                           tmp_path: Path) -> None:
     events, matches, matched_ids = seeded_world()
-    result = assign_tiers(events, matches, seismology_config)
+    result = assign_tiers(events, matches, cfg)
     out = result.events
     assert list(out.columns) == columns_for(SeismicEvent)
     assert {c: str(d) for c, d in out.dtypes.items()} == {
@@ -263,10 +292,10 @@ def test_final_events_are_contract_shaped(seismology_config: SeismologyConfig,
     assert read_models(tmp_path / "events.parquet", SeismicEvent) == from_frame(out, SeismicEvent)
 
 
-def test_zero_events_give_a_typed_empty_table(seismology_config: SeismologyConfig) -> None:
+def test_zero_events_give_a_typed_empty_table(cfg: SeismologyConfig) -> None:
     events = located([])
     result = assign_tiers(events, matches_for(events, [], n_unmatched_public=3),
-                          seismology_config)
+                          cfg)
     assert len(result.events) == 0
     assert list(result.events.columns) == columns_for(SeismicEvent)
     assert result.tiering["thresholds"] is None
@@ -274,44 +303,45 @@ def test_zero_events_give_a_typed_empty_table(seismology_config: SeismologyConfi
 
 
 def test_too_few_matched_fails_loudly_and_supplied_bars_apply(
-    seismology_config: SeismologyConfig,
+    cfg: SeismologyConfig,
 ) -> None:
     events, matches, matched_ids = seeded_world()
-    main = assign_tiers(events, matches, seismology_config)
-    few = matches_for(events, matched_ids[:9])  # minMatched is 10
-    with pytest.raises(TierError, match="minMatched is 10"):
-        assign_tiers(events, few, seismology_config)
-    applied = assign_tiers(events, few, seismology_config, thresholds=main.tiering)
+    main = assign_tiers(events, matches, cfg)
+    min_matched = cfg.tiering.minMatched
+    few = matches_for(events, matched_ids[: min_matched - 1])
+    with pytest.raises(TierError, match=f"minMatched is {min_matched}"):
+        assign_tiers(events, few, cfg)
+    applied = assign_tiers(events, few, cfg, thresholds=main.tiering)
     assert applied.tiering["thresholdSource"] == "supplied"
     assert applied.tiering["thresholds"] == main.tiering["thresholds"]
     assert list(applied.events["tier"]) == list(main.events["tier"])  # same bars, same tiers
-    other = cfg_with(seismology_config, quantiles={"A": 0.2, "B": 0.0})
+    other = cfg_with(cfg, quantiles={"A": 0.2, "B": 0.0})
     with pytest.raises(TierError, match="quantiles"):
         assign_tiers(events, few, other, thresholds=main.tiering)
 
 
-def test_inconsistent_inputs_fail_loudly(seismology_config: SeismologyConfig) -> None:
+def test_inconsistent_inputs_fail_loudly(cfg: SeismologyConfig) -> None:
     events, matches, _ = seeded_world()
     stray = matches.copy()
     stray.loc[0, "eventId"] = "hq-other-000001"
     with pytest.raises(TierError, match="missing from events_located"):
-        assign_tiers(events, stray, seismology_config)
+        assign_tiers(events, stray, cfg)
     twice = matches.copy()
     twice.loc[1, "eventId"] = twice.loc[0, "eventId"]
     with pytest.raises(TierError, match="one-to-one"):
-        assign_tiers(events, twice, seismology_config)
+        assign_tiers(events, twice, cfg)
     flags = pd.DataFrame({"eventId": events["id"].iloc[1:], "mapOnVolumeTop": False})
     with pytest.raises(TierError, match="do not cover"):
-        assign_tiers(events, matches, seismology_config, flags=flags)
-    final = assign_tiers(events, matches, seismology_config).events
+        assign_tiers(events, matches, cfg, flags=flags)
+    final = assign_tiers(events, matches, cfg).events
     with pytest.raises(TierError, match="final-event columns"):
-        assign_tiers(final, matches, seismology_config)
+        assign_tiers(final, matches, cfg)
     with pytest.raises(TierError, match="lacks columns"):
-        assign_tiers(events.drop(columns=["quality_nS"]), matches, seismology_config)
+        assign_tiers(events.drop(columns=["quality_nS"]), matches, cfg)
     no_rms = events.copy()
     no_rms.loc[len(events) - 1, "quality_rmsS"] = np.nan  # an unmatched event
     with pytest.raises(TierError, match="null quality_rmsS"):
-        assign_tiers(no_rms, matches, seismology_config)
+        assign_tiers(no_rms, matches, cfg)
 
 
 # --- event picks ----------------------------------------------------------------------------------
@@ -335,9 +365,9 @@ def picks_and_arrivals(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     return to_frame(picks, Pick), pd.DataFrame(arrivals)
 
 
-def test_event_picks_carry_event_and_residual(seismology_config: SeismologyConfig) -> None:
+def test_event_picks_carry_event_and_residual(cfg: SeismologyConfig) -> None:
     events, matches, _ = seeded_world()
-    final = assign_tiers(events, matches, seismology_config).events
+    final = assign_tiers(events, matches, cfg).events
     picks, arrivals = picks_and_arrivals(final)
     out = event_picks(final, arrivals, picks)
     assert list(out.columns) == columns_for(Pick)
@@ -374,10 +404,11 @@ def write_run(ctx: Any, *, flags: bool = True) -> tuple[pd.DataFrame, pd.DataFra
     return events, matches
 
 
-def test_stage_writes_final_tables_and_record(make_ctx: Any, run_section: RunSection) -> None:
-    assert run_section.refSurfaceElevM == REF
+def test_stage_writes_final_tables_and_record(
+    make_ctx: Any, run: RunSection, cfg: SeismologyConfig
+) -> None:
     stage = importlib.import_module("hq.tier.run")
-    ctx = make_ctx(run_section)
+    ctx = make_ctx(run, cfg)
     events, _ = write_run(ctx)
     ctx.path("sweep.parquet").write_bytes(b"from an earlier tier run")
     stage.run(ctx)
@@ -400,12 +431,12 @@ def test_stage_writes_final_tables_and_record(make_ctx: Any, run_section: RunSec
     assert params["config"]["quantiles"] == {"A": 0.25, "B": 0.0}
 
 
-def test_stage_fails_on_a_depth_from_another_run_section(
-    make_ctx: Any, run_section: RunSection
+def test_stage_fails_on_a_depth_from_another_run(
+    make_ctx: Any, run: RunSection, cfg: SeismologyConfig
 ) -> None:
     stage = importlib.import_module("hq.tier.run")
-    other = run_section.model_copy(update={"refSurfaceElevM": REF + 10.0})
-    ctx = make_ctx(other)
+    other = run.model_copy(update={"refSurfaceElevM": REF + 10.0})
+    ctx = make_ctx(other, cfg)
     write_run(ctx, flags=False)
     with pytest.raises(TierError, match="depthKm"):
         stage.run(ctx)
@@ -423,7 +454,7 @@ def test_stage_resolves_to_the_stage_function(first: str | None) -> None:
 
 
 def test_sweep_counts_tier_a_with_the_configured_runs_bars(
-    seismology_config: SeismologyConfig,
+    cfg: SeismologyConfig,
 ) -> None:
     from hq.associate.result import (
         EVENT_DTYPES,
@@ -436,7 +467,7 @@ def test_sweep_counts_tier_a_with_the_configured_runs_bars(
     from hq.tier.sweep import SweepPipeline, score_sweep
 
     events, _, matched_ids = seeded_world()
-    main = derive_thresholds(events[events["id"].isin(matched_ids)], seismology_config.tiering)
+    main = derive_thresholds(events[events["id"].isin(matched_ids)], cfg.tiering)
 
     def assoc(n: int) -> AssocResult:
         return AssocResult(
@@ -462,9 +493,9 @@ def test_sweep_counts_tier_a_with_the_configured_runs_bars(
                          runtime_s=0.5) for p, r in zip(grid, results, strict=True)]
 
     points, record = score_sweep(run_points, SweepPipeline(fake_locate, fake_match),
-                                 seismology_config, main)
+                                 cfg, main)
     expected_a = [0 if n == 0 else int((assign_tiers(
-        events.iloc[:n], matches_for(events.iloc[:n], []), seismology_config, thresholds=main
+        events.iloc[:n], matches_for(events.iloc[:n], []), cfg, thresholds=main
     ).events["tier"] == "A").sum()) for n in (len(events), 30, 0)]
     assert [p.candidates for p in points] == [len(events), 30, 0]
     assert [p.recoveredPublic for p in points] == [3, 3, 0]
@@ -486,13 +517,13 @@ def test_sweep_without_loc04_names_it() -> None:
 
 
 def test_stage_writes_sweep_parquet_when_enabled(
-    make_ctx: Any, run_section: RunSection, seismology_config: SeismologyConfig,
+    make_ctx: Any, run: RunSection, cfg: SeismologyConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from hq.associate.sweep import SweepRow, SweepScore
 
     stage = importlib.import_module("hq.tier.run")
-    ctx = make_ctx(run_section, cfg_with(seismology_config, sweep={"enabled": True}))
+    ctx = make_ctx(run, cfg_with(cfg, sweep={"enabled": True}))
     write_run(ctx)
     for name, model in (("stations.parquet", "Station"), ("catalog.parquet", "CatalogEvent")):
         write_table(pd.DataFrame({"id": ["x"]}), ctx.path(name), model)

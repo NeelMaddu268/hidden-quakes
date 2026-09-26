@@ -13,7 +13,8 @@ Tiers come from the data, never from textbook values
     to worst on that metric and take the ``ceil((1 - q) * n)``-th, with ``q`` the tier's
     ``tiering.quantiles`` entry. At least ``(1 - q)`` of M therefore meets or beats every bar,
     and a bar is ``p(100 q)`` of M for higher-is-better metrics and ``p(100 (1 - q))`` for
-    lower-is-better ones (numpy's ``inverted_cdf`` on the lower-is-better side). With the showcase
+    lower-is-better ones (numpy's ``inverted_cdf`` at ``1 - q`` on the lower-is-better side, its
+    mirror ``-inverted_cdf(-v, 1 - q)`` on the higher-is-better side). With the showcase
     ``A: 0.25`` that is ">= p25" and "<= p75": at least as good as the 25th-percentile-worst
     matched event. ``B: 0.0`` is the worst matched event. Boundary equality passes.
 
@@ -95,7 +96,8 @@ NULL_RULE = (
 )
 QUANTILE_METHOD = (
     "rank ceil((1 - q) * n) from the best: numpy inverted_cdf at 1 - q for lower-is-better "
-    "metrics, its mirror for higher-is-better ones"
+    "metrics; for higher-is-better ones its mirror -inverted_cdf(-v, 1 - q), the largest value "
+    "at least (1 - q) of M meet or beat (one rank above inverted_cdf at q when q * n is an integer)"
 )
 
 
