@@ -13,6 +13,10 @@ heroRule: tierA_most_stations
 # bundle is committed to git, so it never goes to another worktree's tree), or an absolute path.
 outputDir: apps/web/public/data
 
+# Cap on the whole bundle directory in bytes (docs/01 budgets the committed web bundle at < 30 MB).
+# The export fails before swapping the new bundle in; check_bundle flags a bundle over it.
+maxBundleBytes: 31457280
+
 # SceneMeta knobs that are not derived from the run; origin and refSurfaceElevM come from run.yaml.
 scene:
   # 1.0 is true scale; any other value makes the scene show a permanent "Vertical xN" badge.
@@ -49,9 +53,10 @@ evidence:
   # Hard cap on one evidence file in bytes (docs/01: 20-60 KB). A file over it drops its farthest
   # trace until it fits; the run fails if even a single trace does not fit.
   maxFileBytes: 61440
-  # Events that get an evidence file: the hero, then reveal order. null = every event that has
-  # arrivals. The bundle is committed to git (docs/01 budgets < 30 MB), so cap this on a big run.
-  maxEvents: null
+  # Events that get an evidence file: the hero, then reveal order (so every Tier A event comes
+  # before any Tier B); null = every event that has arrivals. Budget: 400 files x at most
+  # maxFileBytes (61440) = 24.0 MB, leaving room for events.json and the rest under maxBundleBytes.
+  maxEvents: 400
 
 # Decimals of every value the exporter derives itself (pipeline values are written as stored), so
 # the same run gives a byte-identical bundle.

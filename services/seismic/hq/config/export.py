@@ -74,7 +74,7 @@ class EvidenceConfig(BaseModel):
     maxFileBytes: int = Field(default=60 * 1024, gt=0)
     # Events that get an evidence file, in reveal order after the hero; null means every event
     # that has arrivals. The bundle is committed to git, so cap it when the run is large.
-    maxEvents: int | None = Field(default=None, ge=1)
+    maxEvents: int | None = Field(default=400, ge=1)
 
     @model_validator(mode="after")
     def _check(self) -> "EvidenceConfig":
@@ -114,6 +114,9 @@ class ExportConfig(BaseModel):
     # Where bundles go: <outputDir>/<mode>/. Relative to the checkout that holds the ``hq``
     # package (the bundle is committed to git), or absolute.
     outputDir: str = Field(default="apps/web/public/data", min_length=1)
+    # Cap on one whole bundle directory (docs/01 budgets the committed web bundle at < 30 MB);
+    # the export fails before swapping the bundle in, and check_bundle flags it.
+    maxBundleBytes: int = Field(default=30 * 1024 * 1024, gt=0)
     scene: SceneConfig = Field(default_factory=SceneConfig)
     evidence: EvidenceConfig = Field(default_factory=EvidenceConfig)
     rounding: RoundingConfig = Field(default_factory=RoundingConfig)

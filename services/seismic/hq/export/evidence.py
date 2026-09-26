@@ -6,8 +6,9 @@ the ``WaveformSource``, one channel is chosen by ``channelPriority``, the displa
 bandpassed by H1's ``display_copy``, resampled to ``displayRateHz``, trimmed to the window,
 scaled to ``[-1, 1]`` and rounded. A station with no data in the window, a channel with none of
 the wanted components, a segment shorter than ``minLengthS`` or a flat trace is dropped and
-logged, never filled. Traces are sorted by ``epiDistM`` (nearest first), at most ``maxTraces``,
-and the file must fit ``maxFileBytes``: a file over it drops its farthest trace until it fits.
+logged, never filled. Picks come only from ``arrivals.pickId``; a null one shows no pick. Traces
+are sorted by ``epiDistM`` (nearest first), at most ``maxTraces``, and the file must stay under
+``maxFileBytes``: a file at or over it drops its farthest trace until it fits.
 """
 
 import json
@@ -50,20 +51,10 @@ def epicentral_distance_m(event: SeismicEvent, station: Station) -> float:
     return math.hypot(station.enu.e - event.enu.e, station.enu.n - event.enu.n)
 
 
-def _event_pick(
-    event: SeismicEvent, picks: dict[str, Pick], station_id: str, phase: str, pick_id: str | None
-) -> Pick | None:
-    """The pick the arrival names, else the event's best pick of that station and phase."""
-    if pick_id is not None:
-        return picks[pick_id]
-    candidates = [
-        picks[pid]
-        for pid in event.pickIds
-        if picks[pid].stationId == station_id and picks[pid].phase == phase
-    ]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: (p.prob, -p.t))
+def _arrival_pick(picks: dict[str, Pick], pick_id: str | None) -> Pick | None:
+    """The pick ``arrivals.pickId`` names, or None: a null pickId means the trace shows no pick
+    (never a substitute from the event's pick list), while predP/predS stay filled."""
+    return None if pick_id is None else picks[pick_id]
 
 
 def station_arrivals(
@@ -105,8 +96,8 @@ def station_arrivals(
                 epi_dist_m=epicentral_distance_m(event, station),
                 pred_p=pred_p,
                 pred_s=pred_s,
-                pick_p=_event_pick(event, picks, station_id, "P", pick_id_p),
-                pick_s=_event_pick(event, picks, station_id, "S", pick_id_s),
+                pick_p=_arrival_pick(picks, pick_id_p),
+                pick_s=_arrival_pick(picks, pick_id_s),
             )
         )
     return sorted(out, key=lambda sa: (sa.epi_dist_m, sa.station.id))
@@ -220,17 +211,17 @@ def evidence_json(evidence: EventEvidence) -> bytes:
 
 
 def fit_to_budget(evidence: EventEvidence, max_bytes: int) -> tuple[EventEvidence, bytes, int]:
-    """Drop the farthest trace until the file fits ``max_bytes``; returns (evidence, bytes,
-    traces dropped). One trace that does not fit is a config error, not a smaller file."""
+    """Drop the farthest trace until the file is under ``max_bytes`` (strictly); returns
+    (evidence, bytes, traces dropped). One trace that does not fit is a config error."""
     dropped = 0
     data = evidence_json(evidence)
-    while len(data) > max_bytes and len(evidence.traces) > 1:
+    while len(data) >= max_bytes and len(evidence.traces) > 1:
         evidence = evidence.model_copy(update={"traces": evidence.traces[:-1]})
         data = evidence_json(evidence)
         dropped += 1
-    if len(data) > max_bytes:
+    if len(data) >= max_bytes:
         raise ExportError(
-            f"evidence {evidence.eventId}: one trace alone is {len(data)} bytes > maxFileBytes "
+            f"evidence {evidence.eventId}: one trace alone is {len(data)} bytes, not under "
             f"{max_bytes}; shorten beforeS/afterS, lower displayRateHz or rounding.sample"
         )
     return evidence, data, dropped

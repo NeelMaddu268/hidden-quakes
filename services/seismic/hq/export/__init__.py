@@ -57,7 +57,9 @@ def output_root(cfg: ExportConfig) -> Path:
 
 
 def run(ctx: "RunContext") -> None:
-    """Stage entry: export every mode in ``export.yaml``, check each bundle, record counts."""
+    """Stage entry: export every mode in ``export.yaml`` (each bundle is checked before it is
+    swapped in) and record the first mode's counts plus ``modes``; every mode gets the same
+    content, so the counts are not summed across modes."""
     started = time.perf_counter()
     cfg: ExportConfig = ctx.config.export
     tables = load_run_tables(ctx.run_dir)
@@ -72,11 +74,8 @@ def run(ctx: "RunContext") -> None:
         result = export_bundle(
             tables, cfg, ctx.config.run, mode, source, cache_dir=ctx.cache_dir, out_dir=root / mode
         )
-        check_bundle(
-            result.out_dir, rounding=cfg.rounding, max_evidence_bytes=cfg.evidence.maxFileBytes
-        )
-        for key, value in result.counts.items():
-            counts[key] = counts.get(key, 0) + value
+        if not counts:
+            counts = dict(result.counts)
     counts["modes"] = len(cfg.modes)
     ctx.record(STAGE, runtime_s=time.perf_counter() - started, counts=counts)
 

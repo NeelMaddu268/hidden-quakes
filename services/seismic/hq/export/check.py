@@ -2,7 +2,7 @@
 invariants (ticket API-02 acceptance). It reads only the bundle directory, so it also runs on
 the mock bundle and on a bundle fetched from another laptop.
 
-    uv run python -m hq.export.check apps/web/public/data/showcase
+    uv run python -m hq.export apps/web/public/data/showcase [--config-dir configs/showcase]
 
 Checks: every file parses with its Pydantic model and ``schemaVersion`` matches; run ids agree
 across meta, events and summary; ``revealOrder`` is a permutation of ``0..n-1`` in Tier A -> B
@@ -10,7 +10,8 @@ across meta, events and summary; ``revealOrder`` is a permutation of ``0..n-1`` 
 ``catalog.json``; catalog matches are one-to-one and agree with ``SeismicEvent.catalogMatch``;
 the hero is a Tier A event with the most stations and has evidence; every evidence file is under
 the byte cap, names an event in ``events.json``, has at most 16 traces sorted by ``epiDistM``
-with samples in ``[-1, 1]``.
+with samples in ``[-1, 1]``; the whole directory stays under the bundle budget; ``meta.mode``
+matches the directory name (or the mode passed in) and only a ``mock`` bundle is synthetic.
 """
 
 import argparse
@@ -35,8 +36,9 @@ from hq_contracts.models import (
 )
 from pydantic import BaseModel, ValidationError
 
-from hq.config.export import MAX_EVIDENCE_TRACES, EvidenceConfig, RoundingConfig
-from hq.export.bundle import (
+from hq.config import load_config
+from hq.config.export import MAX_EVIDENCE_TRACES, EvidenceConfig, ExportConfig, RoundingConfig
+from hq.export.files import (
     CATALOG_JSON,
     EVENTS_JSON,
     EVIDENCE_DIR,
@@ -60,6 +62,7 @@ OPTIONAL_FILES: tuple[str, ...] = (VALIDATION_JSON,)
 DATA_MODES: tuple[str, ...] = get_args(DataMode.__value__)
 MAX_LISTED = 5
 SAMPLE_LIMIT = 1.0  # WaveformSnippet.samples are scaled to [-1, 1]
+SYNTHETIC_MODE = "mock"  # the only mode whose bundle may carry isSynthetic (CLAUDE.md rule 5)
 
 
 class BundleCheckError(ValueError):
@@ -276,18 +279,25 @@ def check_bundle(
     *,
     rounding: RoundingConfig | None = None,
     max_evidence_bytes: int | None = None,
+    max_bundle_bytes: int | None = None,
+    mode: str | None = None,
 ) -> dict[str, int]:
     """Check every file in ``bundle_dir``; raise ``BundleCheckError`` listing every problem.
 
-    ``rounding`` sets the tolerance for the summary's rounded floats and
-    ``max_evidence_bytes`` the evidence cap; both default to the ``export.yaml`` defaults.
-    Returns counts of what was checked.
+    ``rounding`` sets the tolerance for the summary's rounded floats, ``max_evidence_bytes``
+    the per-file evidence cap and ``max_bundle_bytes`` the whole-directory cap; each defaults to
+    the ``export.yaml`` default. ``mode`` is what ``meta.mode`` must be; by default the bundle
+    directory's name. Returns counts of what was checked.
     """
     bundle_dir = Path(bundle_dir)
     rounding = rounding or RoundingConfig()
     max_bytes = (
         max_evidence_bytes if max_evidence_bytes is not None else EvidenceConfig().maxFileBytes
     )
+    bundle_budget = (
+        max_bundle_bytes if max_bundle_bytes is not None else ExportConfig().maxBundleBytes
+    )
+    expected_mode = mode if mode is not None else bundle_dir.name
     problems: list[str] = []
     if not bundle_dir.is_dir():
         raise BundleCheckError(bundle_dir, [f"{bundle_dir} is not a directory"])
@@ -318,6 +328,15 @@ def check_bundle(
         problems.append(f"meta.schemaVersion {meta.schemaVersion!r} != {SCHEMA_VERSION!r}")
     if meta.mode not in DATA_MODES:
         problems.append(f"meta.mode {meta.mode!r} is not a DataMode")
+    if meta.mode != expected_mode:
+        problems.append(f"meta.mode {meta.mode!r} != {expected_mode!r} (the bundle directory)")
+    if meta.mode != SYNTHETIC_MODE and (meta.run.isSynthetic or meta.scene.isSynthetic):
+        problems.append(
+            f"meta.mode {meta.mode!r} carries isSynthetic; only a {SYNTHETIC_MODE!r} bundle may"
+        )
+    total_bytes = sum(p.stat().st_size for p in bundle_dir.rglob("*") if p.is_file())
+    if total_bytes > bundle_budget:
+        problems.append(f"bundle is {total_bytes} bytes > maxBundleBytes {bundle_budget}")
     station_ids = [s.id for s in stations]
     if len(set(station_ids)) != len(station_ids):
         problems.append("stations.json: duplicate station ids")
@@ -338,17 +357,38 @@ def check_bundle(
         "features": len(features),
         "evidenceFiles": len(evidence_ids),
         "hasValidation": int(validation is not None),
+        "bytes": total_bytes,
     }
-    log.info("check_bundle %s: ok (%s)", bundle_dir, counts)
+    log.info(
+        "check_bundle %s: ok, %d bytes of %d maxBundleBytes (%s)",
+        bundle_dir,
+        total_bytes,
+        bundle_budget,
+        counts,
+    )
     return counts
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate a Hidden Quakes data bundle directory.")
     parser.add_argument("bundle_dir", type=Path, help="e.g. apps/web/public/data/showcase")
+    parser.add_argument(
+        "--config-dir",
+        type=Path,
+        help="config directory whose export.yaml sets the rounding and byte caps to check "
+        "against (default: the ExportConfig defaults)",
+    )
     args = parser.parse_args(argv)
+    kwargs: dict[str, Any] = {}
+    if args.config_dir is not None:
+        cfg = load_config(args.config_dir).export  # a bad config is a loud error, not a default
+        kwargs = {
+            "rounding": cfg.rounding,
+            "max_evidence_bytes": cfg.evidence.maxFileBytes,
+            "max_bundle_bytes": cfg.maxBundleBytes,
+        }
     try:
-        counts = check_bundle(args.bundle_dir)
+        counts = check_bundle(args.bundle_dir, **kwargs)
     except BundleCheckError as exc:
         print(exc, file=sys.stderr)
         return 1

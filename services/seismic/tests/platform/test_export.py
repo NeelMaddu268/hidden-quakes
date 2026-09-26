@@ -67,6 +67,7 @@ PICK_SIGMA_S = {"P": 0.03, "S": 0.06}
 MATCHED_EVENT_INDICES = (0, 2, 5, 7, 9)  # 5 of 6 public rows match; the sixth is unmatched
 UNFILLED_MATCH_INDEX = 5  # this event's catalogMatch is left null in events.parquet
 NO_PICK_STATION_EVENT_INDEX = 1  # a Tier B event with an extra predicted-only station
+BLANK_PICK_ID_EVENT_INDEX = 4  # one S arrival with a null pickId although the event has the pick
 GAP_STATION_ID = "XT.R03"  # returns two short pieces: dropped as a gap
 EMPTY_STATION_ID = "XT.R05"  # returns no data at all: dropped
 NOISE_AMP, P_AMP, S_AMP = 0.08, 0.6, 1.0
@@ -235,6 +236,16 @@ def build_run(ctx: runs.RunContext, seed: int = SEED) -> SyntheticRun:
                         "usedInLocation": True,
                     }
                 )
+        if i == BLANK_PICK_ID_EVENT_INDEX:  # the locator kept the pick out of this arrival row
+            row = next(
+                r
+                for r in reversed(arrival_rows)
+                if r["eventId"] == event_id
+                and r["phase"] == "S"
+                and r["stationId"] not in (GAP_STATION_ID, EMPTY_STATION_ID)
+            )
+            row["pickId"] = None
+            row["usedInLocation"] = False
         if i == NO_PICK_STATION_EVENT_INDEX:  # predicted-only rows for one more station
             st = next(s for s in rest if s.id not in (GAP_STATION_ID, EMPTY_STATION_ID))
             r_km = hypo_dist_m(e, n, elev, st) / 1000.0
@@ -678,6 +689,22 @@ def test_evidence_files_are_small_sorted_and_filled(
             samples = np.asarray(t.samples)
             t_peak = t.t0 + int(np.argmax(np.abs(samples))) * t.dt
             assert abs(t_peak - (t.predS if t.predS is not None else t.predP)) < 0.3
+    # a null arrivals.pickId shows no pick even though the event's pickIds hold one (no substitution)
+    blank_event = synthetic_run.events[BLANK_PICK_ID_EVENT_INDEX]
+    blank_rows = synthetic_run.arrivals[
+        (synthetic_run.arrivals["eventId"] == blank_event.id)
+        & (synthetic_run.arrivals["phase"] == "S")
+        & synthetic_run.arrivals["pickId"].isna()
+    ]
+    assert len(blank_rows) == 1
+    blank_station = str(blank_rows.iloc[0]["stationId"])
+    assert any(p.stationId == blank_station and p.phase == "S" for p in synthetic_run.picks)
+    blank_trace = next(
+        t for t in exported.evidence[blank_event.id].traces if t.stationId == blank_station
+    )
+    assert blank_trace.pickS is None and blank_trace.probS is None
+    assert blank_trace.predS == float(blank_rows.iloc[0]["tPred"])
+    assert blank_trace.pickP is not None
     # the predicted-only station shows predictions and no picks
     ev = exported.evidence[synthetic_run.events[NO_PICK_STATION_EVENT_INDEX].id]
     no_pick = [t for t in ev.traces if t.pickP is None]
@@ -839,8 +866,16 @@ def test_max_events_and_byte_budget(
     out_dir, result = do_export(ctx, tmp_path / "small" / "showcase", run=synthetic_run, cfg=small)
     assert result.counts["evidenceTracesOverBudget"] > 0
     for path in (out_dir / "evidence").glob("*.json"):
-        assert path.stat().st_size <= 9_000
+        assert path.stat().st_size < 9_000
     check_bundle(out_dir, max_evidence_bytes=9_000)
+
+    over = base.model_copy(update={"maxBundleBytes": 20_000})
+    with pytest.raises(ExportError, match="maxBundleBytes"):
+        do_export(ctx, tmp_path / "over" / "showcase", run=synthetic_run, cfg=over)
+    assert not (tmp_path / "over" / "showcase").exists()
+    assert list((tmp_path / "over").iterdir()) == [], "the failed build was cleaned up"
+    with pytest.raises(BundleCheckError, match="maxBundleBytes"):
+        check_bundle(out_dir, max_evidence_bytes=9_000, max_bundle_bytes=20_000)
 
     tiny = base.model_copy(
         update={"evidence": base.evidence.model_copy(update={"maxFileBytes": 500})}
@@ -902,7 +937,7 @@ def test_run_stage_export_end_to_end(
 
 
 def test_missing_lane_modules_name_their_owner(
-    ctx: runs.RunContext, monkeypatch: pytest.MonkeyPatch
+    ctx: runs.RunContext, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setitem(sys.modules, "hq.ingest.cache", None)
     with pytest.raises(ExportError, match=r"hq\.ingest\.cache\.read_window.*H1 Signal"):
@@ -919,8 +954,13 @@ def test_missing_lane_modules_name_their_owner(
     assert isinstance(source, LaneWaveformSource)
 
     monkeypatch.setitem(sys.modules, "hq.export.features", None)
-    with pytest.raises(ExportError, match="FEAT-01"):
-        load_features_lazily(ctx.config.export, ctx.config.run)
+    caplog.set_level(logging.WARNING, logger="hq.export")
+    assert not ctx.config.export.features
+    assert load_features_lazily(ctx.config.export, ctx.config.run) == []
+    assert any("FEAT-01" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+    listed = ctx.config.export.model_copy(update={"features": [{"id": "well-1"}]})
+    with pytest.raises(ExportError, match="lists features.*FEAT-01"):
+        load_features_lazily(listed, ctx.config.run)
     install_module(monkeypatch, "hq.export.features", load_features=fake_features)
     assert [f.id for f in load_features_lazily(ctx.config.export, ctx.config.run)] == [
         "test-outline"
@@ -961,6 +1001,7 @@ def test_check_bundle_reports_every_problem(exported: Bundle, tmp_path: Path) ->
     meta = read_json(broken / "meta.json")
     meta["summary"]["candidateCount"] += 1
     meta["scene"]["heroEventId"] = "hq-nope"
+    meta["run"]["isSynthetic"] = True  # only a mock bundle may be synthetic
     (broken / "meta.json").write_text(json.dumps(meta))
     events = read_json(broken / "events.json")
     events[0]["revealOrder"] = events[1]["revealOrder"]
@@ -977,8 +1018,14 @@ def test_check_bundle_reports_every_problem(exported: Bundle, tmp_path: Path) ->
         "permutation",
         "hq-stray",
         "unexpected entries",
+        "isSynthetic",
+        "'broken' (the bundle directory)",
     ):
         assert needle in problems, needle
+    # the same bundle under its own mode name passes the mode check but nothing else
+    with pytest.raises(BundleCheckError) as info:
+        check_bundle(broken, mode="showcase")
+    assert "bundle directory" not in "\n".join(info.value.problems)
     with pytest.raises(BundleCheckError, match="not a directory"):
         check_bundle(tmp_path / "nothing-here")
     (tmp_path / "empty").mkdir()
@@ -988,7 +1035,8 @@ def test_check_bundle_reports_every_problem(exported: Bundle, tmp_path: Path) ->
 
 def test_load_config_accepts_the_new_knobs(config_dir: Path) -> None:
     cfg = load_config(config_dir).export
-    assert cfg.evidence.maxEvents is None and cfg.evidence.channelPriority == ["Z"]
+    assert cfg.evidence.maxEvents is not None and cfg.evidence.channelPriority == ["Z"]
+    assert cfg.evidence.maxEvents * cfg.evidence.maxFileBytes < cfg.maxBundleBytes
     assert cfg.evidence.maxFileBytes <= MAX_EVIDENCE_BYTES
     assert cfg.evidence.beforeS + cfg.evidence.afterS <= cfg.evidence.maxLengthS
     assert cfg.rounding.sample >= 1 and cfg.scene.verticalExaggeration == 1.0
