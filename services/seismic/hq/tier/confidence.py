@@ -1,21 +1,25 @@
 """Chance-association classifier (ML-01, issue #100), trained on this run's own data.
 
-Each candidate event gets a score in [0, 1] for how much it looks like an association made on
-real pick timing rather than one made on scrambled-clock picks. Label 1 is an event from the
-run's real picks, label 0 a decoy event from the null test's shuffles (every station's picks
-moved together by one uniform(-shiftS, +shiftS) draw), both built by ``hq.tier.confidence_data``
-through the same associate -> locate -> match -> tier path.
+Each candidate event gets a score in [0, 1] for how much its station count, arrival-time fit and
+pick confidence look like an association made on real pick timing rather than one made on
+scrambled-clock picks. Label 1 is an event from the run's real picks, label 0 a decoy event from
+the null test's shuffles (every station's picks moved together by one uniform(-shiftS, +shiftS)
+draw), both built by ``hq.tier.confidence_data`` through the same associate -> locate -> match ->
+tier path.
 
 The score is NOT a calibrated probability that an event is an earthquake: the real-run set
-itself holds some chance associations (the null test's mean is 94 per shuffle), and the
-decoys are much smaller than typical real candidates, so held-out results are also reported
-among events of equal station count.
+itself holds some chance associations, and the decoys are much smaller than typical real
+candidates (almost none has more than 8 stations), so held-out results are also reported among
+events of equal station count, and scores above the decoys' station range are extrapolated.
 
-Two models, both class-weighted and deterministic: a standardized L2 logistic regression
-(numpy/scipy) and a one-hidden-layer MLP (torch). Folds: decoys split by shuffle (grouped),
-real events at random; every event's score comes from a model that did not see it.
+Candidates, simplest first: a 3-feature logistic regression (station count, arrival-time rms,
+mean pick probability), the 34-feature logistic regression, and a one-hidden-layer torch MLP on
+the 34 features. A larger one replaces the simpler choice only if it beats it by more than
+``MARGIN`` on both the held-out ROC AUC and the equal-station-count AUC. Folds: decoys split by
+shuffle (grouped), real events at random; every event's score comes from a model that did not
+see it.
 
-    python -m hq.tier.confidence --data-dir <scratch>/data --out-dir <scratch>
+    python -m hq.tier.confidence --run <runId> --data-dir <scratch>/data --out <scratch>/confidence.json
 """
 
 from __future__ import annotations
@@ -69,7 +73,12 @@ SIZE_FEATURES = (
 # the logistic weights read cleanly (L2 would otherwise split one weight across copies).
 REDUNDANT_FEATURES = ("fracStationsUsed", "vErrNull", "pdfTruncated")
 MODEL_FEATURES = tuple(f for f in FEATURES if f not in REDUNDANT_FEATURES)
-# Pick-confidence features, left out in the "timing and geometry only" ablation.
+# The three features that carry nearly all of the 34-feature model's held-out performance:
+# event size, timing coherence (what the scramble destroys) and pick confidence. Decoys are
+# re-assembled strong picks from real events, so pick confidence gets a negative weight: an
+# artifact of how decoys are made, disclosed rather than hidden.
+CORE_FEATURES = ("quality_nStations", "quality_rmsS", "meanPickProb")
+# Pick-confidence features, left out in the "timing and geometry only" ablations.
 PICK_PROB_FEATURES = (
     "meanPickProb",
     "medianPickProb",
@@ -86,9 +95,13 @@ MLP_EPOCHS = 400
 MLP_LR = 1e-2
 MLP_WEIGHT_DECAY = 1e-3
 HARD_NSTATIONS = (5, 10)
-# The MLP replaces the logistic regression only if its mean held-out ROC AUC and its
-# station-matched AUC are both higher by more than this.
-MLP_MARGIN = 0.01
+# Model candidates, simplest first. A later one replaces the current choice only if its mean
+# held-out ROC AUC and its station-matched AUC are both higher by more than MARGIN.
+CANDIDATES = ("logisticCore", "logistic", "mlp")
+MARGIN = 0.01
+# Decoy support: the largest station count with at least this many decoys. Above it the score
+# is an extrapolation of the station-count weight, not a comparison with decoys.
+SUPPORT_MIN_DECOYS = 5
 
 
 # --- features -------------------------------------------------------------------------------
@@ -347,6 +360,7 @@ def fold_metrics(df: pd.DataFrame, s: np.ndarray) -> dict[str, float]:
         "rocAucNSta5to10": roc_auc(y[hard], s[hard]),
         "rocAucTierC": roc_auc(y[tier_c], s[tier_c]),
         "matchedAucNSta": matched_auc(y, s, nsta)[0],
+        "matchedAucNPicks": matched_auc(y, s, df["nPicksUsed"].to_numpy())[0],
     }
 
 
@@ -373,6 +387,7 @@ def pooled(df: pd.DataFrame, s: np.ndarray) -> dict[str, Any]:
     le10 = nsta <= hi
     tier_c = (y == 0) | (df["tier"].to_numpy() == "C")
     mauc, pairs = matched_auc(y, s, nsta)
+    mauc_p, pairs_p = matched_auc(y, s, df["nPicksUsed"].to_numpy())
     return {
         "rocAuc": round(roc_auc(y, s), 4),
         "averagePrecision": round(average_precision(y, s), 4),
@@ -395,7 +410,28 @@ def pooled(df: pd.DataFrame, s: np.ndarray) -> dict[str, Any]:
             "nDecoy": int((y[tier_c] == 0).sum()),
         },
         "matchedNSta": {"rocAuc": round(mauc, 4), "pairs": pairs},
+        "matchedNPicksUsed": {"rocAuc": round(mauc_p, 4), "pairs": pairs_p},
     }
+
+
+def by_station_count(df: pd.DataFrame, s: np.ndarray) -> list[dict[str, Any]]:
+    """Pooled out-of-fold ROC AUC within each station count that has both classes."""
+    y = df["label"].to_numpy()
+    nsta = df["quality_nStations"].to_numpy()
+    rows = []
+    for k in np.unique(nsta):
+        m = nsta == k
+        n1, n0 = int((y[m] == 1).sum()), int((y[m] == 0).sum())
+        auc = roc_auc(y[m], s[m]) if n1 and n0 else float("nan")
+        rows.append({"nStations": int(k), "nReal": n1, "nDecoy": n0, "rocAuc": round(auc, 4)})
+    return rows
+
+
+def decoy_support(nsta_decoys: np.ndarray, min_decoys: int = SUPPORT_MIN_DECOYS) -> int:
+    """Largest station count held by at least ``min_decoys`` decoys (0 if none)."""
+    counts = pd.Series(np.asarray(nsta_decoys)).value_counts()
+    ok = counts[counts >= min_decoys]
+    return int(ok.index.max()) if len(ok) else 0
 
 
 def permutation_importance(
@@ -430,12 +466,17 @@ def permutation_importance(
     )
 
 
-def choose(summary: dict[str, dict[str, list[float]]]) -> str:
-    """Logistic unless the MLP's mean held-out ROC AUC and station-matched AUC both beat it by
-    more than MLP_MARGIN."""
-    lg, ml = summary["logistic"], summary["mlp"]
-    better = all(ml[k][0] - lg[k][0] > MLP_MARGIN for k in ("rocAuc", "matchedAucNSta"))
-    return "mlp" if better else "logistic"
+def choose(
+    summary: dict[str, dict[str, list[float]]], candidates: Sequence[str] = CANDIDATES
+) -> str:
+    """The simplest candidate, replaced by a later (larger) one only if that one's mean held-out
+    ROC AUC and station-matched AUC both beat the current choice by more than MARGIN."""
+    chosen = candidates[0]
+    for c in candidates[1:]:
+        cur, new = summary[chosen], summary[c]
+        if all(new[k][0] - cur[k][0] > MARGIN for k in ("rocAuc", "matchedAucNSta")):
+            chosen = c
+    return chosen
 
 
 # --- run ------------------------------------------------------------------------------------
@@ -464,31 +505,63 @@ def _git_sha() -> str:
         return "unknown"
 
 
-def run(data_dir: Path, out_dir: Path) -> dict[str, Any]:
+def _weights(df: pd.DataFrame, names: Sequence[str], fold_coefs: list[np.ndarray]) -> list[dict]:
+    """Logistic coefficients per standard deviation from a full-data fit, with their across-fold
+    sd, largest first."""
+    y = df["label"].to_numpy()
+    prep = fit_prep(df, names)
+    full = fit_logistic(apply_prep(prep, df), y, class_weights(y))
+    out = pd.DataFrame(
+        {
+            "feature": list(names),
+            "coef": full.coef,
+            "coefFoldStd": np.array(fold_coefs).std(axis=0, ddof=1),
+        }
+    )
+    out = out.sort_values("coef", key=np.abs, ascending=False, ignore_index=True)
+    return out.round(4).to_dict("records")
+
+
+def run(data_dir: Path, out_path: Path, run_id: str | None = None) -> dict[str, Any]:
+    """Train and evaluate every candidate on the same folds; write ``out_path``
+    (``confidence.json``) and, beside it, ``scores.parquet`` and ``report.json``."""
     pos = pd.read_parquet(data_dir / "positives.parquet")
     neg = pd.read_parquet(data_dir / "negatives.parquet")
     manifest = json.loads((data_dir / "manifest.json").read_text())
+    if run_id is not None and manifest["runId"] != run_id:
+        raise ValueError(
+            f"{data_dir} holds training data for run {manifest['runId']!r}, not {run_id!r}"
+        )
     df = pd.concat([pos, neg], ignore_index=True)
     y = df["label"].to_numpy()
     fold = make_folds(y, df["shuffle"].to_numpy())
     names = list(MODEL_FEATURES)
-    no_size = [n for n in names if n not in SIZE_FEATURES]
-    no_prob = [n for n in names if n not in PICK_PROB_FEATURES]
-
-    cv = {
-        "logistic": cross_validate(df, fold, "logistic", names),
-        "mlp": cross_validate(df, fold, "mlp", names),
-        "logisticNoSize": cross_validate(df, fold, "logistic", no_size),
-        "logisticNoPickProb": cross_validate(df, fold, "logistic", no_prob),
+    feature_sets = {
+        "logisticCore": list(CORE_FEATURES),
+        "logistic": names,
+        "mlp": names,
+        "logisticCoreNoPickProb": [n for n in CORE_FEATURES if n not in PICK_PROB_FEATURES],
+        "logisticNoSize": [n for n in names if n not in SIZE_FEATURES],
+        "logisticNoPickProb": [n for n in names if n not in PICK_PROB_FEATURES],
     }
-    baseline = df["quality_nStations"].to_numpy(dtype=float)
+    cv = {
+        k: cross_validate(df, fold, "mlp" if k == "mlp" else "logistic", v)
+        for k, v in feature_sets.items()
+    }
+    # One-feature baselines, no training: bigger events and tighter arrival-time fits look real.
+    baselines = {
+        "nStationsOnly": df["quality_nStations"].to_numpy(dtype=float),
+        "rmsOnly": -df["quality_rmsS"].to_numpy(dtype=float),
+    }
     fold_summary = {k: summarize(v.folds) for k, v in cv.items()}
-    fold_summary["nStationsOnly"] = summarize(
-        [fold_metrics(df[fold == k], baseline[fold == k]) for k in np.unique(fold)]
-    )
     pooled_all = {k: pooled(df, v.oof) for k, v in cv.items()}
-    pooled_all["nStationsOnly"] = pooled(df, baseline)
+    for k, b in baselines.items():
+        fold_summary[k] = summarize(
+            [fold_metrics(df[fold == f], b[fold == f]) for f in np.unique(fold)]
+        )
+        pooled_all[k] = pooled(df, b)
     chosen = choose(fold_summary)
+    chosen_names = feature_sets[chosen]
     score = cv[chosen].oof
 
     real = y == 1
@@ -502,17 +575,20 @@ def run(data_dir: Path, out_dir: Path) -> dict[str, Any]:
             "catalogMatched": df["catalogMatched"],
             "nStations": df["quality_nStations"],
             "score": score,
+            "scoreLogisticCore": cv["logisticCore"].oof,
             "scoreLogistic": cv["logistic"].oof,
             "scoreMlp": cv["mlp"].oof,
             "scoreLogisticNoSize": cv["logisticNoSize"].oof,
             "decoyExceedance": decoy_exceedance(score, y, fold),
         }
     )
+    out_dir = out_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     sc.to_parquet(out_dir / "scores.parquet", index=False)
 
     dec = sc[~real]
     rs = sc[real]
+    support = decoy_support(dec["nStations"].to_numpy())
     thresholds = {}
     for fpr in (0.10, 0.05, 0.01):
         t = threshold_at_fpr(dec["score"].to_numpy(), fpr)
@@ -521,7 +597,7 @@ def run(data_dir: Path, out_dir: Path) -> dict[str, Any]:
             "decoysAbove": int((dec["score"] > t).sum()),
             "realAbove": int((rs["score"] > t).sum()),
             "realTierCAbove": f"{int((rs[rs.tier == 'C'].score > t).sum())}/{int((rs.tier == 'C').sum())}",
-            "realNStaLe10Above": f"{int((rs[rs.nStations <= 10].score > t).sum())}/{int((rs.nStations <= 10).sum())}",
+            "realWithinSupportAbove": f"{int((rs[rs.nStations <= support].score > t).sum())}/{int((rs.nStations <= support).sum())}",
         }
     for cut in (0.5, 0.9):
         thresholds[f"score{cut}"] = {
@@ -531,12 +607,22 @@ def run(data_dir: Path, out_dir: Path) -> dict[str, Any]:
 
     top_decoys = dec.sort_values("nStations", ascending=False).head(10)
     sanity = {
+        "decoySupport": {
+            "maxStations": support,
+            "minDecoysPerStationCount": SUPPORT_MIN_DECOYS,
+            "decoysAbove": int((dec.nStations > support).sum()),
+            "realWithin": int((rs.nStations <= support).sum()),
+            "realAbove": int((rs.nStations > support).sum()),
+        },
+        "byStationCount": by_station_count(df, score),
+        "realWithinSupport": _describe(rs[rs.nStations <= support].score),
+        # All catalog-matched events are far above the decoy support, so this is trivially met.
         "catalogMatched": _describe(rs[rs.catalogMatched].score),
-        "catalogMatchedMin": round(float(rs[rs.catalogMatched].score.min()), 4),
+        "catalogMatchedMinNStations": (
+            int(rs[rs.catalogMatched].nStations.min()) if rs.catalogMatched.any() else None
+        ),
         "byTier": {t: _describe(g.score) for t, g in rs.groupby("tier")},
-        "realNSta5to10": _describe(rs[(rs.nStations >= 5) & (rs.nStations <= 10)].score),
         "decoys": _describe(dec.score),
-        "decoysNSta5to10": _describe(dec[(dec.nStations >= 5) & (dec.nStations <= 10)].score),
         "decoysReachedTierB": int((dec.tier != "C").sum()),
         "largestDecoys": top_decoys[["shuffle", "eventId", "nStations", "score"]]
         .round(4)
@@ -544,20 +630,16 @@ def run(data_dir: Path, out_dir: Path) -> dict[str, Any]:
         "realDecoyExceedance": {
             f"<={c}": int((rs.decoyExceedance <= c).sum()) for c in (0.01, 0.05)
         },
+        "realAtLeast0.99": int((rs.score >= 0.99).sum()),
         "spearmanScoreVsNStationsReal": round(float(spearmanr(rs.score, rs.nStations)[0]), 3),
     }
 
-    prep_all = fit_prep(df, names)
-    full = fit_logistic(apply_prep(prep_all, df), y, class_weights(y))
-    coef_folds = np.array(cv["logistic"].coefs)
-    weights = pd.DataFrame(
-        {
-            "feature": names,
-            "coef": full.coef,
-            "coefFoldStd": coef_folds.std(axis=0, ddof=1),
-        }
-    ).sort_values("coef", key=np.abs, ascending=False, ignore_index=True)
-    perm = permutation_importance(df, fold, names)
+    weights = {
+        k: _weights(df, feature_sets[k], cv[k].coefs)
+        for k in ("logisticCore", "logistic", "logisticCoreNoPickProb")
+    }
+    perm_names = chosen_names if chosen != "mlp" else names
+    perm = permutation_importance(df, fold, perm_names)
 
     report = {
         "schema": "hq.confidence-report/1",
@@ -569,7 +651,8 @@ def run(data_dir: Path, out_dir: Path) -> dict[str, Any]:
             "decoys": int((~real).sum()),
             "shuffles": int(df.loc[~real, "shuffle"].nunique()),
             "shiftS": manifest["nullTest"]["shiftS"],
-            "features": names,
+            "features": chosen_names,
+            "allFeatures": names,
             "droppedDuplicates": list(REDUNDANT_FEATURES),
         },
         "folds": {
@@ -590,42 +673,61 @@ def run(data_dir: Path, out_dir: Path) -> dict[str, Any]:
             "mlpEpochs": MLP_EPOCHS,
             "mlpLr": MLP_LR,
             "mlpWeightDecay": MLP_WEIGHT_DECAY,
-            "mlpMargin": MLP_MARGIN,
+            "candidates": list(CANDIDATES),
+            "margin": MARGIN,
+            "supportMinDecoys": SUPPORT_MIN_DECOYS,
         },
+        "featureSets": feature_sets,
         "foldSummary(mean,std,min,max)": fold_summary,
         "pooledOutOfFold": pooled_all,
         "chosen": chosen,
         "thresholds": thresholds,
         "sanity": sanity,
-        "logisticWeights": weights.round(4).to_dict("records"),
+        "logisticWeights": weights,
         "permutationImportance": perm.round(4).to_dict("records"),
     }
     (out_dir / "report.json").write_text(json.dumps(report, indent=1, default=float))
     doc = confidence_doc(report, sc[real])
-    (out_dir / "confidence.json").write_text(json.dumps(doc, sort_keys=True, separators=(",", ":")))
+    out_path.write_text(json.dumps(doc, sort_keys=True, separators=(",", ":")))
     return report
 
 
-LABEL = "Decoy test"
+LABEL = "Scramble test"
 DESCRIPTION = (
-    "How much this event's pick timing looks like a real association rather than a"
-    " scrambled-clock decoy, from a model trained on this run (not a probability that it is"
-    " an earthquake)"
+    "How much this event's station count, arrival-time fit and pick confidence look like an"
+    " association on real pick timing rather than a scrambled-clock decoy, from a logistic"
+    " regression trained on this run (not a probability that it is an earthquake)"
 )
+MODEL_TYPES = {
+    "logisticCore": "logistic regression, 3 features, class-weighted; out-of-fold scores",
+    "logistic": "logistic regression, 34 features, class-weighted; out-of-fold scores",
+    "mlp": "MLP (one hidden layer), 34 features, class-weighted; out-of-fold scores",
+}
 
 
 def confidence_doc(report: dict[str, Any], real: pd.DataFrame) -> dict[str, Any]:
     """The ``hq.confidence/1`` document the exporter reads from a run directory: out-of-fold
-    scores of the real candidate events, rounded to 3 decimals."""
+    scores of the real candidate events, rounded to 3 decimals, with the held-out numbers and
+    the baselines they must be read against."""
     chosen = report["chosen"]
-    folds = report["foldSummary(mean,std,min,max)"][chosen]
+    fs = report["foldSummary(mean,std,min,max)"]
     data = report["data"]
+    support = report["sanity"]["decoySupport"]
+
+    def held(key: str) -> dict[str, Any]:
+        return {
+            "rocAuc": fs[key]["rocAuc"][0],
+            "rocAucEqualStationCount": fs[key]["matchedAucNSta"][0],
+        }
+
+    weights = report["logisticWeights"].get(chosen) if chosen != "mlp" else None
     return {
         "schema": "hq.confidence/1",
         "runId": report["runId"],
         "model": {
-            "type": f"{chosen} (class-weighted), out-of-fold scores",
+            "type": MODEL_TYPES[chosen],
             "features": data["features"],
+            "coefPerSd": {w["feature"]: w["coef"] for w in weights} if weights else None,
             "trainedOn": {
                 "positives": data["real"],
                 "decoys": data["decoys"],
@@ -633,11 +735,25 @@ def confidence_doc(report: dict[str, Any], real: pd.DataFrame) -> dict[str, Any]
                 "shiftS": data["shiftS"],
             },
             "heldOut": {
-                "rocAuc": folds["rocAuc"][0],
-                "rocAucStd": folds["rocAuc"][1],
-                "averagePrecision": folds["averagePrecision"][0],
-                "rocAucEqualStationCount": folds["matchedAucNSta"][0],
+                "rocAuc": fs[chosen]["rocAuc"][0],
+                "rocAucStd": fs[chosen]["rocAuc"][1],
+                "rocAucRange": fs[chosen]["rocAuc"][2:],
+                "averagePrecision": fs[chosen]["averagePrecision"][0],
+                "rocAucEqualStationCount": fs[chosen]["matchedAucNSta"][0],
+                "rocAucEqualStationCountRange": fs[chosen]["matchedAucNSta"][2:],
                 "folds": report["folds"]["n"],
+                "baselines": {
+                    "stationCountOnly": held("nStationsOnly"),
+                    "rmsOnly": held("rmsOnly"),
+                },
+                "comparedWith": {k: held(k) for k in CANDIDATES if k != chosen},
+            },
+            "decoySupport": {
+                "maxStations": support["maxStations"],
+                "note": (
+                    "Decoys with more stations than this are too few to compare against; scores"
+                    " of larger events extrapolate the station-count weight."
+                ),
             },
             "createdAt": report["createdAt"],
             "gitSha": report["gitSha"],
@@ -650,12 +766,25 @@ def confidence_doc(report: dict[str, Any], real: pd.DataFrame) -> dict[str, Any]
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--data-dir", type=Path, required=True)
-    ap.add_argument("--out-dir", type=Path, required=True)
+    ap.add_argument("--run", required=True, help="runId the training data must come from")
+    ap.add_argument(
+        "--data-dir", type=Path, required=True, help="output dir of hq.tier.confidence_data"
+    )
+    ap.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="confidence.json to write; scores.parquet and report.json are written beside it",
+    )
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    report = run(args.data_dir, args.out_dir)
-    log.info("chosen=%s pooled=%s", report["chosen"], json.dumps(report["pooledOutOfFold"]))
+    report = run(args.data_dir, args.out, run_id=args.run)
+    log.info(
+        "chosen=%s heldOut=%s wrote %s",
+        report["chosen"],
+        json.dumps(report["foldSummary(mean,std,min,max)"][report["chosen"]]),
+        args.out,
+    )
 
 
 if __name__ == "__main__":
