@@ -480,3 +480,30 @@ and full at windowEnd; the scrubber clears the shell and the drawer; R returns t
 playback holds 120 fps (Chrome, 0 frames > 20 ms) and WebKit's 60 Hz cap (0 frames > 33 ms). The production page
 without the scrubber mounted replays correctly with no errors. Time mode off is inert: the 10-run determinism hashes
 equal WEB-08's in both engines. `make check`: seismic 778 / 3 skipped, API 26, web 575, tokens 12, copy clean.
+
+### WEB-08 real-data checkpoint · 2026-09-26 11:05 EDT
+
+The real showcase run (20260926-0210-a04c611, republished 12:07Z with events, arrivals and matches) exports on this
+laptop up to evidence, which needs H1's waveform cache (REQ-H3-9: `CacheMissError`, nothing written). To QA the scene on
+real data before the cache arrives, H4's exporter was run unchanged with a no-waveform source into scratch (a
+local-only preview, never committed, never presented as evidence). Its shape is a compact near-vertical column several
+km below the site, and it exposed four defects the mock never did, fixed on `agent/WEB-08` (#29 stays open):
+
+- **Revealed frame.** The side preset framed only the event cloud, so the surface, the ruler's 0 km and the wellhead
+  labels fell off the top. It now targets the middle of the column from the surface to the deepest framed event and
+  frames the surface.
+- **Depth section.** It fitted the whole population including stations (tens of km of grid east), so the structure was a
+  few pixels wide. `sectionStructureFit` now frames Tier A and B (trimmed like the plan camera) from the surface down at
+  true scale. Drawing is clipped to the plot, and the header states how many events lie outside the frame.
+- **Label under the counters.** Feature labels now also keep clear of the shell's overlay blocks and H3's panels
+  (`overlayObstacles.ts`: read-only rects of the shell root's children and H3 panels, re-measured 4× a second).
+- **Ruler among Tier C.** `RULER_GAP_FRACTION` 0.12 → 0.3.
+
+Verified on the mock and the real preview, headed Chrome 153 + WebKit 26.5:
+- Strict preset label-overlap check passes.
+- 10-run determinism passes in both engines. The start frames are unchanged. The revealed frames have new baselines,
+  since the side view was reframed on purpose: Chrome `3c71a6c6…`, WebKit `f4f6a0ec…`.
+- Full plan acceptance passes, including 2,000 events at 120 fps (Chrome) and the 60 Hz cap (WebKit).
+- The real-bundle check passes (`PREVIEW_NO_EVIDENCE=1`: the evidence and E steps are skipped).
+
+`make check`: seismic 778 / 3 skipped, API 26, web 584, tokens 12, copy clean.
