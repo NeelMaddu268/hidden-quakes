@@ -118,6 +118,23 @@ The app was scaffolded with the latest create-next-app, which ships `apps/web/AG
 
 `revealOrder` comes from the exporter: Tier A first (time-ordered within), then B, then C. Structure forms first, then fills in. Never re-sort in the browser.
 
+### Demo store semantics (what H4's shell can rely on)
+
+`apps/web/src/state/demo.ts` implements the docs/02 §6 interface exactly. Where docs/02 is silent, it behaves like this:
+
+| Action | Effect |
+| --- | --- |
+| `reveal()` | Only from `"public"` (a no-op mid-reveal or after, so Space can't restart it). Sets `phase: "revealing"`, `revealProgress: 0`, `filter: "all"` (or keeps `"strict"` if S was pressed first), and `view: "side"` because the reveal dollies into the side view (plan view stays `"plan"`). |
+| `reset()` | Every field back to the start frame: `phase "public"`, progress 0, filter `"public"`, selection null, time mode off, `tNow` null, not playing, view `"oblique"`. The camera tweens back to the preset. |
+| `setFilter(f)` | Sets it in any phase. Before the reveal the scene still hides candidates; a pre-reveal S sticks through `reveal()`. |
+| `setTimeMode(false)` | Also stops playback and sets `tNow` null (every event visible). `setTimeMode(true)` leaves `tNow` for the scrubber to set. |
+| `setPlaying(true)` | Also turns time mode on. |
+| `setView(v)` / `select(id)` / `setTNow(t)` | Set the field; nothing else. |
+
+**Reveal timing for the counter:** `revealProgress` is the counter clock. It stays 0 until events start appearing (~1.0 s after `reveal()`), reaches exactly 1 as the last event appears (~6.0 s), and the counter should read `publicCatalogCount + (candidateCount − publicCatalogCount) × revealProgress`, rounded. `phase` becomes `"revealed"` only after the settle (~7.0 s). Gate "next beat" logic on `phase`, never on `revealProgress === 1`.
+
+**Tokens for the shell:** `colors`, `fonts` (reads `--font-inter` / `--font-jetbrains-mono`), `numeric` (tabular figures), `motion`, `easeOutCubic`, `tierStyle`, `strictFadeOpacity`, and `cssVariables()` (every token as a `--hq-*` custom property).
+
 ### Strict, time, drawer
 
 - **STRICT:** B and C fade to 0.05 over 600 ms; halos appear on Tier A.

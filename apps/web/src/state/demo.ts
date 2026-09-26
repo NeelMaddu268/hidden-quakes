@@ -48,11 +48,18 @@ export const useDemo: UseBoundStore<StoreApi<DemoState>> = create<DemoState>()((
   ...initialDemoState,
 
   // Only from "public": pressing REVEAL (or Space) mid-reveal or after it never restarts the animation.
-  // The filter switches to "all" because the reveal *is* the moment every candidate event appears;
-  // leaving it on "public" would hide exactly what is being revealed.
+  // The reveal is the moment every candidate event appears, so a "public" filter becomes "all" (an S
+  // pressed beforehand keeps "strict"). The reveal dollies the camera into the low side view, so `view`
+  // says "side", except from plan view, where the reveal plays top-down (WEB-07).
   reveal() {
-    if (get().phase !== "public") return;
-    set({ phase: "revealing", revealProgress: 0, filter: "all" });
+    const { phase, filter, view } = get();
+    if (phase !== "public") return;
+    set({
+      phase: "revealing",
+      revealProgress: 0,
+      filter: filter === "public" ? "all" : filter,
+      view: view === "plan" ? "plan" : "side",
+    });
   },
 
   // Back to the start frame: docs/02 names phase, progress, filter and selection; time mode and the
@@ -88,18 +95,30 @@ export const useDemo: UseBoundStore<StoreApi<DemoState>> = create<DemoState>()((
   },
 }));
 
-/**
- * Scene-only: advance the reveal. Clamped to [0, 1]; at 1 the phase becomes "revealed" and progress is
- * exactly 1. Ignored outside "revealing", so a frame that lands after `reset()` can't resurrect a reveal.
- */
+// ---- Scene-only helpers (not part of DemoState) -------------------------------------------------
+//
+// Reveal timeline (docs/lanes/H3 → The reveal): revealProgress is the *counter* clock. It is 0 from
+// reveal() until events start appearing (~1.0 s), climbs to exactly 1 as the last event appears
+// (~6.0 s), and the shell's counter reads publicCatalogCount + (candidateCount − publicCatalogCount) ×
+// revealProgress. The phase becomes "revealed" only after the settle (~7.0 s), via finishReveal().
+// The scene calls setRevealProgress once per frame for those ~5 s; each call is one zustand set, which
+// is how docs/02 routes progress to the shell. The scene itself reads the store with getState(), never
+// a hook, so its per-frame work doesn't re-render React.
+
+/** Scene-only: advance the counter clock. Clamped to [0, 1]; ignored outside "revealing". */
 export function setRevealProgress(progress: number): void {
   const state = useDemo.getState();
   if (state.phase !== "revealing") return;
   if (Number.isNaN(progress)) throw new Error("setRevealProgress: progress is NaN");
-  if (progress >= 1) {
-    useDemo.setState({ revealProgress: 1, phase: "revealed" });
-    return;
-  }
-  const clamped = progress <= 0 ? 0 : progress;
+  const clamped = progress <= 0 ? 0 : progress >= 1 ? 1 : progress;
   if (clamped !== state.revealProgress) useDemo.setState({ revealProgress: clamped });
+}
+
+/**
+ * Scene-only: end the reveal after the settle. Progress is pinned to exactly 1 and the phase becomes
+ * "revealed". Ignored outside "revealing", so a late frame after reset() can't resurrect a reveal.
+ */
+export function finishReveal(): void {
+  if (useDemo.getState().phase !== "revealing") return;
+  useDemo.setState({ revealProgress: 1, phase: "revealed" });
 }

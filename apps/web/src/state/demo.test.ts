@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { initialDemoState, setRevealProgress, useDemo, type DemoState } from "./demo";
+import { finishReveal, initialDemoState, setRevealProgress, useDemo, type DemoState } from "./demo";
 
 const s = () => useDemo.getState();
 
@@ -28,6 +28,32 @@ describe("initial state (docs/02 §6)", () => {
     expect(data(s())).toEqual(initialDemoState);
   });
 
+  it("has exactly the docs/02 fields and actions, nothing more", () => {
+    expect(Object.keys(s()).sort()).toEqual(
+      [
+        "phase",
+        "revealProgress",
+        "filter",
+        "timeMode",
+        "tNow",
+        "playing",
+        "selectedEventId",
+        "view",
+        "reveal",
+        "reset",
+        "setFilter",
+        "setTimeMode",
+        "setTNow",
+        "setPlaying",
+        "select",
+        "setView",
+      ].sort(),
+    );
+    expect(Object.keys(initialDemoState).sort()).toEqual(
+      ["phase", "revealProgress", "filter", "timeMode", "tNow", "playing", "selectedEventId", "view"].sort(),
+    );
+  });
+
   it("exposes exactly the docs/02 actions", () => {
     const actions = Object.entries(s())
       .filter(([, v]) => typeof v === "function")
@@ -51,6 +77,12 @@ describe("reveal()", () => {
     expect(s().filter).toBe("all");
   });
 
+  it("keeps STRICT if it was chosen before the reveal", () => {
+    s().setFilter("strict");
+    s().reveal();
+    expect(s().filter).toBe("strict");
+  });
+
   it("is a no-op while revealing or after revealed (Space can't restart it)", () => {
     s().reveal();
     setRevealProgress(0.4);
@@ -58,27 +90,39 @@ describe("reveal()", () => {
     expect(s().phase).toBe("revealing");
     expect(s().revealProgress).toBe(0.4);
 
-    setRevealProgress(1);
+    finishReveal();
     s().setFilter("strict");
     s().reveal();
     expect(s().phase).toBe("revealed");
     expect(s().filter).toBe("strict");
   });
 
-  it("keeps the current camera view (the reveal also starts from plan view)", () => {
+  it("reports the side view the reveal dollies into", () => {
+    s().reveal();
+    expect(s().view).toBe("side");
+  });
+
+  it("keeps plan view (the reveal also plays from plan view)", () => {
     s().setView("plan");
     s().reveal();
     expect(s().view).toBe("plan");
   });
 });
 
-describe("setRevealProgress() (scene-only helper)", () => {
-  it("advances progress during revealing and marks revealed at exactly 1", () => {
+describe("setRevealProgress() and finishReveal() (scene-only helpers)", () => {
+  it("advances the counter clock during revealing without ending the reveal", () => {
     s().reveal();
     setRevealProgress(0.25);
     expect(s().revealProgress).toBe(0.25);
-    expect(s().phase).toBe("revealing");
     setRevealProgress(1.0000001);
+    expect(s().revealProgress).toBe(1);
+    expect(s().phase).toBe("revealing"); // the settle still runs
+  });
+
+  it("finishReveal pins progress to exactly 1 and marks revealed", () => {
+    s().reveal();
+    setRevealProgress(0.97);
+    finishReveal();
     expect(s().revealProgress).toBe(1);
     expect(s().phase).toBe("revealed");
   });
@@ -89,12 +133,13 @@ describe("setRevealProgress() (scene-only helper)", () => {
     expect(s().revealProgress).toBe(0);
   });
 
-  it("is ignored outside revealing, so a late frame after reset() can't resurrect the reveal", () => {
+  it("are ignored outside revealing, so a late frame after reset() can't resurrect the reveal", () => {
     setRevealProgress(0.5);
+    finishReveal();
     expect(data(s())).toEqual(initialDemoState);
 
     s().reveal();
-    setRevealProgress(1);
+    finishReveal();
     setRevealProgress(0.3);
     expect(s().revealProgress).toBe(1);
     expect(s().phase).toBe("revealed");
@@ -132,7 +177,7 @@ describe("reset()", () => {
 
   it("covers everything docs/02 names: public, progress 0, filter public, selection null", () => {
     s().reveal();
-    setRevealProgress(1);
+    finishReveal();
     s().select("evt-2");
     s().reset();
     expect(s().phase).toBe("public");
@@ -143,7 +188,7 @@ describe("reset()", () => {
 
   it("allows a fresh reveal afterwards", () => {
     s().reveal();
-    setRevealProgress(1);
+    finishReveal();
     s().reset();
     s().reveal();
     expect(s().phase).toBe("revealing");

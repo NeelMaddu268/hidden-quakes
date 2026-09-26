@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   colors,
@@ -9,24 +10,16 @@ import {
   tierStyle,
 } from "./tokens";
 
-// The table in docs/lanes/H3-visualization.md → Design tokens, copied verbatim. If this test fails,
-// either the doc or tokens.ts drifted; fix whichever is wrong, never both silently.
-const SPEC: Record<string, string> = {
-  bg: "#07090C",
-  surface: "#0E1217",
-  terrain: "#1A2027",
-  contour: "#2A333D",
-  text: "#E6E9ED",
-  textDim: "#8A94A0",
-  public: "#DCE6F2",
-  recovered: "#FFB547",
-  strictHalo: "#FFD08A",
-  geo: "#7FE0CF",
-  pickP: "#5AA9FF",
-  pickS: "#FF8A4C",
-  station: "#7C8B99",
-  alert: "#FF4D4D",
-};
+// The source of truth is the table in docs/lanes/H3-visualization.md → Design tokens. Parse it, so a
+// drift between the doc and tokens.ts fails here instead of on stage.
+const LANE_DOC = readFileSync(new URL("../../docs/lanes/H3-visualization.md", import.meta.url), "utf8");
+
+function docTokenTable(): Record<string, string> {
+  const section = LANE_DOC.slice(LANE_DOC.indexOf("### Design tokens"));
+  const table: Record<string, string> = {};
+  for (const m of section.matchAll(/^\| `(\w+)` \| (#[0-9A-Fa-f]{6}) \|/gm)) table[m[1]] = m[2];
+  return table;
+}
 
 /** y(x) for a CSS cubic-bezier(x1, y1, x2, y2), solved by bisection on x(t). */
 function cubicBezierAt(x: number, x1: number, y1: number, x2: number, y2: number): number {
@@ -44,7 +37,9 @@ function cubicBezierAt(x: number, x1: number, y1: number, x2: number, y2: number
 
 describe("colors", () => {
   it("match the lane doc table exactly, with no extra or missing tokens", () => {
-    expect({ ...colors }).toEqual(SPEC);
+    const spec = docTokenTable();
+    expect(Object.keys(spec)).toHaveLength(14);
+    expect({ ...colors }).toEqual(spec);
   });
 
   it("are all 6-digit hex strings", () => {
