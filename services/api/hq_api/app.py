@@ -14,7 +14,7 @@ and a status the shell derives its copy from; the API never carries that copy.
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -84,7 +84,7 @@ def create_app(
     live = worker if worker is not None else LiveWorker(config, runner, root=root, clock=clock)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if scheduler:
             live.start()
             log.info(

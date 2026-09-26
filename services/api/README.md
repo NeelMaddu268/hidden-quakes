@@ -36,11 +36,17 @@ responsive:
 4. `latencyS` = data end → results ready: the run measured on the monotonic clock plus
    `dataLagS`. Over `window.maxLatencyS` it is logged as slow and flagged in `/health`.
 5. `export_bundle(..., mode="snapshot")` rewrites `paths.snapshotDir`
-   (`apps/web/public/data/snapshot/`) when the window produced a valid bundle
-   (`snapshot.writeEmptyWindows` decides whether a window with no candidate events does too).
+   (`apps/web/public/data/snapshot/`) when the window produced a valid bundle with candidate
+   events; `snapshot.writeEmptyWindows` (default false) decides whether an empty window does
+   too. A snapshot failure of any kind is logged and recorded in the window's `error`, never
+   fails the window: its live bundle is already good. The deployed static site fails over to the
+   snapshot **committed** in git (API-05 commits it through `main`); this runtime write matters
+   for the local and offline builds, which serve `apps/web/public/data/snapshot/` as it is on disk.
 6. The served window is swapped and `paths.stateFile` (`data/live/latest.json`) is written
    atomically: the last good record plus the last `serve.historyN` attempts. A restart serves the
-   last window from it without waiting for a new run.
+   last window from it without waiting for a new run. Run ids have minute resolution
+   (`hq.runs.create_run`), so restarting within the same minute as the last window records one
+   failed attempt ("run directory already exists") and the next tick runs normally.
 
 A tick that arrives while a window is still running is skipped and logged, never queued.
 
@@ -53,6 +59,10 @@ A tick that arrives while a window is still running is skipped and logged, never
 | `GET /api/live/evidence/{id}` | `EventEvidence`; 404 when the window has none for that id |
 | `GET /api/live/status` | `LiveStatus` without `events` |
 | `GET /health` | `status` (waiting / ok / stale), the served and last-attempted window records, history, worker counters, config |
+
+`stationsOnline` in the status is the count of stations with `usedInRun` true in the run's
+`stations.parquet`. When a window holds more than `serve.maxEvents` candidate events, `/events`
+serves the first `maxEvents` in reveal order and the worker logs the truncation once per window.
 
 Before the first good window every `/api/live/*` route answers 503 (the provider treats it as a
 failed fetch; API-05 fails over). An empty window is a normal answer: `events` is `[]` and the
@@ -84,3 +94,11 @@ owner's name and nothing is served. Once they exist, the real runner needs nothi
 `hq.ingest.cache.read_window` and `hq.preprocess.display_copy` are resolved for evidence at
 export time (a missing one names H1), and the run tables listed in `docs/02` §2 are what
 `hq.export` reads.
+
+## API-05 to do
+
+- The web app's `LIVE_API_BASE` (`apps/web/src/providers/config.ts`) is the same-origin relative
+  `/api/live`, while this worker runs cross-origin: add a `NEXT_PUBLIC_LIVE_API_BASE` build flag
+  (and keep CORS in `serve.corsOrigins`), or serve `apps/web/out/` from the API itself.
+- Ctrl-C while a window is running blocks exit until the pipeline thread finishes: track the tick
+  tasks and cancel them, and give the executor a way to abandon the run, before the demo.

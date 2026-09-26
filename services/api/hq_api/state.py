@@ -57,7 +57,7 @@ class WindowRecord(BaseModel):
     runId: str | None
     stagesRan: list[str]
     eventCount: int
-    stationsOnline: int
+    stationsOnline: int  # stations with usedInRun true in the run's stations.parquet
     evidenceIds: list[str]
     bundleDir: str | None  # the live bundle this record's events are served from
     snapshotWritten: bool

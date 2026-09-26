@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from hq.config.export import ExportConfig, ExportMode
-from hq.export import ExportError, RunTables, export_bundle, load_run_tables
+from hq.export import RunTables, export_bundle, load_run_tables
 from hq.export.bundle import FeaturesLoader, load_features_lazily
 from hq.export.files import EVIDENCE_DIR
 from hq_api.config import LiveConfig, checkout_root, resolve_path
@@ -215,6 +215,15 @@ class LiveWorker:
             ", SLOW" if slow else "",
             run.run_id,
         )
+        max_events = cfg.serve.maxEvents
+        if n_events > max_events:
+            log.warning(
+                "live window %s: %d candidate events; /api/live/events serves the first %d in "
+                "reveal order (serve.maxEvents)",
+                window.label,
+                n_events,
+                max_events,
+            )
         if slow:
             log.warning(
                 "live window %s: latencyS %.1f exceeds maxLatencyS %.0f; docs/03 says cut the "
@@ -236,7 +245,7 @@ class LiveWorker:
             runId=run.run_id,
             stagesRan=list(run.stages_ran),
             eventCount=n_events,
-            stationsOnline=len(tables.run.stationIds),
+            stationsOnline=sum(1 for s in tables.stations if s.usedInRun),
             evidenceIds=sorted(
                 name.removeprefix(f"{EVIDENCE_DIR}/").removesuffix(".json")
                 for name in result.sizes
@@ -271,7 +280,7 @@ class LiveWorker:
                 out_dir=self.snapshot_dir,
                 features_loader=self.features_loader,
             )
-        except (ExportError, OSError, ValueError) as exc:
+        except Exception as exc:  # the live bundle is already good; only the snapshot is lost
             log.exception("live: snapshot bundle not written to %s", self.snapshot_dir)
             return False, f"snapshot: {error_text(exc)}"
         log.info("live: snapshot bundle written to %s", self.snapshot_dir)
