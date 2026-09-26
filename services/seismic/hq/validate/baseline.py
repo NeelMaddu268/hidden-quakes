@@ -4,11 +4,16 @@ the run's own ``SeismologyConfig`` (docs/02 §5). One ``BaselineRow`` per picker
 
 Every input is a stored table (``picks.parquet``, ``picks_stalta.parquet``, ``stations.parquet``,
 ``catalog.parquet``) and the stored config; nothing is drawn at random, so the table reproduces
-byte for byte from the same run directory. Every rerun tiers against the run's own bars
-(``thresholds=`` from ``ProcessingRun.tiering``, REQ-H2-9; an STA/LTA rerun matches another set
-of public events, so bars derived from it would be on another scale) with ``arrivals=`` and
-``stations=`` so the nearest-station rule runs as stage ``tier`` does; ``baseline_reruns`` keeps
-each rerun's tiering record for ``validation_notes.json``.
+byte for byte from the same run directory. Every rerun tiers against one set of supplied bars
+(``thresholds=``, REQ-H2-9; an STA/LTA rerun matches another set of public events, so bars
+derived from it would be on another scale): the run's own ``ProcessingRun.tiering`` by default
+(every rerun is located with the run's ``statics.parquet``, which the stage binds into
+``locate``, REQ-H1-5 option (a)); with ``validate.yaml`` ``rerunBars: reference`` the ones H2
+derived from the PhaseNet ``full`` rerun through this same path (``hq.validate.reference``,
+option (b)), which ``baseline_reruns`` then reuses as the ``(phasenet, full)`` row instead of
+running it again. Reruns pass ``arrivals=`` and ``stations=`` so the nearest-station rule runs
+as stage ``tier`` does; ``baseline_reruns`` keeps each rerun's tiering record for
+``validation_notes.json``.
 
 Row fields, exactly:
 
@@ -58,6 +63,7 @@ from hq.validate.null_test import (
     rerun_pipeline,
     select_profile,
 )
+from hq.validate.reference import REFERENCE_METHOD, REFERENCE_PROFILE, ReferenceRerun
 
 log = logging.getLogger(__name__)
 
@@ -93,21 +99,29 @@ def rerun_tables(
     *,
     thresholds: Mapping[str, Any],
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any] | None]:
-    """``null_test.rerun_pipeline`` on ``picks`` (the run's bars in ``thresholds``); returns the
-    final events table, the matches table and H2's tiering record. A step that yields no events
-    ends the rerun with two empty frames and no record. API errors propagate unchanged."""
+    """``null_test.rerun_pipeline`` on ``picks`` with the supplied bars in ``thresholds`` (a
+    ``ProcessingRun.tiering``-shaped dict; H1's sweep passes the run's own); returns the final
+    events table, the matches table and H2's tiering record. A step that yields no events ends
+    the rerun with two empty frames and no record. API errors propagate unchanged."""
+    require_thresholds(thresholds, "rerun_tables")
     rerun = rerun_pipeline(
         picks, stations, catalog, api, seismology_cfg, run, thresholds=thresholds
     )
-    if rerun.tiering is None:
+    return _checked_tables(rerun.events, rerun.matches, rerun.tiering)
+
+
+def _checked_tables(
+    events: pd.DataFrame, matches: pd.DataFrame, tiering: dict[str, Any] | None
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any] | None]:
+    if tiering is None:
         return (
             pd.DataFrame(columns=list(FINAL_EVENT_COLUMNS)),
             pd.DataFrame(columns=["catalogId", MATCH_EVENT_COLUMN]),
             None,
         )
-    _require_columns(rerun.events, FINAL_EVENT_COLUMNS, "assign_tiers events (docs/02 §2)")
-    _require_columns(rerun.matches, (MATCH_EVENT_COLUMN,), "match matches (docs/02 §2)")
-    return rerun.events, rerun.matches, rerun.tiering
+    _require_columns(events, FINAL_EVENT_COLUMNS, "assign_tiers events (docs/02 §2)")
+    _require_columns(matches, (MATCH_EVENT_COLUMN,), "match matches (docs/02 §2)")
+    return events, matches, tiering
 
 
 def summarize_row(
@@ -160,12 +174,20 @@ def baseline_reruns(
     p_only: POnlyAssociatorConfig | None = None,
     *,
     thresholds: Mapping[str, Any],
+    reference: ReferenceRerun | None = None,
 ) -> list[BaselineRerun]:
     """The baseline table with each rerun's tiering record: for each method (PhaseNet, then
     STA/LTA) and each profile in ``cfg.profiles`` (in that order), the picks the profile selects
     go through the pipeline with the profile's config (``p_only`` reruns carry the associator
-    overrides, REQ-H2-7) and the run's bars (``thresholds``, REQ-H2-9)."""
+    overrides, REQ-H2-7) and the supplied bars (``thresholds``, REQ-H2-9). With ``reference``
+    (the PhaseNet ``full`` rerun the bars were derived from, REQ-H1-5 b) that row is taken from
+    it instead of rerun; ``thresholds`` must then be the reference's own bars."""
     require_thresholds(thresholds, "the baseline comparison")
+    if reference is not None and thresholds is not reference.thresholds:
+        raise ValidateError(
+            "baseline_reruns got a reference rerun but other bars than the ones derived from it; "
+            "every baseline row must be tiered on the reference's scale (REQ-H1-5 b)"
+        )
     _require_columns(stations, (STATION_ID_COLUMN,), "stations")
     known = set(stations[STATION_ID_COLUMN].astype(str))
     for name, picks in ((PHASENET, picks_phasenet), (STALTA, picks_stalta)):
@@ -176,12 +198,16 @@ def baseline_reruns(
                 f"{name} picks name stations missing from stations table: {unknown}"
             )
     log.info(
-        "baseline: %d phasenet picks, %d stalta picks, %d stations, %d catalog events, profiles %s",
+        "baseline: %d phasenet picks, %d stalta picks, %d stations, %d catalog events, profiles "
+        "%s; (%s, %s) row %s",
         len(picks_phasenet),
         len(picks_stalta),
         len(stations),
         len(catalog),
         list(cfg.profiles),
+        REFERENCE_METHOD,
+        REFERENCE_PROFILE,
+        "reused from the reference rerun" if reference is not None else "rerun",
     )
     reruns: list[BaselineRerun] = []
     for method, picks in ((PHASENET, picks_phasenet), (STALTA, picks_stalta)):
@@ -189,9 +215,14 @@ def baseline_reruns(
             started = time.perf_counter()
             selected = select_profile(picks, profile)
             profile_cfg = profile_config(seismology_cfg, profile, p_only or POnlyAssociatorConfig())
-            events, matches, tiering = rerun_tables(
-                selected, stations, catalog, api, profile_cfg, run, thresholds=thresholds
-            )
+            if reference is not None and (method, profile) == (REFERENCE_METHOD, REFERENCE_PROFILE):
+                events, matches, tiering = _checked_tables(
+                    reference.events, reference.matches, reference.tiering
+                )
+            else:
+                events, matches, tiering = rerun_tables(
+                    selected, stations, catalog, api, profile_cfg, run, thresholds=thresholds
+                )
             row = summarize_row(method, profile, events, matches)
             reruns.append(BaselineRerun(row, tiering))
             log.info(
@@ -225,13 +256,14 @@ def run_baseline(
     p_only: POnlyAssociatorConfig | None = None,
     *,
     thresholds: Mapping[str, Any],
+    reference: ReferenceRerun | None = None,
 ) -> list[BaselineRow]:
     """The baseline table (``baseline_reruns`` without the tiering records)."""
     return [
         r.row
         for r in baseline_reruns(
             picks_phasenet, picks_stalta, stations, catalog, api, seismology_cfg, run, cfg,
-            p_only, thresholds=thresholds,
+            p_only, thresholds=thresholds, reference=reference,
         )
     ]  # fmt: skip
 

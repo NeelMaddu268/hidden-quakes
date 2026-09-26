@@ -2,10 +2,12 @@
 whose stations were shifted independently, finds fewer chance events than the coherent picks,
 is seeded and reproducible, and the ``validate`` stage writes ``null_test.json`` (always),
 ``validation_notes.json`` (always) and ``validation.json`` (when H2's synthetic test exists) and
-records counts. Every rerun tiers against the run's own bars (REQ-H2-9) and locates with the
-run's cache dir and id (REQ-H2-8). Offline: picks come from a few planted synthetic events built
-here, and H2's four functions are a toy associator that clusters P arrival times, injected as a
-``SeismologyApi`` or as fake ``hq.*`` modules."""
+records counts. Every rerun locates with the run's cache dir and id (REQ-H2-8) and the run's
+own ``statics.parquet`` (REQ-H1-5 option (a)), and tiers against supplied bars (REQ-H2-9): the
+run's own by default, with ``rerunBars: reference`` the ones the PhaseNet ``full`` reference
+rerun derived through the same path (option (b)). Offline: picks come from a few planted
+synthetic events built here, and H2's four functions are a toy associator that clusters P
+arrival times, injected as a ``SeismologyApi`` or as fake ``hq.*`` modules."""
 
 import json
 import logging
@@ -23,19 +25,27 @@ import pandas as pd
 import pytest
 import yaml
 from hq_contracts import models as m
-from hq_contracts.io import from_frame, read_table, to_frame, write_models
+from hq_contracts.io import from_frame, read_table, to_frame, write_models, write_table
 
 from hq import cli, runs
 from hq.config.run import RunSection
-from hq.config.validate import NullTestConfig, POnlyAssociatorConfig
+from hq.config.validate import (
+    RERUN_BARS_REFERENCE,
+    RERUN_BARS_RUN,
+    NullTestConfig,
+    POnlyAssociatorConfig,
+    RerunBars,
+)
 from hq.validate import (
     NOTES_JSON,
     NULL_TEST_JSON,
+    STATICS_TABLE,
     VALIDATION_JSON,
     LaneSeismologyApi,
     ValidateError,
     real_seismology_api,
     run_null_test,
+    validate_run,
 )
 from hq.validate import run as validate_stage
 from hq.validate.notes import (
@@ -43,6 +53,11 @@ from hq.validate.notes import (
     FOCAL_DEPTH_SENSOR,
     MAP_ON_TOP_SKIPPED_NOTE,
     NO_STATICS_NOTE,
+    STATICS_NOTE,
+    THRESHOLDS_REFERENCE_NOTE,
+    THRESHOLDS_RUN_NOTE,
+    THRESHOLDS_SOURCE_REFERENCE,
+    THRESHOLDS_SOURCE_RUN,
     ValidationNotes,
     rerun_notes,
 )
@@ -57,6 +72,7 @@ from hq.validate.null_test import (
     shift_picks,
     station_shifts,
 )
+from hq.validate.reference import reference_rerun
 from hq.validate.sidecars import NOTES
 
 pytestmark = pytest.mark.smoke
@@ -87,6 +103,9 @@ MIN_STATIONS = 4
 TIER_A_MIN_STATIONS = 7
 TIER_B_MIN_STATIONS = 5
 MATCH_DT_S = 2.0
+# The toy stand-in for H2's tiering.minMatched: assign_tiers without thresholds= derives bars
+# only from at least this many matched events (the baseline tests keep two catalog events).
+FAKE_MIN_MATCHED = 2
 
 ASSOC_EVENT_COLUMNS = ("assocId", "t", "latitude", "longitude", "elevM", "nPicks", "nP", "nS")
 ASSOC_PICK_COLUMNS = ("assocId", "pickId")
@@ -128,9 +147,25 @@ def config_dir(tmp_path: Path) -> Path:
     return target
 
 
+def set_rerun_bars(config_dir: Path, mode: RerunBars) -> None:
+    """Switch validate.yaml's ``rerunBars`` knob in a test config directory."""
+    path = config_dir / "validate.yaml"
+    validate = yaml.safe_load(path.read_text(encoding="utf-8"))
+    validate["rerunBars"] = mode
+    path.write_text(yaml.safe_dump(validate), encoding="utf-8")
+
+
 @pytest.fixture
 def ctx(config_dir: Path, tmp_path: Path) -> runs.RunContext:
     return runs.create_run(config_dir, tmp_path / "data", now=NOW)
+
+
+def reference_ctx(config_dir: Path, tmp_path: Path) -> runs.RunContext:
+    """A run context with validate.yaml rerunBars: reference (option (b))."""
+    set_rerun_bars(config_dir, RERUN_BARS_REFERENCE)
+    ctx = runs.create_run(config_dir, tmp_path / "data-reference", now=NOW)
+    assert ctx.config.validate.rerunBars == RERUN_BARS_REFERENCE
+    return ctx
 
 
 @pytest.fixture
@@ -315,6 +350,10 @@ class FakeTierResult:
     tiering: dict[str, Any]
 
 
+class FakeTierError(ValueError):
+    """Shaped like H2's ``hq.tier.TierError`` (a ``ValueError`` named TierError in its text)."""
+
+
 @dataclass
 class FakeSeismologyApi:
     """H2's four calls over a toy associator: P picks of at least ``MIN_STATIONS`` distinct
@@ -331,6 +370,7 @@ class FakeSeismologyApi:
     cfgs_seen: list[Any] = field(default_factory=list)  # the SeismologyConfig each associate got
     locate_kwargs: list[dict[str, Any]] = field(default_factory=list)  # REQ-H2-8 per locate call
     tier_kwargs: list[dict[str, Any]] = field(default_factory=list)  # REQ-H2-9 per assign_tiers
+    derived: list[dict[str, Any]] = field(default_factory=list)  # bars derived without thresholds=
 
     def _tick(self, name: str) -> None:
         self.calls[name] += 1
@@ -397,10 +437,12 @@ class FakeSeismologyApi:
         *,
         cache_dir: Path | None = None,
         run_id: str | None = None,
+        statics: pd.DataFrame | None = None,
     ) -> FakeLocateResult:
-        """H2's ``locate`` shape: the docs/02 positional call plus the REQ-H2-8 keywords."""
+        """H2's ``locate`` shape: the docs/02 positional call plus the REQ-H2-8 keywords and
+        the REQ-H1-5 ``statics=`` table (recorded, not applied: the toy has no residuals)."""
         self._tick("locate")
-        self.locate_kwargs.append({"cache_dir": cache_dir, "run_id": run_id})
+        self.locate_kwargs.append({"cache_dir": cache_dir, "run_id": run_id, "statics": statics})
         known = set(picks["id"].astype(str))
         events: list[m.SeismicEvent] = []
         for k, row in enumerate(assoc.events.itertuples(index=False)):
@@ -480,18 +522,36 @@ class FakeSeismologyApi:
         arrivals: pd.DataFrame | None = None,
         stations: pd.DataFrame | None = None,
     ) -> FakeTierResult:
-        """H2's ``assign_tiers`` shape (REQ-H2-9 keywords). Like H2, a call without the run's
-        bars cannot tier a rerun (its matched set is too small) and raises; with them the tiers
-        come from the toy nStations rule and ``tiering`` carries H2's rules keys."""
+        """H2's ``assign_tiers`` shape (REQ-H2-9 keywords). Like H2, a call without
+        ``thresholds=`` derives H2-shaped bars from this call's matched set when it holds at
+        least ``FAKE_MIN_MATCHED`` events (``thresholdSource`` "derived") and raises a
+        ``TierError``-like error otherwise; with them the bars are applied as given
+        ("supplied"). The tiers themselves come from the toy nStations rule either way and
+        ``tiering`` carries H2's rules keys."""
         self._tick("assign_tiers")
         self.tier_kwargs.append(
             {"thresholds": thresholds, "arrivals": arrivals, "stations": stations, "flags": flags}
         )
-        if thresholds is None or not isinstance(thresholds.get("thresholds"), dict):
-            raise ValueError("TierError (test stand-in): a rerun's matched set is too small to "
-                             "derive bars from; pass thresholds=")  # fmt: skip
         if (arrivals is None) != (stations is None):
-            raise ValueError("TierError (test stand-in): pass arrivals= and stations= together")
+            raise FakeTierError("TierError (test stand-in): pass arrivals= and stations= together")
+        if thresholds is None:
+            n_matched = int(matches["eventId"].notna().sum())
+            if n_matched < FAKE_MIN_MATCHED:
+                raise FakeTierError(
+                    f"TierError (test stand-in): the matched set has {n_matched} event(s) and "
+                    f"tiering.minMatched is {FAKE_MIN_MATCHED}: no bars are derived. Pass "
+                    "thresholds= to apply another run's bars instead."
+                )
+            record = thresholds_record(n_matched)
+            record["method"] = "derived by the test stand-in from this call's matched set"
+            self.derived.append(record)
+            source = "derived"
+        elif not isinstance(thresholds.get("thresholds"), dict):
+            raise FakeTierError("TierError (test stand-in): thresholds= must be a Thresholds or "
+                                "a ProcessingRun.tiering dict with a 'thresholds' record")  # fmt: skip
+        else:
+            record = thresholds["thresholds"]
+            source = "supplied"
         events = events_located.copy()
         n = events["quality_nStations"].to_numpy(dtype=np.int64)
         events["tier"] = np.where(
@@ -507,7 +567,7 @@ class FakeSeismologyApi:
         events["magnitude_sigma"] = None
         final = to_frame(from_frame(events, m.SeismicEvent), m.SeismicEvent)  # docs/02 §2 columns
         tiering = {
-            "thresholdSource": "supplied",
+            "thresholdSource": source,
             "rules": {
                 "A": {
                     "mapOnVolumeTop": {"applied": flags is not None},
@@ -517,7 +577,7 @@ class FakeSeismologyApi:
                     },
                 },
             },
-            "thresholds": thresholds["thresholds"],
+            "thresholds": record,
             "toy": {"tierA": {"nStations": TIER_A_MIN_STATIONS}, "tierB": {"nStations": 5}},
         }  # fmt: skip
         return FakeTierResult(final, tiering)
@@ -534,7 +594,7 @@ class FakeSeismologyApi:
 
 
 def null_cfg(**overrides: Any) -> NullTestConfig:
-    return NullTestConfig(**{"nShuffles": 8, "shiftS": 30.0, "seed": 3, **overrides})
+    return NullTestConfig(**{"nShuffles": 5, "shiftS": 30.0, "seed": 3, **overrides})
 
 
 # --- the null test on its own -----------------------------------------------------------------
@@ -603,6 +663,14 @@ def test_reruns_tier_with_the_run_bars_arrivals_and_stations(
     )  # fmt: skip
     assert (notes.reruns, notes.rerunsTiered, notes.staticsApplied) == (2, 1, False)
     assert notes.thresholds.nMatched == N_MATCHED and notes.thresholds.quantiles == TIER_QUANTILES
+    assert notes.thresholds.source == THRESHOLDS_SOURCE_RUN  # H1's 4-positional call: run bars
+    assert notes.thresholds.record == "ProcessingRun.tiering.thresholds"
+    assert notes.thresholds.bars == {
+        tier: {name: {"op": op, "value": bar["value"]} for (name, op, _), bar in zip(
+            TIER_METRICS, RUN_TIERING["thresholds"][tier].values(), strict=True)}
+        for tier in TIER_QUANTILES
+    }  # fmt: skip
+    assert THRESHOLDS_RUN_NOTE in notes.notes and THRESHOLDS_REFERENCE_NOTE not in notes.notes
     assert notes.tieringRules is not None
     assert notes.tieringRules.focalDepthBelow == FOCAL_DEPTH_SENSOR
     assert notes.tieringRules.mapOnVolumeTopApplied is False
@@ -634,6 +702,51 @@ def test_thresholds_record_round_trips_through_h2s_reader() -> None:
             assert {k: back[tier][name][k] for k in read_keys} == {
                 k: record[tier][name][k] for k in read_keys
             }
+
+
+def test_reference_rerun_derives_bars_without_thresholds_or_fails_naming_h2s_rule(
+    synthetic: SyntheticPicks, section: RunSection, ctx: runs.RunContext
+) -> None:
+    """REQ-H1-5 (b): the PhaseNet full rerun calls assign_tiers(events, matches, cfg,
+    arrivals=, stations=) with no thresholds= so H2 derives the bars; the result carries them
+    in the ProcessingRun.tiering shape every other rerun gets. Too few matched events (H2's
+    minMatched rule) or an empty rerun fail loudly; nothing is invented."""
+    api = FakeSeismologyApi()
+    ref = reference_rerun(
+        synthetic.picks_frame, synthetic.stations_frame, synthetic.catalog_frame, api,
+        ctx.config.seismology, section,
+    )  # fmt: skip
+    assert api.calls == {"associate": 1, "locate": 1, "match": 1, "assign_tiers": 1}
+    [kw] = api.tier_kwargs
+    assert kw["thresholds"] is None and kw["arrivals"] is not None and kw["stations"] is not None
+    assert api.phases_seen == {"P", "S"} and api.cfgs_seen == [ctx.config.seismology]  # full
+    assert ref.n_matched == len(synthetic.catalog) == len(CATALOG_EVENT_INDICES)
+    assert ref.thresholds == {"thresholds": api.derived[0]} and ref.record is ref.thresholds["thresholds"]
+    assert ref.record["nMatched"] == ref.n_matched != N_MATCHED  # not the run's record
+    assert ref.tiering["thresholdSource"] == "derived" and ref.source == THRESHOLDS_SOURCE_REFERENCE
+    assert len(ref.events) == N_EVENTS and set(ref.events["tier"]) == {"A"}
+    require_thresholds(ref.thresholds, "x")  # the shape every other rerun is checked against
+    # Too few matched events: H2's TierError-like refusal is re-raised naming H2's rule.
+    one_event = synthetic.catalog_frame.iloc[: FAKE_MIN_MATCHED - 1]
+    api = FakeSeismologyApi()
+    with pytest.raises(ValidateError, match=r"minMatched.*H2 Seismology.*never invented"):
+        reference_rerun(
+            synthetic.picks_frame, synthetic.stations_frame, one_event, api,
+            ctx.config.seismology, section,
+        )  # fmt: skip
+    assert api.calls["assign_tiers"] == 1 and not api.derived
+    # A rerun that finds nothing has no matched set either.
+    with pytest.raises(ValidateError, match="no event, so nothing was tiered"):
+        reference_rerun(
+            synthetic.picks_frame.iloc[:2], synthetic.stations_frame, synthetic.catalog_frame,
+            FakeSeismologyApi(), ctx.config.seismology, section,
+        )  # fmt: skip
+    # Any other error from H2 propagates unchanged.
+    with pytest.raises(RuntimeError, match="boom in match"):
+        reference_rerun(
+            synthetic.picks_frame, synthetic.stations_frame, synthetic.catalog_frame,
+            FakeSeismologyApi(fail_in="match"), ctx.config.seismology, section,
+        )  # fmt: skip
 
 
 def test_null_test_finds_fewer_chance_events_than_the_coherent_picks(
@@ -708,7 +821,7 @@ def test_same_seed_reproduces_and_a_different_seed_differs(
             thresholds=RUN_TIERING,
         )  # fmt: skip
 
-    cfg = null_cfg(nShuffles=6)
+    cfg = null_cfg(nShuffles=4)
     first, again = outcomes(cfg), outcomes(cfg)
     for a, b in zip(first, again, strict=True):
         pd.testing.assert_series_equal(a.shifts_s, b.shifts_s)
@@ -800,13 +913,42 @@ def test_api_errors_propagate_unchanged(
 # --- the stage -----------------------------------------------------------------------------------
 
 
+STATICS_MODEL = "StationStatic"  # hq.locate.result.STATICS_MODEL, the statics.parquet model name
+
+
+def statics_table(synthetic: SyntheticPicks) -> pd.DataFrame:
+    """A ``statics.parquet`` table (docs/02 §2: stationId, phase, staticS, nEvents) with one
+    small, distinct term per station x phase, as H2's locate stage leaves it."""
+    rows = [
+        {"stationId": st.id, "phase": phase, "staticS": round(0.01 * (i + 1) * sign, 3),
+         "nEvents": 3 + i}
+        for i, st in enumerate(synthetic.stations)
+        for phase, sign in (("P", 1.0), ("S", -1.0))
+    ]  # fmt: skip
+    return pd.DataFrame(rows, columns=list(STATICS_COLUMNS))
+
+
 def write_run_tables(ctx: runs.RunContext, synthetic: SyntheticPicks) -> None:
-    """The stage's inputs: the three tables and, as H2's tier stage leaves it, the run's bars in
-    ``run.json`` (REQ-H2-9)."""
+    """The stage's inputs: the three tables, H2's ``statics.parquet`` (REQ-H1-5 a) and, as H2's
+    tier stage leaves it, the run's bars in ``run.json`` (REQ-H2-9)."""
     write_models(synthetic.stations, ctx.path("stations.parquet"))
     write_models(synthetic.picks, ctx.path("picks.parquet"))
     write_models(synthetic.catalog, ctx.path("catalog.parquet"))
+    write_table(statics_table(synthetic), ctx.path(STATICS_TABLE), STATICS_MODEL)
     record_tier_thresholds(ctx)
+
+
+def assert_located_with_run_statics(
+    api: FakeSeismologyApi, ctx: runs.RunContext, *, bound_cache: bool = True
+) -> None:
+    """REQ-H1-5 (a): every locate call carried the rows of the run's statics.parquet, and
+    (REQ-H2-8, when the stage built the API itself) the run's cache dir and id."""
+    stored = read_table(ctx.path(STATICS_TABLE))
+    assert api.locate_kwargs  # a shuffle that associates nothing never reaches locate
+    for kw in api.locate_kwargs:
+        if bound_cache:
+            assert (kw["cache_dir"], kw["run_id"]) == (ctx.cache_dir, ctx.run_id)
+        pd.testing.assert_frame_equal(kw["statics"], stored)
 
 
 def read_notes(ctx: runs.RunContext) -> ValidationNotes:
@@ -849,20 +991,19 @@ def test_stage_writes_validation_json_and_records_counts(
 
     runs.run_stage(ctx, "validate")
 
-    assert api.calls["associate"] == cfg.nShuffles
+    assert api.calls["associate"] == cfg.nShuffles and not api.derived  # rerunBars run: no extra
     null_test = m.NullTest.model_validate_json(ctx.path(NULL_TEST_JSON).read_text())
     assert (null_test.nShuffles, null_test.shiftRangeS) == (cfg.nShuffles, cfg.shiftS)
     assert null_test.meanChanceEvents < N_EVENTS
-    # REQ-H2-8: every rerun located with the run's cache dir and id, bound into locate.
-    assert api.locate_kwargs and all(
-        kw == {"cache_dir": ctx.cache_dir, "run_id": ctx.run_id} for kw in api.locate_kwargs
-    )
-    # REQ-H2-9: every tiered rerun used the run's own bars from run.json, with its arrivals and
-    # the stations table it located with.
+    # REQ-H2-8 + REQ-H1-5 (a): every rerun located with the run's cache dir, id and statics.
+    assert_located_with_run_statics(api, ctx)
+    # REQ-H2-9: every tiered rerun used the run's own bars from run.json (one identical dict),
+    # with its arrivals and the stations table it located with.
     run_tiering = ctx.read_run().tiering
     assert run_tiering["thresholds"] == thresholds_record()
     assert api.tier_kwargs and all(
         kw["thresholds"]["thresholds"] == run_tiering["thresholds"]
+        and kw["thresholds"] is api.tier_kwargs[0]["thresholds"]
         and kw["arrivals"] is not None
         and kw["stations"] is not None
         and set(kw["stations"]["id"]) == {s.id for s in synthetic.stations}
@@ -871,8 +1012,14 @@ def test_stage_writes_validation_json_and_records_counts(
     notes = read_notes(ctx)
     assert notes.nullTest.reruns == cfg.nShuffles
     assert notes.nullTest.rerunsTiered == len(api.tier_kwargs)
+    assert notes.nullTest.thresholds.source == THRESHOLDS_SOURCE_RUN
     assert notes.nullTest.thresholds.nMatched == N_MATCHED
-    assert notes.nullTest.staticsApplied is False and NO_STATICS_NOTE in notes.nullTest.notes
+    assert notes.nullTest.thresholds.record == "ProcessingRun.tiering.thresholds"
+    assert notes.nullTest.thresholds.bars["A"]["rmsS"] == {"op": "<=", "value": 0.08}
+    assert set(notes.nullTest.thresholds.bars) == set(TIER_QUANTILES)
+    assert THRESHOLDS_RUN_NOTE in notes.nullTest.notes
+    assert notes.nullTest.staticsApplied is True and STATICS_NOTE in notes.nullTest.notes
+    assert NO_STATICS_NOTE not in notes.nullTest.notes
     assert notes.nullTest.associatorOverrides == {}  # the full profile
     assert notes.baseline is None  # no picks_stalta.parquet
     assert notes.gr is not None and notes.gr.magType == CATALOG_MAG_TYPE
@@ -893,27 +1040,122 @@ def test_stage_writes_validation_json_and_records_counts(
     assert counts["nullChanceStrict"] == round(null_test.meanChanceStrict * cfg.nShuffles)
     assert counts["sweepPoints"] == len(sweep) and counts["validationJson"] == 1
     assert counts["nullRerunsTiered"] == notes.nullTest.rerunsTiered
+    assert (counts["referenceRerun"], counts["referenceMatched"]) == (0, 0)
+    assert counts["staticsRows"] == 2 * N_STATIONS
     assert counts["publicMagnitudesExcluded"] == 0
     assert ctx.read_run().runtimeS["validate"] >= 0.0
     assert not list(ctx.run_dir.glob("*.tmp"))
     messages = [r.getMessage() for r in caplog.records]
     assert sum("null test: rerun" in msg for msg in messages) == cfg.nShuffles
     assert any(msg.startswith("null test: chance events") for msg in messages)
-    assert any("reruns use" in msg and "cache_dir" in msg for msg in messages)
+    assert any("reruns use" in msg and "cache_dir" in msg and "statics rows" in msg
+               for msg in messages)  # fmt: skip
+    assert any("go into every rerun's locate as statics=" in msg for msg in messages)
+    assert not any(msg.startswith("reference rerun") for msg in messages)
     # Same seed, same files: the stage is reproducible byte for byte.
     before = {n: ctx.path(n).read_bytes() for n in (NULL_TEST_JSON, NOTES_JSON)}
     validate_stage(ctx)
     assert {n: ctx.path(n).read_bytes() for n in before} == before
 
 
+def test_stage_without_statics_parquet_names_h2s_locate_stage(
+    ctx: runs.RunContext, synthetic: SyntheticPicks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-H1-5 (a): reruns without the run's statics are not on its scale, so a missing
+    statics.parquet is a loud error naming H2's locate stage, and nothing is rerun."""
+    write_run_tables(ctx, synthetic)
+    ctx.path(STATICS_TABLE).unlink()
+    api = FakeSeismologyApi()
+    api.install(monkeypatch)
+    with pytest.raises(ValidateError, match=r"statics\.parquet.*'locate'.*H2 Seismology"):
+        runs.run_stage(ctx, "validate")
+    assert api.calls["associate"] == 0
+    write_table(statics_table(synthetic).drop(columns=["staticS"]), ctx.path(STATICS_TABLE),
+                STATICS_MODEL)  # fmt: skip
+    with pytest.raises(ValidateError, match=r"statics\.parquet lacks columns.*staticS.*H2"):
+        runs.run_stage(ctx, "validate")
+    assert api.calls["associate"] == 0
+    # An injected API gets the statics bound too (validate_run's api= path).
+    write_table(statics_table(synthetic), ctx.path(STATICS_TABLE), STATICS_MODEL)
+    injected = FakeSeismologyApi()
+    validate_run(ctx, injected.as_lane_api())
+    assert_located_with_run_statics(injected, ctx, bound_cache=False)
+
+
+def test_stage_rerun_bars_reference_derives_bars_from_the_phasenet_rerun(
+    config_dir: Path,
+    tmp_path: Path,
+    synthetic: SyntheticPicks,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """validate.yaml rerunBars: reference (REQ-H1-5 b): the first assign_tiers call is the
+    PhaseNet full reference rerun with no thresholds=; every rerun after it received the very
+    dict built from what H2 derived there, not the run's own bars in run.json; every locate
+    still carried the run's statics."""
+    caplog.set_level(logging.INFO, logger="hq.validate")
+    ctx = reference_ctx(config_dir, tmp_path)
+    write_run_tables(ctx, synthetic)
+    api = FakeSeismologyApi()
+    api.install(monkeypatch)
+    cfg = ctx.config.validate.nullTest
+    runs.run_stage(ctx, "validate")
+    assert api.calls["associate"] == cfg.nShuffles + 1  # the reference rerun, then the shuffles
+    assert_located_with_run_statics(api, ctx)
+    run_tiering = ctx.read_run().tiering
+    first, *rest = api.tier_kwargs
+    assert first["thresholds"] is None and len(api.derived) == 1
+    reference_bars = rest[0]["thresholds"]
+    assert reference_bars == {"thresholds": api.derived[0]}
+    assert reference_bars["thresholds"] != run_tiering["thresholds"]
+    assert rest and all(
+        kw["thresholds"] is reference_bars and kw["arrivals"] is not None
+        and kw["stations"] is not None for kw in rest
+    )  # fmt: skip
+    notes = read_notes(ctx)
+    assert notes.nullTest.reruns == cfg.nShuffles and notes.nullTest.rerunsTiered == len(rest)
+    assert notes.nullTest.thresholds.source == THRESHOLDS_SOURCE_REFERENCE
+    assert notes.nullTest.thresholds.nMatched == len(synthetic.catalog) != N_MATCHED
+    assert "hq.validate.reference" in notes.nullTest.thresholds.record
+    assert THRESHOLDS_REFERENCE_NOTE in notes.nullTest.notes
+    assert notes.nullTest.staticsApplied is True and STATICS_NOTE in notes.nullTest.notes
+    counts = json.loads(ctx.path("stages.json").read_text())["validate"]["counts"]
+    assert (counts["referenceRerun"], counts["referenceMatched"]) == (1, len(synthetic.catalog))
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(msg.startswith("reference rerun") and "derived" in msg for msg in messages)
+    assert any("not applied to the reruns" in msg for msg in messages)  # run.json has bars too
+    # Same seed, same files: reproducible byte for byte in this mode too.
+    before = {n: ctx.path(n).read_bytes() for n in (NULL_TEST_JSON, NOTES_JSON)}
+    validate_stage(ctx)
+    assert {n: ctx.path(n).read_bytes() for n in before} == before
+
+
+def test_stage_fails_naming_h2s_rule_when_the_reference_rerun_matches_too_few(
+    config_dir: Path, tmp_path: Path, synthetic: SyntheticPicks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-H1-5 (b): with rerunBars reference and a matched set below H2's minMatched, the stage
+    stops before any shuffle; the run's own bars are never substituted silently."""
+    ctx = reference_ctx(config_dir, tmp_path)
+    write_run_tables(ctx, synthetic)
+    write_models(synthetic.catalog[: FAKE_MIN_MATCHED - 1], ctx.path("catalog.parquet"))
+    api = FakeSeismologyApi()
+    api.install(monkeypatch)
+    with pytest.raises(ValidateError, match=r"reference rerun.*minMatched.*H2 Seismology"):
+        runs.run_stage(ctx, "validate")
+    assert api.calls == {"associate": 1, "locate": 1, "match": 1, "assign_tiers": 1}
+    assert not ctx.path(NULL_TEST_JSON).exists() and not ctx.path(NOTES_JSON).exists()
+
+
 def test_stage_without_the_run_bars_names_h2s_tier_stage(
     ctx: runs.RunContext, synthetic: SyntheticPicks, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """REQ-H2-9: no ProcessingRun.tiering["thresholds"] -> a loud error naming stage tier; the
-    reruns never invent bars, and nothing is rerun."""
+    """REQ-H2-9 (the default rerunBars run): no ProcessingRun.tiering["thresholds"] -> a loud
+    error naming stage tier; the reruns never invent bars, and nothing is rerun."""
+    assert ctx.config.validate.rerunBars == RERUN_BARS_RUN
     write_models(synthetic.stations, ctx.path("stations.parquet"))
     write_models(synthetic.picks, ctx.path("picks.parquet"))
     write_models(synthetic.catalog, ctx.path("catalog.parquet"))
+    write_table(statics_table(synthetic), ctx.path(STATICS_TABLE), STATICS_MODEL)
     api = FakeSeismologyApi()
     api.install(monkeypatch)
     assert ctx.read_run().tiering == {}
@@ -928,7 +1170,25 @@ def test_stage_without_the_run_bars_names_h2s_tier_stage(
     assert api.calls["associate"] == 0
     record_tier_thresholds(ctx)
     runs.run_stage(ctx, "validate")
-    assert api.calls["associate"] == STAGE_TEST_SHUFFLES
+    assert api.calls["associate"] == STAGE_TEST_SHUFFLES and not api.derived
+
+
+def test_stage_reference_bars_need_no_run_bars(
+    config_dir: Path, tmp_path: Path, synthetic: SyntheticPicks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rerunBars reference on a run whose run.json holds no tier bars: the reference rerun
+    supplies them, so the validate stage can run before (or without) stage tier's record."""
+    ctx = reference_ctx(config_dir, tmp_path)
+    write_models(synthetic.stations, ctx.path("stations.parquet"))
+    write_models(synthetic.picks, ctx.path("picks.parquet"))
+    write_models(synthetic.catalog, ctx.path("catalog.parquet"))
+    write_table(statics_table(synthetic), ctx.path(STATICS_TABLE), STATICS_MODEL)
+    assert ctx.read_run().tiering == {}
+    api = FakeSeismologyApi()
+    api.install(monkeypatch)
+    runs.run_stage(ctx, "validate")
+    assert api.calls["associate"] == STAGE_TEST_SHUFFLES + 1 and len(api.derived) == 1
+    assert read_notes(ctx).nullTest.thresholds.source == THRESHOLDS_SOURCE_REFERENCE
 
 
 def test_stage_without_synthetic_json_writes_the_sidecar_and_names_h2(
@@ -966,6 +1226,9 @@ def test_missing_run_table_names_its_writer(
     with pytest.raises(ValidateError, match="holds Pick rows, not CatalogEvent"):
         runs.run_stage(ctx, "validate")
     assert read_table(ctx.path("picks.parquet")).attrs["model"] == "Pick"
+    write_models(synthetic.catalog, ctx.path("catalog.parquet"))
+    with pytest.raises(ValidateError, match=r"statics\.parquet.*'locate'.*H2 Seismology"):
+        runs.run_stage(ctx, "validate")
 
 
 def test_missing_h2_modules_fail_naming_h2(
