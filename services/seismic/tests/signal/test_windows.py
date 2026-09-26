@@ -978,4 +978,5 @@ def test_run_known_windows_end_to_end(fake_ctx, run_section: RunSection) -> None
     assert load_windows(fake_ctx.path("known") / "windows.json") == doc
     record = fake_ctx.records["known_windows"]
     assert record["counts"]["events"] == len(doc["events"])
-    assert record["params"] == cfg.model_dump(mode="json")
+    assert record["params"] == {"known_windows": cfg.model_dump(mode="json")}
+    assert record["field"] == "picker"

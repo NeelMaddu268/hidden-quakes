@@ -458,6 +458,27 @@ def test_no_measurement_keeps_station_used_and_flagged(
 
 
 @pytest.mark.smoke
+def test_unmeasured_station_with_no_served_data_is_unused(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    def cs01_unmeasured(url: str, params: Any, timeout_s: float) -> HttpResult:
+        if params["sta"] == "CS01":
+            return HttpResult(204, "")
+        return mustang_http(url, params, timeout_s)
+
+    res = build(
+        run_section,
+        cfg,
+        tmp_path / "cache",
+        http_get=cs01_unmeasured,
+        rate_probe=serving({"6K.CS01": None}),
+    )
+    assert detail(res, "6K.CS01")["rateCheck"]["status"] == "nodata"
+    assert by_id(res)["6K.CS01"]["usedInRun"] is False
+    assert any("no data at any rate probe either" in f for f in flags_of(res, "6K.CS01"))
+
+
+@pytest.mark.smoke
 def test_no_station_with_data_fails_loudly(
     run_section: RunSection, cfg: StationSelection, tmp_path: Path
 ) -> None:
@@ -855,7 +876,7 @@ def test_stage_writes_stations_parquet(
     assert report["counts"]["selected"] == len(EXPECTED_IDS)
     rec = fake_ctx.records[inv.STAGE]
     assert rec["counts"]["selected"] == len(EXPECTED_IDS)
-    assert rec["params"] == cfg.model_dump(mode="json")
+    assert rec["params"] == {inv.STAGE: cfg.model_dump(mode="json")}
 
 
 @pytest.mark.smoke
