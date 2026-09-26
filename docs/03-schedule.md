@@ -17,7 +17,7 @@ We have ~36 hours and strong agents, so code volume isn't the constraint. Two th
 | **Depth call** | 10:00 AM Sat | Depth gate passes, or the plan-view hero becomes permanent | H2 |
 | **D · demo** | 2:00 PM Sat | Full 2-minute flow works; an outsider explains it in 20 seconds | Everyone |
 | **P · pipeline freeze** | Passed early, about 6:45 PM Sat (H2's call: run `20260926-0210-a04c611` is final and no v4 follows; the 9 PM slot from the 4:50 PM move is void) | Final showcase `runId` exported and deployed | H2 + H4 |
-| **F · feature freeze** | 12:00 AM Sun | Nothing new after this | H4 |
+| **F · feature freeze** | 3:00 AM Sun (moved from 12 AM at about 7 PM Sat: overnight features for the judging rubric; UI copy freeze 4:00 AM, code freeze 5:30 AM, submission by 7:00 AM) | Nothing new after this | H4 |
 
 ### Check A and Check B (10:00 PM)
 
@@ -54,9 +54,14 @@ We have ~36 hours and strong agents, so code volume isn't the constraint. Two th
 | **6 PM** | **22** | **Integration meeting 6** (Gate P moved to 9 PM) | | | |
 | **~6:45 PM** | **23** | **Gate P: data freeze, called early by H2** (run `20260926-0210-a04c611` final; no v4) | | | |
 | 6 PM–12 AM | 22–28 | Everyone: Devpost screenshots, video, Live if stable, language audit, second outsider test at 10 PM | | | |
-| **12 AM Sun** | **28** | **Gate F: feature freeze** | | | |
-| 12–4 AM | 28–32 | Everyone: five rehearsals, hostile Q&A drills, Devpost, README, multi-browser + Wi-Fi-off tests; pairs sleep in 3-hour shifts | | | |
-| 4–8 AM | 32–36 | No core engineering. Emergency fixes, submission, pitch practice. | | | |
+| **12 AM Sun** | **28** | **Integration meeting 7** (merge to `main`, Neel redeploys) | | | |
+| **3 AM Sun** | **31** | **Gate F: feature freeze** (moved from 12 AM); integration merge to `main`, Neel redeploys | | | |
+| **4 AM Sun** | **32** | UI copy and claims freeze | | | |
+| **5:30 AM Sun** | **33.5** | Code freeze | | | |
+| **7 AM Sun** | **35** | Submission done: Devpost first, then the Expo form (expo.hexlabs.org) | | | |
+| 12–3 AM | 28–31 | Overnight features for the judging rubric (comprehension, labels, who it is for, what the ML is); rehearsals and hostile Q&A drills in between | | | |
+| 3–7 AM | 31–35 | Devpost fill (`make story`), video, Expo form, README, multi-browser + Wi-Fi-off tests; emergency fixes only after 5:30 AM | | | |
+| 7–8 AM | 35–36 | Pitch practice; nothing else | | | |
 
 H2 and H3 are never asleep at the same time before the 10 AM depth call.
 
@@ -64,7 +69,7 @@ H2 and H3 are never asleep at the same time before the 10 AM depth call.
 
 ## Integration meetings
 
-15 minutes, at the team table: **10 PM Fri, 12 AM, 4 AM, 8 AM, 2 PM, 6 PM Sat, 12 AM Sun.** Each lane answers three things: what's merged, what's blocked (with a `docs/requests/` link), and what lands before the next meeting. H4 merges `feat/*` into `main` right after each one, then everyone runs `git fetch && git merge origin/main`.
+15 minutes, at the team table: **10 PM Fri, 12 AM, 4 AM, 8 AM, 2 PM, 6 PM Sat, 12 AM and 3 AM Sun.** After each overnight merge H4 tells Neel, who redeploys `main` from his Vercel account (`docs/deploy.md`). Each lane answers three things: what's merged, what's blocked (with a `docs/requests/` link), and what lands before the next meeting. H4 merges `feat/*` into `main` right after each one, then everyone runs `git fetch && git merge origin/main`.
 
 Before the first meeting, foundations land on `main` directly so nobody waits: `run.yaml` (H2, 8:05 PM), contracts (H4, 8:25), config loader + stage runner and mock bundle (H4, 8:45), provider hooks (H4, 9:00).
 
@@ -75,10 +80,10 @@ Before the first meeting, foundations land on `main` directly so nobody waits: `
 | Contracts (`packages/contracts`, `docs/02`) | 8:30 PM Fri | PR + approval from affected lanes + version bump |
 | Tier definitions and match tolerances | 10:00 AM Sat | Only with a rerun under a new `runId` |
 | Showcase run | Frozen about 6:45 PM Sat (run `20260926-0210-a04c611`; H2 called no v4) | Nothing: the bundle on `main` is final |
-| Features | 12:00 AM Sun | Bugs, polish, docs |
-| UI copy and claims | 2:00 AM Sun | Typo fixes |
-| Code | 6:00 AM Sun | Emergency fixes only |
-| Submission | At least 1 h before the deadline | — |
+| Features | 3:00 AM Sun (moved from 12 AM) | Bugs, polish, docs |
+| UI copy and claims | 4:00 AM Sun (moved from 2 AM) | Typo fixes |
+| Code | 5:30 AM Sun (moved from 6 AM) | Emergency fixes only |
+| Submission | By 7:00 AM Sun: Devpost first, then the Expo form (expo.hexlabs.org) | — |
 
 ## Kill switches
 
