@@ -6,7 +6,6 @@ import { useDemo } from "../../state/demo";
 import { useBundle } from "../data";
 import { sceneFx } from "../fx";
 import { publicSwatch } from "../look";
-import { ABSTRACT_SURFACE_LABEL, useSurfaceChoice } from "../terrain";
 import { selectedInstanceIndex } from "../picking/selection";
 import type { BundleState } from "../types";
 import { sectionPanelRect } from "./layout";
@@ -21,9 +20,8 @@ import {
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 
-/** Header (title + projection note [+ abstract-surface note]) and footer (axis captions), CSS px. */
+/** Header (title + projection note) and footer (axis captions) heights inside the panel, CSS px. */
 const HEADER_PX = 38;
-const SLAB_NOTE_PX = 15;
 const FOOTER_PX = 36;
 /** Click radius in the section, CSS px (the 3D picker's default). */
 const HIT_PX = 10;
@@ -56,9 +54,7 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
   const vp = useViewport();
   const rect = sectionPanelRect(vp.width, vp.height);
   const canvas = useRef<HTMLCanvasElement>(null);
-  // In plan view the 3D depth ruler (which carries this note in 3D) is hidden, so the panel says it.
-  const slab = useSurfaceChoice(meta.scene).choice === "slab";
-  const headerPx = HEADER_PX + (slab ? SLAB_NOTE_PX : 0);
+  const headerPx = HEADER_PX;
 
   const model = useMemo(
     () => buildSectionModel(events, catalog, stations, meta.scene, meta.run.windowStart),
@@ -160,11 +156,6 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
           Depth section
         </div>
         <div style={{ fontSize: 10.5 }}>Every event projected onto grid east · true scale (1 km = 1 km)</div>
-        {slab && (
-          <div data-testid="abstract-surface-note" style={{ fontSize: 10.5, color: colors.text }}>
-            {ABSTRACT_SURFACE_LABEL}
-          </div>
-        )}
       </header>
       <canvas
         ref={canvas}
