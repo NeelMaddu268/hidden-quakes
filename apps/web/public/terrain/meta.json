@@ -25,6 +25,7 @@
     "azimuthDeg": 315.0,
     "flatValue": 180,
     "method": "Horn (1981) gradient, ESRI hillshade formula",
+    "storage": "8-bit value in R = G = B of an RGB PNG (WebKit alters grayscale PNGs on decode)",
     "zFactor": 1.0
   },
   "origin": {
