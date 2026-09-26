@@ -579,3 +579,34 @@ At H2's request, the depth ruler and the depth slices now reach the deepest disp
 that is 9 km: 15 Tier C events lie deeper than 6 km, the deepest at 8.63 km. The label-obstacle list is sized
 from the same depth. The five pre-reveal feature labels and the verbatim tier reasons stay as they are (H2's
 call).
+
+### WEB-09 Tour (story mode) · 2026-09-26 6:45 PM EDT
+
+H2's first overnight item: the judge sequence plays by itself, for a presenter who wants hands off and for
+recording the video. **G** starts it (H4's Tour button too, once mounted: REQ-H3-15). Steps, in `scene/tour/script.ts`:
+
+| Step | Store action (as the presenter's keys would) | Holds for |
+| --- | --- | --- |
+| public | `reset()`: the start frame, pixel-identical to a fresh load | 4.5 s |
+| reveal | `reveal()` | until phase "revealed" (the settle, ≈7 s), then 3 s |
+| strict | `setFilter("strict")` | 6.5 s |
+| hidden | `selectHiddenHero(events)`: the drawer on a Tier A event with no catalog match (skipped if none) | 8 s, then `select(null)` |
+| validation | outlines H4's Validation card (skipped if not on screen) | 6 s |
+| replay | `setTimeMode(true)`: the window replays at `LOOK.time.playbackRate` | until it stops at the window end, then 1.5 s |
+| full | `select(null)`, `setTimeMode(false)`, `setFilter("all")` | 6.5 s, then the tour ends |
+
+- **Stopping.** Any key, click or scroll stops it and leaves the scene where it is. The key is captured on
+  `window` before the shell's presenter keys and prevented, so it does nothing else. Bare modifiers and
+  Cmd/Ctrl/Alt shortcuts don't stop it, so a screen recorder's hotkeys can't end a take. Clicks on the tour's
+  own button (`data-tour-control`) are the button's.
+- **Captions.** One per step, from `scene/tour/copy.ts`, the copy file **H4 may edit** (REQ-H3-15; the rest of
+  `scene/tour/` stays H3's). Numbers come only from `{placeholders}`, filled from `meta.summary`, the hidden
+  event's `quality.nStations` and the playback rate. They are drawn in the counters' mono face and tones (public
+  cool white, pipeline amber). `copy.test.ts` fails on a digit, a docs/00 forbidden phrase, an unqualified
+  "catalog", an unknown placeholder or a caption over 170 characters. The caption is a lower third
+  (`tour/layout.ts` `captionBox`), centered, and keeps clear of every measured overlay: it steps up above the
+  scrubber or REVEAL when either is under the center, and sits left of the open drawer. Scene labels avoid it
+  too, through `H3_OVERLAY_SELECTORS`. It fades in on each step, except under `prefers-reduced-motion`.
+- **State.** A separate `useTour` store (running, step, runs), so docs/02 §6's `DemoState` stays as frozen.
+  `TourRun` is pure: the clock is passed in, and the overlay ticks it once per animation frame, so a hidden tab
+  pauses the tour with the scene.
