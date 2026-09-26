@@ -7,11 +7,13 @@ LOC-02 helpers (test station geometry, test config, exact picks) reach the tests
 fixture ``loc02``: under ``--import-mode=importlib`` a test module can't import a sibling module.
 """
 
+from __future__ import annotations
+
 import socket
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -20,9 +22,10 @@ import yaml
 
 from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
-from hq.locate.locator import Locator, LocatorSetup
-from hq.locate.tt_grid import PHASES, layered_first_arrival
-from hq.locate.velocity import LayerModel, SourceRef, load_configured_model
+
+if TYPE_CHECKING:  # the LOC-02 modules load lazily, so an import error there fails only LOC-02
+    from hq.locate.locator import Locator, LocatorSetup
+    from hq.locate.velocity import LayerModel
 
 SEISMIC_ROOT = Path(__file__).resolve().parents[2]
 SHOWCASE_DIR = SEISMIC_ROOT / "configs" / "showcase"
@@ -184,6 +187,8 @@ class Loc02Kit:
 
     @staticmethod
     def toy_model(tops: list[float], vp: list[float], vs: list[float]) -> LayerModel:
+        from hq.locate.velocity import LayerModel, SourceRef
+
         return LayerModel(
             name="toy",
             datum="topElevM is m above mean sea level.",
@@ -211,6 +216,8 @@ class Loc02Kit:
 
         P on every station (or ``p_stations``), S on every station (or ``s_stations``).
         """
+        from hq.locate.tt_grid import PHASES, layered_first_arrival
+
         rows = []
         for sid, se, sn, surface, depth in self.STATIONS:
             z_rec = surface - depth
@@ -231,6 +238,9 @@ class Loc02Kit:
     def setup(
         self, cfg: SeismologyConfig | None = None, run: RunSection | None = None
     ) -> LocatorSetup:
+        from hq.locate.locator import LocatorSetup
+        from hq.locate.velocity import load_configured_model
+
         config = cfg if cfg is not None else self.test_config()
         section = run if run is not None else self.run_section()
         return LocatorSetup(
