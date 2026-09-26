@@ -613,21 +613,25 @@ def _flagged(az: pd.DataFrame, min_n: int, flag_s: float) -> pd.DataFrame:
 
 
 def side_drop_text(pa: pd.DataFrame) -> str:
-    """Outlier-pass drop fraction per phase for stations west vs east of the epicentre."""
+    """Outlier-pass drop fraction per phase for stations west vs east of the epicentre and of
+    the run origin (the two splits differ when the epicentres sit off the origin)."""
     if pa.empty:
         return ""
-    bits = []
-    for phase, g in pa.groupby("phase", sort=True):
-        east = (g["stE"] > g["evE"]).to_numpy(dtype=bool)
-        used = g["used"].to_numpy(dtype=bool)
-        parts = []
-        for label, mask in (("west", ~east), ("east", east)):
-            n = int(mask.sum())
-            parts.append(f"{label} {1.0 - used[mask].sum() / n:.0%} of {n}" if n else
-                         f"{label} none")
-        bits.append(f"{phase} " + ", ".join(parts))
-    return ("; outlier pass drop fraction by station side of the epicentre: "
-            + "; ".join(bits))
+    splits = []
+    for split, east_of in (("the epicentre", pa["evE"]), ("the run origin", 0.0)):
+        bits = []
+        for phase in sorted(pa["phase"].unique()):
+            g = pa["phase"] == phase
+            east = (pa["stE"] > east_of).to_numpy(dtype=bool)
+            used = pa["used"].to_numpy(dtype=bool)
+            parts = []
+            for label, mask in (("west", g.to_numpy() & ~east), ("east", g.to_numpy() & east)):
+                n = int(mask.sum())
+                parts.append(f"{label} {1.0 - used[mask].sum() / n:.0%} of {n}" if n else
+                             f"{label} none")
+            bits.append(f"{phase} " + ", ".join(parts))
+        splits.append(f"of {split}: " + "; ".join(bits))
+    return "; outlier pass drop fraction by station side " + " / ".join(splits)
 
 
 def sp_ratio(inputs: DiagnosticsInputs, cat_az: pd.DataFrame,
@@ -858,7 +862,7 @@ def synthetic_section(inputs: DiagnosticsInputs) -> list[str]:
     lines.append(
         "The synthetic picks carry noise at pickSigmaS, below the observed residual spread (section "
         "above), and a P pick at every station, and the test has no model error, so these errors "
-        "are a lower bound for the real candidate events."
+        "are optimistic for the real candidate events."
     )
     return lines
 
