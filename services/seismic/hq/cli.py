@@ -4,14 +4,16 @@
     hq stage <name> --run <runId> [--config-dir DIR] [--data-dir DIR]
     hq stages
 
-The data directory is ``--data-dir``, else ``$HQ_DATA_DIR``, else ``<repo root>/data`` where the
-repo root is the first ancestor of the config directory holding ``.git``. Runs live at
+The data directory is ``--data-dir``, else ``$HQ_DATA_DIR``, else ``<checkout root>/data`` where
+the root is the first ancestor of the config directory holding ``.git``; in a linked git worktree
+that is the main checkout, so every worktree on a laptop shares one ``data/``. Runs live at
 ``<data>/<mode>/runs/<runId>``, the waveform cache at ``<data>/cache``. Logs go to stderr at INFO.
 """
 
 import argparse
 import logging
 import os
+import subprocess
 import sys
 import time
 from collections.abc import Sequence
@@ -31,19 +33,47 @@ DATA_DIR_HELP = f"runs and cache root (default: ${DATA_DIR_ENV} or <repo root>/{
 
 
 def configure_logging() -> None:
-    """INFO to stderr, timestamps in UTC like run ids. A no-op when the root logger already
-    has handlers (tests, embedding)."""
-    logging.Formatter.converter = time.gmtime
-    logging.basicConfig(
-        level=logging.INFO, format=LOG_FORMAT, datefmt="%H:%M:%S", stream=sys.stderr
-    )
+    """INFO to stderr with UTC timestamps (like run ids). A no-op when the root logger already
+    has handlers (tests, embedding); never touches global logging state."""
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    formatter = logging.Formatter(LOG_FORMAT, datefmt="%H:%M:%S")
+    formatter.converter = time.gmtime
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(formatter)
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
+def git_common_dir(cwd: Path) -> Path | None:
+    """The ``.git`` directory shared by every worktree of the repo at ``cwd``; None without git."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return Path(proc.stdout.strip())
 
 
 def find_repo_root(start: Path) -> Path | None:
-    """First ancestor of ``start`` (inclusive) containing ``.git`` (a dir, or a file in worktrees)."""
+    """Root of the checkout whose ``data/`` a run uses: the first ancestor of ``start`` holding
+    ``.git``. In a linked worktree (``.git`` is a file) that is the main checkout, so worktrees
+    share one ``data/`` (runs and the waveform cache) instead of each getting their own."""
     for candidate in (start, *start.parents):
-        if (candidate / ".git").exists():
+        git = candidate / ".git"
+        if git.is_dir():
             return candidate
+        if git.is_file():
+            common = git_common_dir(candidate)
+            return common.parent if common is not None else candidate
     return None
 
 
@@ -128,10 +158,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
-    except (ConfigError, runs.RunError) as exc:
-        log.error("%s", exc)
+    except (ConfigError, runs.RunError) as exc:  # logged once, with the runner's rerun hint
+        log.error("%s", "; ".join([str(exc), *getattr(exc, "__notes__", [])]))
         return 1
-    except Exception:  # a stage crashed: keep the traceback, exit nonzero
+    except Exception:  # a stage crashed: keep the traceback (notes included), exit nonzero
         log.exception("hq %s failed", args.command)
         return 1
 

@@ -14,7 +14,7 @@ import importlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -80,6 +80,28 @@ class RunConfig:
         return value
 
 
+def _collect_models(annotation: Any, seen: set[type[BaseModel]]) -> None:
+    """Add every ``BaseModel`` subclass reachable from ``annotation`` to ``seen``, unwrapping
+    ``X | None``, ``list[X]``, ``dict[K, X]``, ``tuple[...]`` and nested model fields."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        if annotation not in seen:
+            seen.add(annotation)
+            for field in annotation.model_fields.values():
+                _collect_models(field.annotation, seen)
+        return
+    for arg in get_args(annotation):
+        _collect_models(arg, seen)
+
+
+def lax_models(model: type[BaseModel]) -> list[type[BaseModel]]:
+    """``model`` and every model nested in it that doesn't set ``extra="forbid"``, by name."""
+    seen: set[type[BaseModel]] = set()
+    _collect_models(model, seen)
+    return sorted(
+        (cls for cls in seen if cls.model_config.get("extra") != "forbid"), key=lambda c: c.__name__
+    )
+
+
 def _import_model(spec: SectionSpec) -> type[BaseModel] | None:
     """The section's Pydantic model, or ``None`` when its module isn't merged yet."""
     try:
@@ -93,10 +115,12 @@ def _import_model(spec: SectionSpec) -> type[BaseModel] | None:
         raise ConfigError(
             f"{spec.module} has no Pydantic model {spec.class_name} (owner: {spec.owner})"
         )
-    if model.model_config.get("extra") != "forbid":
+    lax = lax_models(model)
+    if lax:
+        names = ", ".join(cls.__name__ for cls in lax)
         raise ConfigError(
-            f"{spec.module}.{spec.class_name} must set extra='forbid' so unknown keys in "
-            f"{spec.filename} are errors (owner: {spec.owner})"
+            f"{spec.module}.{spec.class_name}: {names} must set extra='forbid' so unknown keys "
+            f"in {spec.filename} are errors, at every nesting level (owner: {spec.owner})"
         )
     return model
 
@@ -175,5 +199,6 @@ __all__ = [
     "RunConfig",
     "RunSection",
     "SectionSpec",
+    "lax_models",
     "load_config",
 ]

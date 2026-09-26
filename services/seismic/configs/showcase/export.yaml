@@ -13,8 +13,12 @@ heroRule: tierA_most_stations
 evidence:
   # Seconds of waveform before the predicted P arrival at each station.
   beforeS: 2.0
-  # Seconds after it. A snippet is beforeS + afterS long; docs/02 expects 4-8 s.
+  # Seconds after it. A snippet is beforeS + afterS long and must fit [minLengthS, maxLengthS].
   afterS: 4.0
+  # Shortest snippet worth showing in the drawer, s (the contract describes 4-8 s snippets).
+  minLengthS: 4.0
+  # Longest snippet, s. Longer snippets make every evidence file heavier for no extra evidence.
+  maxLengthS: 8.0
   # Zero-phase bandpass for the display copy, Hz (low, high). Recorded as EventEvidence.filterHz.
   bandHz: [2.0, 20.0]
   # Traces per event, closest stations first. The contract caps this at 16; the "evidence drawer"
