@@ -326,3 +326,9 @@ def match(
         time.perf_counter() - started,
     )
     return MatchResult(matches=matches, sensitivity=sensitivity)
+
+
+# Last, so the package attribute ``run`` is the stage function, not the submodule: the stage
+# registry (H4's ``hq.runs.STAGES``) resolves stage ``match`` as ``hq.match`` plus
+# ``getattr(module, "run")``. ``importlib.import_module("hq.match.run")`` is the module.
+from hq.match.run import run as run  # explicit re-export
