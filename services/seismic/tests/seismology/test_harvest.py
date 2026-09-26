@@ -492,6 +492,12 @@ def test_stage_pass_2_harvests_and_keeps_the_terms(
     assert not any("afterNoHarvestHM" in r for r in params_off["statics"]["reference"])
     assert set(params_on["statics"]["crossValidatedOffsets"]) == {
         "before", "after", "afterNoHarvest", "inSample"}
+    report_on, report_off = (c.path("diagnostics.md").read_text() for c in (on, off))
+    assert "## Pick harvest (LOC-10)" in report_on and "Pick harvest" not in report_off
+    n = len(hworld["withheld"])
+    assert f"{n} of {n} harvested picks used" in report_on
+    assert "held-out terms, before the harvest" in report_on
+    assert "not independent evidence" in report_on and "Chance:" in report_on
     # A pass 2 rerun on the harvested events_located (after match reruns) must not call the
     # association stale: the harvested pick ids belong to no association event.
     write_table(match(ev_on, catalog, hworld["on"]).matches, on.path("matches.parquet"), "Match")
