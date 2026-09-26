@@ -23,8 +23,8 @@ check that fails gives the reason:
 7. ``location`` (stations, picks, ``events_located.pickIds``): the located events within
    ``maxCandidateDtS`` of the public origin that carry in-window picks from ``minStations``
    stations are this event's associated candidates. If any exists, the reason is "located out of
-   tolerance" with the lowest-cost one; if none does and check 6 ran, it is
-   "associated, not located".
+   tolerance" with the lowest-cost one (and the public event that candidate is matched to, if
+   any); if none does and check 6 ran, it is "associated, not located".
 8. Otherwise the ``match`` reason stays: "no candidate within ..." with the lowest-cost located
    event.
 
@@ -347,6 +347,7 @@ class _Context:
     ran: frozenset[str]
     offsets: Offsets
     j_of: dict[str, int]
+    matched_to: dict[str, str]  # located event id -> the public event it is matched to
     tol: Tolerance
     k_min: int
     min_prob: float
@@ -415,6 +416,11 @@ def explain_unmatched(
             ran=ran,
             offsets=pair_offsets(located, public),
             j_of={eid: j for j, eid in enumerate(located["id"])},
+            matched_to={
+                str(r.eventId): str(r.catalogId)
+                for r in matches.itertuples(index=False)
+                if pd.notna(r.eventId)
+            },
             tol=Tolerance.from_config(cfg.matching),
             k_min=reasons_cfg.minStations,
             min_prob=reasons_cfg.minPickProb,
@@ -529,11 +535,13 @@ def _evidence_reason(base: str, ev: pd.Series, i: int, ctx: _Context) -> str:
         cols = np.array([ctx.j_of[e] for e in candidates], dtype=np.intp)
         best = int(np.argmin(ctx.tol.cost(ctx.offsets.dt[i, cols], ctx.offsets.dist[i, cols])))
         eid, j = candidates[best], int(cols[best])
+        owner = ctx.matched_to.get(eid)
+        taken = "" if owner is None else f"; matched to {owner}"
         return (
             f"{REASONS['locatedOutOfTolerance']} {ctx.tol.label()} (lowest-cost associated "
             f"candidate {eid}: dt {ctx.offsets.dt[i, j]:+.2f} s, "
             f"{ctx.offsets.dist[i, j] / 1000.0:.2f} km; picks in the expected arrival windows "
-            f"from {per_event[eid]} stations)"
+            f"from {per_event[eid]} stations{taken})"
         )
     if "association" in ctx.ran:
         return (
