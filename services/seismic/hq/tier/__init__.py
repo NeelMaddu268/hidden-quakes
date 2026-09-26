@@ -430,31 +430,31 @@ def supplied_thresholds(
 # --- tiering one event ----------------------------------------------------------------------------
 
 
-def _fmt(value: float, other: float | None, decimals: int) -> str:
-    """``value`` at ``decimals``, or more (up to 6) until it reads differently from ``other``."""
+def _decimals(value: float, other: float, decimals: int) -> int:
+    """``decimals``, or more (up to 6) until ``value`` reads differently from ``other``."""
     d = decimals
-    while other is not None and value != other and d < 6:
-        if f"{value:.{d}f}" != f"{other:.{d}f}":
-            break
+    while value != other and d < 6 and f"{value:.{d}f}" == f"{other:.{d}f}":
         d += 1
-    return f"{value:.{d}f}"
+    return d
 
 
 def _metric_reason(metric: Metric, value: float | None, bars: dict[str, Bar]) -> str:
-    """One tierReasons string: the A comparison, and the B one when A fails."""
+    """One tierReasons string: the A comparison, and the B one when A fails. Every number in it
+    is shown at one precision, enough to tell the value from each bar shown."""
     if value is None:
         return f"{metric.name} null (no formal error): fails A and B"
-    parts: list[str] = []
+    shown: list[tuple[str, Bar]] = []
     for tier in BARRED_TIERS:
-        bar = bars[tier]
-        op = metric.op if bar.passes(value) else metric.fail_op
-        bar_text = _fmt(bar.value, value, metric.decimals)
-        source = f"{tier}: {bar.label}" + (f", n={bar.n_used}" if tier == "A" else "")
-        parts.append(f"{op} {bar_text} ({source})")
-        if bar.passes(value):
+        shown.append((tier, bars[tier]))
+        if bars[tier].passes(value):
             break
-    value_text = _fmt(value, next((b.value for b in bars.values()), None), metric.decimals)
-    return f"{metric.name} {value_text} " + "; ".join(parts)
+    d = max(_decimals(value, bar.value, metric.decimals) for _, bar in shown)
+    parts = []
+    for tier, bar in shown:
+        op = metric.op if bar.passes(value) else metric.fail_op
+        source = f"{tier}: {bar.label}" + (f", n={bar.n_used}" if tier == "A" else "")
+        parts.append(f"{op} {bar.value:.{d}f} ({source})")
+    return f"{metric.name} {value:.{d}f} " + "; ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -578,6 +578,7 @@ def assign_tiers(
         "caveat": CAVEAT,
         "rules": rules,
         "thresholdSource": source,
+        "note": None,
         "matchedSet": {
             "n": int(is_matched.sum()),
             "definition": "located candidate events with a public regional catalog match "

@@ -157,6 +157,9 @@ def test_bars_are_quantiles_of_the_matched_set(cfg: SeismologyConfig) -> None:
     matched = events[events["id"].isin(matched_ids)]
     q = cfg.tiering.quantiles
     assert th["nMatched"] == N_MATCHED == result.tiering["matchedSet"]["n"]
+    # Every top-level key on every path: run.json merges the tiering record shallowly, so a key
+    # only the zero-event path wrote would outlive a later non-empty tier run.
+    assert result.tiering["note"] is None
     assert th["quantiles"] == {"A": q.A, "B": q.B}
     for metric in METRICS:
         values = matched[metric.column].to_numpy(dtype=np.float64)
@@ -201,6 +204,18 @@ def test_boundary_equality_passes(cfg: SeismologyConfig) -> None:
     assert out["tierReasons"].iloc[0][3] == "rmsS 0.050 <= 0.050 (A: p75 of matched, n=12)"
     reason = out["tierReasons"].iloc[13][3]
     assert reason.startswith("rmsS 0.0501 > 0.0500 (A: p75 of matched, n=12); > 0.0500 (B")
+
+
+def test_reasons_never_read_as_false_inequalities(cfg: SeismologyConfig) -> None:
+    """A value within one display unit of the B bar: value and bars share one precision."""
+    gaps = [100.0] * 8 + [130.6, 150.0, 160.0, 188.9]  # A bar 130.6 (9th of 12), B bar 188.9
+    models = [event(k, gapDeg=g) for k, g in enumerate(gaps)]
+    events = located(models + [event(12, gapDeg=188.86)])
+    out = assign_tiers(events, matches_for(events, [m.id for m in models]), cfg).events
+    assert out["tier"].iloc[12] == "B"
+    assert out["tierReasons"].iloc[12][6] == (
+        "gapDeg 188.86 > 130.60 (A: p75 of matched, n=12); <= 188.90 (B: worst of matched)"
+    )
 
 
 def test_null_errors_fail_a_and_b(cfg: SeismologyConfig) -> None:
@@ -324,6 +339,9 @@ def test_zero_events_give_a_typed_empty_table(cfg: SeismologyConfig) -> None:
     assert len(result.events) == 0
     assert list(result.events.columns) == columns_for(SeismicEvent)
     assert result.tiering["thresholds"] is None
+    assert result.tiering["note"] == "no located events, so no bars were derived"
+    non_empty = assign_tiers(*seeded_world()[:2], cfg).tiering
+    assert set(result.tiering) == set(non_empty)  # same top-level keys: nothing stale survives
     assert result.tiering["counts"]["all"] == {"A": 0, "B": 0, "C": 0}
 
 
