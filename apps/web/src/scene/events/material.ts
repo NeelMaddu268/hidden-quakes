@@ -2,6 +2,7 @@
 // Everything that animates (reveal, tier/filter opacity, layer opacity) is a uniform, so per-frame
 // updates are a handful of float writes and never touch per-instance data.
 
+import { colors } from "@hq/visualization";
 import { Color, Vector3, type IUniform } from "three";
 import { TIMELINE } from "../reveal/timeline";
 
@@ -35,7 +36,15 @@ export interface EventUniforms {
   uLayerOpacity: IUniform<number>;
   /** Intensity multiplier; values above 1 push cores past the bloom threshold. */
   uGlow: IUniform<number>;
+  /** Instance index of the selected event in this layer (WEB-05), or −1 for none. */
+  uSelected: IUniform<number>;
+  /** Color of the thin ring around the selected event. */
+  uRingColor: IUniform<Color>;
 }
+
+/** The selected glyph's quad grows by this factor (or to SELECTED_MIN_PX_FACTOR × uMinPx) to hold its ring. */
+export const SELECTED_QUAD_SCALE = 2.6;
+export const SELECTED_MIN_PX_FACTOR = 5;
 
 export const EVENT_VERTEX_SHADER = /* glsl */ `
   attribute float aTier;
@@ -54,10 +63,13 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
   uniform float uDepthFog;
   uniform vec3 uTierOpacity;
   uniform float uLayerOpacity;
+  uniform float uSelected;
 
   varying vec2 vUv;
   varying float vAlpha;
   varying float vBoost;
+  varying float vSelected;
+  varying float vCoreFrac;
 
   void main() {
     vec4 worldCenter = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
@@ -74,11 +86,22 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
     float tierOpacity = aTier < 0.5 ? uTierOpacity.x : (aTier < 1.5 ? uTierOpacity.y : uTierOpacity.z);
     float fog = exp(-uDepthFog * max(0.0, uSurfaceY - worldCenter.y));
     vAlpha = tierOpacity * uLayerOpacity * shown * fog;
+    // The selected event stays at full strength even when its tier is faded (e.g. STRICT on a Tier B).
+    vSelected = abs(float(gl_InstanceID) - uSelected) < 0.5 ? 1.0 : 0.0;
+    vAlpha = max(vAlpha, vSelected * uLayerOpacity * shown);
 
     // Pixels per scene unit at this depth; perspective when projectionMatrix[2][3] == -1.
     float pxPerUnit = projectionMatrix[1][1] * uViewportHeight * 0.5;
     if (projectionMatrix[2][3] < -0.5) pxPerUnit /= max(-mvCenter.z, 1e-4);
     float radius = max(uSize * aScale, uMinPx / pxPerUnit);
+    // Selected: a bigger quad whose inner vCoreFrac holds the usual glyph and whose rim holds the ring.
+    float quad = mix(
+      radius,
+      max(radius * ${SELECTED_QUAD_SCALE.toFixed(2)}, uMinPx * ${SELECTED_MIN_PX_FACTOR.toFixed(2)} / pxPerUnit),
+      vSelected
+    );
+    vCoreFrac = radius / quad;
+    radius = quad;
     // Hidden instances collapse to a point: no fragments, no overdraw.
     radius *= mix(2.0, 1.0, settle) * step(0.001, vAlpha);
 
@@ -91,20 +114,39 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
 export const EVENT_FRAGMENT_SHADER = /* glsl */ `
   uniform vec3 uColor;
   uniform float uGlow;
+  uniform vec3 uRingColor;
 
   varying vec2 vUv;
   varying float vAlpha;
   varying float vBoost;
+  varying float vSelected;
+  varying float vCoreFrac;
 
   void main() {
     vec2 p = vUv * 2.0 - 1.0;
-    float r2 = dot(p, p);
-    if (r2 > 1.0) discard;
-    float core = 1.0 - smoothstep(0.0, 0.3, r2);
-    float falloff = 1.0 - r2;
-    float halo = falloff * falloff * 0.35;
-    float shape = core + halo;
-    gl_FragColor = vec4(uColor * shape * uGlow * (1.0 + vBoost), vAlpha * min(shape, 1.0));
+    float rq = length(p);
+    float px = fwidth(rq); // before any discard or branch, so the derivative is always defined
+    if (rq > 1.0) discard;
+    // The glyph fills the quad (vCoreFrac = 1) unless selected, when it keeps its size in the middle.
+    vec2 g = p / vCoreFrac;
+    float r2 = dot(g, g);
+    float shape = 0.0;
+    if (r2 <= 1.0) {
+      float core = 1.0 - smoothstep(0.0, 0.3, r2);
+      float falloff = 1.0 - r2;
+      float halo = falloff * falloff * 0.35;
+      shape = core + halo;
+    }
+    vec3 rgb = uColor * shape * uGlow * (1.0 + vBoost + 0.8 * vSelected);
+    float alpha = vAlpha * min(shape, 1.0);
+    if (vSelected > 0.5) {
+      // Thin ring (~1.5 px at any size) just inside the rim of the quad.
+      float ring = 1.0 - smoothstep(0.0, 1.5 * px, abs(rq - (1.0 - 2.0 * px)));
+      rgb = mix(rgb, uRingColor, ring);
+      alpha = max(alpha, ring * vAlpha);
+    }
+    if (alpha <= 0.0) discard;
+    gl_FragColor = vec4(rgb, alpha);
     #include <colorspace_fragment>
   }
 `;
@@ -135,6 +177,8 @@ export function createEventUniforms(opts: EventMaterialOptions): EventUniforms {
     uTierOpacity: { value: new Vector3(1, 1, 1) },
     uLayerOpacity: { value: 1 },
     uGlow: { value: opts.glow ?? 1 },
+    uSelected: { value: -1 },
+    uRingColor: { value: new Color(colors.strictHalo) },
   };
 }
 
