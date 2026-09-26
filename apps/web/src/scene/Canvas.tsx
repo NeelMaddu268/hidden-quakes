@@ -2,7 +2,7 @@
 
 import { colors } from "@hq/visualization";
 import { Canvas } from "@react-three/fiber";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useDemo } from "../state/demo";
 import { computeBounds } from "./camera/bounds";
 import { CameraRig } from "./camera/CameraRig";
@@ -25,6 +25,8 @@ import {
 } from "./events/instances";
 import type { EventUniforms } from "./events/material";
 import { sceneFx } from "./fx";
+import { Picker } from "./picking/Picker";
+import { selectedInstanceIndex } from "./picking/selection";
 import { Post } from "./post/Post";
 import { RevealDriver } from "./reveal/RevealDriver";
 import type { BundleState } from "./types";
@@ -42,9 +44,10 @@ const EVENT_GLOW = 1.6;
 /** Depth fog density per km below the site surface: deeper events read slightly dimmer. */
 const DEPTH_FOG_PER_KM = 0.07;
 
-/** Candidate (amber) layer: follows the reveal and the filter. Reads the store without re-rendering. */
-function driveCandidates(u: EventUniforms): void {
+/** Candidate (amber) layer: follows the reveal, the filter and the selection. Reads the store without re-rendering. */
+function driveCandidates(u: EventUniforms, indexById: ReadonlyMap<string, number>): void {
   const s = useDemo.getState();
+  u.uSelected.value = selectedInstanceIndex(s.selectedEventId, indexById);
   u.uRevealElapsed.value = candidateRevealUniform(s.phase, sceneFx.revealElapsedS);
   const [a, b, c] = FILTER_TIER_OPACITY[s.filter];
   u.uTierOpacity.value.set(a, b, c);
@@ -65,6 +68,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
 
   const candidates = useMemo(() => buildCandidateInstances(events, ve, windowStart), [events, ve, windowStart]);
   const publicEvents = useMemo(() => buildPublicInstances(catalog, ve, windowStart), [catalog, ve, windowStart]);
+  const drive = useCallback((u: EventUniforms) => driveCandidates(u, candidates.indexById), [candidates]);
   // Frame the structure: Tier A and B candidates plus the public catalog. Scattered Tier C events
   // stay rendered but don't widen the shot.
   const surfaceY = depthKmToSceneY(0, meta.scene);
@@ -102,13 +106,14 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         color={colors.recovered}
         size={CANDIDATE_SIZE_KM}
         minPx={CANDIDATE_MIN_PX}
-        drive={driveCandidates}
+        drive={drive}
         glow={EVENT_GLOW}
         surfaceY={surfaceY}
         depthFog={DEPTH_FOG_PER_KM}
         renderOrder={1}
       />
       <CameraRig bounds={bounds} />
+      <Picker candidates={candidates} publicEvents={publicEvents} catalog={catalog} sizeKm={{ candidate: CANDIDATE_SIZE_KM, public: PUBLIC_SIZE_KM }} />
     </>
   );
 }

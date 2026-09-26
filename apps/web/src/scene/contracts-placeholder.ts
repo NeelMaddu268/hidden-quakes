@@ -88,6 +88,27 @@ export interface CatalogEvent {
   matchedEventId?: string | null;
 }
 
+export interface WaveformSnippet {
+  stationId: string;
+  channel: string;
+  epiDistM: number;
+  t0: number; // epoch s of the first sample
+  dt: number; // s between display samples (~0.01)
+  samples: number[]; // bandpassed display copy, scaled to [-1, 1], 4-8 s long
+  pickP?: number | null; // epoch s
+  pickS?: number | null;
+  probP?: number | null;
+  probS?: number | null;
+  predP?: number | null; // predicted from the final location
+  predS?: number | null;
+}
+
+export interface EventEvidence {
+  eventId: string;
+  filterHz: [number, number];
+  traces: WaveformSnippet[]; // sorted by epiDistM, at most 16
+}
+
 export interface SourceRef {
   citation: string;
   url: string;
@@ -154,6 +175,12 @@ export interface ModeInfo {
   generatedAt: number;
   isSynthetic: boolean;
 }
+
+export type EvidenceState = {
+  status: "idle" | "loading" | "ready" | "error";
+  evidence?: EventEvidence;
+  message?: string;
+};
 
 export type BundleState =
   | { status: "loading" }
