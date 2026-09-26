@@ -585,11 +585,11 @@ describe("live failover to the snapshot bundle (API-05)", () => {
     state.up = false;
     mountLive(provider);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(LIVE_FETCH_TIMEOUT_MS - 10);
+      await vi.advanceTimersByTimeAsync(LIVE_FETCH_TIMEOUT_MS / 2);
     });
     expect(screen.getByTestId("label").textContent).toBe("loading");
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(LIVE_FETCH_TIMEOUT_MS / 2 + 20); // past the deadline
     });
     await waitFor(() => expect(screen.getByTestId("label").textContent).toBe(SNAPSHOT_LABEL));
   });

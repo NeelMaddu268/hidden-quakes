@@ -152,7 +152,7 @@ This laptop runs the run of record. Around 10:30 PM, take H1's `data/cache/` fol
 | --- | --- | --- | --- |
 | `StaticBundleProvider("mock")` | `/data/mock/` | red SYNTHETIC banner | Dev only; excluded from production by env flag |
 | `StaticBundleProvider("showcase")` | `/data/showcase/` | "Showcase · {windowLabel} · run {runId}" | Default |
-| `LiveProvider(apiBase)` | `/api/live/*` (`NEXT_PUBLIC_LIVE_API_BASE`) | "Live · last 2 h · updated {n} min ago" | Polls every 60 s, heartbeats every 2 s; a failed request (refused, 503, no answer in 5 s) fails over; a later healthy heartbeat switches back (`services/api/README.md` → Failover) |
+| `LiveProvider(apiBase)` | `/api/live/*` (`NEXT_PUBLIC_LIVE_API_BASE`) | "Live · last 2 h · updated {n} min ago" | Polls every 60 s, heartbeats every 2 s; a failed request (refused, 503, no answer within `LIVE_FETCH_TIMEOUT_MS`) fails over; a hang is noticed within one heartbeat plus that timeout; a later healthy heartbeat switches back (`services/api/README.md` → Failover) |
 | `StaticBundleProvider("snapshot")` | `/data/snapshot/` | "Snapshot · generated {time} by our pipeline · run {runId}" | Automatic failover target; frozen with `hq-api freeze-snapshot`, committed through `main` |
 
 ### Validation panel

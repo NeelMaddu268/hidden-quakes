@@ -15,7 +15,7 @@ export const LIVE_POLL_MS = 60_000;
 export const LIVE_HEARTBEAT_MS = 2_000;
 
 /** A live request that has not answered after this long counts as failed and fails over. */
-export const LIVE_FETCH_TIMEOUT_MS = 5_000;
+export const LIVE_FETCH_TIMEOUT_MS = 3_000;
 
 /** Where static bundles live, relative to the site root (docs/01 → Data bundle). */
 export const DATA_BASE_URL = "/data";
