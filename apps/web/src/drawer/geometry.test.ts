@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Station, WaveformSnippet } from "../scene/types";
-import { depthGeometry, depthKmOfElev, evidenceStations, mapGeometry, roundLengthAtMost } from "./geometry";
+import { depthGeometry, depthKmOfElev, evidenceStations, mapGeometry, pickingStations, roundLengthAtMost } from "./geometry";
 
 const BOX = { width: 240, height: 200, pad: 16 };
 
@@ -140,5 +140,23 @@ describe("depthGeometry", () => {
     );
     expect(g.verticalExaggeration).toBe(1);
     expect(g.y(1) - g.y(0)).toBeCloseTo(g.x(1000) - g.x(0), 6);
+  });
+});
+
+describe("pickingStations", () => {
+  const st = (id: string, e = 0, n = 0) => ({ id, enu: { e, n, u: 0 } }) as unknown as Station;
+  const byId = new Map([st("UU.FORK2"), st("6K.CS03", 10, 20), st("UU.NOPOS", NaN, 0)].map((s) => [s.id, s]));
+
+  it("takes the part of each pick id that is a bundle station id, deduplicated in pick order", () => {
+    const ids = [
+      "phasenet:instance:6K.CS03:P:1789037720.490",
+      "phasenet:instance:6K.CS03:S:1789037721.410",
+      "phasenet:instance:UU.FORK2:P:1789037723.410",
+    ];
+    expect(pickingStations(ids, byId).map((s) => s.id)).toEqual(["6K.CS03", "UU.FORK2"]);
+  });
+
+  it("skips picks naming no known station and stations without a position", () => {
+    expect(pickingStations(["x:y:XX.GONE:P:1", "a:b:UU.NOPOS:P:2", "garbage"], byId)).toEqual([]);
   });
 });

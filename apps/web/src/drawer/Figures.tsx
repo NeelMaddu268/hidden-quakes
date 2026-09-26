@@ -28,17 +28,21 @@ export interface FiguresProps {
   stations: Station[] | null;
   /** Evidence station ids the bundle has no station record for. */
   missing: string[];
+  /** Where `stations` came from: the evidence traces, or the event's picks when it has no evidence file. */
+  source?: "evidence" | "picks";
 }
 
 /** Plan view (north up) with station-to-epicenter lines, and the depth section beside it. */
-export function Figures({ event, meta, stations, missing }: FiguresProps) {
+export function Figures({ event, meta, stations, missing, source = "evidence" }: FiguresProps) {
   return (
     <section className="hqd-section" aria-label="Station geometry">
       <div className="hqd-figs">
         <div className="hqd-fig">
           <span className="hqd-label">Plan view</span>
           {stations ? <MiniMap event={event} stations={stations} /> : <div className="hqd-fig-empty" />}
-          <div className="hqd-fig-caption">Grid north up · station → epicenter lines</div>
+          <div className="hqd-fig-caption">
+            Grid north up · {source === "picks" ? "picking station" : "station"} → epicenter lines
+          </div>
         </div>
         <div className="hqd-fig">
           <span className="hqd-label">Depth section · looking north</span>

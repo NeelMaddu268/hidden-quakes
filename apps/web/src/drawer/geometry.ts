@@ -19,6 +19,27 @@ export function roundLengthAtMost(maxLen: number): number {
   return pow;
 }
 
+/**
+ * Stations that picked the event, from its pick ids, deduplicated in pick order: the drawer's station
+ * geometry when the event has no evidence file (the exporter caps evidence at `maxEvents`). The contract
+ * doesn't fix a pick id's format, so the station is the one colon-separated part that is a bundle station
+ * id (real ids read `<picker>:<instance>:<NET.STA>:<phase>:<time>`); a pick with no such part is skipped.
+ */
+export function pickingStations(pickIds: readonly string[], stationsById: ReadonlyMap<string, Station>): Station[] {
+  const seen = new Set<string>();
+  const out: Station[] = [];
+  for (const id of pickIds) {
+    const st = id
+      .split(":")
+      .map((part) => stationsById.get(part))
+      .find((s): s is Station => s !== undefined);
+    if (!st || seen.has(st.id) || !isNum(st.enu?.e) || !isNum(st.enu?.n)) continue;
+    seen.add(st.id);
+    out.push(st);
+  }
+  return out;
+}
+
 /** Stations of the evidence traces, in trace order, deduplicated; ids missing from the bundle are listed. */
 export function evidenceStations(
   traces: readonly WaveformSnippet[],
