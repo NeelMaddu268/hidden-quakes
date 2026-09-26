@@ -1,0 +1,150 @@
+# Devpost submission (draft, DEMO-03)
+
+Story and language follow `docs/demo/pitch-and-qa.md`; claims follow `docs/00-project.md`. Every number is a placeholder of the form `<from FILE: field>` and is filled on Saturday evening from the exported run of record (`apps/web/public/data/showcase/`). Nothing numeric is typed in by hand. The "Fill-in checklist" at the bottom lists every placeholder and its source; one grep finds them all:
+
+```
+grep -o '<[a-z][^>]*>' docs/demo/devpost.md | sort -u
+```
+
+A placeholder whose source field is null in the bundle means the claim was cut by a kill switch (`docs/03-schedule.md`); delete the sentence, don't estimate.
+
+---
+
+## Title
+
+**Hidden Quakes**
+
+## Tagline
+
+What the public can't see beneath Utah's geothermal frontier.
+
+## Thumbnail
+
+Semi-transparent terrain, the geothermal reference outline, public points in white, strict candidate events in amber below, and the counter `<from meta.json: summary.publicCatalogCount> PUBLIC → <from meta.json: summary.candidateCount> RECOVERED`. It has to read with no video; if it looks like random dots, redesign it.
+
+## Inspiration
+
+Enhanced geothermal is expanding around Milford, Utah. Operators and research teams see underground: dense downhole geophones and fiber arrays give them detailed pictures of the microseismicity that shows an engineered reservoir taking shape. The public gets the regional catalog, which lists a sparse slice of that activity. Microseismicity is also what induced-seismicity oversight (traffic-light protocols) is built on. We wanted to know how much of the underground picture the public seismic network is already hearing, and to show it in a way a non-seismologist can read in five seconds.
+
+## What it does
+
+The public regional catalog shows `<from meta.json: summary.publicCatalogCount>` earthquakes under Utah's geothermal frontier in the showcase window (`<from meta.json: run.windowLabel>`). We rebuilt the catalog from raw public seismometers with neural phase picking, multi-station association, relocation and quality tiers, and found `<from meta.json: summary.candidateCount>` candidate events, `<from meta.json: summary.strictQualityCount>` at strict quality, underground where the public view is nearly empty.
+
+Three interactions:
+
+1. **The reveal.** The scene opens on dark terrain, one glowing geothermal reference and one counter, PUBLIC. Press REVEAL HIDDEN SIGNAL and the candidate events play into the volume, strict tier first, while the counter climbs. PUBLIC / ALL / STRICT filters the view; plan view is one key away.
+2. **The evidence.** Click any dot (or press E for the hero event, the strict event located with the most stations) and the drawer shows the waveforms that put it there: `<from evidence/<heroEventId>.json: traces.length>` stations sorted by distance, the neural P and S picks on each, and the arrival times implied by the final location. They agree, and that agreement is what makes a dot an event.
+3. **Time.** The scrubber replays the window, so clustering in space and time is visible instead of described.
+
+Everything on screen is a candidate event, tiered. Strict means located at least as well as three-quarters of the public-catalog events we recovered, on every metric.
+
+## How we built it
+
+Two halves joined by files. A Python pipeline (`hq`) writes an immutable run directory, stage by stage:
+
+- **Ingest (EarthScope FDSN):** station metadata at channel level, including sensor depth for borehole instruments, and continuous waveforms for every station in the box, cached once.
+- **Preprocess:** one profile per sensor type with explicit anti-aliasing, because the borehole sensors sample far faster than the surface ones and the picker expects one rate.
+- **Pick:** pretrained PhaseNet through SeisBench, weights chosen by an A/B on public-catalog events (`<from meta.json: run.pickerWeights>`). We trained nothing.
+- **Associate:** PyOcto turns single-station picks into events that agree across stations through a velocity model.
+- **Locate:** our own grid locator on a published FORGE velocity model from the DOE Geothermal Data Repository (`<from meta.json: run.velocityModel.name>`), with station statics, per-event uncertainty and a synthetic recovery test on the real station geometry.
+- **Match and tier:** one-to-one matching against the public regional catalog (USGS ComCat, UUSS solutions). The recovered public events set the quality bar: each tier threshold is a quantile of that set, stored in the run.
+- **Magnitude:** a local magnitude calibrated on the matched public events, with leave-one-out error, kept only if that error is acceptable.
+- **Validate and export:** a null test, an STA/LTA baseline, Gutenberg–Richter, then a static bundle (`meta.json`, `events.json`, `validation.json`, evidence snippets) that the web app reads through a provider. Nothing on the demo path depends on a live service.
+
+The web app is Next.js with React Three Fiber: terrain baked from public elevation tiles, events as instanced points with error halos, borehole sensors drawn at their true depth, reference features from GDR well surveys and UGS layers with their sources cited. The shell renders no digit of its own: a test parses every text node and fails on a number. Every run records its full config; the Run details panel prints it verbatim.
+
+Four humans, one lane each (signal, seismology, visualization, platform), each running their own coding agents against a shared plan with frozen contracts and one owner per path.
+
+## Validation
+
+Numbers below are copied from the Validation card of the deployed page, which reads them from the exported run.
+
+- Public-catalog recall: `<from meta.json: summary.recoveredCatalogCount>` of `<from meta.json: summary.publicCatalogCount>`; every miss is listed in the run.
+- Candidate events: `<from meta.json: summary.candidateCount>`, of which `<from meta.json: summary.additionalCount>` are not in the public catalog; `<from meta.json: summary.strictAdditionalCount>` of those pass the strict tier.
+- Median stations per event `<from meta.json: summary.medianStations>`; median travel-time residual `<from meta.json: summary.medianRmsS>` s.
+- Depth resolution of this station geometry, from the synthetic test: about ±`<from validation.json: synthetic.medianVErrM>` m.
+- Null test: with each station's timing scrambled and the same config, association yields about `<from validation.json: nullTest.meanChanceEvents>` chance events, versus `<from meta.json: summary.candidateCount>` with real timing.
+- Baseline (only if `summary.baseline` is present): at comparable quality, neural picking yields `<from meta.json: summary.baseline.gain>`× the strict events of STA/LTA.
+- Magnitudes (only if `validation.magnitude` is present): calibrated on `<from validation.json: magnitude.n>` matched public events, leave-one-out error ±`<from validation.json: magnitude.looMae>`.
+
+## Limits
+
+- **Candidate events, not verified earthquakes.** Each needs consistent picks across multiple stations; strict ones locate at least as well as most public-catalog events. We don't claim all of them are real, and there is no false-positive rate because there is no ground truth for events the public catalog lacks; the null test and the tiers are the proxies.
+- **Sparse public geometry.** Depth is the weakest dimension. Published catalogs from downhole arrays are far denser and sharper than ours; every halo is that event's own error, and we claim no fracture geometry.
+- **No attribution.** Several operations share the region. We never name a cause for any event, and we never attribute seismicity to Utah FORGE, Cape Station or any operator.
+- **Pretrained picker.** PhaseNet weights are public and unchanged; site-specific training needs labels we don't have.
+- **One site, one window.** Config-driven, but run nowhere else yet.
+
+## Challenges
+
+- **Borehole sample rates.** The borehole sensors sample far faster than the surface stations. We built per-sensor-type preprocessing profiles with explicit anti-aliasing and A/B'd a time-stretch variant to keep the high-frequency band, rather than resampling blindly.
+- **Depth credibility.** A sparse surface network trades depth against origin time. We required S picks and a near station for the strict tier, added station statics, measured depth resolution on synthetic events with the real geometry, and kept a plan-view hero ready in case the depth gate failed.
+- **Datums.** Public-catalog depths are relative to sea level, station elevations come from a DEM, borehole sensors sit far below their wellhead, and well surveys are published in survey feet on a state grid. One vertical convention (elevation above sea level, everywhere) and one horizontal one (UTM minus a fixed origin) made every comparison free.
+- **Honesty at hackathon speed.** Every number on screen had to come from data, so the shell carries no digits and the docs quote none; a test and a script enforce it.
+
+## Accomplishments that we're proud of
+
+- A reproducible public-data pipeline from raw waveforms to a tiered catalog, with the whole config recorded in every run.
+- A reveal that reads in five seconds and an evidence drawer that survives a skeptical seismologist.
+- Quality tiers anchored to the public catalog rather than to hand-picked thresholds.
+- A validation card that hides any row whose data is missing, so the demo never overstates.
+- Four lanes, frozen contracts and one owner per path: four people and their agents shipped one product without stepping on each other.
+
+## What we learned
+
+- PhaseNet does one station at a time; the event only exists when picks agree across stations through a velocity model, so association, location, uncertainty and tiering are where the work is.
+- Depth resolution is set by station geometry before any algorithm choice. Measuring it synthetically, on the real geometry, is the honest way to say how good the depths are.
+- The public regional catalog is both the reference the public actually has and the only independent label set, which makes it the right thing to validate against and to calibrate tiers on.
+- Saying "candidate event" every time is a feature, not a hedge.
+
+## What's next
+
+- Other public-network sites: the pipeline is config-driven (area, stations, velocity model); the real per-site cost is a velocity model and station QC.
+- Relative relocation of the strict tier for sharper clusters.
+- Continuous live operation: the live worker already reruns the pipeline on a rolling window and fails over to a snapshot; it needs hardening and a longer uptime record.
+- A public-catalog recall check on a second, well-studied sequence.
+
+## Built with
+
+Python, ObsPy, SeisBench (PhaseNet), PyOcto, scikit-fmm, SciPy, NumPy, pandas, PyArrow, PyProj, Pydantic, FastAPI, uv; TypeScript, Next.js, React, three.js, React Three Fiber, zustand, Vitest, pnpm; EarthScope FDSN services, USGS ComCat, USGS 3DEP, DOE Geothermal Data Repository, Utah Geological Survey.
+
+## Links
+
+- Live demo: `<deployed URL>`
+- Repository: `<repo URL>`
+- Video: `<video URL>`
+
+## HackGT compliance
+
+Pre-event work was research into which public data exist and which published methods work; it produced the planning documents that are the repository's first commit. Everything else in the repository (pipeline, contracts, exporter, web app, scripts, tests, docs) was built during HackGT by the four of us and our agents; git history starts at the kickoff commit. Public data, public pretrained models (PhaseNet via SeisBench) and published papers only; no pre-event code, fixtures or outputs.
+
+---
+
+## Fill-in checklist
+
+Fill every placeholder from the exported run of record. `meta.json` and `validation.json` are in `apps/web/public/data/showcase/`; the evidence file is `evidence/<heroEventId>.json` in the same folder, with `heroEventId` in `meta.json` → `scene.heroEventId`. Conditional placeholders are removed, sentence and all, when their field is null.
+
+| Placeholder | Source | Condition |
+| --- | --- | --- |
+| `<from meta.json: summary.publicCatalogCount>` | `meta.json` → `summary.publicCatalogCount` | always |
+| `<from meta.json: summary.candidateCount>` | `meta.json` → `summary.candidateCount` | always |
+| `<from meta.json: summary.strictQualityCount>` | `meta.json` → `summary.strictQualityCount` | always |
+| `<from meta.json: summary.recoveredCatalogCount>` | `meta.json` → `summary.recoveredCatalogCount` | always |
+| `<from meta.json: summary.additionalCount>` | `meta.json` → `summary.additionalCount` | always |
+| `<from meta.json: summary.strictAdditionalCount>` | `meta.json` → `summary.strictAdditionalCount` | always |
+| `<from meta.json: summary.medianStations>` | `meta.json` → `summary.medianStations` | always |
+| `<from meta.json: summary.medianRmsS>` | `meta.json` → `summary.medianRmsS` | always |
+| `<from meta.json: summary.baseline.gain>` | `meta.json` → `summary.baseline.gain` | only if `summary.baseline` is not null (VAL-01 writes it only when the gain holds in both association profiles); otherwise delete the sentence |
+| `<from meta.json: run.windowLabel>` | `meta.json` → `run.windowLabel` | always |
+| `<from meta.json: run.pickerWeights>` | `meta.json` → `run.pickerWeights` | always |
+| `<from meta.json: run.velocityModel.name>` | `meta.json` → `run.velocityModel.name` | always (H2's dict; if the key is named differently, take the model name from `run.velocityModel`) |
+| `<from validation.json: synthetic.medianVErrM>` | `validation.json` → `synthetic.medianVErrM` | always |
+| `<from validation.json: nullTest.meanChanceEvents>` | `validation.json` → `nullTest.meanChanceEvents` | only if `nullTest` is not null; otherwise delete the sentence |
+| `<from validation.json: magnitude.n>` | `validation.json` → `magnitude.n` | only if `magnitude` is not null and the magnitude kill switch did not fire; otherwise delete the sentence |
+| `<from validation.json: magnitude.looMae>` | `validation.json` → `magnitude.looMae` | same as above |
+| `<from evidence/<heroEventId>.json: traces.length>` | `evidence/<scene.heroEventId>.json` → length of `traces` | always |
+| `<deployed URL>` | the production URL (`docs/deploy.md`) | always |
+| `<repo URL>` | the GitHub repository | always |
+| `<video URL>` | the uploaded video | always |
+
+After filling: run `scripts/check-copy.sh docs/demo/devpost.md`. It will now flag the filled numbers, which is expected for the final pass; read each flagged line and confirm it is one of the placeholders above and nothing else.

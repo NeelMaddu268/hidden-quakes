@@ -62,7 +62,12 @@ export function useValidation(): Validation | null {
   return useProviderContext("useValidation").validation;
 }
 
-/** `null` outside live mode. */
+/** `null` outside live mode, and `null` while live mode is failed over to the snapshot. */
 export function useLiveStatus(): LiveStatus | null {
   return useProviderContext("useLiveStatus").liveStatus;
+}
+
+/** True while `?mode=live` is showing the snapshot bundle because the worker is unreachable. */
+export function useFailedOver(): boolean {
+  return useProviderContext("useFailedOver").failedOver;
 }
