@@ -304,10 +304,10 @@ baseline:
                              # Joining both horizontals into one trigger list lost many consistent S picks
   minSMinusPS: 0.15
   maxSMinusPS: 5.0
-  # Thresholds of picks_stalta.parquet; must be a point of the sweep grid. Provisional: the lane doc
-  # asks for the sweep point with the most Tier A events, which needs H2's associate/locate/match/tier
-  # (not merged yet); until then baseline_sweep.parquet holds pick counts only. Once it is scored the
-  # stage logs the best Tier A point and warns while it differs from this one.
+  # Thresholds of picks_stalta.parquet; must be a point of the sweep grid, and the start of the
+  # coordinate search below. Provisional: the lane doc asks for the sweep point with the most Tier A
+  # events. A scored sweep logs its best Tier A point (ties keep this one) and warns while it differs
+  # from this one; copy it here once the scoring run is done.
   chosen:
     pOn: 5.0
     pOff: 1.5
@@ -324,7 +324,20 @@ baseline:
     pOn: [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
     sOn: [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
     offLevels: [1.0, 1.5, 2.0]
-    scoreWithH2: true        # score every grid point through H2's associate -> locate -> match ->
-                             # assign_tiers: one full H2 run per point (147 with this grid), logged per
-                             # point. Set false, or shrink the grid, if that is too slow. Until H2's
-                             # modules are merged the stage warns and writes null scores either way
+    # Scoring: a grid point's picks go through H2's associate -> locate -> match -> assign_tiers
+    # exactly as H4's VAL-01 scores its BaselineRow (profile full, the run's own tier bars from
+    # ProcessingRun.tiering), and PhaseNet's picks.parquet is scored once the same way as the
+    # reference (baseline_reference.json). The run's tier bars exist only after stage tier, which the
+    # pipeline runs after this stage, so a fresh `hq run` cannot score: this stays none, and the sweep
+    # is scored by rerunning the stage on a run that went through tier, e.g.
+    #   python -m hq.baseline.run --run-dir <run> --config-dir configs/showcase --cache-dir <cache>
+    #     --score-mode coordinate --score-only
+    # (or `hq stage baseline` with scoreMode set here). A scoring run on a run without tier bars
+    # fails before it picks anything. One point is a full H2 run: minutes each.
+    scoreMode: none          # all: every grid point; coordinate: coordinate descent from chosen (vary
+                             # pOn at chosen sOn/off, then sOn, then off; repeat passes until one moves
+                             # nowhere; ties keep the incumbent, then grid order); none: pick counts only
+    scoreWorkers: 3          # grid points scored at once, each in its own spawned process; every H2
+                             # locate call inside also spawns seismology.locator.nWorkers processes.
+                             # 1 scores in this process
+    maxPasses: 3             # coordinate mode: at most this many passes over pOn, sOn and off
