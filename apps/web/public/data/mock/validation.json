@@ -1,0 +1,200 @@
+{
+  "baseline": [
+    {
+      "associationProfile": "full",
+      "candidates": 500,
+      "medianRmsS": 0.071,
+      "medianStations": 8.0,
+      "method": "phasenet",
+      "recoveredPublic": 38,
+      "tiers": {
+        "A": 150,
+        "B": 200,
+        "C": 150
+      }
+    },
+    {
+      "associationProfile": "p_only",
+      "candidates": 370,
+      "medianRmsS": 0.092,
+      "medianStations": 7.2,
+      "method": "phasenet",
+      "recoveredPublic": 35,
+      "tiers": {
+        "A": 102,
+        "B": 160,
+        "C": 128
+      }
+    },
+    {
+      "associationProfile": "full",
+      "candidates": 205,
+      "medianRmsS": 0.114,
+      "medianStations": 6.4,
+      "method": "stalta",
+      "recoveredPublic": 29,
+      "tiers": {
+        "A": 46,
+        "B": 90,
+        "C": 82
+      }
+    },
+    {
+      "associationProfile": "p_only",
+      "candidates": 150,
+      "medianRmsS": 0.135,
+      "medianStations": 6.0,
+      "method": "stalta",
+      "recoveredPublic": 24,
+      "tiers": {
+        "A": 33,
+        "B": 70,
+        "C": 68
+      }
+    }
+  ],
+  "gr": {
+    "bSigma": 0.046,
+    "bValue": 0.858,
+    "magBins": [
+      -0.5,
+      -0.25,
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0,
+      1.25,
+      1.5,
+      1.75,
+      2.0,
+      2.25,
+      2.5
+    ],
+    "mcPublic": 0.7,
+    "mcRecovered": -0.3,
+    "publicCum": [
+      37,
+      37,
+      37,
+      33,
+      29,
+      21,
+      14,
+      7,
+      5,
+      4,
+      3,
+      1,
+      1
+    ],
+    "recoveredCum": [
+      386,
+      217,
+      106,
+      59,
+      29,
+      15,
+      11,
+      7,
+      6,
+      4,
+      2,
+      1,
+      0
+    ]
+  },
+  "magnitude": {
+    "coefficients": {
+      "a": 1.0,
+      "b": 1.11,
+      "c": 0.00189,
+      "d": -2.09
+    },
+    "looMae": 0.184,
+    "n": 33
+  },
+  "nullTest": {
+    "meanChanceEvents": 2.4,
+    "meanChanceStrict": 0.1,
+    "nShuffles": 20,
+    "shiftRangeS": 30.0,
+    "stdChanceEvents": 1.3
+  },
+  "sweep": [
+    {
+      "candidates": 950,
+      "params": {
+        "nPAndSMin": 4,
+        "pickMatchToleranceS": 1.5
+      },
+      "recoveredPublic": 38,
+      "tierA": 140
+    },
+    {
+      "candidates": 675,
+      "params": {
+        "nPAndSMin": 5,
+        "pickMatchToleranceS": 1.5
+      },
+      "recoveredPublic": 38,
+      "tierA": 147
+    },
+    {
+      "candidates": 500,
+      "params": {
+        "nPAndSMin": 6,
+        "pickMatchToleranceS": 1.5
+      },
+      "recoveredPublic": 38,
+      "tierA": 150
+    },
+    {
+      "candidates": 360,
+      "params": {
+        "nPAndSMin": 7,
+        "pickMatchToleranceS": 1.5
+      },
+      "recoveredPublic": 35,
+      "tierA": 128
+    },
+    {
+      "candidates": 250,
+      "params": {
+        "nPAndSMin": 8,
+        "pickMatchToleranceS": 1.5
+      },
+      "recoveredPublic": 30,
+      "tierA": 98
+    },
+    {
+      "candidates": 430,
+      "params": {
+        "nPAndSMin": 6,
+        "pickMatchToleranceS": 1.0
+      },
+      "recoveredPublic": 36,
+      "tierA": 135
+    },
+    {
+      "candidates": 610,
+      "params": {
+        "nPAndSMin": 6,
+        "pickMatchToleranceS": 2.0
+      },
+      "recoveredPublic": 38,
+      "tierA": 144
+    }
+  ],
+  "synthetic": {
+    "medianDepthBiasM": -40.0,
+    "medianHErrM": 180.0,
+    "medianVErrM": 260.0,
+    "nEvents": 200,
+    "p90VErrM": 620.0,
+    "pickSigmaS": {
+      "P": 0.03,
+      "S": 0.06
+    }
+  }
+}
