@@ -60,6 +60,15 @@ export const DRAWER_CSS = `
 .hqd-tier[data-tier="A"] { border-color: ${colors.strictHalo}; color: ${colors.strictHalo}; }
 .hqd-reasons { color: ${colors.textDim}; font-size: 11px; }
 .hqd-reasons span + span::before { content: " · "; }
+.hqd-reasons[data-clamped="true"] {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
+.hqd-more {
+  padding: 0; border: 0; background: none; color: ${colors.textDim}; font: inherit; font-size: 11px;
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.hqd-more:hover { color: ${colors.text}; }
+.hqd-more:focus-visible { outline: 1px solid ${colors.textDim}; outline-offset: 1px; }
 .hqd-origin { display: grid; grid-template-columns: 76px 1fr; gap: 1px 8px; margin-top: 10px; font-size: 12.5px; }
 .hqd-depth { margin-top: 10px; }
 .hqd-stats {

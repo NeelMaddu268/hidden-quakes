@@ -406,6 +406,35 @@ describe("figures", () => {
   });
 });
 
+describe("tier reasons", () => {
+  it("clamp to two lines with a toggle only when they overflow", () => {
+    const sh = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const ch = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    let overflow = false;
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get() { return overflow && this.classList.contains("hqd-reasons") ? 120 : 0; } });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get() { return overflow && this.classList.contains("hqd-reasons") ? 30 : 0; } });
+    try {
+      data.evidence[HERO] = { status: "ready", evidence: evidence(HERO, 4) };
+      const { unmount } = render(<EvidenceDrawer />);
+      select(HERO);
+      expect(document.querySelector(".hqd-reasons")!.getAttribute("data-clamped")).toBe("true");
+      expect(screen.queryByRole("button", { name: "Show all reasons" })).toBeNull(); // fits: no toggle
+      unmount();
+      act(() => useDemo.getState().select(null));
+      overflow = true;
+      render(<EvidenceDrawer />);
+      select(HERO);
+      const more = screen.getByRole("button", { name: "Show all reasons" });
+      fireEvent.click(more);
+      expect(document.querySelector(".hqd-reasons")!.getAttribute("data-clamped")).toBe("false");
+      expect(screen.getByRole("button", { name: "Show less" }).getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      if (sh) Object.defineProperty(HTMLElement.prototype, "scrollHeight", sh);
+      if (ch) Object.defineProperty(HTMLElement.prototype, "clientHeight", ch);
+    }
+  });
+});
+
 describe("loading and errors", () => {
   it("evidence loading: header at once, a placeholder for traces", () => {
     render(<EvidenceDrawer />);
