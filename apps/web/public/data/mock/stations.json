@@ -1,0 +1,412 @@
+[
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 1064.5,
+      "n": 10693.6,
+      "u": 37.8
+    },
+    "id": "XX.M01",
+    "kind": "surface",
+    "latitude": 38.606062,
+    "location": "",
+    "longitude": -112.887779,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1665.5,
+    "staticsS": {},
+    "station": "M01",
+    "surfaceElevM": 1665.5,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 3964.7,
+      "n": 8063.3,
+      "u": 133.8
+    },
+    "id": "XX.M02",
+    "kind": "surface",
+    "latitude": 38.582433,
+    "location": "",
+    "longitude": -112.854485,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1761.5,
+    "staticsS": {
+      "P": 0.012,
+      "S": 0.056
+    },
+    "station": "M02",
+    "surfaceElevM": 1761.5,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 9466.5,
+      "n": 3990.3,
+      "u": 152.2
+    },
+    "id": "XX.M03",
+    "kind": "surface",
+    "latitude": 38.545846,
+    "location": "",
+    "longitude": -112.791325,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1779.9,
+    "staticsS": {
+      "P": -0.033,
+      "S": 0.006
+    },
+    "station": "M03",
+    "surfaceElevM": 1779.9,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 10879.2,
+      "n": 1520.8,
+      "u": 140.4
+    },
+    "id": "XX.M04",
+    "kind": "surface",
+    "latitude": 38.523662,
+    "location": "",
+    "longitude": -112.775107,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1768.1,
+    "staticsS": {},
+    "station": "M04",
+    "surfaceElevM": 1768.1,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 7500.7,
+      "n": -5809.1,
+      "u": 4.6
+    },
+    "id": "XX.M05",
+    "kind": "surface",
+    "latitude": 38.457816,
+    "location": "",
+    "longitude": -112.813892,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1632.3,
+    "staticsS": {
+      "P": 0.006,
+      "S": -0.054
+    },
+    "station": "M05",
+    "surfaceElevM": 1632.3,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 3800.0,
+      "n": -8156.0,
+      "u": -127.7
+    },
+    "id": "XX.M06",
+    "kind": "surface",
+    "latitude": 38.436734,
+    "location": "",
+    "longitude": -112.856376,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1500.0,
+    "staticsS": {},
+    "station": "M06",
+    "surfaceElevM": 1500.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 185.5,
+      "n": -10760.9,
+      "u": -127.7
+    },
+    "id": "XX.M07",
+    "kind": "surface",
+    "latitude": 38.413334,
+    "location": "",
+    "longitude": -112.897871,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1500.0,
+    "staticsS": {
+      "P": -0.051,
+      "S": 0.055
+    },
+    "station": "M07",
+    "surfaceElevM": 1500.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": -4798.0,
+      "n": -8822.3,
+      "u": -127.7
+    },
+    "id": "XX.M08",
+    "kind": "surface",
+    "latitude": 38.430748,
+    "location": "",
+    "longitude": -112.955082,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1500.0,
+    "staticsS": {},
+    "station": "M08",
+    "surfaceElevM": 1500.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": -8685.8,
+      "n": -6340.1,
+      "u": -127.7
+    },
+    "id": "XX.M09",
+    "kind": "surface",
+    "latitude": 38.453046,
+    "location": "",
+    "longitude": -112.999713,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1500.0,
+    "staticsS": {
+      "P": 0.028,
+      "S": -0.003
+    },
+    "station": "M09",
+    "surfaceElevM": 1500.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": -9395.9,
+      "n": -5.6,
+      "u": -127.7
+    },
+    "id": "XX.M10",
+    "kind": "surface",
+    "latitude": 38.50995,
+    "location": "",
+    "longitude": -113.007865,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1500.0,
+    "staticsS": {
+      "P": 0.013,
+      "S": 0.03
+    },
+    "station": "M10",
+    "surfaceElevM": 1500.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": -9197.2,
+      "n": 6303.8,
+      "u": -127.7
+    },
+    "id": "XX.M11",
+    "kind": "surface",
+    "latitude": 38.566628,
+    "location": "",
+    "longitude": -113.005584,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1500.0,
+    "staticsS": {},
+    "station": "M11",
+    "surfaceElevM": 1500.0,
+    "usedInRun": false
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": -5186.3,
+      "n": 9209.2,
+      "u": -43.6
+    },
+    "id": "XX.M12",
+    "kind": "surface",
+    "latitude": 38.592727,
+    "location": "",
+    "longitude": -112.959539,
+    "network": "XX",
+    "preprocessProfile": "surface",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1584.1,
+    "staticsS": {},
+    "station": "M12",
+    "surfaceElevM": 1584.1,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "DPZ",
+      "DP1",
+      "DP2"
+    ],
+    "enu": {
+      "e": 1150.0,
+      "n": -550.0,
+      "u": -352.4
+    },
+    "id": "XX.M13",
+    "kind": "borehole",
+    "latitude": 38.505059,
+    "location": "",
+    "longitude": -112.886798,
+    "network": "XX",
+    "preprocessProfile": "borehole",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 380.0,
+    "sensorElevM": 1275.3,
+    "staticsS": {
+      "P": 0.051
+    },
+    "station": "M13",
+    "surfaceElevM": 1655.3,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "DPZ",
+      "DP1",
+      "DP2"
+    ],
+    "enu": {
+      "e": 2650.0,
+      "n": -1750.0,
+      "u": -683.2
+    },
+    "id": "XX.M14",
+    "kind": "borehole",
+    "latitude": 38.49428,
+    "location": "",
+    "longitude": -112.869578,
+    "network": "XX",
+    "preprocessProfile": "borehole",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 720.0,
+    "sensorElevM": 944.5,
+    "staticsS": {},
+    "station": "M14",
+    "surfaceElevM": 1664.5,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "DPZ",
+      "DP1",
+      "DP2"
+    ],
+    "enu": {
+      "e": 900.0,
+      "n": -2150.0,
+      "u": -1104.1
+    },
+    "id": "XX.M15",
+    "kind": "borehole",
+    "latitude": 38.490686,
+    "location": "",
+    "longitude": -112.889668,
+    "network": "XX",
+    "preprocessProfile": "borehole",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 1050.0,
+    "sensorElevM": 523.6,
+    "staticsS": {},
+    "station": "M15",
+    "surfaceElevM": 1573.6,
+    "usedInRun": true
+  }
+]

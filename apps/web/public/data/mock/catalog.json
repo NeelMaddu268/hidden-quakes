@@ -1,0 +1,776 @@
+[
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.04,
+    "elevM": -40.0,
+    "enu": {
+      "e": 4861.0,
+      "n": 411.7,
+      "u": -1667.7
+    },
+    "id": "mockpub001",
+    "latitude": 38.513698,
+    "longitude": -112.844195,
+    "mag": 0.9,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000015",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789001931.219
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.86,
+    "elevM": -860.0,
+    "enu": {
+      "e": 2041.0,
+      "n": -486.6,
+      "u": -2487.7
+    },
+    "id": "mockpub002",
+    "latitude": 38.505628,
+    "longitude": -112.876569,
+    "mag": 0.23,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000055",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789008760.588
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.41,
+    "elevM": -410.0,
+    "enu": {
+      "e": 2076.9,
+      "n": -900.4,
+      "u": -2037.7
+    },
+    "id": "mockpub003",
+    "latitude": 38.501911,
+    "longitude": -112.876157,
+    "mag": null,
+    "magType": null,
+    "matchedEventId": "hq-mock-13-000068",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789009267.997
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -0.66,
+    "elevM": 660.0,
+    "enu": {
+      "e": 1523.2,
+      "n": -887.9,
+      "u": -967.7
+    },
+    "id": "mockpub004",
+    "latitude": 38.502024,
+    "longitude": -112.882513,
+    "mag": 0.46,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000082",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789010144.724
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -0.9,
+    "elevM": 900.0,
+    "enu": {
+      "e": 2973.0,
+      "n": -2449.0,
+      "u": -727.7
+    },
+    "id": "mockpub005",
+    "latitude": 38.488,
+    "longitude": -112.86587,
+    "mag": 0.51,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000086",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789010193.882
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.98,
+    "elevM": -1980.0,
+    "enu": {
+      "e": 2098.3,
+      "n": -248.7,
+      "u": -3607.7
+    },
+    "id": "mockpub006",
+    "latitude": 38.507766,
+    "longitude": -112.875911,
+    "mag": 0.3,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000090",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789010255.933
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.66,
+    "elevM": -660.0,
+    "enu": {
+      "e": 1448.7,
+      "n": 270.5,
+      "u": -2287.7
+    },
+    "id": "mockpub007",
+    "latitude": 38.51243,
+    "longitude": -112.883369,
+    "mag": 0.77,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000101",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789010823.843
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.39,
+    "elevM": -390.0,
+    "enu": {
+      "e": 1296.3,
+      "n": -839.1,
+      "u": -2017.7
+    },
+    "id": "mockpub008",
+    "latitude": 38.502462,
+    "longitude": -112.885118,
+    "mag": 0.13,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000124",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789011392.102
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.13,
+    "elevM": -1130.0,
+    "enu": {
+      "e": 2330.8,
+      "n": -738.8,
+      "u": -2757.7
+    },
+    "id": "mockpub009",
+    "latitude": 38.503363,
+    "longitude": -112.873243,
+    "mag": 0.04,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000129",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789011543.791
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.01,
+    "elevM": -1010.0,
+    "enu": {
+      "e": 2578.6,
+      "n": -280.6,
+      "u": -2637.7
+    },
+    "id": "mockpub010",
+    "latitude": 38.507479,
+    "longitude": -112.870398,
+    "mag": 0.31,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000134",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789011671.289
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.69,
+    "elevM": -690.0,
+    "enu": {
+      "e": 19601.7,
+      "n": 32.7,
+      "u": -2317.7
+    },
+    "id": "mockpub011",
+    "latitude": 38.510294,
+    "longitude": -112.674972,
+    "mag": 1.46,
+    "magType": "Md",
+    "matchedEventId": null,
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789011913.223
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 3.11,
+    "elevM": -3110.0,
+    "enu": {
+      "e": 16735.9,
+      "n": 8823.7,
+      "u": -4737.7
+    },
+    "id": "mockpub012",
+    "latitude": 38.589264,
+    "longitude": -112.707872,
+    "mag": 1.05,
+    "magType": "Md",
+    "matchedEventId": null,
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789015150.45
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -0.14,
+    "elevM": 140.0,
+    "enu": {
+      "e": -7460.1,
+      "n": 3098.7,
+      "u": -1487.7
+    },
+    "id": "mockpub013",
+    "latitude": 38.537836,
+    "longitude": -112.985642,
+    "mag": 1.06,
+    "magType": "ML",
+    "matchedEventId": null,
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789016389.899
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.35,
+    "elevM": -1350.0,
+    "enu": {
+      "e": 2011.7,
+      "n": 961.0,
+      "u": -2977.7
+    },
+    "id": "mockpub014",
+    "latitude": 38.518633,
+    "longitude": -112.876905,
+    "mag": 0.71,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000162",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789017536.898
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.24,
+    "elevM": -1240.0,
+    "enu": {
+      "e": 7110.7,
+      "n": -17457.0,
+      "u": -2867.7
+    },
+    "id": "mockpub015",
+    "latitude": 38.353182,
+    "longitude": -112.818369,
+    "mag": 0.88,
+    "magType": "ML",
+    "matchedEventId": null,
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789028754.718
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.45,
+    "elevM": -450.0,
+    "enu": {
+      "e": 1335.2,
+      "n": -2269.8,
+      "u": -2077.7
+    },
+    "id": "mockpub016",
+    "latitude": 38.48961,
+    "longitude": -112.884672,
+    "mag": 0.81,
+    "magType": "Md",
+    "matchedEventId": "hq-mock-13-000211",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789032101.387
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.07,
+    "elevM": -70.0,
+    "enu": {
+      "e": 1846.0,
+      "n": -999.9,
+      "u": -1697.7
+    },
+    "id": "mockpub017",
+    "latitude": 38.501018,
+    "longitude": -112.878808,
+    "mag": 1.27,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000214",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789033058.305
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 2.47,
+    "elevM": -2470.0,
+    "enu": {
+      "e": 3385.8,
+      "n": -1796.5,
+      "u": -4097.7
+    },
+    "id": "mockpub018",
+    "latitude": 38.493862,
+    "longitude": -112.861131,
+    "mag": 1.23,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000243",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789037076.578
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.22,
+    "elevM": -1220.0,
+    "enu": {
+      "e": 2002.6,
+      "n": -979.1,
+      "u": -2847.7
+    },
+    "id": "mockpub019",
+    "latitude": 38.501205,
+    "longitude": -112.87701,
+    "mag": 0.88,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000255",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789038555.783
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.65,
+    "elevM": -1650.0,
+    "enu": {
+      "e": 1045.9,
+      "n": -2237.0,
+      "u": -3277.7
+    },
+    "id": "mockpub020",
+    "latitude": 38.489905,
+    "longitude": -112.887993,
+    "mag": 0.57,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000267",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789039535.118
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -0.04,
+    "elevM": 40.0,
+    "enu": {
+      "e": 1981.4,
+      "n": -274.2,
+      "u": -1587.7
+    },
+    "id": "mockpub021",
+    "latitude": 38.507537,
+    "longitude": -112.877253,
+    "mag": 1.89,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000269",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789039730.098
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -0.66,
+    "elevM": 660.0,
+    "enu": {
+      "e": 1251.3,
+      "n": -1437.1,
+      "u": -967.7
+    },
+    "id": "mockpub022",
+    "latitude": 38.497091,
+    "longitude": -112.885635,
+    "mag": 0.8,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000271",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789039955.656
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.31,
+    "elevM": -310.0,
+    "enu": {
+      "e": 1692.2,
+      "n": -1485.5,
+      "u": -1937.7
+    },
+    "id": "mockpub023",
+    "latitude": 38.496656,
+    "longitude": -112.880574,
+    "mag": 0.51,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000278",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789040625.23
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.15,
+    "elevM": -150.0,
+    "enu": {
+      "e": 2543.1,
+      "n": -305.4,
+      "u": -1777.7
+    },
+    "id": "mockpub024",
+    "latitude": 38.507256,
+    "longitude": -112.870805,
+    "mag": 0.7,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000285",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789040821.823
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 3.75,
+    "elevM": -3750.0,
+    "enu": {
+      "e": 91.5,
+      "n": -8050.2,
+      "u": -5377.7
+    },
+    "id": "mockpub025",
+    "latitude": 38.437685,
+    "longitude": -112.89895,
+    "mag": null,
+    "magType": null,
+    "matchedEventId": null,
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789041792.928
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -1.43,
+    "elevM": 1430.0,
+    "enu": {
+      "e": 1872.9,
+      "n": -1180.8,
+      "u": -197.7
+    },
+    "id": "mockpub026",
+    "latitude": 38.499393,
+    "longitude": -112.8785,
+    "mag": 0.88,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000305",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789042260.006
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.4,
+    "elevM": -400.0,
+    "enu": {
+      "e": 2421.3,
+      "n": -404.9,
+      "u": -2027.7
+    },
+    "id": "mockpub027",
+    "latitude": 38.506362,
+    "longitude": -112.872204,
+    "mag": 1.07,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000318",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789042999.076
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.48,
+    "elevM": -480.0,
+    "enu": {
+      "e": 1755.7,
+      "n": -1423.2,
+      "u": -2107.7
+    },
+    "id": "mockpub028",
+    "latitude": 38.497215,
+    "longitude": -112.879845,
+    "mag": 1.0,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000337",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789045263.452
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.14,
+    "elevM": -1140.0,
+    "enu": {
+      "e": 912.1,
+      "n": -1468.3,
+      "u": -2767.7
+    },
+    "id": "mockpub029",
+    "latitude": 38.49681,
+    "longitude": -112.889529,
+    "mag": 0.62,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000341",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789045756.04
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -0.61,
+    "elevM": 610.0,
+    "enu": {
+      "e": 2489.2,
+      "n": -1340.4,
+      "u": -1017.7
+    },
+    "id": "mockpub030",
+    "latitude": 38.497959,
+    "longitude": -112.871424,
+    "mag": 2.06,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000347",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789046451.454
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.32,
+    "elevM": -1320.0,
+    "enu": {
+      "e": 1821.0,
+      "n": -1296.7,
+      "u": -2947.7
+    },
+    "id": "mockpub031",
+    "latitude": 38.498352,
+    "longitude": -112.879095,
+    "mag": 0.37,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000350",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789046956.335
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.16,
+    "elevM": -160.0,
+    "enu": {
+      "e": 1927.7,
+      "n": -983.6,
+      "u": -1787.7
+    },
+    "id": "mockpub032",
+    "latitude": 38.501164,
+    "longitude": -112.87787,
+    "mag": 0.61,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000390",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789063165.397
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 5.57,
+    "elevM": -5570.0,
+    "enu": {
+      "e": -8692.4,
+      "n": 7391.8,
+      "u": -7197.7
+    },
+    "id": "mockpub033",
+    "latitude": 38.576401,
+    "longitude": -112.999789,
+    "mag": 1.64,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000397",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789064019.47
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.62,
+    "elevM": -620.0,
+    "enu": {
+      "e": 2115.7,
+      "n": -2362.9,
+      "u": -2247.7
+    },
+    "id": "mockpub034",
+    "latitude": 38.488774,
+    "longitude": -112.875711,
+    "mag": 1.02,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000401",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789064490.957
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -0.92,
+    "elevM": 920.0,
+    "enu": {
+      "e": 1379.8,
+      "n": -1464.4,
+      "u": -707.7
+    },
+    "id": "mockpub035",
+    "latitude": 38.496845,
+    "longitude": -112.884159,
+    "mag": null,
+    "magType": null,
+    "matchedEventId": "hq-mock-13-000402",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789064585.715
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -1.22,
+    "elevM": 1220.0,
+    "enu": {
+      "e": 1823.5,
+      "n": -1395.6,
+      "u": -407.7
+    },
+    "id": "mockpub036",
+    "latitude": 38.497463,
+    "longitude": -112.879066,
+    "mag": 0.74,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000404",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789065613.997
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -0.97,
+    "elevM": 970.0,
+    "enu": {
+      "e": 1376.2,
+      "n": 763.7,
+      "u": -657.7
+    },
+    "id": "mockpub037",
+    "latitude": 38.516861,
+    "longitude": -112.884201,
+    "mag": 1.21,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000405",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789065657.45
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": -1.21,
+    "elevM": 1210.0,
+    "enu": {
+      "e": 1554.5,
+      "n": -2147.3,
+      "u": -417.7
+    },
+    "id": "mockpub038",
+    "latitude": 38.490711,
+    "longitude": -112.882155,
+    "mag": null,
+    "magType": null,
+    "matchedEventId": "hq-mock-13-000420",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789067031.201
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.24,
+    "elevM": -240.0,
+    "enu": {
+      "e": 1688.1,
+      "n": -687.9,
+      "u": -1867.7
+    },
+    "id": "mockpub039",
+    "latitude": 38.503821,
+    "longitude": -112.88062,
+    "mag": 0.23,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000426",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789067409.354
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 1.19,
+    "elevM": -1190.0,
+    "enu": {
+      "e": 2144.5,
+      "n": -982.6,
+      "u": -2817.7
+    },
+    "id": "mockpub040",
+    "latitude": 38.501173,
+    "longitude": -112.875381,
+    "mag": null,
+    "magType": null,
+    "matchedEventId": "hq-mock-13-000429",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789067433.583
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.48,
+    "elevM": -480.0,
+    "enu": {
+      "e": 2009.8,
+      "n": 8.4,
+      "u": -2107.7
+    },
+    "id": "mockpub041",
+    "latitude": 38.510075,
+    "longitude": -112.876927,
+    "mag": 2.17,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000456",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789071601.626
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 0.99,
+    "elevM": -990.0,
+    "enu": {
+      "e": 2941.4,
+      "n": 256.6,
+      "u": -2617.7
+    },
+    "id": "mockpub042",
+    "latitude": 38.512305,
+    "longitude": -112.866233,
+    "mag": 2.57,
+    "magType": "ML",
+    "matchedEventId": "hq-mock-13-000481",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789077593.079
+  },
+  {
+    "depthDatum": "sea level",
+    "depthKm": 3.68,
+    "elevM": -3680.0,
+    "enu": {
+      "e": 3011.0,
+      "n": 5654.9,
+      "u": -5307.7
+    },
+    "id": "mockpub043",
+    "latitude": 38.560799,
+    "longitude": -112.865434,
+    "mag": null,
+    "magType": null,
+    "matchedEventId": "hq-mock-13-000493",
+    "source": "synthetic public catalog (mock fixture)",
+    "t": 1789081832.58
+  }
+]
