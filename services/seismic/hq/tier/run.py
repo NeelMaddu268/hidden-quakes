@@ -15,7 +15,9 @@ the nearest-station rule measures depth below the nearest used station's sensor)
 pre-statics offsets into ``catalogMatch``. A stale one fails the stage: rerun stage match first.
 
 With ``tiering.sweep.enabled`` it also runs the association sweep (``hq.tier.sweep``, with the
-bars just derived and the run's ``statics.parquet``) and writes ``sweep.parquet``; disabled, it
+bars just derived and the run's ``statics.parquet``; with ``statics.mode`` referenceEvents those
+terms come from the very public events the points are matched to, so the points' recall is
+in-sample: warned and recorded as ``sweep.statics.inSample``) and writes ``sweep.parquet``; disabled, it
 removes a ``sweep.parquet`` left by an earlier tier run, whose Tier A counts used that run's bars
 and rules, so ``Validation.sweep`` stays empty until a tier run with the sweep enabled (logged and
 recorded). Every output is written under a ``.part`` name first and moved into place only after
@@ -179,6 +181,15 @@ def _sweep(
     cfg = ctx.config.seismology
     catalog = _read(ctx.path(CATALOG_TABLE), "catalog")
     statics = run_statics(ctx)
+    # referenceEvents terms were estimated from the public events every point is matched to.
+    in_sample = (cfg.statics.mode == "referenceEvents"
+                 and any(v != 0.0 for v in statics.values()))
+    if in_sample:
+        log.warning(
+            "tier sweep: %s holds reference-event terms estimated from the public events each "
+            "point is matched to, so every point's recoveredPublic and matched-event Tier A are "
+            "in-sample, not held out (events.parquet relocated each reference event with terms "
+            "computed without it); recorded as sweep.statics.inSample", STATICS_TABLE)
     run_points, pipeline = real_pipeline(
         picks, stations, catalog, cfg, ctx.config.run, run_id=ctx.run_id, cache_dir=ctx.cache_dir,
         statics=statics,
@@ -194,9 +205,11 @@ def _sweep(
     if at_configured:
         log.info(
             "tier sweep: configured point %s gives %d Tier A through the sweep driver; "
-            "events.parquet has %d (a fresh association of the same picks, located with the "
-            "same statics)",
-            configured, at_configured[0]["tierA"], tier_a,
+            "events.parquet has %d (a fresh association of the same picks, every event located "
+            "with %s%s)",
+            configured, at_configured[0]["tierA"], tier_a, STATICS_TABLE,
+            ", where events.parquet used held-out terms for the reference events" if in_sample
+            else "",
         )
     return points, {
         "enabled": True,
@@ -211,6 +224,11 @@ def _sweep(
             "stationPhases": len(statics),
             "nonZero": sum(1 for v in statics.values() if v != 0.0),
             "maxAbsS": max((abs(v) for v in statics.values()), default=0.0),
+            "inSample": in_sample,
+            "note": ("statics.mode referenceEvents: these terms were estimated from the public "
+                     "events every point is matched to, so recoveredPublic and the matched "
+                     "events' tiers are in-sample, not held out" if in_sample else
+                     "no reference-event terms: nothing in-sample"),
         },
         "points": per_point,
         "runtimeS": round(time.perf_counter() - started, 3),
