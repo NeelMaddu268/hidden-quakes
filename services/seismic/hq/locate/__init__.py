@@ -29,15 +29,17 @@ Outputs (``hq.locate.result`` has the dtypes)
     ``run_id`` (the docs/02 call has none, so ``run.name`` stands in); ``source`` is
     ``hq-pipeline``; latitude/longitude come from ``hq.locate.coords.from_enu``; ``depthKm`` is
     ``(run.refSurfaceElevM - elevM) / 1000``; ``quality.method`` is ``grid1d`` and
-    ``quality.statics`` is true only when a used pick carried a non-zero static (never before
-    LOC-05); ``meanPickProb`` is the mean ``prob`` of the picks used in the final location, which
+    ``quality.statics`` is true only when a used pick carried a non-zero static;
+    ``meanPickProb`` is the mean ``prob`` of the picks used in the final location, which
     are ``pickIds``; ``revealOrder`` is -1.
     ``arrivals`` (``arrivals.parquet``): one row per located event x used station x phase.
     Station-phases without a pick keep ``tPred`` and have null ``tObs``, ``residualS`` and
     ``pickId``; ``usedInLocation`` is false for them and for outlier-dropped picks.
     ``statics`` (``statics.parquet``): one row per used station x phase, ``staticS`` the static
-    the locator applied (0.0 until LOC-05) and ``nEvents`` the located events that used a pick of
-    that station-phase. With no located event every table has zero rows.
+    the locator applied to every event without its own (0.0 without statics) and ``nEvents`` the
+    events that static was estimated from (``hq.locate.statics``); without statics, the located
+    events that used a pick of that station-phase. With no located event every table has zero
+    rows.
 
 H2-internal table ``locate_flags.parquet`` (not in docs/02; LOC-06 and the depth gate read it)
     One row per located event: ``eventId``, ``assocId`` and the per-event flags docs/02 has no
@@ -52,9 +54,14 @@ H2-internal table ``locate_flags.parquet`` (not in docs/02; LOC-06 and the depth
     lower stations, so this flag catches what ``mapOnVolumeTop`` can't. It is never written into
     ``events_located.parquet``.
 
-Statics hook (LOC-05)
+Statics (LOC-05, ``hq.locate.statics``)
     ``locate_detailed(..., statics={(stationId, phase): s})`` passes additive statics to the
-    locator; they enter every ``tPred`` and the ``staticS`` column. ``locate`` applies none.
+    locator; they enter every ``tPred`` and the ``staticS`` column; ``event_statics`` gives
+    single events (by assocId) their own. ``locate`` applies what ``statics.mode`` says. Pipeline
+    order with the default mode (referenceEvents): locate (pass 1, no statics) -> match -> locate
+    (pass 2, terms at the public-catalog hypocentres of the matched events, each matched event
+    relocated with terms computed without it) -> match -> tier. Stage ``locate`` runs pass 2 when
+    ``matches.parquet`` is in the run dir; ``locate()`` has no matches and runs pass 1.
 """
 
 import atexit
@@ -355,18 +362,28 @@ def locate_detailed(
     run_id: str | None = None,
     cache_dir: Path | None = None,
     statics: Statics | None = None,
+    event_statics: Mapping[str, Statics] | None = None,
+    static_events: Mapping[tuple[str, str], int] | None = None,
     model: LayerModel | None = None,
 ) -> LocateDetails:
     """``locate`` plus flags, the per-event locations, counts and the run record.
 
-    ``statics`` maps (stationId, phase) to an additive static (s), the LOC-05 hook; ``model``
-    replaces the configured layer file (tests).
+    ``statics`` maps (stationId, phase) to an additive static (s) for every event;
+    ``event_statics`` (keyed by assocId) gives those events their own map instead (LOC-05's
+    held-out reference terms). ``static_events`` is the ``nEvents`` column of the statics table:
+    how many events each static was estimated from (default: the located events that used a
+    pick of that station-phase). ``model`` replaces the configured layer file (tests).
     """
     started = time.perf_counter()
     rid = run.name if run_id is None else run_id
     applied: Statics = dict(statics or {})
+    own = {str(k): dict(v) for k, v in (event_statics or {}).items()}
     used = used_stations(stations, run, cfg.locator.enuConsistencyTolM)
     assoc_ids, frames = event_picks(assoc, picks, cfg.locator.minPicks)
+    unknown = sorted(set(own) - set(assoc_ids))
+    if unknown:
+        raise ValueError(f"event_statics name association events not in assoc: {unknown[:5]}")
+    per_event = [own.get(aid, applied) for aid in assoc_ids]
     setup = LocatorSetup(
         stations=used,
         model=load_configured_model(cfg.velocity) if model is None else model,
@@ -375,12 +392,15 @@ def locate_detailed(
         cache_dir=Path(cache_dir) if cache_dir is not None else _process_cache_dir(),
     )
     locator = build_locator(setup)
-    located = locate_many(setup, frames, statics=applied, locator=locator) if frames else []
+    located = (
+        locate_many(setup, frames, event_statics=per_event, locator=locator) if frames else []
+    )
 
     order = sorted(range(len(located)), key=lambda k: (located[k].t0, assoc_ids[k]))
     locations = tuple(located[k] for k in order)
     ordered_assoc = tuple(assoc_ids[k] for k in order)
     probs = [dict(zip(frames[k]["id"], frames[k]["prob"], strict=True)) for k in order]
+    event_maps = [per_event[k] for k in order]
     lat, lon, _ = from_enu(
         [loc.e_m for loc in locations],
         [loc.n_m for loc in locations],
@@ -395,7 +415,7 @@ def locate_detailed(
     for k, loc in enumerate(locations):
         event = _event_row(k, loc, float(lat[k]), float(lon[k]), probs[k], run, rid)
         models.append(event)
-        arrivals += _arrival_rows(event.id, loc, locator, applied)
+        arrivals += _arrival_rows(event.id, loc, locator, event_maps[k])
         surface = nearest_station_surface(used, loc.e_m, loc.n_m)
         flags.append(_flag_row(event.id, ordered_assoc[k], loc, edge, surface))
         use = loc.arrivals[loc.arrivals["usedInLocation"].to_numpy(dtype=bool)]
@@ -406,7 +426,10 @@ def locate_detailed(
                 "stationId": sid,
                 "phase": ph,
                 "staticS": float(applied.get((sid, ph), 0.0)),
-                "nEvents": int(n_events[(sid, ph)]),
+                "nEvents": int(
+                    n_events[(sid, ph)] if static_events is None
+                    else static_events.get((sid, ph), 0)
+                ),
             }
             for sid in locator.station_ids
             for ph in PHASES
@@ -462,9 +485,11 @@ def locate_detailed(
             "travel time + static; tObs/residualS/pickId null without a pick; usedInLocation "
             "false for outlier-dropped picks and rows without a pick",
             "statics": {
-                "applied": bool(applied),
+                "applied": bool(applied) or any(bool(v) for v in own.values()),
                 "nonZero": int(sum(1 for v in applied.values() if v != 0.0)),
-                "note": "additive per (stationId, phase); none applied until LOC-05",
+                "eventsWithOwnStatics": len(own),
+                "note": "additive per (stationId, phase); the statics table holds the map every "
+                "event without its own used (hq.locate.statics)",
             },
             "flagsTable": "locate_flags.parquet (H2-internal): " + ", ".join(FLAG_DTYPES),
             "stations": {"nUsed": len(used), "ids": locator.station_ids},
@@ -509,11 +534,15 @@ def locate(
 
     ``run_id`` (keyword only; the docs/02 call leaves it out, and ``run.name`` stands in) goes
     into event ids and ``runId``. ``cache_dir`` caches the travel-time tables under
-    ``<cache_dir>/ttgrids/``.
+    ``<cache_dir>/ttgrids/``. Statics follow ``statics.mode`` (``hq.locate.statics``):
+    selfConsistent iterates them here; referenceEvents needs a match pass this call has no
+    access to, so it locates without statics (pass 1).
     """
-    return locate_detailed(
+    from hq.locate.statics import locate_with_statics  # imports this package
+
+    return locate_with_statics(
         assoc, picks, stations, cfg, run, run_id=run_id, cache_dir=cache_dir
-    ).result
+    ).details.result
 
 
 # Last, so the package attribute ``run`` is the stage function, not the submodule.
