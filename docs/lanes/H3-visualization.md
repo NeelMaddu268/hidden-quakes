@@ -507,3 +507,66 @@ Verified on the mock and the real preview, headed Chrome 153 + WebKit 26.5:
 - The real-bundle check passes (`PREVIEW_NO_EVIDENCE=1`: the evidence and E steps are skipped).
 
 `make check`: seismic 778 / 3 skipped, API 26, web 584, tokens 12, copy clean.
+
+### WEB-08 QA checkpoint on the real bundle · 2026-09-26 5:50 PM EDT
+
+Real showcase bundle on main (981b746, run 20260926-0210-a04c611, v3), static export of feat/web, headed Chrome 153
+and WebKit 26.5 on the dev machine (Apple M4 Pro). Local harness: `work/web08-qa-real.mjs` and `web08-determinism.mjs`.
+
+A fresh reviewer subagent, started by the lane agent (not a separate session opened by a human), ran the lane doc's
+reviewer prompt over the H3 paths on the real bundle. Findings and fixes:
+
+- **Blocker, fixed.** 254 Tier C events have no evidence file (the exporter caps evidence at `maxEvents`), and their
+  drawer printed the provider's raw "…json: HTTP 404" in red and hid the figures. The drawer now says "No waveform
+  evidence was exported for this event." as a neutral note (other failures: a plain error, logged), and keeps the plan
+  and depth figures with lines to the stations that picked the event.
+- **Fixed.** Record-section caption: "N traces from the closest stations, k with a pick" (it claimed "the stations that
+  picked this event").
+- **Fixed.** Real tier reasons (300–700 characters) pushed the record section below the fold at 720p. They are clamped
+  to two lines with "Show all reasons".
+- **Fixed.** Before the reveal, clicking a public point opened its matched candidate's drawer. Public points now select
+  only after the reveal.
+- **Fixed.** Time playback allocated per frame: `stepTime` writes into a preallocated step, and the scrubber builds
+  text only on change.
+- **Fixed, polish.** Typographic minus on depth-section ticks. Copy without digits: "One-sigma … error", "true scale".
+  Unverified labels read "Name · approximate". Dead code and stale comments removed.
+- **Not changed.**
+  - The ruler stops at 6 km; 15 Tier C events go deeper.
+  - Five labelled features show before the reveal.
+  - Tier reasons are verbatim pipeline text (e.g. "hErrM null (no formal error)"), reported to H2.
+
+QA results on the dev machine:
+- **5-second frame:** no ruler, no SYNTHETIC banner, PUBLIC = meta.
+- **Counters:** RECOVERED and STRICT equal meta after the reveal; STRICT = `strictQualityCount`.
+- **Drawer:** E opens the hero with 16 real traces. Null-field events (Tier C null hErrM/vErrM, depthOnEdge, null
+  pickP/pickS, a non-hero catalog match, no evidence file) render without NaN/undefined/Infinity.
+- **Plan view:** the depth section shows its outside count. The time scrubber shows 0 events at windowStart and all at
+  windowEnd, and plays. Reset returns the exact start frame.
+- **Speed:** 120 fps median in every phase in Chrome, and 58.8 in WebKit (its 60 Hz cap), at 1280×720 and 3840×2160.
+- **Determinism:** 10/10 identical start and revealed frames (canvas + DOM labels) in both engines.
+- **Still to do by hand:** fps on the demo laptop, and Safari itself (the runs used WebKit).
+
+Manual run sheet for the demo laptop (Chrome, then Safari; 1280×720, then a 4K display):
+1. `make offline` (or `NEXT_PUBLIC_ALLOW_MOCK=1 pnpm --filter web build` and serve `apps/web/out`); open `/` (showcase is
+   the default mode). Expect no SYNTHETIC banner and the header "Showcase · <window> · run <id>".
+2. 5-second frame: dark terrain, the glowing wells labelled "· approximate", the PUBLIC count, REVEAL. No depth ruler.
+3. Press Space. The reveal runs about 7 s and the counters climb. It ends in the side view with 0 km and the wellhead
+   labels at the top and the event column below.
+4. fps: paste this in the console right after pressing Space, and again later in each view. Record the median and the
+   frames over 20 ms:
+   `(()=>{const d=[];let l=performance.now(),t=l;const f=n=>{d.push(n-l);l=n;if(n-t<5000)requestAnimationFrame(f);else{d.shift();const s=[...d].sort((a,b)=>a-b);console.log('median fps',(1000/s[s.length>>1]).toFixed(1),'frames>20ms',d.filter(x=>x>20).length,'of',d.length)}};requestAnimationFrame(f)})()`
+5. Press S. STRICT equals the Validation card's strict count; B and C fade; Tier A halos are small, tight rings. Press S
+   again to return to ALL.
+6. Press E. The hero drawer shows "N stations agreed", Tier A, and 16 traces whose picks tick in. There is no
+   NaN/undefined anywhere. "Show all reasons" expands and collapses. Press Esc.
+7. Click a few faint Tier C points away from the column. Some show "No waveform evidence was exported for this event."
+   with the plan and depth figures still drawn; none shows a URL or "404".
+8. Press P for the straight-down plan view (north up). The left panel says "framed on Tier A and B" plus the outside
+   count. Clicking an event in the panel opens the drawer. Press P to go back.
+9. Press T. The scrubber appears at the bottom and replays from 00:00 UTC, with counts and histogram building. Drag the
+   strip, use the arrow keys, play and pause. T closes it.
+10. Press R: exactly the frame from step 2.
+11. Reload three times and run step 3 each time: the revealed frame looks identical.
+12. Resize to 1280×720 and to 4K. Repeat steps 3, 6, 8 and 9: nothing overlaps the counters, validation card, drawer or
+    scrubber.
+13. Repeat steps 1–12 in Safari.
