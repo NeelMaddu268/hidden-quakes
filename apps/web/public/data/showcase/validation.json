@@ -1,0 +1,387 @@
+{
+  "baseline": [],
+  "gr": null,
+  "magnitude": {
+    "coefficients": {
+      "a": 1.0,
+      "b": 1.2295577646792426,
+      "c": 0.21305013029081588
+    },
+    "looMae": 0.10874507229008822,
+    "n": 23
+  },
+  "nullTest": null,
+  "sweep": [
+    {
+      "candidates": 1021,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 4,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 943,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 5,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 893,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 6,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 722,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 8,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 1013,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 4,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 938,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 5,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 892,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 6,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 724,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 8,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 982,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 4,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 921,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 5,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 879,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 6,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 720,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 8,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 825,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 4,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 768,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 5,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 726,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 6,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 578,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 8,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 820,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 4,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 764,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 5,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 724,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 6,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 578,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 8,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 803,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 4,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 759,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 5,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 718,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 6,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 575,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 8,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 690,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 4,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 656,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 5,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 618,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 6,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 492,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 8,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 688,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 4,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 654,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 5,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 617,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 6,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 491,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 8,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 681,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 4,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 653,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 5,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 615,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 6,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 490,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 8,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    }
+  ],
+  "synthetic": {
+    "medianDepthBiasM": -5.4710117683989665,
+    "medianHErrM": 46.64416391093262,
+    "medianVErrM": 59.23312892146055,
+    "nEvents": 200,
+    "p90VErrM": 144.4055832357911,
+    "pickSigmaS": {
+      "P": 0.02,
+      "S": 0.04
+    }
+  }
+}
