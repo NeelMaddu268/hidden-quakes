@@ -16,18 +16,21 @@ import pandas as pd
 import pytest
 from hq_contracts.io import read_table
 
-from hq.config.seismology import PhaseSigma, SeismologyConfig
+from hq.config.seismology import HarvestConfig, PhaseSigma, SeismologyConfig
+from hq.locate.diagnostics import harvest_section
 from hq.locate.harvest import (
     FREE_COLUMNS,
+    HARVEST_COLUMNS,
     SLOT_COLUMNS,
     UNTRUSTED,
+    HarvestReport,
     analytic_chance,
     free_picks,
     select,
     slot_table,
     untrusted_flags,
 )
-from hq.locate.statics import check_same_association
+from hq.locate.statics import StaticsReport, check_same_association
 
 # --- config (smoke) ----------------------------------------------------------------------------
 
@@ -263,6 +266,68 @@ def test_check_same_association_ignores_harvested_picks_but_not_a_regrouping() -
         check_same_association(pairs, regrouped)  # x0 now names other picks
     with pytest.raises(ValueError, match="another association"):
         check_same_association(pairs.assign(assocId=["x9", "x1"]), regrouped)  # x9 is gone
+
+
+def _at(e: float, n: float, elev: float, rms: float) -> SimpleNamespace:
+    """The EventLocation fields the report reads."""
+    return SimpleNamespace(e_m=e, n_m=n, elev_m=elev, rms_s=rms)
+
+
+@pytest.mark.smoke
+def test_report_record_and_diagnostics_section_on_hand_built_inputs() -> None:
+    """The flag-on reporting (to_record, offsets_summary's afterNoHarvest, harvest_section)
+    without locating anything, so make check covers it; with no harvest the section is empty."""
+    added = pd.DataFrame({
+        "assocId": ["x0", "x0", "x1"], "pickId": ["h0", "h1", "h2"],
+        "stationId": ["A", "B", "A"], "phase": ["S", "P", "S"], "t": [10.0, 5.0, 20.0],
+        "prob": [0.9, 0.8, 0.7], "tPred": [9.95, 5.02, 20.1], "offsetS": [0.05, -0.02, -0.1],
+        "usedInLocation": [True, True, False], "residualS": [0.01, -0.01, 0.2],
+    }, columns=list(HARVEST_COLUMNS))
+    rep = HarvestReport(
+        config=HarvestConfig(enabled=True, windowS=WINDOW, minProb=0.3), added=added,
+        before={"x0": _at(0.0, 0.0, -2000.0, 0.02), "x1": _at(0.0, 0.0, -3000.0, 0.03)},
+        counts={"picks": 3, "picksUsed": 2, "events": 2, "freePicks": 40, "ambiguousPicks": 1,
+                "skippedUntrustedSlots": 0, "skippedMultiCandidateSlots": 0},
+        chance={"analyticPicks": 0.4, "pickSpanS": 100.0, "controlShiftsS": [-1.0, 1.0],
+                "controlPicks": {"-1": 0, "+1": 1}, "controlMeanPicks": 0.5},
+        pick_stats_before={"sKeepProb": 0.75, "pickProb": 0.8})
+    record = json.loads(json.dumps(rep.to_record({"x0": "e0", "x1": "e1"}), allow_nan=False))
+    assert record["byPhase"] == {"P": {"added": 1, "used": 1}, "S": {"added": 2, "used": 1}}
+    assert [(p["eventId"], p["pickId"], p["usedInLocation"]) for p in record["picks"]] == [
+        ("e0", "h0", True), ("e0", "h1", True), ("e1", "h2", False)]
+    assert record["config"]["enabled"] is True and record["counts"]["picks"] == 3
+
+    reference = pd.DataFrame({
+        "catalogId": ["c0", "c1"], "assocId": ["x0", "x1"],
+        "afterHM": [100.0, 300.0], "afterDzM": [-50.0, 80.0], "afterRmsS": [0.03, 0.04],
+        "afterNoHarvestHM": [120.0, 300.0], "afterNoHarvestDzM": [-50.0, 60.0],
+        "afterNoHarvestRmsS": [0.02, 0.03],
+    })
+    empty = pd.DataFrame()
+    statics = StaticsReport(mode="referenceEvents", pass_number=2, note="", terms=empty, cap_s=1.0,
+                            min_events=3, explanations=empty, sigma=empty, sigma_events="",
+                            history=empty, reference=reference)
+    summary = statics.offsets_summary()
+    assert summary["afterNoHarvest"]["medianHM"] == 210.0
+    assert summary["afterNoHarvest"]["medianAbsDzM"] == 55.0
+    assert summary["after"]["medianAbsDzM"] == 65.0
+    details = SimpleNamespace(harvest=rep, assoc_ids=("x0", "x1"),
+                              locations=(_at(30.0, 40.0, -2025.0, 0.025),
+                                         _at(0.0, 0.0, -3000.0, 0.03)))
+    unset = SimpleNamespace(synthetic=SimpleNamespace(sKeepProb=None, pickProb=None))
+    lines = harvest_section(SimpleNamespace(details=details, statics=statics, cfg=unset))
+    text = "\n".join(lines)
+    assert lines[0] == "## Pick harvest (LOC-10)" and lines[-1] != ""
+    assert "3 picks added, 2 used after the relocation" in text
+    assert "| S | 2 | 1 | 1 | -0.025 | 0.075 |" in lines
+    assert "| P | 1 | 1 | 0 | -0.020 | 0.000 |" in lines
+    assert "horizontal shift median 25 m" in text
+    assert "| held-out terms, before the harvest | 210 | 282 | 55 | 59 | 0.025 |" in lines
+    assert ("closer for 1 and farther for 0, and abs(dz) closer for 0 and farther for 1"
+            in text)
+    assert "before it they were 0.750 / 0.800" in text
+    none = SimpleNamespace(details=SimpleNamespace(harvest=None), statics=None, cfg=unset)
+    assert harvest_section(none) == []
 
 
 # --- locating the LOC-02 test geometry with withheld picks (not smoke) --------------------------

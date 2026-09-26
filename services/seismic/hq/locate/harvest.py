@@ -14,10 +14,12 @@ arrival ``tPred = t0 + T(MAP) + static`` is known at every locator station and p
   used or dropped by the outlier pass, fills the slot, so it is never replaced or duplicated;
 and skips (each counted)
 - a pick within the window of the tPred of two or more located events at its station-phase
-  (filled slots and untrusted events included): likely another event's arrival;
-- a slot with two or more such candidates;
-- the slots of events whose location is not trusted (``UNTRUSTED``); their windows still count
-  for the rule above.
+  (filled slots and untrusted events included): likely another event's arrival
+  (``ambiguousPicks`` counts every such free pick, also one whose slots are all filled);
+- a slot with two or more candidates left after the rule above (``skippedMultiCandidateSlots``;
+  a slot with one such candidate takes it, even with an ambiguous pick in its window too);
+- the slots of events whose location is not trusted (``UNTRUSTED``) that had a candidate
+  (``skippedUntrustedSlots``); their windows still count for the first rule.
 Every event that gained picks is relocated once, with the same statics map as before (a
 reference event's held-out map included) and the normal outlier pass; a harvested pick that pass
 drops stays in arrivals with ``usedInLocation`` false, as an associated one does. Harvest runs
@@ -278,7 +280,7 @@ def harvest_and_relocate(
         residual.append(float(row["residualS"]))
     added = pd.DataFrame({
         "assocId": [str(assoc_ids[int(k)]) for k in chosen["event"]],
-        **{c: chosen[c].to_numpy() for c in HARVEST_COLUMNS[1:8]},
+        **{c: chosen[c].to_numpy() for c in CHOSEN_COLUMNS if c != "event"},
         "usedInLocation": np.array(used, dtype=bool),
         "residualS": np.array(residual, dtype=np.float64),
     }, columns=list(HARVEST_COLUMNS))

@@ -68,7 +68,8 @@ Statics (LOC-05, ``hq.locate.statics``)
 
 Pick harvest (LOC-10, ``hq.locate.harvest``, off unless ``harvest.enabled``)
     Every statics-corrected locate of a whole association (stage locate pass 2, selfConsistent's
-    last iteration, ``locate(statics=...)`` and the tier sweep) passes ``harvest=True``: picks in
+    last iteration, ``locate(statics=...)``, the tier sweep and, with ``locator.method``
+    grid3d, the grid1d comparison, which runs pass 2 too) passes ``harvest=True``: picks in
     no association event within ``harvest.windowS`` of an event's predicted arrival at a
     station-phase it has no pick for are added and the events that gained picks relocated. They
     appear only as extra ``pickIds``, filled ``arrivals`` rows (``tObs``, ``residualS``,
@@ -448,7 +449,9 @@ def locate_detailed(
     n_picks = sum(len(f) for f in frames)  # associated picks
     harvested: HarvestReport | None = None
     if harvest and cfg.harvest.enabled and located:
-        from hq.locate.harvest import harvest_and_relocate  # imports hq.locate.locator only
+        # Imported per call, not at the top: the harvest runs only when enabled, and
+        # test_self_consistent_harvests_on_the_last_iteration_only monkeypatches it on the module.
+        from hq.locate.harvest import harvest_and_relocate
 
         frames, located, harvested = harvest_and_relocate(
             setup, locator, assoc_ids, frames, located, per_event, picks,
