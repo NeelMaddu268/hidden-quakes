@@ -1,5 +1,8 @@
 """Write ``Bundle``'s JSON schema (with every model in ``$defs``) for ``scripts/gen-contracts.sh``.
 
+``schema.json`` exists only to generate the TS: it is normalized for json2ts (draft-07 tuples,
+every field required). Validate JSON with the Pydantic models, never with this file.
+
 Usage: ``python -m hq_contracts.schema <out.json>``. Prints ``SCHEMA_VERSION`` on stdout.
 """
 
@@ -52,7 +55,7 @@ def bundle_schema() -> dict:
         sub["title"] = name
     _strip_property_titles(schema)
     schema["title"] = "Bundle"
-    schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+    schema["$schema"] = "http://json-schema.org/draft-07/schema#"
     schema["description"] = f"Hidden Quakes contracts, schemaVersion {SCHEMA_VERSION}"
     return schema
 
