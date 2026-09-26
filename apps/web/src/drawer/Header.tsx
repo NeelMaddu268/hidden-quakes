@@ -1,7 +1,7 @@
-import type { Confidence } from "../providers/confidence";
 import type { BundleMeta, SceneMeta, SeismicEvent } from "../scene/types";
 import { depthKmOfElev } from "./geometry";
 import { DASH, fmtFixed, fmtMagnitude, fmtPlusMinusM, fmtUnit, fmtUtahLocal, fmtUtc, isNum } from "./format";
+import type { Confidence } from "../providers/confidence";
 
 export interface HeaderProps {
   /** Selected event id (shown even before the bundle is ready). */
