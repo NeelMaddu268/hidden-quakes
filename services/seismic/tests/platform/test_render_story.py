@@ -92,7 +92,12 @@ def test_every_placeholder_is_substituted_or_manual(
     # The manual list is explicit: no bundle field, so the pitch says where to read it.
     manual = {r.name for r in rows if r.status == story.STATUS_MANUAL}
     assert "{depthBand}" in manual and "{latency}" in manual
-    assert {"<deployed URL>", "<repo URL>", "<video URL>"} <= manual
+    assert {"<repo URL>", "<video URL>"} <= manual
+    # The deployed URL is the public link docs/deploy.md names, never a team-internal alias.
+    deployed = next(r for r in rows if r.name == "<deployed URL>")
+    assert deployed.status == story.STATUS_VALUE
+    assert deployed.text.startswith("https://") and ".vercel.app" in deployed.text
+    assert "projects" not in deployed.text
 
 
 def test_values_come_from_the_bundle(rendered: tuple[Path, list, str]) -> None:

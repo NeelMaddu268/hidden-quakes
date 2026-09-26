@@ -51,6 +51,8 @@ DOCS_DEMO = REPO_ROOT / "docs" / "demo"
 PITCH_DOC = DOCS_DEMO / "pitch-and-qa.md"
 DEVPOST_DOC = DOCS_DEMO / "devpost.md"
 DEFAULT_OUT = REPO_ROOT / "data" / "story"
+DEPLOY_DOC = REPO_ROOT / "docs" / "deploy.md"
+PUBLIC_LINK_RE = re.compile(r"\*\*Public link: <(https://[^>\s]+)>\*\*")
 
 NUMBERS_MD = "numbers.md"
 PITCH_FILLED_MD = "pitch-filled.md"
@@ -283,6 +285,23 @@ def gated(gate_file: str, gate_path: str, inner: Resolver, *, sentence: str) -> 
             return Resolved(r.text, f"{r.source} (only with {gate_source}: {sentence})", r.status)
         r = inner(bundle)
         return Resolved(r.text, f"{r.source} (only with {gate_source}: {sentence})", r.status)
+
+    return resolve
+
+
+def deployed_url() -> Resolver:
+    """The public link, read from ``docs/deploy.md`` ("Public link: <https://...>") so the
+    Devpost carries the one URL the deploy doc names and never a team-internal alias."""
+
+    def resolve(bundle: Bundle) -> Resolved:
+        source = "docs/deploy.md → Public link"
+        text = DEPLOY_DOC.read_text(encoding="utf-8") if DEPLOY_DOC.is_file() else ""
+        match = PUBLIC_LINK_RE.search(text)
+        if match is None:
+            return Resolved(
+                "[not available: docs/deploy.md names no public link]", source, STATUS_NOT_AVAILABLE
+            )
+        return Resolved(match.group(1), source, STATUS_VALUE)
 
     return resolve
 
@@ -601,7 +620,7 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
     Spec("<from evidence/<heroEventId>.json: traces.length>", hero_station_count()),
     Spec("<heroEventId>", meta_field("scene.heroEventId")),
     Spec("<scene.heroEventId>", meta_field("scene.heroEventId")),
-    Spec("<deployed URL>", manual("the production URL (docs/deploy.md)")),
+    Spec("<deployed URL>", deployed_url()),
     Spec("<repo URL>", manual("the GitHub repository URL")),
     Spec("<video URL>", manual("the uploaded video URL")),
     Spec("<from FILE: field>", literal("describes the placeholder form; not a placeholder")),
