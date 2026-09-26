@@ -946,6 +946,24 @@ def test_reason_located_out_of_tolerance(
     }
 
 
+def test_reason_located_out_of_tolerance_names_the_carriers_match(
+    seismology_config: SeismologyConfig, arrivals: ArrivalModel
+) -> None:
+    """Review reproduction: a is picked, but its picks went into x, which lies 3 s later and is
+    matched to b. The reason names b, so the miss reads as merged into x rather than mislocated."""
+    pub = public([("a", T0, 0, 0), ("b", T0 + 3.0, 0, 0)])
+    sta = stations()
+    picks = arrival_picks(sta, T0, HYPO, n=6)
+    loc = located([("x", T0 + 3.0, 0.0, 0.0)], {"x": [p.id for p in picks]})
+    evidence = Evidence(stations=sta, picks=picks_frame(picks))
+    reasons, explained = _explain(loc, pub, seismology_config, arrivals, evidence)
+    assert reasons == {
+        "a": "located out of tolerance 2 s / 5 km (lowest-cost associated candidate x: dt +3.00 s, "
+        "0.00 km; picks in the expected arrival windows from 6 stations; matched to b)"
+    }
+    assert explained.codes == {"a": "locatedOutOfTolerance"}
+
+
 @pytest.mark.parametrize("dt_s", [8.0, 3.0, -3.0])
 def test_neighbouring_event_picks_are_not_credited(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel, dt_s: float
