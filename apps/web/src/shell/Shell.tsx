@@ -1,8 +1,6 @@
 "use client";
 
-import { useContext } from "react";
-import { useBundle } from "@/providers";
-import { ProviderContext } from "@/providers/root";
+import { useBundle, useMode } from "@/providers";
 import { useDemo } from "@/state/demo";
 import { Counters } from "./Counters";
 import { FilterPills, ModePills } from "./Pills";
@@ -18,7 +16,7 @@ import { useKeyboard } from "./useKeyboard";
 export function Shell() {
   const bundle = useBundle();
   // The mode is known from `?mode=` before the bundle is; the loading line names it.
-  const { mode } = useContext(ProviderContext);
+  const mode = useMode();
   const phase = useDemo((s) => s.phase);
   const ready = bundle.status === "ready";
   useKeyboard({ heroEventId: ready ? bundle.meta.scene.heroEventId : null, ready });

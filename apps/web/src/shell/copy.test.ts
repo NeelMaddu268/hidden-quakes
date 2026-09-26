@@ -17,13 +17,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOTS = ["shell", "app"].map((dir) => resolve(HERE, "..", dir));
 
 const READABLE_ATTRIBUTES = new Set(["aria-label", "title", "alt", "placeholder", "aria-description"]);
+// Copy routed through constants (`{ value, label }` tables rendered as `{label}`) is scanned too.
+const READABLE_PROPERTIES = new Set(["label", "title", "text", "copy", "message"]);
 
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) out.push(...walk(path));
-    else if (name.endsWith(".tsx") && !name.endsWith(".test.tsx")) out.push(path);
+    else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) && !name.endsWith(".d.ts")) out.push(path);
   }
   return out;
 }
@@ -54,6 +56,12 @@ export function readableCopy(source: string, fileName = "copy.tsx"): string[] {
       literalText(node.expression, copy);
     } else if (ts.isJsxAttribute(node) && READABLE_ATTRIBUTES.has(node.name.getText(file))) {
       if (node.initializer && ts.isStringLiteral(node.initializer)) copy.push(node.initializer.text);
+    } else if (
+      ts.isPropertyAssignment(node) &&
+      (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
+      READABLE_PROPERTIES.has(node.name.text)
+    ) {
+      literalText(node.initializer, copy);
     }
     ts.forEachChild(node, visit);
   };
@@ -93,5 +101,7 @@ describe("UI copy carries no numbers", () => {
     expect(readableCopy(attribute)).toEqual(["43 events"]);
     const fine = "export function E({ n }: { n: number }) { return <p data-testid=\"c-1\">{`${n} events`}</p>; }";
     expect(readableCopy(fine)).toEqual(["events"]);
+    const property = `const FILTERS = [{ value: "top", label: "Top 10" }];`;
+    expect(readableCopy(property, "copy.ts")).toEqual(["Top 10"]);
   });
 });
