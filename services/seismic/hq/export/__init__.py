@@ -62,7 +62,7 @@ def run(ctx: "RunContext") -> None:
     content, so the counts are not summed across modes."""
     started = time.perf_counter()
     cfg: ExportConfig = ctx.config.export
-    tables = load_run_tables(ctx.run_dir)
+    tables = load_run_tables(ctx.run_dir, gr_cfg=ctx.config.validate.gr)
     if tables.run.id != ctx.run_id:
         raise ExportError(
             f"{ctx.run_dir}/run.json has id {tables.run.id!r}, expected {ctx.run_id!r}"
@@ -72,7 +72,14 @@ def run(ctx: "RunContext") -> None:
     counts: dict[str, int] = {}
     for mode in cfg.modes:
         result = export_bundle(
-            tables, cfg, ctx.config.run, mode, source, cache_dir=ctx.cache_dir, out_dir=root / mode
+            tables,
+            cfg,
+            ctx.config.run,
+            mode,
+            source,
+            cache_dir=ctx.cache_dir,
+            out_dir=root / mode,
+            baseline_cfg=ctx.config.validate.baseline,
         )
         if not counts:
             counts = dict(result.counts)
