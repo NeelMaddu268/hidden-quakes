@@ -537,6 +537,7 @@ class BaselineSweep(_Section):
     pOn: tuple[float, ...] = Field(min_length=1)
     sOn: tuple[float, ...] = Field(min_length=1)
     offLevels: tuple[float, ...] = Field(min_length=1)
+    scoreWithH2: bool  # score every grid point through H2's associate..assign_tiers, once merged
 
     @model_validator(mode="after")
     def _check(self) -> "BaselineSweep":
@@ -550,18 +551,23 @@ class BaselineSweep(_Section):
 
 
 class BaselineConfig(_Section):
-    """Classical recursive STA/LTA picker and its threshold sweep (``hq.baseline``)."""
+    """Classical recursive STA/LTA picker and its threshold sweep (``hq.baseline``).
+
+    The gap-edge distance is not here: the baseline uses ``picker.gapEdgeS``, the same number
+    PhaseNet's full-window stage passes to ``hq.preprocess.chunks.pick_is_kept``.
+    """
 
     prob: float = Field(ge=0.0, le=1.0)  # Pick.prob of every trigger; see signal.yaml
-    gapEdgeS: float = Field(ge=0.0)  # picks this close to a raw data edge are dropped, counted
-    minSegmentMarginS: float = Field(ge=0.0)  # segments shorter than ltaS + this are skipped
+    minSegmentMarginS: float = Field(ge=0.0)  # segments shorter than warmupS + this are skipped
     maxWorkers: int = Field(ge=1)  # stations processed in parallel (threads); 1 = inline
-    prefilter: BaselineBandpass | None  # null: STA/LTA straight on the preprocessed traces
+    settleLtaMultiple: float = Field(gt=0.0)  # overlapS must hold this many ltaS before a keep
+    prefilter: dict[str, BaselineBandpass] = Field(min_length=1)  # per preprocess profile
     p: BaselinePhase
     s: BaselinePhase
+    pHorizontalTolS: float = Field(ge=0.0)  # per horizontal: a trigger on this near a P is the P
     minSMinusPS: float = Field(ge=0.0)  # S is the first horizontal trigger in
     maxSMinusPS: float = Field(gt=0.0)  # [tP + minSMinusPS, tP + maxSMinusPS]
-    chosen: BaselineThresholds  # thresholds of picks_stalta.parquet
+    chosen: BaselineThresholds  # thresholds of picks_stalta.parquet; must be a sweep grid point
     sweep: BaselineSweep
 
     @model_validator(mode="after")
@@ -573,6 +579,15 @@ class BaselineConfig(_Section):
         shared = set(self.p.components) & set(self.s.components)
         if shared:
             raise ValueError(f"p and s components overlap: {sorted(shared)}")
+        c, sw = self.chosen, self.sweep
+        on_grid = (
+            c.pOff == c.sOff and c.pOn in sw.pOn and c.sOn in sw.sOn and c.pOff in sw.offLevels
+        )
+        if not on_grid:
+            raise ValueError(
+                f"chosen {c.model_dump()} is not a sweep grid point: needs pOn in sweep.pOn, "
+                "sOn in sweep.sOn and pOff == sOff in sweep.offLevels"
+            )
         return self
 
 

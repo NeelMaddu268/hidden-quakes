@@ -5,40 +5,70 @@ Stage ``baseline`` (docs/01): cache + ``stations.parquet`` -> ``picks_stalta.par
 
 Input. Every ``usedInRun`` station is read through ``hq.preprocess.chunks.iter_model_chunks``,
 the same hour chunks and the same ``for_picking`` output PhaseNet (SEIS-06) picks on, and every
-pick goes through the same ``pick_is_kept`` rule: outside the chunk's keep interval it belongs to
-the neighbouring chunk; within ``baseline.gapEdgeS`` of a raw data edge it is dropped and counted.
+pick goes through the same ``pick_is_kept`` rule with the same distance, ``picker.gapEdgeS``:
+outside the chunk's keep interval it belongs to the neighbouring chunk; within ``gapEdgeS`` of a
+raw data edge it is dropped and counted.
 
-Characteristic function. Per gap-separated segment: an optional causal Butterworth bandpass
-(``baseline.prefilter``), then ObsPy's ``recursive_sta_lta``. P uses the vertical, S each
-horizontal, each with its own STA/LTA windows. Windows are REAL seconds, so a time-stretched
-``borehole-B`` segment gets the same physical windows (``TimeMap.factor`` x more model samples).
-The recursive LTA starts from zero, so the first ``warmupS`` of every segment is zeroed (ObsPy
-itself zeroes only the first LTA window). Segments shorter than ``ltaS + minSegmentMarginS`` are
-skipped and counted. Each function is computed ONCE per segment and window setting; every
-threshold of the sweep and the chosen thresholds then only re-run the cheap ``trigger_onset``.
+Characteristic function. Per gap-separated segment: a causal Butterworth bandpass chosen by the
+station's preprocessing profile (``baseline.prefilter[profile]``, real Hz), then ObsPy's
+``recursive_sta_lta``. P uses the vertical, S each horizontal, each with its own STA/LTA windows.
+Windows are REAL seconds, so a time-stretched ``borehole-B`` segment gets the same physical
+windows (``TimeMap.factor`` x more model samples). Each function is computed ONCE per segment and
+window setting; every threshold of the sweep and the chosen thresholds then only re-run the cheap
+``trigger_onset``.
+
+Warm-up. The recursive LTA starts from zero at every segment start, so the ratio is inflated
+there. A trigger that starts in the first ``warmupS`` of a segment is dropped; at the chosen
+thresholds the ones inside the keep interval and not already within ``gapEdgeS`` of a data edge
+are counted (``suppressedWarmupP``/``suppressedWarmupS``). After a gap the effective exclusion is
+therefore ``warmupS`` (P 6 s, S 12 s in the showcase config), not ``gapEdgeS``. Segments shorter
+than ``warmupS + minSegmentMarginS`` could never trigger and are skipped and counted.
 
 Onsets. A pick is the first sample of a ``trigger_onset`` trigger, converted from model time to
 real time with ``TimeMap.to_real`` (identity except ``borehole-B``). P: every vertical trigger.
-S: for each P of the station (a P within ``gapEdgeS`` of a data edge does not count), the EARLIEST
-trigger on either horizontal in ``[tP + minSMinusPS, tP + maxSMinusPS]``; earliest rather than
-strongest because the first S energy is the onset and a later, stronger trigger is more often
-coda. Two Ps choosing the same trigger give one S pick. Horizontal triggers with no P ahead of them
-are not picks. Known limitation, as for any classical S picker: when P energy on a horizontal keeps
-the trigger on until the S arrives, that S has no onset of its own and is missed.
+S: for each P of the station (a P within ``gapEdgeS`` of a data edge does not count, and the S
+picks lost that way are counted as ``sLostPNearGapEdge``), each horizontal is searched on its
+own. On one horizontal, a trigger that is on at any time within ``pHorizontalTolS`` of the P
+onset is that P's own energy on the component (an emergent P can cross the level there a few
+tenths of a second after the vertical): it is never an S, and the search on that component
+starts where it ends, so P-coda re-triggers do not become S picks. The component's S is its
+earliest other trigger starting in ``[tP + minSMinusPS, tP + maxSMinusPS]``, and the pick is the
+earlier of the two components'. Searching per component matters: a P trigger that stays on one
+horizontal must not hide the S onset on the other. Earliest rather than strongest because the
+first new horizontal energy is the onset and a later, stronger trigger is more often coda. Two Ps
+choosing the same trigger give one S pick; horizontal triggers with no P ahead of them are not
+picks. Known limitations, as for any classical S picker: when P energy keeps a horizontal trigger
+on until the S arrives, that S has no onset of its own on that component; and an S less than
+about ``pHorizontalTolS`` after the P is taken for the P's own trigger. Onsets are late-biased by
+the STA build-up and by the causal prefilter's group delay, which is larger at low frequency, so
+S is biased later than P (numbers in ``signal.yaml``).
 
 Probability. STA/LTA has no calibrated confidence, so every pick gets ``prob = baseline.prob``
-(1.0). How reliable the baseline is is controlled by the trigger thresholds alone, which the sweep
-varies; prob 1.0 means an association probability threshold never drops a baseline pick, so the
-baseline gets its best shot in the comparison.
+(1.0). The swept trigger thresholds are the baseline's only tuning dimension: with prob 1.0 no
+association probability threshold ever drops a baseline pick. A baseline event's
+``meanPickProb`` is therefore always 1.0 and says nothing about confidence; it is not comparable
+with a PhaseNet event's.
 
 Sweep. Grid ``sweep.pOn x sweep.sOn x sweep.offLevels`` (one off level for both phases). For
-every point the stage records ``nP``, ``nS`` and ``nStations`` (stations with any pick). Tier A
-and recovered-public counts need H2's ``associate``/``locate``/``match``/``assign_tiers``
-(docs/02 section 5); until those are merged ``evaluate_with_h2`` raises
-``H2PipelineMissingError``, the stage logs a WARNING and writes ``candidates``,
-``recoveredPublic`` and ``tierA`` as null. docs/02's ``SweepPoint`` has non-null ints, so the
-file is written with model name ``BaselineSweep``: SweepPoint's columns (``params`` as JSON text,
-the io flattening rule for dicts) plus ``nP``, ``nS``, ``nStations``.
+every point the stage records ``nP``, ``nS`` and ``nStations`` (stations with any pick). With
+``sweep.scoreWithH2`` every point is also run through H2's ``associate``/``locate``/``match``/
+``assign_tiers`` (docs/02 section 5), one full H2 run per point with the default association
+config, logged per point, and scored as ``candidates``, ``recoveredPublic`` and ``tierA``. Any
+H2 error then stops the stage (``picks_stalta.parquet`` is already written). Caveat for the
+comparison: H2's ``assign_tiers`` derives Tier A thresholds from each pick set's own matched
+events, so ``tierA`` is not measured on one fixed yardstick across grid points or against
+PhaseNet; whether the sweep should reuse the PhaseNet run's tiering thresholds is for H2 and H4
+to settle. Until H2's API is merged ``evaluate_with_h2`` raises ``H2PipelineMissingError``; the
+stage catches only that, logs a WARNING and writes the three scores as null. docs/02's
+``SweepPoint`` has non-null ints, so the file is written with model name ``BaselineSweep``:
+SweepPoint's columns (``params`` as JSON text, the io flattening rule for dicts) plus ``nP``,
+``nS``, ``nStations``. Once scored, the stage logs the best Tier A point (ties: first in grid
+order) and warns while it differs from ``baseline.chosen``.
+
+Failures. A station with nothing cached (``CacheMissError`` on its first read) has no picks and
+the reason is reported. Any other error for a station (conflicting overlapping pieces, a rate its
+profile rejects, an ambiguous station id) stops the stage with the station named: those are data
+or config faults PhaseNet would hit too, and the fix belongs upstream.
 
 Outputs are sorted by ``(t, stationId, phase)``; identical config and cache give identical files.
 """
@@ -68,7 +98,13 @@ from obspy.signal.trigger import recursive_sta_lta, trigger_onset
 from scipy import signal as sps
 
 from hq.config.run import RunSection
-from hq.config.signal import BaselineBandpass, BaselineConfig, BaselinePhase, SignalConfig
+from hq.config.signal import (
+    BaselineBandpass,
+    BaselineConfig,
+    BaselinePhase,
+    PreprocessConfig,
+    SignalConfig,
+)
 from hq.ingest.cache import CacheMissError
 from hq.preprocess.chunks import (
     NEAR_GAP_EDGE,
@@ -81,7 +117,7 @@ from hq.preprocess.chunks import (
 
 log = logging.getLogger(__name__)
 
-STAGE = "baseline"  # registry name and ctx.record() key
+STAGE = "baseline"  # registry name, ctx.record() key and the key params nest under
 PICKER = "stalta"  # docs/02 Pick.picker for this baseline: a contract value, not a knob
 PICKS_FILE = "picks_stalta.parquet"
 SWEEP_FILE = "baseline_sweep.parquet"
@@ -102,6 +138,7 @@ _STATION_COLUMNS = ("id", "channels", "preprocessProfile", "usedInRun")
 
 FloatArray = npt.NDArray[np.float64]
 Pair = tuple[float, float]  # trigger (on, off)
+Triggers = tuple[FloatArray, FloatArray]  # (onset, end) real times, sorted by onset
 
 
 class StageContext(Protocol):
@@ -161,103 +198,160 @@ def chosen_point(cfg: BaselineConfig) -> GridPoint:
     return GridPoint(c.pOn, c.pOff, c.sOn, c.sOff)
 
 
+def gap_edge_s(signal: SignalConfig) -> float:
+    """The gap-edge distance both full-window pickers pass to ``pick_is_kept``."""
+    return signal.picker.gapEdgeS
+
+
+def real_nyquist_hz(pre: PreprocessConfig, profile: str) -> float:
+    """Lowest real Nyquist a segment of ``profile`` can have after ``for_picking``.
+
+    Every profile outputs ``targetRateHz`` of model time; ``stretch`` only relabels, so its real
+    rate is the input rate (at least ``minRateHz``), the others resample to ``targetRateHz``.
+    """
+    prof = pre.profiles[profile]
+    real_rate = prof.minRateHz if prof.method == "stretch" else pre.targetRateHz
+    return real_rate / 2.0
+
+
 def check_config(signal: SignalConfig) -> None:
-    """Cross-section checks the per-section validators can't make."""
+    """Cross-section checks the per-section validators can't make (run at stage start)."""
     b = signal.baseline
-    model = set(signal.preprocess.modelComponents)
+    pre = signal.preprocess
+    model = set(pre.modelComponents)
     for name, phase in (("p", b.p), ("s", b.s)):
         extra = set(phase.components) - model
         if extra:
             raise ValueError(
                 f"baseline.{name}.components {sorted(extra)} are not model components "
-                f"{signal.preprocess.modelComponents!r}"
+                f"{pre.modelComponents!r}"
             )
+    missing = sorted(set(pre.profiles) - set(b.prefilter))
+    unknown = sorted(set(b.prefilter) - set(pre.profiles))
+    if missing or unknown:
+        raise ValueError(
+            "baseline.prefilter needs one band per preprocess profile: "
+            f"missing {missing}, not a profile {unknown}"
+        )
+    for profile, band in b.prefilter.items():
+        nyquist = real_nyquist_hz(pre, profile)
+        if band.highHz >= nyquist:
+            raise ValueError(
+                f"baseline.prefilter.{profile}.highHz {band.highHz} reaches the real Nyquist "
+                f"{nyquist} Hz of profile {profile}"
+            )
+    overlap = pre.chunks.overlapS
     # A keep interval must start after every warm-up, and an S just inside it needs its P (up to
     # maxSMinusPS earlier, in the overlap) to be pickable too: past the P warm-up.
-    overlap = signal.preprocess.chunks.overlapS
     need = max(b.s.warmupS, b.p.warmupS + b.maxSMinusPS)
     if overlap < need:
         raise ValueError(
             f"preprocess.chunks.overlapS {overlap} s is shorter than max(s.warmupS, p.warmupS + "
             f"maxSMinusPS) = {need} s: picks near a keep start would depend on the chunking"
         )
-    if b.prefilter is not None and b.prefilter.highHz >= signal.preprocess.targetRateHz / 2.0:
+    # ... and the recursive LTA must have forgotten its zero start there.
+    settle = max(b.settleLtaMultiple * b.s.ltaS, b.settleLtaMultiple * b.p.ltaS + b.maxSMinusPS)
+    if overlap < settle:
         raise ValueError(
-            f"baseline.prefilter.highHz {b.prefilter.highHz} reaches the model Nyquist "
-            f"{signal.preprocess.targetRateHz / 2.0} Hz"
+            f"preprocess.chunks.overlapS {overlap} s is shorter than settleLtaMultiple x ltaS "
+            f"(+ maxSMinusPS for P) = {settle} s: the LTA at a keep start would depend on the "
+            "chunking"
+        )
+    gap = gap_edge_s(signal)
+    if gap >= overlap:
+        raise ValueError(
+            f"picker.gapEdgeS {gap} s must be below preprocess.chunks.overlapS {overlap} s: a data "
+            "edge that close to a keep interval must lie inside the chunk's read span"
         )
 
 
 # --- characteristic function and onsets -------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class SegmentCF:
+    """Recursive STA/LTA of one segment; triggers starting before ``warmup`` samples are dropped."""
+
+    cf: FloatArray
+    warmup: int
+
+
 def characteristic_function(
     tr: Trace,
     phase: BaselinePhase,
-    prefilter: BaselineBandpass | None,
+    prefilter: BaselineBandpass,
     factor: float,
     min_margin_s: float,
-) -> FloatArray | None:
-    """Recursive STA/LTA of one segment, or ``None`` when it is shorter than ``ltaS + margin``.
+) -> SegmentCF | None:
+    """STA/LTA of one segment, or ``None`` when it is shorter than ``warmupS + margin``.
 
     ``factor`` is the chunk's ``TimeMap.factor``: the segment's real sample rate is its model
     rate times ``factor``, and every window is converted to samples at that real rate.
     """
     fs_real = float(tr.stats.sampling_rate) * factor
-    if tr.stats.npts / fs_real < phase.ltaS + min_margin_s:
+    if tr.stats.npts / fs_real < phase.warmupS + min_margin_s:
         return None
-    data = np.asarray(tr.data, dtype=np.float64)
-    if prefilter is not None:
-        if prefilter.highHz >= fs_real / 2.0:
-            raise ValueError(
-                f"{tr.id}: prefilter highHz {prefilter.highHz} reaches Nyquist of {fs_real} Hz"
-            )
-        sos = sps.butter(
-            prefilter.corners,
-            [prefilter.lowHz, prefilter.highHz],
-            btype="bandpass",
-            fs=fs_real,
-            output="sos",
+    if prefilter.highHz >= fs_real / 2.0:
+        raise ValueError(
+            f"{tr.id}: prefilter highHz {prefilter.highHz} reaches Nyquist of {fs_real} Hz"
         )
-        data = sps.sosfilt(sos, data)
+    sos = sps.butter(
+        prefilter.corners,
+        [prefilter.lowHz, prefilter.highHz],
+        btype="bandpass",
+        fs=fs_real,
+        output="sos",
+    )
+    data = sps.sosfilt(sos, np.asarray(tr.data, dtype=np.float64))
     nsta = round(phase.staS * fs_real)
     nlta = round(phase.ltaS * fs_real)
     if nsta < 1 or nlta <= nsta:
         raise ValueError(f"{tr.id}: STA/LTA windows {nsta}/{nlta} samples at {fs_real} Hz")
     cf: FloatArray = recursive_sta_lta(data, nsta, nlta)
-    cf[: min(round(phase.warmupS * fs_real), cf.size)] = 0.0
-    return cf
+    return SegmentCF(cf=cf, warmup=min(round(phase.warmupS * fs_real), cf.size))
 
 
-def onset_samples(cf: FloatArray, on: float, off: float) -> npt.NDArray[np.int64]:
-    """Sample index of the start of every ``trigger_onset`` trigger."""
-    trig = np.asarray(trigger_onset(cf, on, off), dtype=np.int64).reshape(-1, 2)
-    return trig[:, 0]
+def trigger_samples(cf: FloatArray, on: float, off: float) -> npt.NDArray[np.int64]:
+    """``trigger_onset`` as an ``(n, 2)`` array of (first, last) sample indices."""
+    return np.asarray(trigger_onset(cf, on, off), dtype=np.int64).reshape(-1, 2)
 
 
 @dataclass(frozen=True)
 class ChunkOnsets:
-    """Trigger onsets of one chunk in REAL time, sorted, per threshold pair.
+    """Triggers of one chunk in REAL time, per threshold pair.
 
-    ``p`` from the vertical segments; ``h`` from every horizontal segment, both components merged.
+    ``p``: vertical onsets, sorted. ``h``: per horizontal component, in ``s.components`` order,
+    that component's triggers as (onset, end) arrays sorted by onset (empty when it has none).
+    ``warmupP`` / ``warmupS``: onsets at the chosen thresholds that started inside a warm-up
+    span and were dropped (vertical / horizontal).
     """
 
     p: dict[Pair, FloatArray]
-    h: dict[Pair, FloatArray]
+    h: dict[Pair, tuple[Triggers, ...]]
+    warmupP: FloatArray
+    warmupS: FloatArray
 
 
 def chunk_onsets(
     chunk: ModelChunk,
     cfg: BaselineConfig,
+    prefilter: BaselineBandpass,
     p_pairs: Sequence[Pair],
     s_pairs: Sequence[Pair],
+    chosen: GridPoint,
     counts: Counter[str],
 ) -> ChunkOnsets:
     """Compute each segment's characteristic function once and trigger it at every pair."""
-    lists: dict[str, dict[Pair, list[FloatArray]]] = {
+    ons: dict[str, dict[Pair, list[FloatArray]]] = {
         "P": {pair: [] for pair in p_pairs},
         "S": {pair: [] for pair in s_pairs},
     }
+    # horizontal triggers per (pair, component): onsets and ends
+    h_on: dict[tuple[Pair, str], list[FloatArray]] = {}
+    h_end: dict[tuple[Pair, str], list[FloatArray]] = {}
+    warm: dict[str, list[FloatArray]] = {"P": [], "S": []}
+    chosen_pair = {"P": chosen.p_pair, "S": chosen.s_pair}
+    to_real = chunk.timemap.to_real
     for tr in chunk.stream:
         comp = tr.stats.channel[-1:]
         if comp in cfg.p.components:
@@ -267,28 +361,51 @@ def chunk_onsets(
         else:
             counts["segmentsOtherComponent"] += 1
             continue
-        cf = characteristic_function(
-            tr, phase_cfg, cfg.prefilter, chunk.timemap.factor, cfg.minSegmentMarginS
+        seg = characteristic_function(
+            tr, phase_cfg, prefilter, chunk.timemap.factor, cfg.minSegmentMarginS
         )
-        if cf is None:
+        if seg is None:
             counts[f"segmentsSkippedShort{phase}"] += 1
             continue
         counts[f"segments{phase}"] += 1
         start, delta = tr.stats.starttime.timestamp, float(tr.stats.delta)
-        for pair, found in lists[phase].items():
-            idx = onset_samples(cf, *pair)
-            if idx.size:
-                found.append(chunk.timemap.to_real(start + idx * delta))
+        for pair in ons[phase]:
+            trig = trigger_samples(seg.cf, *pair)
+            late = trig[:, 0] >= seg.warmup
+            if pair == chosen_pair[phase] and not late.all():
+                warm[phase].append(to_real(start + trig[~late, 0] * delta))
+            trig = trig[late]
+            if trig.size == 0:
+                continue
+            if phase == "P":
+                ons["P"][pair].append(to_real(start + trig[:, 0] * delta))
+            else:
+                h_on.setdefault((pair, comp), []).append(to_real(start + trig[:, 0] * delta))
+                h_end.setdefault((pair, comp), []).append(to_real(start + trig[:, 1] * delta))
+    h: dict[Pair, tuple[Triggers, ...]] = {}
+    for pair in s_pairs:
+        per_comp: list[Triggers] = []
+        for comp in cfg.s.components:
+            on_t, end_t = _cat(h_on.get((pair, comp), [])), _cat(h_end.get((pair, comp), []))
+            order = np.argsort(on_t, kind="stable")
+            per_comp.append((on_t[order], end_t[order]))
+        h[pair] = tuple(per_comp)
     return ChunkOnsets(
-        p={pair: _sorted(found) for pair, found in lists["P"].items()},
-        h={pair: _sorted(found) for pair, found in lists["S"].items()},
+        p={pair: np.sort(_cat(found)) for pair, found in ons["P"].items()},
+        h=h,
+        warmupP=np.sort(_cat(warm["P"])),
+        warmupS=np.sort(_cat(warm["S"])),
     )
 
 
-def _sorted(parts: list[FloatArray]) -> FloatArray:
+def _cat(parts: list[FloatArray]) -> FloatArray:
     if not parts:
         return np.empty(0, dtype=np.float64)
-    return np.sort(np.concatenate(parts))
+    return np.concatenate(parts).astype(np.float64, copy=False)
+
+
+def _sorted(parts: list[FloatArray]) -> FloatArray:
+    return np.sort(_cat(parts))
 
 
 def edge_mask(t: FloatArray, edges: Sequence[float], gap_edge_s: float) -> npt.NDArray[np.bool_]:
@@ -312,23 +429,66 @@ def keep_masks(
     return in_keep & ~near, in_keep & near
 
 
-def s_after_p(p: FloatArray, h: FloatArray, min_s: float, max_s: float) -> FloatArray:
-    """For each P, the earliest horizontal onset in ``[p + min_s, p + max_s]``; unique, sorted."""
-    if p.size == 0 or h.size == 0:
+def s_on_component(
+    p: FloatArray, h: Triggers, p_tol: float, min_s: float, max_s: float
+) -> FloatArray:
+    """Per P (aligned with ``p``), the S onset on ONE horizontal component, or NaN.
+
+    ``h`` is that component's triggers as (onset, end), sorted by onset. A trigger that is on at
+    any time within ``p_tol`` of the P onset is the P's own energy on this component: it is never
+    the S, and the search starts where it ends. The S is the earliest other trigger starting in
+    ``[p + min_s, p + max_s]``.
+    """
+    h_on, h_end = h
+    out = np.full(p.shape, np.nan)
+    if p.size == 0 or h_on.size == 0:
+        return out
+    # Triggers starting at or before p + p_tol, and the latest end among them. If that end
+    # reaches p - p_tol, a trigger was on within p_tol of the P.
+    n_upto = np.searchsorted(h_on, p + p_tol, side="right")
+    last_end = np.maximum.accumulate(h_end)
+    prev_end = np.where(n_upto > 0, last_end[np.maximum(n_upto - 1, 0)], -np.inf)
+    busy = prev_end >= p - p_tol
+    start = np.where(busy, np.maximum(p + min_s, prev_end), p + min_s)
+    i = np.maximum(np.searchsorted(h_on, start, side="left"), n_upto)
+    ok = i < h_on.size
+    cand = np.full(p.shape, np.inf)
+    cand[ok] = h_on[i[ok]]
+    hit = cand <= p + max_s
+    out[hit] = cand[hit]
+    return out
+
+
+def s_after_p(
+    p: FloatArray,
+    horizontals: Sequence[Triggers],
+    p_tol: float,
+    min_s: float,
+    max_s: float,
+) -> FloatArray:
+    """For each P, the earliest S over the horizontal components; unique and sorted.
+
+    Each component is searched on its own (``s_on_component``): a P trigger still on one
+    horizontal does not hide an S onset on the other.
+    """
+    if p.size == 0 or not horizontals:
         return np.empty(0, dtype=np.float64)
-    i = np.searchsorted(h, p + min_s, side="left")
-    ok = i < h.size
-    cand = h[i[ok]]
-    return np.unique(cand[cand <= p[ok] + max_s])
+    per = np.vstack([s_on_component(p, h, p_tol, min_s, max_s) for h in horizontals])
+    best = np.where(np.isnan(per), np.inf, per).min(axis=0)
+    return np.unique(best[np.isfinite(best)])
+
+
+def s_picks(p: FloatArray, h: Sequence[Triggers], cfg: BaselineConfig) -> FloatArray:
+    return s_after_p(p, h, cfg.pHorizontalTolS, cfg.minSMinusPS, cfg.maxSMinusPS)
 
 
 def phase_picks(
-    onsets: ChunkOnsets, point: GridPoint, chunk: ModelChunk, cfg: BaselineConfig
+    onsets: ChunkOnsets, point: GridPoint, chunk: ModelChunk, cfg: BaselineConfig, gap: float
 ) -> tuple[FloatArray, FloatArray]:
     """P and S candidates of one chunk at one threshold point, before the keep rule."""
     p = onsets.p[point.p_pair]
-    p_valid = p[~edge_mask(p, chunk.dataEdges, cfg.gapEdgeS)]
-    return p, s_after_p(p_valid, onsets.h[point.s_pair], cfg.minSMinusPS, cfg.maxSMinusPS)
+    p_valid = p[~edge_mask(p, chunk.dataEdges, gap)]
+    return p, s_picks(p_valid, onsets.h[point.s_pair], cfg)
 
 
 # --- one station -------------------------------------------------------------------------------------
@@ -357,6 +517,21 @@ class StationResult:
         return sum(1 for _, ph in self.picks if ph == phase)
 
     @property
+    def lost(self) -> int:
+        """Chosen-threshold candidates dropped by the edge, warm-up and P-near-edge rules."""
+        c = self.counts
+        return sum(
+            c[k]
+            for k in (
+                "droppedNearGapEdgeP",
+                "droppedNearGapEdgeS",
+                "suppressedWarmupP",
+                "suppressedWarmupS",
+                "sLostPNearGapEdge",
+            )
+        )
+
+    @property
     def reason(self) -> str:
         """Why a station has no picks at the chosen thresholds ("" when it has some)."""
         if self.picks:
@@ -364,13 +539,15 @@ class StationResult:
         if self.notCached is not None:
             return "not cached"
         if self.chunks.yielded == 0:
-            if self.chunks.noSegments:
-                return "every segment too short for for_picking"
-            return "no data in window"
+            c = self.chunks
+            parts = [f"{c.empty} of {c.planned} chunks empty"] if c.empty else []
+            if c.noSegments:
+                parts.append(f"{c.noSegments} with every segment too short for for_picking")
+            return "no usable data: " + ", ".join(parts)
         if self.counts["segmentsP"] + self.counts["segmentsS"] == 0:
-            return "every segment shorter than ltaS + minSegmentMarginS"
-        if self.counts["droppedNearGapEdgeP"] + self.counts["droppedNearGapEdgeS"]:
-            return "every trigger within gapEdgeS of a data edge"
+            return "every segment shorter than warmupS + minSegmentMarginS"
+        if self.lost:
+            return "every trigger near a data edge or inside a warm-up span"
         return "no trigger above the chosen thresholds"
 
 
@@ -387,6 +564,10 @@ def pick_station(
     """Chosen-threshold picks and per-grid-point kept pick times of one station over [t0, t1)."""
     began = perf_counter()
     b = cfg.baseline
+    gap = gap_edge_s(cfg)
+    prefilter = b.prefilter.get(station.profile)
+    if prefilter is None:
+        raise ValueError(f"{station.id}: no baseline.prefilter for profile {station.profile!r}")
     chosen = chosen_point(b)
     p_pairs = sorted({g.p_pair for g in grid} | {chosen.p_pair})
     s_pairs = sorted({g.s_pair for g in grid} | {chosen.s_pair})
@@ -405,35 +586,52 @@ def pick_station(
             read_window=read_window,
             stats=res.chunks,
         ):
-            onsets = chunk_onsets(chunk, b, p_pairs, s_pairs, res.counts)
+            onsets = chunk_onsets(chunk, b, prefilter, p_pairs, s_pairs, chosen, res.counts)
             # Published picks: every candidate goes through the shared keep rule.
-            for phase, times in zip(PHASES, phase_picks(onsets, chosen, chunk, b), strict=True):
+            p, s = phase_picks(onsets, chosen, chunk, b, gap)
+            for phase, times in zip(PHASES, (p, s), strict=True):
                 for t in times.tolist():
-                    kept, why = pick_is_kept(t, chunk, b.gapEdgeS)
+                    kept, why = pick_is_kept(t, chunk, gap)
                     if kept:
                         res.picks.append((t, phase))
                     elif why == NEAR_GAP_EDGE:
                         res.counts[f"droppedNearGapEdge{phase}"] += 1
+            # What the other rules cost at the chosen thresholds, counted like drops: kept S
+            # candidates whose only P was near a data edge, and onsets inside warm-up spans.
+            s_all = s_picks(p, onsets.h[chosen.s_pair], b)
+            lost = np.setdiff1d(s_all, s)
+            res.counts["sLostPNearGapEdge"] += int(keep_masks(lost, chunk, gap)[0].sum())
+            for phase, t_warm in zip(PHASES, (onsets.warmupP, onsets.warmupS), strict=True):
+                n_warm = int(keep_masks(t_warm, chunk, gap)[0].sum())
+                res.counts[f"suppressedWarmup{phase}"] += n_warm
             # Sweep counts: the same rule, vectorised (tests check it matches pick_is_kept).
             for k, point in enumerate(grid):
-                p, s = phase_picks(onsets, point, chunk, b)
-                sweep_p[k].append(p[keep_masks(p, chunk, b.gapEdgeS)[0]])
-                sweep_s[k].append(s[keep_masks(s, chunk, b.gapEdgeS)[0]])
+                p_k, s_k = phase_picks(onsets, point, chunk, b, gap)
+                sweep_p[k].append(p_k[keep_masks(p_k, chunk, gap)[0]])
+                sweep_s[k].append(s_k[keep_masks(s_k, chunk, gap)[0]])
     except CacheMissError as exc:  # nothing at all cached for the station: raised on the 1st read
         res.notCached = str(exc)
         log.warning("baseline %s: not cached, no picks (%s)", station.id, exc)
+    except Exception as exc:
+        # Deliberately not handled (see the module docstring); only name the station.
+        exc.add_note(f"baseline stage, station {station.id} (profile {station.profile})")
+        raise
     res.sweepP = [_sorted(parts) for parts in sweep_p]
     res.sweepS = [_sorted(parts) for parts in sweep_s]
     res.runtimeS = perf_counter() - began
     log.info(
-        "baseline %s (%s): P=%d S=%d dropped_near_gap_edge P=%d S=%d segments P=%d S=%d "
-        "skipped_short P=%d S=%d chunks %d/%d runtime_s=%.2f",
+        "baseline %s (%s): P=%d S=%d dropped_near_gap_edge P=%d S=%d s_lost_p_near_edge=%d "
+        "suppressed_warmup P=%d S=%d segments P=%d S=%d skipped_short P=%d S=%d chunks %d/%d "
+        "runtime_s=%.2f",
         station.id,
         station.profile,
         res.n("P"),
         res.n("S"),
         res.counts["droppedNearGapEdgeP"],
         res.counts["droppedNearGapEdgeS"],
+        res.counts["sLostPNearGapEdge"],
+        res.counts["suppressedWarmupP"],
+        res.counts["suppressedWarmupS"],
         res.counts["segmentsP"],
         res.counts["segmentsS"],
         res.counts["segmentsSkippedShortP"],
@@ -494,23 +692,30 @@ def load_h2_pipeline() -> H2Pipeline:
 
 
 def evaluate_with_h2(
-    picks_df: pd.DataFrame, stations_df: pd.DataFrame, ctx: StageContext
+    picks_df: pd.DataFrame,
+    stations_df: pd.DataFrame,
+    ctx: StageContext,
+    *,
+    h2: H2Pipeline | None = None,
+    catalog: pd.DataFrame | None = None,
 ) -> SweepScores:
     """Associate, locate, match and tier one pick set with H2's pipeline (docs/02 section 5).
 
     ``candidates``: located events; ``recoveredPublic``: public catalog events matched to one;
-    ``tierA``: Tier A events. Raises ``H2PipelineMissingError`` until H2's API is merged.
+    ``tierA``: Tier A events. Raises ``H2PipelineMissingError`` until H2's API is merged. Pass
+    ``h2`` and ``catalog`` to reuse them across calls (the sweep loads each once).
     """
-    h2 = load_h2_pipeline()
-    from hq_contracts.io import read_table
+    pipeline = load_h2_pipeline() if h2 is None else h2
+    if catalog is None:
+        from hq_contracts.io import read_table
 
+        catalog = read_table(ctx.path("catalog.parquet"))
     seismology = ctx.config.seismology
     run_section = ctx.config.run
-    catalog = read_table(ctx.path("catalog.parquet"))
-    assoc = h2.associate(picks_df, stations_df, seismology, run_section)
-    located = h2.locate(assoc, picks_df, stations_df, seismology, run_section)
-    matched = h2.match(located.events, catalog, seismology)
-    tiers = h2.assign_tiers(located.events, matched.matches, seismology)
+    assoc = pipeline.associate(picks_df, stations_df, seismology, run_section)
+    located = pipeline.locate(assoc, picks_df, stations_df, seismology, run_section)
+    matched = pipeline.match(located.events, catalog, seismology)
+    tiers = pipeline.assign_tiers(located.events, matched.matches, seismology)
     return SweepScores(
         candidates=len(located.events),
         recoveredPublic=int(matched.matches["eventId"].notna().sum()),
@@ -604,15 +809,15 @@ def score_sweep(
     results: Sequence[StationResult],
     grid: Sequence[GridPoint],
     stations_df: pd.DataFrame,
-    prob: float,
+    cfg: BaselineConfig,
     ctx: StageContext,
 ) -> list[SweepScores | None]:
-    """H2 scores per grid point, or nulls (with a WARNING) while H2's pipeline is not merged."""
+    """H2 scores per grid point, or nulls: scoring switched off, or H2 not merged (WARNING)."""
+    if not cfg.sweep.scoreWithH2:
+        log.info("baseline sweep: baseline.sweep.scoreWithH2 is false; scores are null")
+        return [None] * len(grid)
     try:
-        return [
-            evaluate_with_h2(picks_frame(sweep_rows(results, k), prob), stations_df, ctx)
-            for k in range(len(grid))
-        ]
+        h2 = load_h2_pipeline()
     except H2PipelineMissingError as exc:
         log.warning(
             "baseline sweep: %s; candidates, recoveredPublic and tierA are null for all %d "
@@ -621,6 +826,50 @@ def score_sweep(
             len(grid),
         )
         return [None] * len(grid)
+    from hq_contracts.io import read_table
+
+    catalog = read_table(ctx.path("catalog.parquet"))
+    scores: list[SweepScores | None] = []
+    for k, point in enumerate(grid):
+        began = perf_counter()
+        picks = picks_frame(sweep_rows(results, k), cfg.prob)
+        sc = evaluate_with_h2(picks, stations_df, ctx, h2=h2, catalog=catalog)
+        log.info(
+            "baseline sweep %d/%d %s: %d picks -> %d candidates, %d recovered public, "
+            "%d Tier A in %.1f s",
+            k + 1,
+            len(grid),
+            point.params(),
+            len(picks),
+            sc.candidates,
+            sc.recoveredPublic,
+            sc.tierA,
+            perf_counter() - began,
+        )
+        scores.append(sc)
+    return scores
+
+
+def best_point(grid: Sequence[GridPoint], scores: Sequence[SweepScores | None]) -> int | None:
+    """Index of the grid point with the most Tier A events (first in grid order on ties)."""
+    scored = [(sc.tierA, -k) for k, sc in enumerate(scores) if sc is not None]
+    if not scored:
+        return None
+    return -max(scored)[1]
+
+
+def report_best(grid: Sequence[GridPoint], k: int | None, chosen: GridPoint) -> None:
+    if k is None:
+        return
+    best = grid[k]
+    log.info("baseline sweep: most Tier A events at %s", best.params())
+    if best != chosen:
+        log.warning(
+            "baseline sweep: baseline.chosen %s is not the best Tier A point %s; copy it into "
+            "signal.yaml if the comparison should use the baseline's best thresholds",
+            chosen.params(),
+            best.params(),
+        )
 
 
 def station_rows(stations_df: pd.DataFrame, station_ids: Sequence[str] | None) -> list[StationRow]:
@@ -653,23 +902,24 @@ def station_rows(stations_df: pd.DataFrame, station_ids: Sequence[str] | None) -
 def format_station_table(results: Sequence[StationResult]) -> str:
     head = (
         f"{'station':<10} {'profile':<12} {'chunks':>7} {'P':>6} {'S':>6} {'dropP':>5} "
-        f"{'dropS':>5} {'short':>5} {'sec':>6}  reason for no picks"
+        f"{'dropS':>5} {'sNoP':>5} {'warmP':>5} {'warmS':>5} {'short':>5} {'sec':>6}  "
+        "reason for no picks"
     )
     title = (
-        "STA/LTA baseline at the chosen thresholds "
-        "(drop = within gapEdgeS of a data edge, short = segments skipped as too short)"
+        "STA/LTA baseline at the chosen thresholds (drop = within picker.gapEdgeS of a data "
+        "edge; sNoP = S lost because its P was near an edge; warm = onset inside a warm-up span; "
+        "short = segments skipped as too short)"
     )
-    lines = [
-        title,
-        head,
-        "-" * len(head),
-    ]
+    lines = [title, head, "-" * len(head)]
     for r in results:
-        short = r.counts["segmentsSkippedShortP"] + r.counts["segmentsSkippedShortS"]
+        c = r.counts
+        short = c["segmentsSkippedShortP"] + c["segmentsSkippedShortS"]
         lines.append(
             f"{r.stationId:<10} {r.profile:<12} {r.chunks.yielded:>3}/{r.chunks.planned:<3} "
-            f"{r.n('P'):>6} {r.n('S'):>6} {r.counts['droppedNearGapEdgeP']:>5} "
-            f"{r.counts['droppedNearGapEdgeS']:>5} {short:>5} {r.runtimeS:>6.1f}  {r.reason}"
+            f"{r.n('P'):>6} {r.n('S'):>6} {c['droppedNearGapEdgeP']:>5} "
+            f"{c['droppedNearGapEdgeS']:>5} {c['sLostPNearGapEdge']:>5} "
+            f"{c['suppressedWarmupP']:>5} {c['suppressedWarmupS']:>5} {short:>5} "
+            f"{r.runtimeS:>6.1f}  {r.reason}"
         )
     return "\n".join(lines)
 
@@ -710,6 +960,38 @@ def _map_stations(
         return list(pool.map(work, rows))  # input order: deterministic
 
 
+_TOTALLED = (
+    "droppedNearGapEdgeP",
+    "droppedNearGapEdgeS",
+    "sLostPNearGapEdge",
+    "suppressedWarmupP",
+    "suppressedWarmupS",
+    "segmentsP",
+    "segmentsS",
+    "segmentsSkippedShortP",
+    "segmentsSkippedShortS",
+    "segmentsOtherComponent",
+)
+
+
+def record_params(
+    signal: SignalConfig, grid: Sequence[GridPoint], best: int | None
+) -> dict[str, Any]:
+    """``ctx.record`` params, nested under the stage key (H4, REQ-H1-2: keys never collide).
+
+    ``baseline.*`` from signal.yaml, plus what else decides the picks: the shared gap-edge
+    distance and chunking, and the best Tier A sweep point once the sweep is scored.
+    """
+    return {
+        STAGE: {
+            **signal.baseline.model_dump(mode="json"),
+            "pickerGapEdgeS": gap_edge_s(signal),
+            "preprocessChunks": signal.preprocess.chunks.model_dump(mode="json"),
+            "sweepBestTierA": None if best is None else grid[best].params(),
+        }
+    }
+
+
 def run_baseline(
     ctx: StageContext,
     *,
@@ -736,12 +1018,13 @@ def run_baseline(
     rows = station_rows(stations_df, station_ids)
     grid = sweep_grid(b)
     log.info(
-        "baseline: %d stations over [%s, %s), %d sweep points, %d worker(s)",
+        "baseline: %d stations over [%s, %s), %d sweep points, %d worker(s), gapEdgeS %.2f s",
         len(rows),
         UTCDateTime(t0),
         UTCDateTime(t1),
         len(grid),
         b.maxWorkers,
+        gap_edge_s(signal),
     )
 
     def work(row: StationRow) -> StationResult:
@@ -752,9 +1035,11 @@ def run_baseline(
     results = _map_stations(rows, work, b.maxWorkers)
     picks = picks_frame(chosen_rows(results), b.prob)
     write_table(picks, ctx.path(PICKS_FILE), "Pick")
-    scores = score_sweep(results, grid, stations_df, b.prob, ctx)
+    scores = score_sweep(results, grid, stations_df, b, ctx)
     sweep = sweep_frame(results, grid, scores)
     write_table(sweep, ctx.path(SWEEP_FILE), SWEEP_MODEL)
+    best = best_point(grid, scores)
+    report_best(grid, best, chosen_point(b))
 
     chunk_totals = ChunkStats()
     totals: Counter[str] = Counter()
@@ -767,13 +1052,7 @@ def run_baseline(
         "stationsNotCached": sum(1 for r in results if r.notCached is not None),
         "nP": int((picks["phase"] == "P").sum()),
         "nS": int((picks["phase"] == "S").sum()),
-        "droppedNearGapEdgeP": totals["droppedNearGapEdgeP"],
-        "droppedNearGapEdgeS": totals["droppedNearGapEdgeS"],
-        "segmentsP": totals["segmentsP"],
-        "segmentsS": totals["segmentsS"],
-        "segmentsSkippedShortP": totals["segmentsSkippedShortP"],
-        "segmentsSkippedShortS": totals["segmentsSkippedShortS"],
-        "segmentsOtherComponent": totals["segmentsOtherComponent"],
+        **{key: int(totals[key]) for key in _TOTALLED},
         **chunk_totals.as_counts(),
         "sweepPoints": len(grid),
         "sweepScored": sum(1 for s in scores if s is not None),
@@ -782,20 +1061,23 @@ def run_baseline(
     print(format_sweep_table(sweep))
     runtime_s = perf_counter() - began
     log.info(
-        "baseline: %d P and %d S picks on %d of %d stations, %d near-gap-edge drops, "
-        "%d sweep points (%d scored), wrote %s and %s in %.1f s",
+        "baseline: %d P and %d S picks on %d of %d stations; %d near-gap-edge drops, %d S lost "
+        "to a P near an edge, %d onsets inside warm-up spans; %d sweep points (%d scored); "
+        "wrote %s and %s in %.1f s",
         counts["nP"],
         counts["nS"],
         counts["stationsWithPicks"],
         counts["stations"],
         counts["droppedNearGapEdgeP"] + counts["droppedNearGapEdgeS"],
+        counts["sLostPNearGapEdge"],
+        counts["suppressedWarmupP"] + counts["suppressedWarmupS"],
         counts["sweepPoints"],
         counts["sweepScored"],
         PICKS_FILE,
         SWEEP_FILE,
         runtime_s,
     )
-    ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params=b.model_dump(mode="json"))
+    ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params=record_params(signal, grid, best))
     return BaselineResult(stations=results, picks=picks, sweep=sweep, counts=counts)
 
 
