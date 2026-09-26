@@ -27,7 +27,7 @@ from hq.config.export import EvidenceConfig, RoundingConfig
 from hq.config.run import epoch_s
 from hq.export.errors import ExportError
 from hq.export.summary import rnd
-from hq.export.tables import str_or_none
+from hq.export.tables import is_null, str_or_none
 from hq.export.waveforms import WaveformSource
 
 log = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ def station_arrivals(
                 f"arrivals.parquet has several {phase} rows for event {event.id} at {station_id}"
             )
         t_pred = row["tPred"]
-        if t_pred is None or not np.isfinite(float(t_pred)):
+        if is_null(t_pred) or not np.isfinite(float(t_pred)):
             raise ExportError(
                 f"arrivals.parquet: event {event.id} at {station_id} {phase} has no tPred"
             )

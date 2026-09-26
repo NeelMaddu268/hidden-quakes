@@ -1,7 +1,9 @@
 """The JSON sidecars of ``runs/<runId>/`` that the validate stage writes or embeds and that the
 exporter reads when ``validation.json`` is not there (docs/02 §2).
 
-Every sidecar holds one contract model (or a list of one) as JSON. ``Sidecar.read`` returns
+Every sidecar holds one contract model (or a list of one) as JSON; ``validation_notes.json``
+holds H4's own ``hq.validate.notes.ValidationNotes`` (provenance the frozen contract models
+have no field for). ``Sidecar.read`` returns
 ``None`` when the file does not exist and raises the caller's error type when it exists but is
 not valid, so a missing sidecar is a documented gap and a corrupt one fails loudly in both
 stages. ``Sidecar.write`` is atomic and byte-stable: same value, same bytes.
@@ -22,6 +24,7 @@ from hq_contracts.models import (
 from pydantic import TypeAdapter, ValidationError
 
 from hq.runs import write_text_atomic
+from hq.validate.notes import ValidationNotes
 
 H2 = "H2 Seismology"
 H4 = "H4 Platform"
@@ -66,6 +69,9 @@ BASELINE = Sidecar(
 )
 GR = Sidecar("gr.json", TypeAdapter(GRCurve), "GRCurve", "validate", H4)
 VALIDATION = Sidecar("validation.json", TypeAdapter(Validation), "Validation", "validate", H4)
+NOTES = Sidecar(
+    "validation_notes.json", TypeAdapter(ValidationNotes), "ValidationNotes", "validate", H4
+)
 
 SYNTHETIC_JSON = SYNTHETIC.filename
 MAGNITUDE_JSON = MAGNITUDE.filename
@@ -73,3 +79,4 @@ NULL_TEST_JSON = NULL_TEST.filename
 BASELINE_JSON = BASELINE.filename
 GR_JSON = GR.filename
 VALIDATION_JSON = VALIDATION.filename
+NOTES_JSON = NOTES.filename
