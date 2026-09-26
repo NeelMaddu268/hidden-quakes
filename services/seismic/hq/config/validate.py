@@ -1,7 +1,7 @@
 """Validate section: the validation reruns H4 makes through H2's library API
 (``configs/showcase/validate.yaml``). Unknown keys are an error.
 
-Consumed by ``hq.validate`` (VAL-02 null test now; VAL-01 baseline table, sweep, G-R later).
+Consumed by ``hq.validate`` (VAL-02 null test; VAL-01 baseline table and G-R curve).
 Every value the stage uses is a field here, with its default documented in ``validate.yaml``;
 nothing is hard-coded in the stage. The H2 knobs the reruns share (associator, locator, tiering,
 matching) stay in ``seismology.yaml``: a rerun always uses the same ``SeismologyConfig`` as the
@@ -38,25 +38,45 @@ class NullTestConfig(BaseModel):
 
 
 class BaselineConfig(BaseModel):
-    """Baseline comparison (VAL-01): two pickers x two association profiles. Stub until VAL-01;
-    the defaults name what docs/lanes/H4 asks for."""
+    """Baseline comparison (VAL-01): two pickers (PhaseNet, STA/LTA) x two association
+    profiles through H2's associate -> locate -> match -> assign_tiers, each with the run's own
+    ``SeismologyConfig`` (``hq.validate.baseline``)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Association profiles every picker is run through; ``BaselineGain`` needs both.
+    # Association profiles every picker is run through. ``BaselineGain`` is quoted on ``full``
+    # and only when the gain holds in both ``full`` and ``p_only``, so both must be listed for
+    # the summary to carry one; fewer profiles still fill the table.
     profiles: list[AssociationProfile] = Field(
         default_factory=lambda: list(ASSOCIATION_PROFILES), min_length=1
     )
+    # The gain (PhaseNet Tier A count / STA/LTA Tier A count) must exceed this in every profile
+    # for ``BaselineGain`` to be claimed; the docs/lanes/H4 rule is "gain > 1".
+    minGain: float = Field(default=1.0, ge=1.0)
+    # docs/03 baseline kill switch: STA/LTA "within ~20% of PhaseNet's strict count" is logged
+    # as a warning when |strictPhasenet - strictStalta| <= comparableFraction * strictPhasenet.
+    # Logged only; it never decides the gain (that is the ``minGain`` rule above).
+    comparableFraction: float = Field(default=0.2, ge=0.0, le=1.0)
 
 
 class GRConfig(BaseModel):
-    """Gutenberg-Richter curve (VAL-01). Stub until VAL-01; docs/lanes/H4 fixes the method:
+    """Gutenberg-Richter curve (VAL-01, ``hq.validate.gr``). docs/lanes/H4 fixes the method:
     Aki-Utsu b with Shi-Bolt sigma, Mc by maximum curvature plus an offset."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    magBinWidth: float = Field(default=0.1, gt=0.0)  # width of GRCurve.magBins
-    mcOffsetMag: float = Field(default=0.2, ge=0.0)  # added to the maximum-curvature Mc
+    # Width of GRCurve.magBins (magnitude units); also the histogram bin of the maximum-curvature
+    # Mc and the ``bin_width / 2`` binning correction of the Aki-Utsu estimator.
+    magBinWidth: float = Field(default=0.1, gt=0.0)
+    # Added to the maximum-curvature magnitude of completeness (Mc = MaxC + offset).
+    mcOffsetMag: float = Field(default=0.2, ge=0.0)
+    # Fewest magnitudes for any estimate: below this the curve is not built at all (public and
+    # recovered together), a set's Mc is null, and b / sigma are null when fewer than this many
+    # recovered magnitudes lie above Mc.
+    minEvents: int = Field(default=30, ge=2)
+    # docs/03 magnitude kill switch: when H2's MagCalibration.looMae exceeds this, G-R is skipped
+    # (with a warning) and only the calibration is embedded.
+    maxLooMae: float = Field(default=0.4, gt=0.0)
 
 
 class ValidateConfig(BaseModel):
