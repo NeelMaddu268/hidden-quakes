@@ -237,8 +237,9 @@ def run(ctx: "RunContext") -> None:
         "staticsPass": rep.pass_number,
         "staticsReferenceEvents": 0 if rep.reference is None else len(rep.reference),
         "staticsNonZero": int((rep.terms["staticS"] != 0.0).sum()),
-        "staticsExplained": int((rep.explanations["verdict"] != "unexplained").sum()),
+        "staticsAboveFlag": len(rep.explanations),
         "staticsUnexplained": int((rep.explanations["verdict"] == "unexplained").sum()),
+        "staticsFarHypothesis": int((rep.explanations["verdict"] == "far").sum()),
     }
     params: dict[str, Any] = {
         **details.record,

@@ -80,6 +80,7 @@ PIPELINE_ORDER = (
 # |t_event - t_catalog - matches.dtS| above this means matches.parquet was written for another
 # events_located.parquet (parquet keeps float64 exactly; this only absorbs float round-off).
 ROUNDOFF_S = 1e-6
+ALL_EVENTS = "all located events"
 GAUSS_MAD = 1.4826  # robust sigma = GAUSS_MAD * MAD (consistent with a Gaussian's sigma)
 TERM_COLUMNS = ["stationId", "phase", "staticS", "rawS", "nEvents", "madS"]
 Statics = Mapping[tuple[str, str], float]
@@ -267,43 +268,58 @@ def self_consistent_terms(
 # --- explanations and residual spread -------------------------------------------------------------
 
 
-def _trend_prediction(
-    terms: pd.DataFrame, pos: pd.DataFrame, station: str, phase: str, min_stations: int
-) -> float:
-    """The plane fit (term ~ a + b e + c n) of the OTHER stations' non-zero terms of ``phase``,
-    evaluated at ``station``; NaN with fewer than ``min_stations`` of them."""
+def _neighbour_median(
+    terms: pd.DataFrame, pos: pd.DataFrame, station: str, phase: str, k: int, min_events: int
+) -> tuple[float, list[str]]:
+    """Median ``phase`` term of the ``k`` stations nearest ``station`` (epicentrally) that have
+    an estimated term (``nEvents >= min_events``), and their ids; NaN when none has one."""
     others = terms[(terms["phase"] == phase) & (terms["stationId"] != station)
-                   & (terms["staticS"] != 0.0)]
-    if len(others) < min_stations:
-        return math.nan
-    p = pos.loc[others["stationId"]]
-    design = np.column_stack([np.ones(len(p)), p["enu_e"] / 1000.0, p["enu_n"] / 1000.0])
-    coef, *_ = np.linalg.lstsq(design, others["staticS"].to_numpy(dtype=np.float64), rcond=None)
+                   & (terms["nEvents"] >= min_events)]
+    if others.empty:
+        return math.nan, []
     here = pos.loc[station]
-    return float(coef[0] + coef[1] * here["enu_e"] / 1000.0 + coef[2] * here["enu_n"] / 1000.0)
+    p = pos.loc[others["stationId"]]
+    d = np.hypot(p["enu_e"].to_numpy() - here["enu_e"], p["enu_n"].to_numpy() - here["enu_n"])
+    near = np.argsort(d, kind="stable")[:k]
+    ids = others["stationId"].to_numpy()[near].tolist()
+    return float(np.median(others["staticS"].to_numpy(dtype=np.float64)[near])), ids
 
 
 def explain_terms(
     terms: pd.DataFrame,
     stations: pd.DataFrame,
     model: LayerModel,
+    centre: tuple[float, float],
     flag_s: float,
+    min_events: int,
     cfg: StaticsExplainConfig,
 ) -> pd.DataFrame:
     """One row per static with ``|staticS| > flag_s``: its evidence and a written explanation.
 
-    Evidence: (1) the position trend of the other stations' terms of that phase (a plane over
-    station ENU) predicted at this station: the same sign and at least ``lateralFraction`` of the
-    term reads as lateral structure the 1D model can't hold (diagnostics row 7); (2) the station's
-    S/P term ratio (when ``|P term| >= minRatioTermS``) against the model's Vp/Vs at the sensor:
-    within a factor ``ratioBand`` of it reads as a velocity anomaly along the path near the
-    station, within a factor ``ratioBand`` of 1 as equal delays (a timing offset is possible);
-    (3) the sensor's elevation against the source model's own top (above it, the model's top
-    layer is extended upward and stands in for whatever rock is there). ``verdict`` is the first
-    of lateral / path / timing that holds, else unexplained.
+    Evidence, each computed from the terms, the station geometry and the model:
+    - neighbours: the median term of the ``neighbours`` nearest other stations with an
+      estimated term (``nEvents >= min_events``, same phase).
+      The same sign and at least ``lateralFraction`` of the term: nearby stations share the
+      delay, so it is lateral structure the 1D model can't hold (diagnostics row 7), not a
+      station fault.
+    - S/P: the station's S term over its P term (same sign, ``|P| >= minRatioTermS``) against
+      the model's Vp/Vs at the sensor. Within a factor ``ratioBand`` of it: P and S slowed in
+      proportion, a velocity anomaly along the path near the station. Above that: the anomaly is
+      mostly in S, so the local Vp/Vs differs from the model's (higher where late, as in
+      unconsolidated sediment; lower where early, as in crystalline rock under the model's
+      sediment-like top layers). Within a factor ``ratioBand`` of 1: equal delays, a station
+      timing offset or pick bias is possible.
+    - distance: an early term at a station more than ``farStationM`` from ``centre`` (the
+      events' median epicentre): most of its ray length lies in the model's half-space, where
+      the sources sit and which the layer file marks as extrapolation, so a faster half-space
+      would make it early; a hypothesis the terms alone can't test.
+    - elevation: the sensor against the source model's own top (above it the top layer is
+      extended upward and stands in for whatever rock is there); context, not a verdict.
+    ``verdict``: the first of lateral / path / vpvs / timing / far that holds, else unexplained.
     """
-    columns = ["stationId", "phase", "staticS", "nEvents", "trendPredS", "spRatio", "modelVpVs",
-               "sensorElevM", "aboveModelTopM", "verdict", "explanation"]
+    columns = ["stationId", "phase", "staticS", "nEvents", "neighbourMedianS", "neighbours",
+               "spRatio", "modelVpVs", "distanceM", "sensorElevM", "aboveModelTopM", "verdict",
+               "explanation"]
     pos = stations.set_index(stations["id"].astype(str))
     source_top = (model.top_extension.from_elev_m if model.top_extension is not None
                   else model.top_of_model_elev_m)
@@ -312,38 +328,54 @@ def explain_terms(
     rows = []
     for r in terms[terms["staticS"].abs() > flag_s].itertuples(index=False):
         sid, ph, term = str(r.stationId), str(r.phase), float(r.staticS)
-        pred = _trend_prediction(terms, pos, sid, ph, cfg.minTrendStations)
+        near, near_ids = _neighbour_median(terms, pos, sid, ph, cfg.neighbours, min_events)
         p_term, s_term = by_key.get((sid, "P"), 0.0), by_key.get((sid, "S"), 0.0)
-        ratio = s_term / p_term if abs(p_term) >= cfg.minRatioTermS and s_term != 0.0 else math.nan
+        ratio = (s_term / p_term if abs(p_term) >= cfg.minRatioTermS and s_term * p_term > 0
+                 else math.nan)
         elev = float(pos.loc[sid, "sensorElevM"])
         vpvs = float(model.vp_at(elev)) / float(model.vs_at(elev))
-        lateral = (math.isfinite(pred) and np.sign(pred) == np.sign(term)
-                   and abs(pred) >= cfg.lateralFraction * abs(term))
-        path = math.isfinite(ratio) and vpvs / cfg.ratioBand <= ratio <= vpvs * cfg.ratioBand
-        timing = math.isfinite(ratio) and 1.0 / cfg.ratioBand <= ratio <= cfg.ratioBand
-        verdict = ("lateral" if lateral else "path" if path else "timing" if timing
-                   else "unexplained")
+        dist = float(np.hypot(pos.loc[sid, "enu_e"] - centre[0], pos.loc[sid, "enu_n"] - centre[1]))
+        lateral = (math.isfinite(near) and np.sign(near) == np.sign(term)
+                   and abs(near) >= cfg.lateralFraction * abs(term))
+        has_ratio = math.isfinite(ratio)
+        path = has_ratio and vpvs / cfg.ratioBand <= ratio <= vpvs * cfg.ratioBand
+        vpvs_differs = has_ratio and ratio > vpvs * cfg.ratioBand
+        timing = has_ratio and 1.0 / cfg.ratioBand <= ratio <= cfg.ratioBand
+        far = term < 0 and dist > cfg.farStationM
+        verdict = next((name for name, hit in (("lateral", lateral), ("path", path),
+                                                ("vpvs", vpvs_differs), ("timing", timing),
+                                                ("far", far)) if hit), "unexplained")
         above = elev - source_top
         side = "early" if term < 0 else "late"
         text = [f"{ph} arrives {abs(term):.3f} s {side} against the 1D model (n {int(r.nEvents)})."]
-        if math.isfinite(pred):
+        if near_ids:
             text.append(
-                f"The other stations' {ph} terms, fit as a plane over station position, predict "
-                f"{pred:+.3f} s here: " + (
-                    "the same sign and most of the term, so it is part of the regional trend: "
-                    "lateral structure the 1D model can't hold (row 7)." if lateral else
-                    "not enough of the term to call it the regional trend.")
+                f"Its nearest stations with a {ph} term ({', '.join(near_ids)}) have a median "
+                f"{near:+.3f} s: " + (
+                    "they share the delay, so it is lateral structure the 1D model can't hold "
+                    "(row 7), not a station fault." if lateral else "they don't share it.")
             )
-        else:
-            text.append(f"Too few other {ph} terms (< {cfg.minTrendStations}) for a position trend.")
-        if math.isfinite(ratio):
+        if has_ratio:
             text.append(
                 f"S/P term ratio {ratio:.2f} against the model's Vp/Vs {vpvs:.2f} at the sensor: "
-                + ("P and S delayed in proportion to the slownesses, a velocity anomaly along "
-                   "the path near the station, not a clock offset." if path else
+                + ("P and S slowed in proportion, a velocity anomaly along the path near the "
+                   "station." if path else
+                   "the anomaly is mostly in S, so the local Vp/Vs "
+                   + ("is higher than the model's (as in unconsolidated sediment)." if term > 0
+                      else "is lower than the model's (as in crystalline rock under the model's "
+                      "sediment-like top layers).") if vpvs_differs else
                    "equal P and S delays: a station timing offset or pick bias is possible; "
                    "check the station's timing." if timing else
                    "neither proportional to the slownesses nor equal.")
+            )
+        elif p_term * s_term < 0 and abs(p_term) >= cfg.minRatioTermS:
+            text.append("P and S terms have opposite signs.")
+        if far:
+            text.append(
+                f"The station lies {dist / 1000:.1f} km from the events' median epicentre (more "
+                f"than {cfg.farStationM / 1000:g} km), so most of its ray length lies in the "
+                "model's half-space, which the layer file marks as extrapolation; a faster "
+                "half-space would make it early (a hypothesis these terms can't test)."
             )
         text.append(
             f"Sensor at {elev:.0f} m ASL, "
@@ -354,16 +386,18 @@ def explain_terms(
         if verdict == "unexplained":
             text.append("No evidence here explains it: an unexplained static (depth gate).")
         rows.append({"stationId": sid, "phase": ph, "staticS": term, "nEvents": int(r.nEvents),
-                     "trendPredS": pred, "spRatio": ratio, "modelVpVs": vpvs, "sensorElevM": elev,
+                     "neighbourMedianS": near, "neighbours": ",".join(near_ids),
+                     "spRatio": ratio, "modelVpVs": vpvs, "distanceM": dist, "sensorElevM": elev,
                      "aboveModelTopM": above, "verdict": verdict, "explanation": " ".join(text)})
     return pd.DataFrame(rows, columns=columns)
 
 
 def residual_sigma(
-    arrivals: pd.DataFrame, event_ids: Sequence[str], cfg: SeismologyConfig
+    arrivals: pd.DataFrame, event_ids: Sequence[str], cfg: SeismologyConfig, label: str
 ) -> pd.DataFrame:
     """Per phase: robust sigma (``GAUSS_MAD`` x MAD) of the used-pick residuals of ``event_ids``
-    against ``locator.pickSigmaS``; ``wellAbove`` past ``statics.sigmaFlagRatio``."""
+    (``label`` names them) against ``locator.pickSigmaS``; ``wellAbove`` past
+    ``statics.sigmaFlagRatio``; ``recommendedS`` the robust sigma rounded to ms."""
     use = arrivals[arrivals["usedInLocation"].to_numpy(dtype=bool)
                    & arrivals["eventId"].astype(str).isin(set(event_ids))]
     rows = []
@@ -372,7 +406,7 @@ def residual_sigma(
         conf = float(getattr(cfg.locator.pickSigmaS, ph))
         sigma = GAUSS_MAD * float(np.median(np.abs(r - np.median(r)))) if r.size else math.nan
         ratio = sigma / conf
-        rows.append({"phase": ph, "nPicks": int(r.size), "configuredS": conf,
+        rows.append({"events": label, "phase": ph, "nPicks": int(r.size), "configuredS": conf,
                      "robustSigmaS": sigma, "ratio": ratio,
                      "wellAbove": bool(math.isfinite(ratio) and ratio > cfg.statics.sigmaFlagRatio),
                      "recommendedS": round(sigma, 3) if math.isfinite(sigma) else math.nan})
@@ -393,8 +427,8 @@ class StaticsReport:
     cap_s: float
     min_events: int
     explanations: pd.DataFrame  # explain_terms
-    sigma: pd.DataFrame  # residual_sigma over the calibration events
-    sigma_events: str  # which events the sigma rows are over
+    sigma: pd.DataFrame  # residual_sigma: the calibration events first, then all events
+    sigma_events: str  # the calibration events (the recommendation comes from them)
     history: pd.DataFrame  # per pass: iteration, medianRmsS, nCalibration, nNonZero, maxAbsS
     # referenceEvents pass 2: per reference event, catalogId, eventId (after), assocId, fold,
     # offsets before (no statics) and after (held-out terms): h/de/dn/dz (m), rmsS (s)
@@ -461,12 +495,20 @@ def _report(
     pass_number: int, note: str, cap_s: float, min_events: int, sigma_ids: Sequence[str],
     sigma_events: str, history: list[dict], **kw: Any,
 ) -> StaticsReport:
-    explained = explain_terms(terms, details.stations, details.locator.tables.model,
-                              cfg.diagnostics.stationResidualFlagS, cfg.statics.explain)
+    ev = details.result.events
+    centre = ((float(ev["enu_e"].median()), float(ev["enu_n"].median())) if len(ev)
+              else (0.0, 0.0))
+    explained = explain_terms(terms, details.stations, details.locator.tables.model, centre,
+                              cfg.diagnostics.stationResidualFlagS, min_events,
+                              cfg.statics.explain)
     return StaticsReport(
         mode=mode, pass_number=pass_number, note=note, terms=terms, cap_s=cap_s,
         min_events=min_events, explanations=explained,
-        sigma=residual_sigma(details.result.arrivals, sigma_ids, cfg), sigma_events=sigma_events,
+        sigma=pd.concat([
+            residual_sigma(details.result.arrivals, sigma_ids, cfg, sigma_events),
+            *([] if sigma_events == ALL_EVENTS else [residual_sigma(
+                details.result.arrivals, ev["id"].astype(str).tolist(), cfg, ALL_EVENTS)]),
+        ], ignore_index=True), sigma_events=sigma_events,
         history=pd.DataFrame(history), **kw,
     )
 
@@ -548,7 +590,7 @@ def locate_with_statics(
             mode=REFERENCE_EVENTS, pass_number=1, note=note, cap_s=scfg.referenceCapS,
             min_events=scfg.minReferenceEvents,
             sigma_ids=base.result.events["id"].astype(str).tolist(),
-            sigma_events="all located events", history=[_history_row(0, base, 0, None)],
+            sigma_events=ALL_EVENTS, history=[_history_row(0, base, 0, None)],
             previous_median_rms_s=previous)
         return StaticsOutcome(base, report)
 

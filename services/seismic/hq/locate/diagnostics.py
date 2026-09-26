@@ -814,6 +814,7 @@ def sigma_section(inputs: DiagnosticsInputs, pa: pd.DataFrame) -> list[str]:
         lines.append("No associated picks: no residual spread to compare with the pick sigma.")
         return lines
     parts = []
+    above = []
     for phase, g in pa.groupby("phase", sort=True):
         sigma = lcfg.pickSigmaS.P if phase == "P" else lcfg.pickSigmaS.S
         r_used = g.loc[g["used"], "residualS"].to_numpy(dtype=np.float64)
@@ -827,6 +828,7 @@ def sigma_section(inputs: DiagnosticsInputs, pa: pd.DataFrame) -> list[str]:
             f"{_f(scale / sigma, '.1f')}x sigma; all associated picks (n {r_all.size}) MAD "
             f"{_f(_mad(r_all), '.3f')} s"
         )
+        above.append(bool(scale > sigma))
     overrides = ", ".join(f"{k} P {v.P:g} / S {v.S:g} s"
                           for k, v in sorted(lcfg.profilePickSigmaS.items())) or "none"
     lines.append("; ".join(parts) + f". Per-profile sigma overrides: {overrides}.")
@@ -834,9 +836,16 @@ def sigma_section(inputs: DiagnosticsInputs, pa: pd.DataFrame) -> list[str]:
     lines.append(
         "hErrM and vErrM in events_located.parquet are formal errors: the spread of the PDF "
         "exp(-misfit) with each pick weighted by prob / pickSigmaS. They assume residuals on the "
-        "pickSigmaS scale and contain no model error. The used-pick residual spread above is "
-        "larger than pickSigmaS, so the formal errors are too small even before model error; the "
-        "public regional catalog comparison below shows how far model error can move a "
+        "pickSigmaS scale and contain no model error. "
+        + ("The used-pick residual spread above is larger than pickSigmaS, so the formal errors "
+           "are too small even before model error" if all(above) else
+           "The used-pick residual spread above is at or below pickSigmaS for every phase, so "
+           "on the pick-noise side the formal errors are not too small; they still hold no "
+           "model error" if not any(above) else
+           "The used-pick residual spread above is larger than pickSigmaS for "
+           + ", ".join(ph for ph, a in zip(sorted(pa["phase"].unique()), above, strict=True) if a)
+           + ", so those formal errors are too small even before model error")
+        + "; the public regional catalog comparison below shows how far model error can move a "
         "hypocentre. pickSigmaS is updated from the Tier A residual spread once LOC-06 assigns "
         "tiers (lane doc, Locator step 2); until then compare formal errors only with formal "
         "errors (synthetic noisy.medianFormalVErrM)."
@@ -1246,14 +1255,21 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
                            f"{r.rawS:+.3f}", str(int(r.nEvents)), _f(r.madS, ".3f"), note]))
     ex = rep.explanations
     n_un = int((ex["verdict"] == "unexplained").sum())
+    n_far = int((ex["verdict"] == "far").sum())
     counts = ex["verdict"].value_counts()
     lines += ["", f"### Written explanation of every static above {flag:g} s", "",
               f"{len(ex)} static(s) above {flag:g} s: " + (", ".join(
                   f"{k} {int(v)}" for k, v in counts.items()) if len(ex) else "none") + ". "
-              + (f"{n_un} unexplained (the depth gate asks for none)." if n_un else
-                 "None unexplained.")
-              + " Evidence rules: seismology.yaml `statics.explain`; the verdict is the first of "
-              "lateral / path / timing that holds.", ""]
+              + (f"{n_un} unexplained (the depth gate asks for none). " if n_un else
+                 "None unexplained. ")
+              + (f"{n_far} rest on the far-station hypothesis, which these terms can't test. "
+                 if n_far else "")
+              + "Verdicts: lateral = nearby stations share the delay (structure the 1D model "
+              "can't hold, row 7); path = P and S slowed in proportion to the model's Vp/Vs; "
+              "vpvs = the delay is mostly in S (the local Vp/Vs differs from the model's); "
+              "timing = equal P and S delays; far = early at a distant station. Evidence rules: "
+              "seismology.yaml `statics.explain`; the verdict is the first that holds, in that "
+              "order.", ""]
     if len(ex):
         lines += [_row(["stationId", "phase", "staticS (s)", "verdict", "explanation"]),
                   _row(["---"] * 5)]
@@ -1267,30 +1283,32 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
 def _sigma_lines(rep: "StaticsReport", ratio_flag: float) -> list[str]:
     sig = rep.sigma
     when = "after" if rep.pass_number == 2 else "without"
-    title = f"### Residual spread vs pick sigma ({when} statics; used picks of the {rep.sigma_events})"
-    lines = [title, "",
-             _row(["phase", "picks", "pickSigmaS (s)", "robust sigma 1.4826 x MAD (s)",
-                   "ratio"]), _row(["---"] * 5)]
-    lines += [_row([str(r.phase), str(int(r.nPicks)), f"{r.configuredS:g}",
+    lines = [f"### Residual spread vs pick sigma ({when} statics, used picks)", "",
+             _row(["events", "phase", "picks", "pickSigmaS (s)", "robust sigma 1.4826 x MAD (s)",
+                   "ratio"]), _row(["---"] * 6)]
+    lines += [_row([str(r.events), str(r.phase), str(int(r.nPicks)), f"{r.configuredS:g}",
                     _f(r.robustSigmaS, ".3f"), _f(r.ratio, ".2f")])
               for r in sig.itertuples(index=False)]
     above = sig[sig["wellAbove"]]
+    cal = sig[sig["events"] == rep.sigma_events]
     lines.append("")
     if len(above):
         lines.append(
-            "Well above the configured sigma (ratio > statics.sigmaFlagRatio "
-            f"{ratio_flag:g}): " + ", ".join(
-                f"{r.phase} {r.robustSigmaS:.3f} s vs {r.configuredS:g} s"
-                for r in above.itertuples(index=False))
-            + ". Recommended locator.pickSigmaS: " + ", ".join(
-                f"{r.phase} {r.recommendedS:.3f} s" for r in sig.itertuples(index=False))
-            + " (the robust sigma above). Not applied: the lead decides whether to change config. "
-            "Until then hErrM / vErrM stay formal errors at the configured sigma, smaller than "
-            "this spread supports."
+            f"Well above the configured sigma (ratio > statics.sigmaFlagRatio {ratio_flag:g}): "
+            + ", ".join(f"{r.phase} over the {r.events} {r.robustSigmaS:.3f} s vs "
+                        f"{r.configuredS:g} s" for r in above.itertuples(index=False))
+            + f". Recommended locator.pickSigmaS (robust sigma of the {rep.sigma_events}): "
+            + ", ".join(f"{r.phase} {r.recommendedS:.3f} s" for r in cal.itertuples(index=False))
+            + ". Not applied: the lead decides whether to change config. Until then hErrM / vErrM "
+            "are formal errors at the configured sigma, smaller than this spread supports."
         )
     else:
-        lines.append(f"No phase's robust sigma exceeds {ratio_flag:g}x its pickSigmaS; the "
-                     "configured sigmas stand.")
+        lines.append(
+            f"No phase's robust sigma exceeds {ratio_flag:g}x its pickSigmaS, so no change is "
+            "recommended. Where the ratio is below 1 the configured sigma sits above the "
+            "observed spread, and the formal errors are on the conservative side for pick noise "
+            "(they still hold no model error)."
+        )
     return lines
 
 
