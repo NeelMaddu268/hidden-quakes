@@ -739,10 +739,13 @@ def test_stage_writes_sweep_parquet_when_enabled(
     (rec,) = ctx.records
     assert rec["counts"]["sweepPoints"] == 1 and rec["params"]["sweep"]["enabled"]
     assert seen[0].to_record() == rec["params"]["thresholds"]
-    # Sweep points are located with the statics events_located.parquet was located with.
+    # Sweep points are located with the run's statics.parquet.
     assert pipeline_kwargs[0]["statics"] == {("T.E0000", "P"): 0.0, ("T.E0000", "S"): -0.12}
-    assert rec["params"]["sweep"]["statics"] == {
+    record = rec["params"]["sweep"]["statics"]
+    assert {k: record[k] for k in ("table", "stationPhases", "nonZero", "maxAbsS")} == {
         "table": "statics.parquet", "stationPhases": 2, "nonZero": 1, "maxAbsS": 0.12}
+    # Reference-event terms come from the public events the points are matched to: in-sample.
+    assert record["inSample"] is (cfg.statics.mode == "referenceEvents")
     ctx.path("statics.parquet").unlink()
     with pytest.raises(FileNotFoundError):
         stage.run(ctx)
