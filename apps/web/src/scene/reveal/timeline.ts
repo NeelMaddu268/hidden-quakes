@@ -72,8 +72,8 @@ export function revealProgressAt(t: number): number {
 
 /**
  * The time (s since reveal) at which the instance with normalized reveal slot `slot` ∈ [0, 1]
- * appears; the exact inverse of `revealProgressAt` on the events window. The event shader runs the
- * same formula per instance.
+ * appears; the exact inverse of `revealProgressAt` on the events window. Instances get their
+ * appearance time from this on the CPU (events/instances.ts → appearAt), so pops and counter agree.
  */
 export function appearTimeOf(slot: number): number {
   const { startS, endS, exponent } = TIMELINE.events;

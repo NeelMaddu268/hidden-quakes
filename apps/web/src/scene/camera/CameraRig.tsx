@@ -35,7 +35,7 @@ export function CameraRig({ bounds }: { bounds: SceneBounds }) {
   const width = useThree((s) => s.size.width);
   const height = useThree((s) => s.size.height);
   const controls = useRef<Controls>(null);
-  const director = useRef<CameraDirector>(createCameraDirector());
+  const director = useRef<CameraDirector | null>(null);
   const aspect = useRef(aspectOf(width, height));
   const framed = useRef<string | null>(null);
   const bounds$ = useRef(bounds);
@@ -63,17 +63,22 @@ export function CameraRig({ bounds }: { bounds: SceneBounds }) {
     if (signature === framed.current) return;
     framed.current = signature;
     const { view, phase } = useDemo.getState();
+    director.current ??= createCameraDirector();
     if (first || phase === "public") snapTo(camera, c, presetPose(view, bounds, aspect.current), director.current);
   }, [bounds, camera]);
 
+  // Stable callback for the dolly destination: no closure allocated per frame.
+  const dollyTo = useRef(() => presetPose(useDemo.getState().view, bounds$.current, aspect.current));
+
   useEffect(() => {
+    director.current ??= createCameraDirector();
     const d = director.current;
     const moveTo = (view: CameraView) => {
       const c = controls.current;
       if (!c) return;
       dropOrbitMomentum(c, camera.position);
       d.moveTo(camera.position, c.target, presetPose(view, bounds$.current, aspect.current), motion.scene / 1000);
-      c.enabled = false;
+      c.enabled = !d.busy;
     };
     const offStore = useDemo.subscribe((s, prev) => {
       const c = controls.current;
@@ -81,7 +86,7 @@ export function CameraRig({ bounds }: { bounds: SceneBounds }) {
       if (prev.phase === "public" && s.phase === "revealing") {
         dropOrbitMomentum(c, camera.position);
         d.onReveal(s.view === "plan");
-        c.enabled = !d.busy;
+        c.enabled = !d.busy; // one rule everywhere: orbit is enabled exactly when the director is idle
         return;
       }
       // reset() is handled by onDemoReset (including its view change back to the start view).
@@ -97,14 +102,11 @@ export function CameraRig({ bounds }: { bounds: SceneBounds }) {
 
   useFrame((_, delta) => {
     const c = controls.current;
-    if (!c) return;
     const d = director.current;
-    if (!d.busy) return;
-    d.step(delta, sceneFx.revealElapsedS, camera.position, c.target, () =>
-      presetPose(useDemo.getState().view, bounds$.current, aspect.current),
-    );
+    if (!c || !d || !d.busy) return;
+    d.step(delta, sceneFx.revealElapsedS, camera.position, c.target, dollyTo.current);
     c.update();
-    if (!d.busy) c.enabled = true;
+    c.enabled = !d.busy;
   });
 
   return (
