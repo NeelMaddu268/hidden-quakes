@@ -4,11 +4,11 @@ The web app is a static export: `pnpm --filter web build` writes `apps/web/out/`
 
 ## Vercel (the public URL)
 
-Vercel's Git integration builds and deploys `main` on every merge. Nothing in the repo triggers it; the one-time setup is in the dashboard. Import the GitHub repo as a new project and set:
+Vercel's Git integration builds and deploys `main` on every merge. Nothing in the repo triggers it; the one-time setup is in the dashboard. The project lives on Neel's Hobby account, which blocks Git deployments whose head commit someone else authored (private repo), so after other people's pushes Neel redeploys `main` from his account. Import the GitHub repo as a new project and set:
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| Framework Preset | Next.js | Detected; `apps/web/vercel.json` also pins it |
+| Framework Preset | Other | `apps/web/vercel.json` pins `"framework": null`: the build is a static export served from `out/`, and the Next.js preset fails looking for `out/routes-manifest.json` |
 | Root Directory | `apps/web` | The app lives in a pnpm workspace; `apps/web/vercel.json` holds the install and build commands |
 | Include source files outside of the Root Directory | on (the default) | The build needs `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `packages/contracts/ts` and `packages/visualization` from the repo root |
 | Production Branch (Settings → Git) | `main` | Only H4 merges into `main` |
