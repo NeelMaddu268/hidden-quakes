@@ -19,6 +19,8 @@ import {
   TIER_INDEX,
 } from "./events/instances";
 import type { EventUniforms } from "./events/material";
+import { References } from "./references";
+import { Terrain } from "./terrain";
 import type { BundleState } from "./types";
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
@@ -71,6 +73,8 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
 
   return (
     <>
+      <Terrain scene={meta.scene} bounds={bounds} />
+      <References bundle={bundle} bounds={bounds} />
       <EventsLayer
         name="public-events"
         instances={publicEvents}
