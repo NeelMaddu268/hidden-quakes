@@ -11,6 +11,7 @@ import type {
   SceneMeta,
   SeismicEvent,
   Station,
+  Validation,
 } from "@/providers";
 import { SCHEMA_VERSION } from "@/providers";
 
@@ -37,6 +38,8 @@ export interface FixtureOptions {
   scene?: Partial<SceneMeta>;
   summary?: Partial<AnalysisSummary>;
   isSynthetic?: boolean;
+  /** Serve this as `validation.json`; absent (the default) means the file 404s. */
+  validation?: Validation;
 }
 
 export function makeMeta(runId: string, options: FixtureOptions = {}): BundleMeta {
@@ -154,15 +157,18 @@ const catalogEvent: CatalogEvent = {
 
 export type Files = Record<string, unknown>;
 
-/** The files under `/data/<mode>/` for one bundle. `validation.json` and evidence are absent (404). */
+/** The files under `/data/<mode>/` for one bundle. Evidence is absent (404); so is
+ *  `validation.json` unless `options.validation` supplies one. */
 export function bundleFiles(runId: string, options: FixtureOptions = {}): Files {
-  return {
+  const files: Files = {
     "meta.json": makeMeta(runId, options),
     "stations.json": [station],
     "catalog.json": [catalogEvent],
     "events.json": [makeEvent("ev-1", 1), makeEvent(HERO_EVENT_ID, 0)],
     "features.json": [],
   };
+  if (options.validation) files["validation.json"] = options.validation;
+  return files;
 }
 
 /** A fake fetch serving `/data/<mode>/<file>` from in-memory bundles; anything else is a 404. */
