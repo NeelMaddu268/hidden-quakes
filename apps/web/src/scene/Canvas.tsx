@@ -28,6 +28,11 @@ import { sceneFx } from "./fx";
 import { depthFogPerSceneUnit, LOOK } from "./look";
 
 import { Picker } from "./picking/Picker";
+import { DepthSection } from "./plan/DepthSection";
+import { buildPlanHaloInstances } from "./plan/halos";
+import { PlanCamera } from "./plan/PlanCamera";
+import { PlanRingsLayer } from "./plan/PlanRingsLayer";
+import type { RingUniforms } from "./plan/ringMaterial";
 import { selectedInstanceIndex } from "./picking/selection";
 import { Post } from "./post/Post";
 import { RevealDriver } from "./reveal/RevealDriver";
@@ -54,8 +59,15 @@ function drivePublic(u: EventUniforms): void {
   u.uLayerOpacity.value = sceneFx.filterLook.publicLayer;
 }
 
-/** Tier A halos: appear with their events, visible only under STRICT. */
+/** Tier A ellipsoid halos: appear with their events, visible only under STRICT, and only in 3D views. */
 function driveHalos(u: HaloUniforms): void {
+  const s = useDemo.getState();
+  u.uRevealElapsed.value = candidateRevealUniform(s.phase, sceneFx.revealElapsedS);
+  u.uOpacity.value = s.view === "plan" ? 0 : sceneFx.filterLook.halos;
+}
+
+/** Plan-view horizontal uncertainty rings: same reveal and STRICT rules as the 3D halos. */
+function driveRings(u: RingUniforms): void {
   u.uRevealElapsed.value = candidateRevealUniform(useDemo.getState().phase, sceneFx.revealElapsedS);
   u.uOpacity.value = sceneFx.filterLook.halos;
 }
@@ -82,7 +94,16 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
     [candidates, publicEvents, meta.scene],
   );
 
+  // The plan camera frames the same structure, but clips against every event so pan/zoom never loses
+  // deep or distant ones.
+  const clipBounds = useMemo(
+    () => computeBounds([candidates.positions, publicEvents.positions], depthKmToSceneY(0, meta.scene), 0),
+    [candidates, publicEvents, meta.scene],
+  );
+  const view = useDemo((s) => s.view);
+
   const halos = useMemo(() => buildHaloInstances(events, candidates, ve), [events, candidates, ve]);
+  const planRings = useMemo(() => buildPlanHaloInstances(events, candidates), [events, candidates]);
 
   useEffect(() => {
     const issues = revealOrderIssues(events.map((e) => e.revealOrder));
@@ -133,7 +154,14 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         renderOrder={1}
       />
       <HalosLayer halos={halos} surfaceY={surfaceY} depthFog={depthFogPerSceneUnit(ve)} drive={driveHalos} />
-      <CameraRig bounds={bounds} />
+      {view === "plan" ? (
+        <>
+          <PlanCamera bounds={bounds} clipBounds={clipBounds} />
+          <PlanRingsLayer rings={planRings} drive={driveRings} />
+        </>
+      ) : (
+        <CameraRig bounds={bounds} />
+      )}
       <Picker candidates={candidates} publicEvents={publicEvents} catalog={catalog} sizeKm={{ candidate: LOOK.candidates.sizeKm, public: LOOK.publicCatalog.sizeKm }} />
     </>
   );
@@ -146,9 +174,13 @@ function SceneContents() {
   return <BundleScene bundle={bundle} />;
 }
 
-/** The full-bleed 3D canvas (docs/02 §6). H4's page mounts it beneath the shell. */
+/**
+ * The full-bleed 3D canvas (docs/02 §6), plus the plan view's docked depth section (a DOM panel, shown
+ * only in plan view). H4's page mounts it beneath the shell.
+ */
 export function Scene() {
   return (
+    <>
     <Canvas
       dpr={[1, 2]}
       flat
@@ -162,5 +194,7 @@ export function Scene() {
       <SceneContents />
       <Post />
     </Canvas>
+    <DepthSection />
+    </>
   );
 }
