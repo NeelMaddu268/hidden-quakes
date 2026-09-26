@@ -4,15 +4,20 @@ Offline and fast: a fake model with PhaseNet's ``classify`` interface (it honour
 stands in for seisbench, and chunks come either from a fake iterator (exact control over keep
 intervals, data edges and the TimeMap) or from the real ``iter_model_chunks`` over a fake
 ``read_window``. Tests that write parquet need ``hq_contracts`` (H4's CONTRACT-01) and skip
-without it.
+without it. One test starts a real spawned process pool (about 1.5 s on the dev laptop).
 """
 
 import copy
+import importlib
 import json
 import logging
+import os
 import random
+import sys
+import textwrap
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,12 +37,17 @@ from hq.pick.run import (
     StageIO,
     StationReport,
     StationTask,
+    _parse_utc,
+    ab_disagreements,
     dedupe_and_sort,
     default_runner,
+    main,
     pick_window,
     plan_tasks,
+    process_pool_runner,
     run_in_process,
     run_picking,
+    window_alignment_notes,
     zero_pick_reason,
 )
 from hq.pick.run import run as stage_run
@@ -106,6 +116,7 @@ class FakeChunks:
     empty: dict[str, int] = field(default_factory=dict)
     noSegments: dict[str, int] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
+    windows: list[tuple[float, float]] = field(default_factory=list)
 
     def __call__(
         self,
@@ -120,6 +131,7 @@ class FakeChunks:
         stats: ChunkStats | None = None,
     ) -> Iterator[ModelChunk]:
         self.calls.append(station_id)
+        self.windows.append((t0, t1))
         mine = self.chunks.get(station_id, [])
         empty = self.empty.get(station_id, 0)
         short = self.noSegments.get(station_id, 0)
@@ -375,6 +387,133 @@ def test_real_chunk_iterator_with_fake_cache(raw_signal_yaml: dict, tmp_path: Pa
     assert len(reads) == 2
 
 
+@pytest.mark.smoke
+def test_block_wholly_in_the_read_overlap_is_not_counted(
+    signal_cfg: SignalConfig, tmp_path: Path
+) -> None:
+    # Chunk keeps [T0, T0 + 100); its read span holds a 35 s block that ends before T0. The model
+    # still runs on it (its picks belong to the previous chunk), but it is not this chunk's block.
+    ch = chunk("XX.A", (T0, T0 + 100.0), [(T0 - 40.0, T0 - 5.0), (T0, T0 + 140.0)])
+    model = FakeModel({"A": [("P", T0 - 20.0, 0.9), ("S", T0 + 50.0, 0.9)]})
+    io = fake_io(FakeChunks({"XX.A": [ch]}), model)
+    result = pick_window(
+        tasks_for(signal_cfg, "XX.A"), signal_cfg, T0, T0 + 100.0, cache_dir=tmp_path, io=io
+    )
+    (rep,) = result.reports
+    assert len(model.calls) == 2  # both blocks were classified
+    assert (rep.blocks, rep.blocksPicked, rep.blocksTooShort) == (1, 1, 0)
+    assert (rep.nS, rep.outsideKeep) == (1, 1)
+    assert result.counts()["blocks"] == 1 and result.counts()["chunksWithData"] == 1
+
+
+# A spawned worker imports what it unpickles by module name, so the fakes for the pool test live in
+# a module written to tmp_path (put on sys.path, which spawn hands to its children).
+SPAWN_FAKES_MODULE = "seis06_spawn_fakes"
+SPAWN_FAKES_SOURCE = '''
+"""Picklable fakes for tests/signal/test_pick_run.py (written at test time)."""
+
+import os
+from pathlib import Path
+from types import SimpleNamespace
+
+import obspy
+
+
+class Model:
+    sampling_rate = 100.0
+    in_samples = 3001
+    component_order = "ZNE"
+
+    def __init__(self, picks):
+        self.picks = picks
+
+    def classify(self, stream, **kwargs):
+        pre, post = kwargs["blinding"]
+        t0 = max(tr.stats.starttime.timestamp for tr in stream) + pre / self.sampling_rate
+        t1 = min(tr.stats.endtime.timestamp for tr in stream) - post / self.sampling_rate
+        found = self.picks.get(stream[0].stats.station, [])
+        return SimpleNamespace(
+            picks=[
+                SimpleNamespace(phase=ph, peak_time=obspy.UTCDateTime(t), peak_value=p)
+                for ph, t, p in found
+                if t0 <= t <= t1
+            ]
+        )
+
+
+class Loader:
+    def __init__(self, picks):
+        self.picks = picks
+
+    def __call__(self, weights, picker):
+        return Model(self.picks)
+
+
+class Chunks:
+    def __init__(self, chunks, marker_dir):
+        self.chunks = chunks
+        self.marker_dir = Path(marker_dir)
+
+    def __call__(self, station_id, channels, profile, t0, t1, cfg, *, cache_dir, stats=None):
+        (self.marker_dir / f"{os.getpid()}-{station_id}").touch()  # which process picked it
+        mine = self.chunks.get(station_id, [])
+        if stats is not None:
+            stats.planned += len(mine)
+            stats.yielded += len(mine)
+        yield from mine
+
+
+def no_check(station_id, cache_dir):
+    return None
+'''
+
+
+@pytest.mark.smoke
+def test_spawned_pool_matches_in_process(
+    signal_cfg: SignalConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    (tmp_path / f"{SPAWN_FAKES_MODULE}.py").write_text(
+        textwrap.dedent(SPAWN_FAKES_SOURCE), encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    request.addfinalizer(lambda: sys.modules.pop(SPAWN_FAKES_MODULE, None))
+    fakes = importlib.import_module(SPAWN_FAKES_MODULE)
+
+    fake_chunks, fake_model = three_station_setup()
+    fake_chunks.chunks["XX.A"] = two_chunks_with_a_gap("XX.A")
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    io = PickIO(
+        iter_chunks=fakes.Chunks(fake_chunks.chunks, markers),
+        load_model=fakes.Loader({**fake_model._picks, "A": GAP_PICKS}),
+        check_cached=fakes.no_check,
+    )
+    tasks = tasks_for(signal_cfg, "XX.A", "XX.B", "XX.C")
+    window = (T0, T0 + 200.0)
+    in_process = pick_window(
+        tasks, signal_cfg, *window, cache_dir=tmp_path, io=io, runner=run_in_process
+    )
+    here = {m.name for m in markers.iterdir()}
+    assert {name.split("-")[0] for name in here} == {str(os.getpid())}
+    spawned = pick_window(
+        tasks, signal_cfg, *window, cache_dir=tmp_path, io=io, runner=process_pool_runner(2)
+    )
+    pids = {m.name.split("-")[0] for m in markers.iterdir() if m.name not in here}
+    assert pids and str(os.getpid()) not in pids  # really picked in other processes
+    assert len(in_process.picks) > 0
+    assert spawned.picks == in_process.picks
+    strip = [{**r.as_dict(), "runtimeS": 0.0} for r in spawned.reports]
+    assert strip == [{**r.as_dict(), "runtimeS": 0.0} for r in in_process.reports]
+    # the real default: workers from config, capped at the number of stations
+    runner, workers = default_runner(signal_cfg.picker.run, len(tasks))
+    assert (
+        workers == min(signal_cfg.picker.run.workers, len(tasks)) and runner is not run_in_process
+    )
+
+
 # --- ordering, duplicates, ids -------------------------------------------------------------------
 
 
@@ -529,23 +668,34 @@ def test_plan_tasks_rejects_unknown_or_unused_stations(signal_cfg: SignalConfig)
 def test_zero_pick_reasons(raw_signal_yaml: dict, tmp_path: Path) -> None:
     cfg = cfg_from(raw_signal_yaml, run={"onCacheMiss": "report"})
     keep = (T0, T0 + 100.0)
+    disjoint = model_stream("XX.G", [(T0, T0 + 40.0)], comps="Z") + model_stream(
+        "XX.G", [(T0 + 50.0, T0 + 90.0)], comps="NE"
+    )
     chunks = FakeChunks(
         {
             "XX.A": [chunk("XX.A", keep, [(T0, T0 + 100.0)])],  # fine, but the model is silent
             "XX.B": [chunk("XX.B", keep, [(T0, T0 + 20.0), (T0 + 40.0, T0 + 60.0)])],  # 20 s blocks
             "XX.C": [chunk("XX.C", keep, [(T0, T0 + 100.0)], comps="ZN")],  # no E
+            "XX.G": [replace(chunk("XX.G", keep, [(T0, T0 + 100.0)]), stream=disjoint)],
+            "XX.H": [chunk("XX.H", keep, [(T0 - 40.0, T0 + 140.0)])],  # pick only in the overlap
             "XX.P": [chunk("XX.P", keep, [(T0, T0 + 100.0)])],  # has a pick
         },
         empty={"XX.D": 2},
         noSegments={"XX.E": 1, "XX.D": 0},
     )
-    model = FakeModel({"A": [("P", T0 + 50.0, 0.05)], "P": [("S", T0 + 50.0, 0.3)]})
+    model = FakeModel(
+        {
+            "A": [("P", T0 + 50.0, 0.05)],
+            "H": [("P", T0 + 120.0, 0.9)],
+            "P": [("S", T0 + 50.0, 0.3)],
+        }
+    )
 
     def check(station_id: str, cache_dir: Path) -> None:
         if station_id == "XX.F":
             raise CacheMissError(f"nothing cached for station {station_id}")
 
-    sids = ("XX.A", "XX.B", "XX.C", "XX.D", "XX.E", "XX.F", "XX.P")
+    sids = ("XX.A", "XX.B", "XX.C", "XX.D", "XX.E", "XX.F", "XX.G", "XX.H", "XX.P")
     result = pick_window(
         tasks_for(cfg, *sids),
         cfg,
@@ -558,10 +708,12 @@ def test_zero_pick_reasons(raw_signal_yaml: dict, tmp_path: Path) -> None:
     assert reasons == {
         "XX.A": "no picks above threshold",
         "XX.B": "all segments shorter than model window",
-        "XX.C": "no three-component data (a component is missing)",
+        "XX.C": "no three-component data in window (a component is missing)",
         "XX.D": "no data in window",
         "XX.E": "all segments too short for preprocessing (minSegmentModelS / filter padding)",
         "XX.F": "nothing cached for this station",
+        "XX.G": "no three-component data in window (the Z, N and E spans never overlap)",
+        "XX.H": "every pick was outside its chunk's keep interval (read overlap only)",
         "XX.P": None,
     }
     by_id = {r.stationId: r for r in result.reports}
@@ -571,22 +723,29 @@ def test_zero_pick_reasons(raw_signal_yaml: dict, tmp_path: Path) -> None:
         pytest.approx(39.98),
     )
     assert by_id["XX.F"].cacheMiss and "XX.F" not in chunks.calls
+    assert (by_id["XX.G"].chunks, by_id["XX.G"].chunksMissingComponents) == (1, 0)
+    assert by_id["XX.H"].outsideKeep == 1
     counts = result.counts()
-    assert (counts["zeroPickStations"], counts["cacheMissStations"], counts["picksS"]) == (6, 1, 1)
-    near_gap = StationReport(
-        "XX.G",
-        "surface-100",
-        "instance",
-        "weightsByProfile",
-        [],
-        1.0,
-        1.0,
-        chunks=1,
-        blocks=1,
-        blocksPicked=1,
-        droppedNearGapP=2,
+    assert (counts["zeroPickStations"], counts["cacheMissStations"], counts["picksS"]) == (8, 1, 1)
+
+    def report(**kw: Any) -> StationReport:
+        return StationReport(
+            "XX.Z", "surface-100", "instance", "weightsByProfile", [], 1.0, 1.0, **kw
+        )
+
+    picked = {"chunks": 1, "blocks": 1, "blocksPicked": 1}
+    assert (
+        zero_pick_reason(report(**picked, droppedNearGapP=2))
+        == "every pick was within gapEdgeS of a data edge"
     )
-    assert zero_pick_reason(near_gap) == "every pick was within gapEdgeS of a data edge"
+    assert zero_pick_reason(report(**picked, droppedNearGapS=1, outsideKeep=3)) == (
+        "every pick was dropped: 1 within gapEdgeS of a data edge, 3 outside its chunk's keep "
+        "interval"
+    )
+    assert zero_pick_reason(report(chunks=2, chunksMissingComponents=1)) == (
+        "no three-component data in window (a component is missing in 1 of 2 chunks; elsewhere "
+        "the Z, N and E spans never overlap)"
+    )
 
 
 @pytest.mark.smoke
@@ -597,19 +756,42 @@ def test_cache_miss_is_an_error_before_any_picking(
     chunks = FakeChunks({"XX.A": [chunk("XX.A", (T0, T0 + 100.0), [(T0, T0 + 100.0)])]})
 
     def check(station_id: str, cache_dir: Path) -> None:
-        if station_id == "XX.B":
-            raise CacheMissError("nothing cached for station XX.B")
+        if station_id in ("XX.B", "XX.C"):
+            raise CacheMissError(f"nothing cached for station {station_id}")
 
-    with pytest.raises(CacheMissError):
+    with pytest.raises(CacheMissError) as err:
         pick_window(
-            tasks_for(signal_cfg, "XX.A", "XX.B"),
+            tasks_for(signal_cfg, "XX.A", "XX.B", "XX.C"),
             signal_cfg,
             T0,
             T0 + 100.0,
             cache_dir=tmp_path,
             io=fake_io(chunks, FakeModel({}), check),
         )
+    # one error names every missing station, so all can be fixed before the next run
+    assert "2 of 3 usedInRun stations" in str(err.value)
+    assert "XX.B" in str(err.value) and "XX.C" in str(err.value)
     assert chunks.calls == []
+
+
+@pytest.mark.smoke
+def test_failing_station_stops_the_stage_and_says_how_far_it_got(
+    signal_cfg: SignalConfig, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    good = chunk("XX.A", (T0, T0 + 100.0), [(T0, T0 + 100.0)])
+    bad = replace(good, stationId="XX.B", profile="surface-hi")  # not the station's profile
+    chunks = FakeChunks({"XX.A": [good], "XX.B": [bad]})
+    with caplog.at_level(logging.ERROR, logger="hq.pick.run"), pytest.raises(ValueError):
+        pick_window(
+            tasks_for(signal_cfg, "XX.A", "XX.B"),
+            signal_cfg,
+            T0,
+            T0 + 100.0,
+            cache_dir=tmp_path,
+            io=fake_io(chunks, FakeModel({})),
+            runner=run_in_process,
+        )
+    assert "XX.B: picking failed" in caplog.text and "1 of 2 stations had finished" in caplog.text
 
 
 # --- stage, outputs, config ----------------------------------------------------------------------
@@ -656,7 +838,12 @@ def test_stage_writes_report_and_records(fake_ctx: Any, raw_signal_yaml: dict) -
     assert params["pThreshold"] == 0.1 and params["seisbench"]["blinding"] == [50, 50]
     assert params["run"]["workers"] == cfg.picker.run.workers
     assert params["chunks"] == cfg.preprocess.chunks.model_dump(mode="json")
+    assert params["weightsUsedByProfile"] == {"surface-100": "instance"}
     report = json.loads(ctx.path("pick_report.json").read_text(encoding="utf-8"))
+    assert report["weightsUsedByProfile"] == {"surface-100": "instance"}
+    # T0 + 200 s is not an hour boundary: the report says the last chunk differs from an aligned run
+    assert any("window end" in n and "lengthS" in n for n in report["notes"])
+    assert not any("window start" in n for n in report["notes"])
     assert [s["stationId"] for s in report["stations"]] == ["XX.A", "XX.B", "XX.C", "XX.D"]
     first = report["stations"][0]
     for key in (
@@ -704,6 +891,98 @@ def test_stage_sets_picker_fields_when_the_context_can(fake_ctx: Any) -> None:
     )
     picker = fake_ctx.config.signal.picker
     assert updates == {"pickerModel": picker.model, "pickerWeights": picker.defaultWeights}
+
+
+@pytest.mark.smoke
+def test_stage_picks_the_run_yaml_window(fake_ctx: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    chunks = FakeChunks({})
+    sio = MemoryStageIO(stations("XX.A", "XX.B"))
+    run_picking(
+        fake_ctx, io=fake_io(chunks, FakeModel({})), stage_io=sio.io(), runner=run_in_process
+    )
+    rs = fake_ctx.config.run
+    assert chunks.windows == [(rs.window_start_s, rs.window_end_s)] * 2
+    report = json.loads(fake_ctx.path("pick_report.json").read_text(encoding="utf-8"))
+    assert (report["window"]["t0"], report["window"]["t1"]) == (rs.window_start_s, rs.window_end_s)
+
+    # run(ctx) is exactly run_picking(ctx): the whole run.yaml window, every usedInRun station
+    module = importlib.import_module("hq.pick.run")  # `import hq.pick.run` binds the function
+    seen: list[Any] = []
+    monkeypatch.setattr(module, "run_picking", lambda ctx: seen.append(ctx))
+    stage_run(fake_ctx)
+    assert seen == [fake_ctx]
+
+
+@pytest.mark.smoke
+def test_window_alignment_notes() -> None:
+    hour = 3600.0
+    assert window_alignment_notes(T0, T0 + 2 * hour, hour) == []
+    start, end = window_alignment_notes(T0 + 1800.0, T0 + 2 * hour + 0.5, hour)
+    assert start.startswith("window start") and "first chunk" in start
+    assert end.startswith("window end") and "last chunk" in end
+
+
+@pytest.mark.smoke
+def test_ab_json_disagreements_are_noted(
+    fake_ctx: Any, raw_signal_yaml: dict, caplog: pytest.LogCaptureFixture
+) -> None:
+    raw = copy.deepcopy(raw_signal_yaml)
+    raw["picker"]["weightsByProfile"] = {"borehole-A": "instance", "surface-100": "stead"}
+    cfg = SignalConfig.model_validate(raw)
+    infos = {
+        **stations("XX.A", "XX.B", profile="borehole-A"),
+        **stations("XX.C", profile="surface-100"),
+    }
+    tasks = plan_tasks(infos, cfg.picker)
+    ab_path = fake_ctx.path("known") / "ab.json"
+    assert ab_disagreements(ab_path, tasks) == []  # no A/B run yet: nothing to compare
+    ab_path.parent.mkdir()
+    ab_path.write_text(
+        json.dumps(
+            {
+                "adoptedProfileByBase": {"borehole-A": "borehole-B", "surface-100": "surface-100"},
+                "chosenWeightsByProfile": {"borehole-A": "instance", "surface-100": "original"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = ab_disagreements(ab_path, tasks)
+    assert len(notes) == 2
+    assert "adopts profile borehole-B for borehole-A stations" in notes[0]
+    assert "2 station(s)" in notes[0] and "stations.profiles" in notes[0]
+    assert "chose weights original for surface-100" in notes[1] and "uses stead" in notes[1]
+
+    ctx = replace(fake_ctx, config=type(fake_ctx.config)(run=fake_ctx.config.run, signal=cfg))
+    with caplog.at_level(logging.WARNING, logger="hq.pick.run"):
+        run_picking(
+            ctx,
+            window=(T0, T0 + 3600.0),
+            io=fake_io(FakeChunks({}), FakeModel({})),
+            runner=run_in_process,
+            stage_io=MemoryStageIO(infos).io(),
+        )
+    report = json.loads(ctx.path("pick_report.json").read_text(encoding="utf-8"))
+    assert notes[0] in report["notes"] and notes[1] in report["notes"]
+    assert "adopts profile borehole-B" in caplog.text
+
+    ab_path.write_text(json.dumps({"checkB": {}}), encoding="utf-8")
+    (note,) = ab_disagreements(ab_path, tasks)
+    assert "not compared" in note
+
+
+@pytest.mark.smoke
+def test_cli_times_must_be_explicit_utc(tmp_path: Path) -> None:
+    nine = datetime(2026, 9, 10, 9, tzinfo=UTC).timestamp()
+    assert _parse_utc("2026-09-10T09:00:00Z") == nine
+    assert _parse_utc("2026-09-10T09:00:00+00:00") == nine
+    for bad in ("2026-09-10T09:00:00", "2026-09-10T11:00:00+02:00"):
+        with pytest.raises(ValueError, match="UTC"):
+            _parse_utc(bad)
+    base = ["--run-dir", str(tmp_path), "--config-dir", str(tmp_path), "--cache-dir", str(tmp_path)]
+    with pytest.raises(SystemExit):  # a naive time is refused before anything is read
+        main([*base, "--start", "2026-09-10T09:00:00", "--end", "2026-09-10T10:00:00Z"])
+    with pytest.raises(SystemExit):
+        main([*base, "--start", "2026-09-10T09:00:00Z"])
 
 
 @pytest.mark.smoke
