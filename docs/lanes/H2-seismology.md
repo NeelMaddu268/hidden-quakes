@@ -88,6 +88,7 @@
 ### LOC-05 · P0 · Start ~2:00 AM — Station statics
 
 - **Goal:** three iterations of per-station, per-phase statics inside `locate()`, capped at 0.3 s.
+- **Lead decision (during LOC-05):** both methods ship behind `statics.mode`. `selfConsistent` is the method above (cap `statics.capS`). `referenceEvents`, the showcase default, takes each term at the public regional catalog's hypocentres of the matched events, relocates every matched event with terms computed without it, and caps at `statics.referenceCapS` (chosen from the data; `diagnostics.md` justifies it per run). Its stage order is locate (pass 1) → match → locate (pass 2) → match → tier (Locator step 5).
 - **Files:** `hq/locate/statics.py`
 - **In → out:** residuals → `statics.parquet`, relocated events
 - **Depends on:** LOC-04
@@ -148,7 +149,7 @@
 2. L1 misfit with origin time removed analytically: `t0` = weighted median of `t_obs − T_pred`. Weight = picker probability / σ for that phase and profile. Start σ at 0.02 s (P) and 0.04 s (S); update from the Tier A residual spread.
 3. Drop picks with |residual| > max(3 × MAD, 0.15 s) and relocate once.
 4. **Uncertainty:** normalize `exp(−misfit)` over the fine grid into a PDF, take its covariance, report `hErrM` (larger horizontal axis) and `vErrM`. Set `depthOnEdge` when > 5% of the mass sits on the top or bottom face.
-5. **Statics:** after pass 1, take each station-phase's median residual over well-constrained events, subtract, relocate; three iterations; cap 0.3 s.
+5. **Statics:** after pass 1, take each station-phase's median residual over well-constrained events, subtract, relocate; three iterations; cap 0.3 s. This is `statics.mode: selfConsistent`. The showcase default, `referenceEvents` (LOC-05 lead decision), instead takes each station-phase term as the median residual at the public regional catalog's hypocentres of the matched events (hypocentre fixed, origin time by weighted median), relocates each matched event with terms computed without it (leave-one-out or `statics.folds`), gives unmatched events the terms from all matched events, and caps at `statics.referenceCapS`. It needs a match first, so the stages run locate (pass 1, no statics) → match → locate (pass 2) → match → tier; stage `locate` runs pass 2 when `matches.parquet` is in the run dir.
 
 If someone already knows NonLinLoc well, it's an acceptable swap for steps 1–4. Nobody should learn it tonight.
 
