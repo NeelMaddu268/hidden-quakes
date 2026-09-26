@@ -173,14 +173,17 @@ class Resolved:
 Resolver = Callable[[Bundle], Resolved]
 
 
-def fmt(value: Any) -> str:
+def fmt(value: Any, decimals: int | None = None) -> str:
     """Deterministic, human-readable number formatting: integers plain, floats to at most four
-    decimals with trailing zeros dropped."""
+    decimals with trailing zeros dropped, or to exactly ``decimals`` when a doc quotes a field
+    rounded (the magnitude errors, approved at two decimals)."""
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
+        if decimals is not None:
+            return f"{value:.{decimals}f}"
         if value.is_integer():
             return str(int(value))
         return f"{value:.4f}".rstrip("0").rstrip(".")
@@ -220,22 +223,49 @@ def _condition_not_met(source: str, gate: str) -> Resolved:
     )
 
 
-def meta_field(path: str) -> Resolver:
+def meta_field(path: str, *, decimals: int | None = None) -> Resolver:
     def resolve(bundle: Bundle) -> Resolved:
         value, source = _lookup(bundle, META_JSON, path)
         if value is None:
             return _not_available(bundle, META_JSON, source)
-        return Resolved(fmt(value), source, STATUS_VALUE)
+        return Resolved(fmt(value, decimals), source, STATUS_VALUE)
 
     return resolve
 
 
-def validation_field(path: str) -> Resolver:
+def validation_field(path: str, *, decimals: int | None = None) -> Resolver:
     def resolve(bundle: Bundle) -> Resolved:
         value, source = _lookup(bundle, VALIDATION_JSON, path)
         if value is None:
             return _not_available(bundle, VALIDATION_JSON, source)
-        return Resolved(fmt(value), source, STATUS_VALUE)
+        return Resolved(fmt(value, decimals), source, STATUS_VALUE)
+
+    return resolve
+
+
+def none_strict_scrambles() -> Resolver:
+    """The null test's shuffle count, for the clause "none of the chance events reached the
+    strict tier in any of the N scrambles". The clause is true only when ``meanChanceStrict``
+    is exactly zero (a mean of zero over N shuffles means every shuffle had zero), so any other
+    value marks the clause for omission; a missing null test omits it like the sentence."""
+
+    source = f"{VALIDATION_JSON} → nullTest.nShuffles"
+    gate = f"{VALIDATION_JSON} → nullTest.meanChanceStrict == 0"
+    note = f" (only with {gate}: the none-at-the-strict-tier clause)"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        strict, strict_source = _lookup(bundle, VALIDATION_JSON, "nullTest.meanChanceStrict")
+        n, _ = _lookup(bundle, VALIDATION_JSON, "nullTest.nShuffles")
+        if strict is None or n is None:
+            r = _condition_not_met(source, f"{VALIDATION_JSON} → nullTest")
+            return Resolved(r.text, source + note, r.status)
+        if strict != 0:
+            return Resolved(
+                f"[condition not met: {strict_source} is not zero; omit this clause]",
+                source + note,
+                STATUS_CONDITION,
+            )
+        return Resolved(fmt(n), source + note, STATUS_VALUE)
 
     return resolve
 
@@ -401,11 +431,12 @@ PITCH_SPECS: tuple[Spec, ...] = (
             sentence="the null test",
         ),
     ),
+    Spec("{nShuffles}", none_strict_scrambles()),
     Spec(
         "{n}",
         gated(*MAG_GATE, validation_field("magnitude.n"), sentence=MAG_SENTENCE),
-        label="{n} (matched events, Q27)",
-        context=r"matched",
+        label="{n} (calibration events, Q27)",
+        context=r"calibration events",
     ),
     Spec(
         "{n}",
@@ -415,10 +446,10 @@ PITCH_SPECS: tuple[Spec, ...] = (
     ),
     Spec(
         "{looMae}",
-        gated(*MAG_GATE, validation_field("magnitude.looMae"), sentence=MAG_SENTENCE),
+        gated(*MAG_GATE, validation_field("magnitude.looMae", decimals=2), sentence=MAG_SENTENCE),
         companion=(
             "{nullModelMae}",
-            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae"),
+            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae", decimals=2),
         ),
     ),
     Spec(
@@ -433,7 +464,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
         "{nullModelMae}",
         gated(
             *MAG_GATE,
-            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae"),
+            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae", decimals=2),
             sentence=MAG_SENTENCE,
         ),
     ),
@@ -522,16 +553,17 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
             sentence="the null-test sentence",
         ),
     ),
+    Spec("<from validation.json: nullTest.nShuffles>", none_strict_scrambles()),
     Spec(
         "<from validation.json: magnitude.n>",
         gated(*MAG_GATE, validation_field("magnitude.n"), sentence=MAG_SENTENCE),
     ),
     Spec(
         "<from validation.json: magnitude.looMae>",
-        gated(*MAG_GATE, validation_field("magnitude.looMae"), sentence=MAG_SENTENCE),
+        gated(*MAG_GATE, validation_field("magnitude.looMae", decimals=2), sentence=MAG_SENTENCE),
         companion=(
             "<from meta.json: run.matching.magnitude.leaveOneEventOut.nullModelMae>",
-            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae"),
+            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae", decimals=2),
         ),
     ),
     Spec(
@@ -546,7 +578,7 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
         "<from meta.json: run.matching.magnitude.leaveOneEventOut.nullModelMae>",
         gated(
             *MAG_GATE,
-            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae"),
+            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae", decimals=2),
             sentence=MAG_SENTENCE,
         ),
     ),
@@ -653,7 +685,7 @@ class _Filler:
             ):
                 # looMae is quoted only next to the null-model error (FYI-H2-7).
                 partner = spec.companion[1](self.bundle)
-                text = f"{text} (null-model error ±{partner.text})"
+                text = f"{text} (versus {partner.text} for a no-skill baseline)"
             # A placeholder wrapped in its own backticks loses them; a backtick that opens or
             # closes a longer code span (`{a} PUBLIC → {b} RECOVERED`) stays where it was.
             lead, trail = raw.startswith("`"), raw.endswith("`")

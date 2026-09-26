@@ -12,7 +12,7 @@ import mockValidation from "../../../public/data/mock/validation.json";
 import { Shell } from "../Shell";
 import { bundleFiles, fakeFetch, type FixtureOptions } from "../test-fixture";
 import { formatNumber } from "./format";
-import { STRICT_COMPARE_NOTE } from "./rows";
+import { DEPTH_NOTE, STRICT_COMPARE_NOTE } from "./rows";
 
 const validation = mockValidation as unknown as Validation;
 const summary = mockMeta.summary as unknown as AnalysisSummary;
@@ -77,6 +77,8 @@ describe("validation panel", () => {
     // The comparison's PhaseNet count is a rerun on one statics table, so its row carries the
     // note that keeps it from being read against "Strict events" unqualified; no other row does.
     expect(screen.getByTestId("validation-note-strictCompare").textContent).toBe(STRICT_COMPARE_NOTE);
+    // The depth figure comes from the synthetic test with every station recording; its row says so.
+    expect(screen.getByTestId("validation-note-depth").textContent).toBe(DEPTH_NOTE);
     expect(screen.queryByTestId("validation-note-strict")).toBeNull();
     expect(screen.queryByTestId("validation-note-chance")).toBeNull();
   });
