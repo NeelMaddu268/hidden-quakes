@@ -1,11 +1,17 @@
 """CONTRACT-01 acceptance: every model round-trips through JSON; every table model round-trips
-through to_frame/from_frame and parquet. All data here is tiny and built inside the test."""
+through to_frame/from_frame and parquet. CONTRACT-02 (REQ-H2-3): column dtypes come from the
+model annotations, so empty and all-null tables carry the same pandas dtypes and Arrow types as
+populated ones. All data here is tiny and built inside the test."""
 
 import json
 import re
 from pathlib import Path
+from typing import Literal
 
+import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from hq_contracts import io
 from hq_contracts import models as m
@@ -393,6 +399,245 @@ def test_parquet_empty_table_round_trip(tmp_path) -> None:
     path = tmp_path / "empty.parquet"
     io.write_models([], path, model=m.SeismicEvent)
     assert io.read_models(path, m.SeismicEvent) == []
+
+
+# --- CONTRACT-02: dtype-stable frames (REQ-H2-3) ------------------------------------------
+
+# pandas dtype -> the Arrow type write_table must produce, even with zero rows or all nulls.
+# pandas 3 stores its `string` dtype as Arrow large_string; both are string types, never null.
+ARROW_TYPES: dict[str, tuple[str, ...]] = {
+    "float64": ("double",),
+    "int64": ("int64",),
+    "Int64": ("int64",),
+    "bool": ("bool",),
+    "boolean": ("bool",),
+    "string": ("string", "large_string"),
+}
+
+# The full dtype map for the two models every lane writes, spelled out so a change in the
+# rules (or in pandas' inference) fails loudly here rather than in a neighbour's stage.
+EXPECTED_DTYPES: dict[type[BaseModel], dict[str, str]] = {
+    m.Pick: {
+        "id": "string",
+        "stationId": "string",
+        "phase": "string",
+        "t": "float64",
+        "prob": "float64",
+        "picker": "string",
+        "eventId": "string",
+        "residualS": "float64",
+        "weight": "float64",
+    },
+    m.SeismicEvent: {
+        "id": "string",
+        "runId": "string",
+        "source": "string",
+        "t": "float64",
+        "latitude": "float64",
+        "longitude": "float64",
+        "elevM": "float64",
+        "depthKm": "float64",
+        "enu_e": "float64",
+        "enu_n": "float64",
+        "enu_u": "float64",
+        "quality_method": "string",
+        "quality_statics": "bool",
+        "quality_nStations": "int64",
+        "quality_nP": "int64",
+        "quality_nS": "int64",
+        "quality_rmsS": "float64",
+        "quality_gapDeg": "float64",
+        "quality_minEpiDistM": "float64",
+        "quality_hErrM": "float64",
+        "quality_vErrM": "float64",
+        "quality_depthOnEdge": "bool",
+        "tier": "string",
+        "tierReasons": "object",
+        "meanPickProb": "float64",
+        "magnitude_value": "float64",
+        "magnitude_type": "string",
+        "magnitude_sigma": "float64",
+        "catalogMatch_catalogId": "string",
+        "catalogMatch_dtS": "float64",
+        "catalogMatch_distM": "float64",
+        "revealOrder": "int64",
+        "pickIds": "object",
+    },
+}
+
+# Spot checks on the other table models: one column per rule they exercise.
+EXPECTED_DTYPES_SPOT: dict[type[BaseModel], dict[str, str]] = {
+    m.Station: {
+        "kind": "string",
+        "channels": "object",
+        "usedInRun": "bool",
+        "staticsS": "string",  # dict -> JSON text
+        "sampleRateHz": "float64",
+    },
+    m.CatalogEvent: {
+        "t": "float64",
+        "mag": "float64",
+        "magType": "string",
+        "matchedEventId": "string",
+    },
+    m.SweepPoint: {"params": "string", "candidates": "int64", "tierA": "int64"},
+}
+
+
+def dtype_names(df: pd.DataFrame) -> dict[str, str]:
+    return {str(col): str(dtype) for col, dtype in df.dtypes.items()}
+
+
+def arrow_types(path: Path) -> dict[str, str]:
+    return {field.name: str(field.type) for field in pq.read_schema(path)}
+
+
+def assert_arrow_types_match(df: pd.DataFrame, path: Path) -> None:
+    """Every typed pandas column wrote its real Arrow type; only `object` columns may be `null`."""
+    actual = arrow_types(path)
+    for col, dtype in dtype_names(df).items():
+        if dtype == "object":
+            continue
+        assert actual[col] in ARROW_TYPES[dtype], f"{col}: {dtype} wrote Arrow {actual[col]}"
+
+
+@pytest.mark.parametrize("model", list(TABLE_ROWS), ids=lambda model: model.__name__)
+def test_zero_row_frame_has_model_dtypes(tmp_path, model: type[BaseModel]) -> None:
+    empty = io.to_frame([], model=model)
+    populated = io.to_frame(TABLE_ROWS[model])
+    assert len(empty) == 0 and list(empty.columns) == io.columns_for(model)
+    assert dtype_names(empty) == io.dtypes_for(model) == dtype_names(populated)
+    expected = EXPECTED_DTYPES.get(model) or EXPECTED_DTYPES_SPOT[model]
+    for col, dtype in expected.items():
+        assert dtype_names(empty)[col] == dtype, col
+    assert set(dtype_names(empty).values()) <= set(ARROW_TYPES) | {"object"}
+    if "t" in empty.columns:
+        assert empty["t"].dtype == "float64"
+
+    path = tmp_path / f"{model.__name__}.parquet"
+    io.write_table(empty, path, model.__name__)
+    assert_arrow_types_match(empty, path)
+    back = io.read_table(path)
+    assert dtype_names(back) == dtype_names(empty)
+    assert io.from_frame(back, model) == []
+
+
+def test_expected_dtype_maps_are_complete() -> None:
+    for model, expected in EXPECTED_DTYPES.items():
+        assert list(expected) == io.columns_for(model)
+    assert set(EXPECTED_DTYPES) | set(EXPECTED_DTYPES_SPOT) == set(m.TABLE_MODELS)
+
+
+def test_all_none_optional_columns_keep_their_dtype(tmp_path) -> None:
+    # Optional leaf (Pick.eventId, residualS, weight) and optional nested model
+    # (SeismicEvent.magnitude, catalogMatch): all-None rows must match populated rows.
+    cases: list[tuple[type[BaseModel], list[BaseModel], list[BaseModel]]] = [
+        (m.Pick, [pick(0), pick(2)], [pick(1, assigned=True)]),
+        (m.SeismicEvent, [event(0), event(1)], [event(2, matched=True, mag=True)]),
+        (m.CatalogEvent, [catalog_event(0)], [catalog_event(1)]),
+    ]
+    for model, all_none, populated in cases:
+        df = io.to_frame(all_none)
+        assert dtype_names(df) == dtype_names(io.to_frame(populated)) == io.dtypes_for(model)
+        assert io.from_frame(df, model) == all_none
+        path = tmp_path / f"{model.__name__}.parquet"
+        io.write_table(df, path, model.__name__)
+        assert_arrow_types_match(df, path)
+        back = io.read_table(path)
+        assert dtype_names(back) == dtype_names(df)
+        assert io.from_frame(back, model) == all_none
+
+    picks = io.to_frame([pick(0)])
+    assert picks["eventId"].dtype == "string" and picks["eventId"].isna().all()
+    assert picks["residualS"].dtype == "float64" and np.isnan(picks.loc[0, "residualS"])
+    events = io.to_frame([event(0)])
+    assert events["magnitude_type"].dtype == "string"
+    assert events["catalogMatch_catalogId"].dtype == "string"
+    assert events["magnitude_value"].dtype == "float64"
+
+
+def test_optional_nested_model_makes_int_and_bool_leaves_nullable(tmp_path) -> None:
+    """int/bool inside an optional nested model use the nullable Int64/boolean dtypes."""
+
+    class Inner(m.Model):
+        n: int
+        ok: bool
+        label: Literal["x", "y"]
+
+    class Outer(m.Model):
+        id: str
+        count: int
+        flag: bool
+        inner: Inner | None = None
+
+    assert io.dtypes_for(Outer) == {
+        "id": "string",
+        "count": "int64",
+        "flag": "bool",
+        "inner_n": "Int64",
+        "inner_ok": "boolean",
+        "inner_label": "string",
+    }
+    rows = [
+        Outer(id="a", count=1, flag=True, inner=Inner(n=3, ok=False, label="x")),
+        Outer(id="b", count=2, flag=False),
+    ]
+    for subset in (rows, rows[1:], []):
+        df = io.to_frame(subset, model=Outer)
+        assert dtype_names(df) == io.dtypes_for(Outer)
+        assert io.from_frame(df, Outer) == subset
+        path = tmp_path / "outer.parquet"
+        io.write_table(df, path, Outer.__name__)
+        assert_arrow_types_match(df, path)
+        back = io.read_table(path)
+        assert dtype_names(back) == dtype_names(df)
+        assert io.from_frame(back, Outer) == subset
+    assert isinstance(io.from_frame(io.to_frame(rows), Outer)[0].inner.n, int)  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("model", list(TABLE_ROWS), ids=lambda model: model.__name__)
+def test_t_is_always_float64(model: type[BaseModel]) -> None:
+    if "t" not in io.columns_for(model):
+        pytest.skip(f"{model.__name__} has no t column")
+    assert io.to_frame([], model=model)["t"].dtype == "float64"
+    assert io.to_frame(TABLE_ROWS[model])["t"].dtype == "float64"
+    assert io.dtypes_for(model)["t"] == "float64"
+
+
+def test_from_frame_accepts_na_nan_and_none_for_optional_fields() -> None:
+    """Frames built elsewhere may hold pd.NA, NaN or None in optional columns; all mean None."""
+    df = io.to_frame([pick(1, assigned=True)] * 3)
+    df = df.astype({"eventId": "object", "residualS": "object", "weight": "object"})
+    df.loc[0, ["eventId", "residualS", "weight"]] = [pd.NA, pd.NA, pd.NA]
+    df.loc[1, ["eventId", "residualS", "weight"]] = [np.nan, np.nan, np.nan]
+    df.loc[2, ["eventId", "residualS", "weight"]] = [None, None, None]
+    assert io.from_frame(df, m.Pick) == [pick(1)] * 3
+
+    typed = io.to_frame([pick(1, assigned=True), pick(1)])
+    back = io.from_frame(typed, m.Pick)
+    assert back == [pick(1, assigned=True), pick(1)]
+    assert type(back[0].eventId) is str and type(back[0].t) is float
+
+
+def test_columns_for_order_unchanged_by_dtypes() -> None:
+    assert io.columns_for(m.SeismicEvent)[:12] == [
+        "id",
+        "runId",
+        "source",
+        "t",
+        "latitude",
+        "longitude",
+        "elevM",
+        "depthKm",
+        "enu_e",
+        "enu_n",
+        "enu_u",
+        "quality_method",
+    ]
+    assert list(io.dtypes_for(m.SeismicEvent)) == io.columns_for(m.SeismicEvent)
+    assert pa.Table.from_pandas(io.to_frame([], model=m.Pick)).column_names == io.columns_for(
+        m.Pick
+    )
 
 
 def test_read_table_rejects_foreign_parquet(tmp_path) -> None:
