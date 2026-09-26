@@ -71,7 +71,7 @@ class EvidenceConfig(BaseModel):
 #   EPSG:3742   NAD83(HARN) / UTM zone 12N, metres (the datum the 16B(78)-32 survey report states)
 #   EPSG:32612  WGS84 / UTM zone 12N, metres (the project's own scene projection)
 FeatureCrs = Literal["EPSG:4326", "EPSG:26912", "EPSG:3742", "EPSG:32612"]
-PROJECTED_CRS: frozenset[str] = frozenset({"EPSG:26912", "EPSG:3742", "EPSG:32612"})
+PROJECTED_FEATURE_CRS: frozenset[str] = frozenset({"EPSG:26912", "EPSG:3742", "EPSG:32612"})
 
 # Unit of the published horizontal coordinates, depths and elevations of one feature.
 #   deg   degrees; only with EPSG:4326 (elevations stay in metres)
@@ -86,12 +86,25 @@ class FeatureSource(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     citation: str = Field(min_length=1)  # title, author/publisher, date of the publication
-    url: str = Field(min_length=1, pattern=r"^https?://")  # the authoritative publication
+    # The authoritative publication; or, when ``primaryLocated`` is false, the copy that was read.
+    url: str = Field(min_length=1, pattern=r"^https?://")
     accessedOn: date  # when the coordinates were read
     # The page actually read when it is not ``url`` itself (a mirror or copy of the publication).
     # A feature read through a mirror can never be ``verified``.
     readFrom: str | None = Field(default=None, min_length=1, pattern=r"^https?://")
+    # False when the publication the coordinates originally come from could not be named: ``url``
+    # is then the copy that was read, ``readFrom`` stays unset, and the feature is never
+    # ``verified``. The bundle citation says so.
+    primaryLocated: bool = True
     note: str = ""  # anything a reader needs to judge the numbers (datum caveats, what was checked)
+
+    @model_validator(mode="after")
+    def _check_source(self) -> "FeatureSource":
+        if not self.primaryLocated and self.readFrom is not None:
+            raise ValueError(
+                "primaryLocated=false means url is the copy that was read; readFrom must be unset"
+            )
+        return self
 
 
 class FeatureBase(BaseModel):
@@ -115,6 +128,11 @@ class FeatureBase(BaseModel):
                 f"feature {self.id!r}: verified=true requires the coordinates to be read from "
                 f"source.url itself, but readFrom={self.source.readFrom!r} says they came from "
                 "a copy; set verified=false or read them from the primary"
+            )
+        if self.verified and not self.source.primaryLocated:
+            raise ValueError(
+                f"feature {self.id!r}: verified=true requires the primary publication "
+                "(source.primaryLocated=true); a copy of unknown origin is never verified"
             )
         if (self.crs == "EPSG:4326") != (self.unit == "deg"):
             raise ValueError(
@@ -156,7 +174,7 @@ class SurveyRow(BaseModel):
 
     md: float = Field(ge=0.0)  # measured depth along the hole from ``depthRefElev``
     incDeg: float = Field(ge=0.0, le=180.0)  # inclination from vertical
-    aziDeg: float = Field(ge=0.0, lt=360.0)  # azimuth clockwise from grid north (``northRef``)
+    aziDeg: float = Field(ge=0.0, le=360.0)  # azimuth clockwise from grid north (``northRef``)
     # Positions the report itself printed, if any; the loader recomputes them with minimum
     # curvature and refuses the well when they disagree by more than ``maxSurveyMismatchM``.
     tvd: float | None = None  # true vertical depth below ``depthRefElev``
@@ -195,7 +213,7 @@ class WellFeatureConfig(FeatureBase):
 
     @model_validator(mode="after")
     def _check_well(self) -> "WellFeatureConfig":
-        if self.crs not in PROJECTED_CRS:
+        if self.crs not in PROJECTED_FEATURE_CRS:
             raise ValueError(f"well {self.id!r}: a well needs a projected crs, got {self.crs!r}")
         if (self.survey is None) == (self.surveyCsv is None):
             raise ValueError(f"well {self.id!r}: give exactly one of survey and surveyCsv")
@@ -219,6 +237,9 @@ class ExportConfig(BaseModel):
     # Geothermal reference features (wells, well pads, boundaries), each with a cited source.
     # Empty means "export no features". Converted to ``GeoFeature`` by ``hq.export.features``.
     features: list[FeatureConfig] = Field(default_factory=list)
+    # Decimal places of the ENU metres written for each feature point. Survey reports print
+    # positions to 0.01 ft, so 2 (centimetres) loses nothing and keeps features.json byte-stable.
+    featureDecimals: int = Field(default=2, ge=0, le=6)
 
     @model_validator(mode="after")
     def _check(self) -> "ExportConfig":

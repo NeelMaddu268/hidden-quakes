@@ -13,19 +13,23 @@ import numpy as np
 import pytest
 from hq_contracts.models import GeoFeature
 from pydantic import ValidationError
+from pyproj import Transformer
 
 from hq.config import lax_models, load_config
 from hq.config.export import ExportConfig, WellFeatureConfig
 from hq.config.run import RunSection
 from hq.export.features import (
-    ENU_DECIMALS,
     M_PER_UNIT,
+    PINNED_PIPELINES,
+    geographic_transformer,
     load_features,
     minimum_curvature,
     read_survey_csv,
     resolve_survey_path,
 )
 from hq.locate.coords import to_enu
+
+ENU_DECIMALS = ExportConfig().featureDecimals
 
 pytestmark = pytest.mark.smoke
 
@@ -88,7 +92,7 @@ def test_showcase_config_has_typed_cited_features(export: ExportConfig) -> None:
     for feature in export.features:
         assert feature.source.citation.strip()
         assert feature.source.url.startswith("http")
-        if feature.source.readFrom is not None:
+        if feature.source.readFrom is not None or not feature.source.primaryLocated:
             assert feature.verified is False, feature.id
     ids = [f.id for f in export.features]
     assert len(set(ids)) == len(ids)
@@ -147,7 +151,9 @@ def test_showcase_survey_csvs_carry_their_source(export: ExportConfig) -> None:
         assert feature.surveyCsv is not None
         path = resolve_survey_path(feature.surveyCsv)
         assert path.is_relative_to(SHOWCASE_DIR / "features")
-        header = [line for line in path.read_text().splitlines() if line.startswith("#")]
+        header = [
+            line for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("#")
+        ]
         assert any("source:" in line and "http" in line for line in header)
         rows = read_survey_csv(path)
         assert rows[0].md == 0.0 and rows[0].tvd == 0.0
@@ -205,8 +211,6 @@ def test_well_path_lands_on_the_wellhead_in_enu(run: RunSection) -> None:
     assert toe.u == pytest.approx(700.0 - run.origin.elevM, abs=10**-ENU_DECIMALS)
     assert toe.e == head.e and toe.n == head.n  # vertical hole
     # the head is where H2's helper puts the wellhead lat/lon (EPSG:32612 is the scene CRS)
-    from pyproj import Transformer
-
     lon, lat = Transformer.from_crs("EPSG:32612", "EPSG:4326", always_xy=True).transform(
         335_000.0, 4_263_000.0
     )
@@ -303,6 +307,39 @@ def test_point_and_polygon_features(run: RunSection) -> None:
     assert all(p.u == pytest.approx(run.refSurfaceElevM - run.origin.elevM) for p in ring.path)
 
 
+# --- pinned datum handling -----------------------------------------------------------------
+
+
+def test_geographic_transform_is_the_pinned_offline_pipeline() -> None:
+    import pyproj.network
+
+    assert pyproj.network.is_network_enabled() is False
+    assert set(PINNED_PIPELINES) == {"EPSG:26912", "EPSG:3742", "EPSG:32612"}
+    for crs, pipeline in PINNED_PIPELINES.items():
+        transformer = geographic_transformer(crs)
+        definition = transformer.definition
+        assert transformer.is_network_enabled is False
+        assert (
+            "proj=pipeline" in definition and "proj=utm" in definition and "zone=12" in definition
+        )
+        assert "grid" not in definition and "helmert" not in definition and "cart" not in definition
+        assert Transformer.from_pipeline(pipeline).definition == definition
+    with pytest.raises(ValueError, match="no pinned pipeline"):
+        geographic_transformer("EPSG:4326")
+    # No datum step: NAD83 and NAD83(HARN) UTM inverses coincide, and differ from the WGS84 one
+    # only by the GRS80/WGS84 flattening (about a tenth of a millimetre here).
+    x, y = 335_445.0, 4_263_045.0
+    nad83 = geographic_transformer("EPSG:26912").transform(x, y)
+    harn = geographic_transformer("EPSG:3742").transform(x, y)
+    wgs84 = geographic_transformer("EPSG:32612").transform(x, y)
+    assert nad83 == harn
+    assert nad83 == pytest.approx(wgs84, abs=1e-8)
+    # Regression pin: what the pinned pipeline returned for these metres when it was chosen; a
+    # PROJ that silently applied a datum shift or grid would move this by about a metre (1e-5).
+    assert nad83[0] == pytest.approx(-112.8870822, abs=1e-7)
+    assert nad83[1] == pytest.approx(38.5005792, abs=1e-7)
+
+
 # --- validation -----------------------------------------------------------------------------
 
 
@@ -317,7 +354,34 @@ def test_verified_feature_read_from_a_copy_fails() -> None:
     feature = well(verified=True, source=source(readFrom="https://mirror.example.org/copy"))
     with pytest.raises(ValidationError, match="read from source.url itself"):
         ExportConfig(features=[feature])
+    with pytest.raises(ValidationError, match="primaryLocated=true"):
+        ExportConfig(features=[well(verified=True, source=source(primaryLocated=False))])
+    with pytest.raises(ValidationError, match="readFrom must be unset"):
+        ExportConfig(
+            features=[
+                well(source=source(primaryLocated=False, readFrom="https://mirror.example.org/c"))
+            ]
+        )
     ExportConfig(features=[well(verified=True)])  # read from the primary: allowed
+
+
+def test_citation_says_how_the_coordinates_were_read(run: RunSection) -> None:
+    primary, copy, unknown = load_features(
+        ExportConfig(
+            features=[
+                well(id="w-primary"),
+                well(id="w-copy", source=source(readFrom="https://mirror.example.org/copy")),
+                well(id="w-unknown", source=source(primaryLocated=False)),
+            ]
+        ),
+        run,
+    )
+    assert primary.source.citation.endswith("Accessed 2026-09-26.")
+    assert "read from a copy at https://mirror.example.org/copy" in copy.source.citation
+    assert "approximate" in copy.source.citation
+    assert "Primary publication not located" in unknown.source.citation
+    assert "approximate" in unknown.source.citation
+    assert unknown.source.url == "https://example.org/survey"
 
 
 def test_source_needs_citation_url_and_access_date() -> None:

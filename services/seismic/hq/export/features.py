@@ -5,11 +5,21 @@ Wells, well pads and site outlines are context for the scene, nothing more: ever
 the ``SourceRef`` its coordinates were read from, and ``verified`` is true only when they were
 read from the authoritative publication itself. Nothing here attributes seismicity to anything.
 
-Coordinates stay in their published datum and unit in the config. This module converts them with
-pyproj to WGS84 latitude/longitude, then to ENU with H2's ``hq.locate.coords.to_enu`` (UTM 12N
-minus the run origin; ``u = elevM - origin.elevM``, docs/01 -> Conventions). Well trajectories are
-rebuilt from the survey (md, inclination, azimuth) with the minimum-curvature method and, when
-the report also printed positions, checked against them.
+Coordinates stay in their published datum and unit in the config. This module converts them to
+WGS84 latitude/longitude with one pinned, grid-free PROJ pipeline per allowed CRS
+(``PINNED_PIPELINES``), then to ENU with H2's ``hq.locate.coords.to_enu`` (UTM 12N minus the run
+origin; ``u = elevM - origin.elevM``, docs/01 -> Conventions). Well trajectories are rebuilt from
+the survey (md, inclination, azimuth) with the minimum-curvature method and, when the report also
+printed positions, checked against them.
+
+Datum handling, stated plainly: the pinned pipelines apply **no datum shift**, so NAD83 and
+NAD83(HARN) coordinates are treated as WGS84 (the inverse UTM projection on the GRS80 ellipsoid,
+nothing else). That is the EPSG "null" transformation, which PROJ's EPSG database lists with a
+stated accuracy of a few metres; the true NAD83-WGS84 offset in Utah is of the order of a metre.
+It is pinned rather than left to PROJ because PROJ otherwise chooses the most accurate operation
+it can find, and a machine with grid files or ``PROJ_NETWORK=ON`` would move the same config's
+output by about that much (rule 11, determinism). Acceptable for features that are
+``verified: false``; PROJ network access is switched off at import.
 """
 
 from __future__ import annotations
@@ -22,6 +32,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+import pyproj.network
 from hq_contracts.models import Enu, GeoFeature, SourceRef
 from pyproj import Transformer
 
@@ -36,7 +47,7 @@ from hq.config.export import (
     WellFeatureConfig,
 )
 from hq.config.run import RunSection
-from hq.locate.coords import GEOGRAPHIC_CRS, to_enu
+from hq.locate.coords import to_enu
 
 log = logging.getLogger(__name__)
 
@@ -45,9 +56,23 @@ FloatArray = npt.NDArray[np.float64]
 # Unit definitions, not knobs. The US survey foot is exactly 1200/3937 m.
 M_PER_UNIT: dict[str, float] = {"m": 1.0, "usft": 1200.0 / 3937.0}
 
-# ENU output precision: metres to the centimetre. Survey reports print positions to 0.01 ft,
-# so nothing finer is information; it keeps features.json compact and byte-stable.
-ENU_DECIMALS = 2
+# Conventions, not knobs: the one PROJ pipeline used for each CRS a feature may be published in.
+# Each is the plain inverse UTM zone 12N projection on the CRS's ellipsoid followed by a
+# radians -> degrees step; there is no datum step (see the module docstring), no grid and no
+# network lookup, so the same config gives the same bytes on every machine.
+_INVERSE_UTM_12N = (
+    "+proj=pipeline +step +inv +proj=utm +zone=12 +ellps={ellps} "
+    "+step +proj=unitconvert +xy_in=rad +xy_out=deg"
+)
+PINNED_PIPELINES: dict[str, str] = {
+    "EPSG:26912": _INVERSE_UTM_12N.format(ellps="GRS80"),  # NAD83 / UTM 12N
+    "EPSG:3742": _INVERSE_UTM_12N.format(ellps="GRS80"),  # NAD83(HARN) / UTM 12N
+    "EPSG:32612": _INVERSE_UTM_12N.format(ellps="WGS84"),  # WGS84 / UTM 12N
+}
+
+# PROJ must never fetch grids for these conversions; the pinned pipelines name none, and this
+# makes the environment agree even when PROJ_NETWORK is set on the machine.
+pyproj.network.set_network_enabled(False)
 
 # Directory that relative ``surveyCsv`` paths resolve against: ``services/seismic``, where
 # ``configs/`` lives (the same root ``hq run configs/showcase`` is run from).
@@ -134,8 +159,19 @@ def resolve_survey_path(survey_csv: str) -> Path:
 
 
 @lru_cache(maxsize=8)
-def _to_geographic(crs: str) -> Transformer:
-    return Transformer.from_crs(crs, GEOGRAPHIC_CRS, always_xy=True)
+def geographic_transformer(crs: str) -> Transformer:
+    """The pinned ``crs`` -> WGS84 (lon, lat in degrees) transformer for a projected feature CRS.
+
+    Built from ``PINNED_PIPELINES`` only; a CRS without a pinned pipeline, or a PROJ that cannot
+    build it, is an error rather than a fallback to PROJ's own choice of operation.
+    """
+    pipeline = PINNED_PIPELINES.get(crs)
+    if pipeline is None:
+        raise ValueError(f"no pinned pipeline for crs {crs!r}; allowed: {sorted(PINNED_PIPELINES)}")
+    transformer = Transformer.from_pipeline(pipeline)
+    if transformer.is_network_enabled:
+        raise RuntimeError(f"PROJ network access is on for {crs}; the pipeline must stay offline")
+    return transformer
 
 
 def to_latlon(
@@ -149,17 +185,19 @@ def to_latlon(
             raise ValueError(f"unit 'deg' needs crs EPSG:4326, got {crs}")
         return y_a, x_a
     scale = M_PER_UNIT[unit]
-    lon, lat = _to_geographic(crs).transform(x_a * scale, y_a * scale, errcheck=True)
+    lon, lat = geographic_transformer(crs).transform(x_a * scale, y_a * scale, errcheck=True)
     return np.asarray(lat, dtype=np.float64), np.asarray(lon, dtype=np.float64)
 
 
-def _enu_path(lat: FloatArray, lon: FloatArray, elev_m: FloatArray, run: RunSection) -> list[Enu]:
+def _enu_path(
+    lat: FloatArray, lon: FloatArray, elev_m: FloatArray, run: RunSection, decimals: int
+) -> list[Enu]:
     e, n, u = to_enu(lat, lon, elev_m, run.origin)
     return [
         Enu(
-            e=round(float(ei), ENU_DECIMALS),
-            n=round(float(ni), ENU_DECIMALS),
-            u=round(float(ui), ENU_DECIMALS),
+            e=round(float(ei), decimals),
+            n=round(float(ni), decimals),
+            u=round(float(ui), decimals),
         )
         for ei, ni, ui in zip(np.atleast_1d(e), np.atleast_1d(n), np.atleast_1d(u), strict=True)
     ]
@@ -170,7 +208,12 @@ def _source_ref(
 ) -> SourceRef:
     src = feature.source
     citation = src.citation
-    if src.readFrom is not None:
+    if not src.primaryLocated:
+        citation += (
+            f" Primary publication not located; coordinates read from a copy at {src.url} on"
+            f" {src.accessedOn.isoformat()}; location approximate."
+        )
+    elif src.readFrom is not None:
         citation += (
             f" Coordinates read from a copy at {src.readFrom} on {src.accessedOn.isoformat()},"
             " not from the publication itself; location approximate until checked against it."
@@ -182,7 +225,7 @@ def _source_ref(
     return SourceRef(citation=citation, url=src.url, verified=feature.verified)
 
 
-def well_path(feature: WellFeatureConfig, run: RunSection) -> list[Enu]:
+def well_path(feature: WellFeatureConfig, run: RunSection, decimals: int) -> list[Enu]:
     """ENU trajectory of a well: wellhead plus minimum-curvature displacements per station."""
     rows = (
         feature.survey
@@ -222,22 +265,24 @@ def well_path(feature: WellFeatureConfig, run: RunSection) -> list[Enu]:
     north = feature.headY + pos.ns
     elev_m = (feature.depthRefElev - pos.tvd) * scale
     lat, lon = to_latlon(east, north, feature.crs, feature.unit)
-    return _enu_path(lat, lon, elev_m, run)
+    return _enu_path(lat, lon, elev_m, run, decimals)
 
 
-def point_path(feature: PointFeatureConfig, run: RunSection) -> list[Enu]:
+def point_path(feature: PointFeatureConfig, run: RunSection, decimals: int) -> list[Enu]:
     """ENU of a single published point."""
     lat, lon = to_latlon(feature.x, feature.y, feature.crs, feature.unit)
-    return _enu_path(np.atleast_1d(lat), np.atleast_1d(lon), np.array([feature.elevM]), run)
+    return _enu_path(
+        np.atleast_1d(lat), np.atleast_1d(lon), np.array([feature.elevM]), run, decimals
+    )
 
 
-def polygon_path(feature: PolygonFeatureConfig, run: RunSection) -> list[Enu]:
+def polygon_path(feature: PolygonFeatureConfig, run: RunSection, decimals: int) -> list[Enu]:
     """ENU ring of an outline at ``elevM`` (else the run's ``refSurfaceElevM``), closed: the
     first vertex is repeated last."""
     xy = np.array(feature.vertices, dtype=np.float64)
     lat, lon = to_latlon(xy[:, 0], xy[:, 1], feature.crs, feature.unit)
     elev_m = run.refSurfaceElevM if feature.elevM is None else feature.elevM
-    path = _enu_path(lat, lon, np.full(len(lat), elev_m), run)
+    path = _enu_path(lat, lon, np.full(len(lat), elev_m), run, decimals)
     return path + [path[0]]
 
 
@@ -245,20 +290,22 @@ def load_features(cfg: ExportConfig, run: RunSection) -> list[GeoFeature]:
     """Every ``cfg.features`` entry as a contract ``GeoFeature`` in the run's ENU frame.
 
     Order follows the config. Wells become trajectories (``elevM`` along the path, up-positive),
-    boundaries closed rings at their stated elevation, and pads/wellheads single points. Each
-    ``SourceRef`` carries the citation, the authoritative URL and ``verified`` exactly as
-    configured; features read through a copy rather than the publication say so in the citation.
-    Identical config gives identical output; a survey table that contradicts its own printed
-    positions is an error, never a silent fallback.
+    boundaries closed rings at their stated elevation, and pads/wellheads single points, each
+    rounded to ``cfg.featureDecimals`` metres. Each ``SourceRef`` carries the citation, the
+    ``verified`` flag exactly as configured and the URL: the authoritative publication, or the
+    copy that was read when no primary is known; features read through a copy say so in the
+    citation. Identical config gives identical output; a survey table that contradicts its own
+    printed positions is an error, never a silent fallback.
     """
     features: list[GeoFeature] = []
+    decimals = cfg.featureDecimals
     for feature in cfg.features:
         if isinstance(feature, WellFeatureConfig):
-            path = well_path(feature, run)
+            path = well_path(feature, run, decimals)
         elif isinstance(feature, PolygonFeatureConfig):
-            path = polygon_path(feature, run)
+            path = polygon_path(feature, run, decimals)
         else:
-            path = point_path(feature, run)
+            path = point_path(feature, run, decimals)
         features.append(
             GeoFeature(
                 id=feature.id,
@@ -280,10 +327,11 @@ def load_features(cfg: ExportConfig, run: RunSection) -> list[GeoFeature]:
 
 
 __all__ = [
-    "ENU_DECIMALS",
     "M_PER_UNIT",
+    "PINNED_PIPELINES",
     "SEISMIC_ROOT",
     "SurveyPositions",
+    "geographic_transformer",
     "load_features",
     "minimum_curvature",
     "point_path",
