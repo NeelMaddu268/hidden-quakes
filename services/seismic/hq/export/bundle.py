@@ -10,8 +10,9 @@ Files, all key-sorted JSON so the same run gives byte-identical output::
     validation.json          Validation       omitted when the run has none yet (VAL-01)
     evidence/{eventId}.json  EventEvidence    hero first, then reveal order, capped by maxEvents
 
-The bundle is built in a temporary sibling directory and renamed into place only when every file
-is written, so a failure leaves the previous bundle untouched and never a half-written one.
+The bundle is built in a temporary sibling directory, checked there with ``check_bundle`` and
+renamed into place only when the check passes, so a failure leaves the previous bundle untouched
+and never a half-written or invalid one.
 """
 
 import importlib
@@ -30,8 +31,18 @@ from hq_contracts.models import BundleMeta, GeoFeature, SeismicEvent, Station
 
 from hq.config.export import ExportConfig, ExportMode
 from hq.config.run import RunSection
+from hq.export.check import check_bundle
 from hq.export.errors import ExportError
 from hq.export.evidence import build_evidence
+from hq.export.files import (
+    CATALOG_JSON,
+    EVENTS_JSON,
+    EVIDENCE_DIR,
+    FEATURES_JSON,
+    META_JSON,
+    STATIONS_JSON,
+    VALIDATION_JSON,
+)
 from hq.export.summary import (
     analysis_summary,
     apply_matches,
@@ -44,18 +55,12 @@ from hq.export.waveforms import WaveformSource
 
 log = logging.getLogger(__name__)
 
-META_JSON = "meta.json"
-STATIONS_JSON = "stations.json"
-CATALOG_JSON = "catalog.json"
-EVENTS_JSON = "events.json"
-FEATURES_JSON = "features.json"
-VALIDATION_JSON = "validation.json"
-EVIDENCE_DIR = "evidence"
 FEATURES_MODULE, FEATURES_NAME = "hq.export.features", "load_features"
 FEAT_OWNER = "FEAT-01 (H4 Platform)"
 PRETTY_INDENT = 2  # small files are readable in git diffs; events and evidence are compact
 COMPACT_SEPARATORS = (",", ":")
 TMP_PREFIX = "."  # temp dirs beside the bundle start with a dot so nothing serves them
+_MIB = 1024.0 * 1024.0  # log unit
 
 
 @dataclass(frozen=True)
@@ -77,16 +82,27 @@ FeaturesLoader = Callable[[ExportConfig, RunSection], list[GeoFeature]]
 
 def load_features_lazily(cfg: ExportConfig, section: RunSection) -> list[GeoFeature]:
     """``hq.export.features.load_features`` (FEAT-01), imported now so this package works
-    before it is merged; a missing module names the ticket."""
+    before it is merged. Without the module, an empty ``features`` config gives an empty
+    ``features.json`` and a warning naming FEAT-01 (like a missing VAL-01 output); a configured
+    feature list that nothing can load is an error."""
     try:
         module = importlib.import_module(FEATURES_MODULE)
     except ModuleNotFoundError as exc:
-        if exc.name == FEATURES_MODULE:
+        if exc.name != FEATURES_MODULE:
+            raise
+        if cfg.features:
             raise ExportError(
-                f"features.json needs {FEATURES_MODULE}.{FEATURES_NAME}, which is not merged yet "
-                f"(owner: {FEAT_OWNER})"
+                f"export.yaml lists features but {FEATURES_MODULE}.{FEATURES_NAME} is not merged "
+                f"yet (owner: {FEAT_OWNER})"
             ) from exc
-        raise
+        log.warning(
+            "export: %s.%s is not merged yet (%s) and export.yaml lists no features; "
+            "features.json is empty",
+            FEATURES_MODULE,
+            FEATURES_NAME,
+            FEAT_OWNER,
+        )
+        return []
     fn = getattr(module, FEATURES_NAME, None)
     if not callable(fn):
         raise ExportError(
@@ -235,6 +251,25 @@ def _build(
         **counts,
         "bytes": sum(sizes.values()),
     }
+    log.info(
+        "export: %s bundle is %.1f MB of the %.1f MB maxBundleBytes budget",
+        mode,
+        counts["bytes"] / _MIB,
+        cfg.maxBundleBytes / _MIB,
+    )
+    if counts["bytes"] > cfg.maxBundleBytes:
+        raise ExportError(
+            f"{mode} bundle is {counts['bytes']} bytes > maxBundleBytes {cfg.maxBundleBytes}; "
+            "lower evidence.maxEvents (docs/01 budgets the committed bundle at < 30 MB)"
+        )
+    # Swap in only a bundle that passes the same check anyone can run on the directory.
+    check_bundle(
+        tmp,
+        rounding=cfg.rounding,
+        max_evidence_bytes=cfg.evidence.maxFileBytes,
+        max_bundle_bytes=cfg.maxBundleBytes,
+        mode=mode,
+    )
     return sizes, counts
 
 

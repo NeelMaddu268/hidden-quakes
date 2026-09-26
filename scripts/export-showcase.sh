@@ -5,7 +5,8 @@
 #
 # Runs `hq stage export --run <runId>` (which writes apps/web/public/data/<mode>/ for every mode
 # in configs/showcase/export.yaml, atomically) and then re-validates each bundle with
-# `python -m hq.export <dir>` (hq.export.check_bundle). Exit status is nonzero if either fails.
+# `python -m hq.export <dir> --config-dir DIR` (hq.export.check_bundle, with the run's rounding
+# and byte caps). Exit status is nonzero if either fails.
 # `make export RUN=<runId>` calls this.
 set -euo pipefail
 
@@ -38,9 +39,9 @@ from hq.config import load_config
 from hq.export import output_root
 cfg = load_config(Path('$config_dir')).export
 print(' '.join(str(output_root(cfg) / mode) for mode in cfg.modes))
-" 2>/dev/null)"
+")"
 status=0
 for bundle in $modes; do
-  uv run --quiet python -m hq.export "$bundle" || status=1
+  uv run --quiet python -m hq.export "$bundle" --config-dir "$config_dir" || status=1
 done
 exit "$status"
