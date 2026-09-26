@@ -432,6 +432,41 @@ class MatchingConfig(BaseModel):
         return self
 
 
+class TierQuantiles(BaseModel):
+    """Per tier, the share of the matched set allowed to fall on the worse side of each bar."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    A: float = Field(ge=0, lt=1)  # 0.25: p25 (higher is better) / p75 (lower is better)
+    B: float = Field(ge=0, lt=1)  # 0.0: the worst matched event itself
+
+    @model_validator(mode="after")
+    def _b_not_stricter(self) -> "TierQuantiles":
+        if self.B > self.A:
+            raise ValueError(f"quantiles.B {self.B} must not exceed quantiles.A {self.A}")
+        return self
+
+
+class TierSweepConfig(BaseModel):
+    """The association sweep the tier stage scores (``hq.tier.sweep``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool  # true: stage tier reruns associate -> locate -> match -> tiers per point
+
+
+class TieringConfig(BaseModel):
+    """Quality tiers from matched-event quantiles (stage ``tier``, LOC-06, ``hq.tier``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    quantiles: TierQuantiles
+    # Tier A also needs a station with a used pick within this many focal depths (epicentral).
+    strictNearestStationFactor: float = Field(gt=0)
+    minMatched: int = Field(ge=1)  # fewer matched events than this: derivation fails loudly
+    sweep: TierSweepConfig
+
+
 class SeismologyConfig(BaseModel):
     """Contents of ``seismology.yaml``."""
 
@@ -444,6 +479,7 @@ class SeismologyConfig(BaseModel):
     catalog: CatalogConfig
     associator: AssociatorConfig
     matching: MatchingConfig
+    tiering: TieringConfig
 
     @model_validator(mode="after")
     def _consistent(self) -> "SeismologyConfig":
