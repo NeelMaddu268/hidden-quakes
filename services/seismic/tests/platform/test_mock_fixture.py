@@ -113,7 +113,7 @@ def test_nothing_looks_real(bundle: Bundle) -> None:
 def test_station_counts_and_kinds(bundle: Bundle) -> None:
     surface = [s for s in bundle.stations if s.kind == "surface"]
     borehole = [s for s in bundle.stations if s.kind == "borehole"]
-    assert len(bundle.stations) == 15 and len(surface) == 12 and len(borehole) == 3
+    assert len(bundle.stations) == 17 and len(surface) == 14 and len(borehole) == 3
     assert all(s.sensorDepthM == 0.0 for s in surface)
     assert all(s.sensorDepthM > 0.0 and s.sampleRateHz > 100.0 for s in borehole)
     assert all(s.channels[0].startswith("DP") for s in borehole)
@@ -225,6 +225,9 @@ def test_hero_is_the_tier_a_event_with_most_stations(bundle: Bundle) -> None:
     assert hero.tier == "A"
     best = max(e.quality.nStations for e in bundle.events if e.tier == "A")
     assert hero.quality.nStations == best
+    used = sum(1 for s in bundle.stations if s.usedInRun)
+    assert used == 16 and hero.quality.nStations == used, "the hero exercises every used station"
+    assert len(bundle.evidence[hero_id].traces) == 16, "H3 QA: drawer handles 16 traces"
 
 
 def test_reveal_order_is_a_permutation_ordered_a_b_c_then_time(bundle: Bundle) -> None:
