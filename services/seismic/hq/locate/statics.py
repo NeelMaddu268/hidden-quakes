@@ -581,6 +581,7 @@ class StaticsReport:
     reference: pd.DataFrame | None = None
     skipped: tuple[str, ...] = ()  # reference events outside the travel-time grid
     previous_median_rms_s: float | None = None  # stored no-statics events_located, all events
+    previous_median_rms_from: str | None = None  # where previous_median_rms_s comes from
     extra: dict[str, Any] = field(default_factory=dict)
 
     def offsets_summary(self) -> dict[str, dict[str, float]]:
@@ -616,7 +617,8 @@ class StaticsReport:
             "sigmaEvents": self.sigma_events, "history": rows(self.history),
             "reference": rows(self.reference), "skippedOutsideGrid": list(self.skipped),
             "crossValidatedOffsets": self.offsets_summary() or None,
-            "previousMedianRmsS": self.previous_median_rms_s, **self.extra,
+            "previousMedianRmsS": self.previous_median_rms_s,
+            "previousMedianRmsSFrom": self.previous_median_rms_from, **self.extra,
         }
 
 
@@ -677,6 +679,9 @@ def _offsets(details: LocateDetails, pairs: pd.DataFrame, prefix: str) -> pd.Dat
     return pd.DataFrame(rows)
 
 
+PREVIOUS_FROM_TABLE = "the run dir's previous events_located.parquet, located without statics"
+
+
 def _previous_rms(previous: pd.DataFrame | None) -> float | None:
     if previous is None or previous.empty or previous["quality_statics"].astype(bool).any():
         return None
@@ -728,7 +733,8 @@ def locate_with_statics(
             note=f"{scfg.iterations} iteration(s) of the median used-pick residual over the "
             "well-constrained events", cap_s=scfg.capS, min_events=scfg.minEvents,
             sigma_ids=list(cal), sigma_events="well-constrained events", history=history,
-            previous_median_rms_s=previous)
+            previous_median_rms_s=previous,
+            previous_median_rms_from=None if previous is None else PREVIOUS_FROM_TABLE)
         log.info("statics: selfConsistent done in %.1f s", time.perf_counter() - started)
         return StaticsOutcome(details, report)
 
@@ -744,7 +750,8 @@ def locate_with_statics(
             min_events=scfg.minReferenceEvents,
             sigma_ids=base.result.events["id"].astype(str).tolist(),
             sigma_events=ALL_EVENTS, history=[_history_row(0, base, 0, None)],
-            previous_median_rms_s=previous)
+            previous_median_rms_s=previous,
+            previous_median_rms_from=None if previous is None else PREVIOUS_FROM_TABLE)
         return StaticsOutcome(base, report)
 
     # Pass 2: terms at the catalog hypocentres, held out per fold for the reference events.
@@ -793,6 +800,7 @@ def locate_with_statics(
         history=[_history_row(0, before, len(pairs), None),
                  _history_row(1, details, len(pairs), terms)],
         reference=ref, skipped=tuple(skipped), previous_median_rms_s=previous,
+        previous_median_rms_from=None if previous is None else PREVIOUS_FROM_TABLE,
         extra={"foldScheme": k_desc, "nReferenceResiduals": len(res)},
     )
     summary = report.offsets_summary()
