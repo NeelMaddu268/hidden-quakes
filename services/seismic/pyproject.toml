@@ -16,6 +16,7 @@ dependencies = [
   "netcdf4",
   "pydantic>=2",
   "pyyaml",
+  "pyproj",
   "matplotlib",
   "hq-contracts",
 ]
