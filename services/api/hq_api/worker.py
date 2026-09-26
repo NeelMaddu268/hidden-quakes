@@ -194,6 +194,7 @@ class LiveWorker:
             cache_dir=run.cache_dir,
             out_dir=bundle_dir,
             features_loader=self.features_loader,
+            baseline_cfg=run.config.validate.baseline,
         )
         runtime_s = self.monotonic() - t0
         updated_at = self.clock()
@@ -279,6 +280,7 @@ class LiveWorker:
                 cache_dir=run.cache_dir,
                 out_dir=self.snapshot_dir,
                 features_loader=self.features_loader,
+                baseline_cfg=run.config.validate.baseline,
             )
         except Exception as exc:  # the live bundle is already good; only the snapshot is lost
             log.exception("live: snapshot bundle not written to %s", self.snapshot_dir)
