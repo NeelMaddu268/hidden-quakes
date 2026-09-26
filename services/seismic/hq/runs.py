@@ -59,8 +59,13 @@ PARAM_FIELDS: tuple[str, ...] = tuple(
 )
 
 # Which ProcessingRun dict field a stage's ``record(params=...)`` merges into by default.
+# Stages that share a field nest their params under their own key (``{"catalog": {...}}``,
+# ``{"inventory": {...}}``) so keys never collide; the pick and match stages own the top level.
 STAGE_PARAM_FIELDS: dict[str, str] = {
+    "inventory": "picker",
+    "download": "picker",
     "pick": "picker",
+    "baseline": "picker",
     "associate": "associator",
     "locate": "locator",
     "tier": "tiering",
