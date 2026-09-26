@@ -4,10 +4,15 @@ export type {
   AnalysisSummary,
   BundleMeta,
   CatalogEvent,
+  CatalogMatch,
   Enu,
+  EventEvidence,
   GeoFeature,
+  LocationQuality,
+  Magnitude,
   SceneMeta,
   SeismicEvent,
   Station,
+  WaveformSnippet,
 } from "@hq/contracts";
-export type { BundleState } from "../providers/types";
+export type { BundleState, EvidenceState } from "../providers/types";
