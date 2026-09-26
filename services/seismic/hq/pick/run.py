@@ -29,15 +29,39 @@ sees the two tapered ends. The report states per station how many seconds were b
 the window (``blindedS``) and the resulting edge exclusion (``edgeExclusionS``), so a small or
 zero ``droppedNearGap`` is read correctly.
 
-Weights: ``picker.weightsByProfile[profile]``; a profile missing there falls back to
-``picker.defaultWeights`` with a warning, and the report records which (``weightsSource``).
+Profile and weights: the profile is always the station's ``preprocessProfile`` from
+``stations.parquet``. The weight A/B (``hq.pick.ab``) may adopt a variant profile (e.g.
+``borehole-A -> borehole-B``) and name winning weights, but nothing here switches to them: to
+adopt a variant, change the ``stations.profiles`` rule in signal.yaml and rerun the inventory; to
+adopt weights, copy them into ``picker.weightsByProfile``. When ``known/ab.json`` exists in the
+run directory and disagrees with what this run uses, the stage logs a warning per disagreement and
+lists them in the report's ``notes``. Weights are ``picker.weightsByProfile[profile]``; a profile
+missing there falls back to ``picker.defaultWeights`` with a warning, and the report records which
+(``weightsSource``). ``run.json``'s ``pickerWeights`` is ``defaultWeights`` (docs/02: "chosen
+default; per-profile overrides live in picker"); the weights each profile actually ran with are in
+``ProcessingRun.picker.weightsUsedByProfile``.
+
+Chunk boundaries: picks depend on the chunk tiling, because seisbench lays its windows from each
+block's start. Keep intervals sit on multiples of ``preprocess.chunks.lengthS`` since the epoch, so
+two runs whose windows start and end on those multiples see identical chunks and give identical
+picks (a 2 h run equals its two 1 h halves). A window edge off that grid moves the first or last
+chunk's read span, and picks anywhere in that chunk can differ from an aligned run; the stage warns
+and notes it. Neighbouring chunks also place one arrival a few tens of ms apart, so an arrival
+within about 0.5 s of an internal boundary could in principle be kept by both chunks (two picks,
+different ids) or by neither. A review check over one full showcase day found no such case;
+nothing here corrects it.
 
 Execution: stations run in parallel in spawned worker processes (``picker.run.workers``); each
 worker loads each weight set once and runs torch with ``picker.run.torchThreadsPerWorker``
 intra-op threads. Results are collected per station and assembled in station-id order, so the
 output never depends on which worker finished first. Picks are deduplicated by ``id`` (the
 highest ``prob`` wins; the count is logged and recorded) and sorted by
-``(t, stationId, phase, prob desc)``.
+``(t, stationId, phase, prob desc)``. A station that raises stops the stage (fail loudly); the log
+says how many stations had already finished.
+
+Cache misses: ``picker.run.onCacheMiss`` covers a station with no cached file at all. A station
+whose cache holds only manifests (every hour ``nodata``) counts as cached and is reported with zero
+picks and "no data in window".
 
 Outputs: ``picks.parquet`` (``Pick`` rows through ``hq_contracts.io``; an empty table is valid),
 ``pick_report.json`` (per-station counts, blinding, edge exclusion, runtimes and a
@@ -48,6 +72,13 @@ hold stations.parquet, and does not touch run.json)::
 
     uv run python -m hq.pick.run --run-dir <dir> --config-dir configs/showcase --cache-dir <dir>
         [--stations UU.FORK,UU.NMU] [--start 2026-09-10T09:00:00Z --end 2026-09-10T11:00:00Z]
+
+``python -m hq.pick.run`` prints a harmless runpy ``RuntimeWarning`` ("found in sys.modules"):
+``hq.pick`` imports this module to expose the stage function as ``hq.pick.run`` (H4's registry
+calls ``getattr(hq.pick, "run")``), so the module is already loaded when runpy starts it. The
+``__main__`` block below hands off to that imported copy, so spawned workers always unpickle
+``hq.pick.run.*``. For the same reason ``import hq.pick.run as m`` binds the stage FUNCTION; use
+``from hq.pick.run import ...`` or ``importlib.import_module("hq.pick.run")`` for the module.
 """
 
 from __future__ import annotations
@@ -64,7 +95,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import obspy
 import yaml
@@ -72,7 +103,6 @@ import yaml
 from hq.config.run import RunSection
 from hq.config.signal import PickerConfig, PickerRunConfig, SignalConfig
 from hq.ingest.cache import CacheMissError, station_keys
-from hq.pick.ab import StationInfo, load_signal_config, load_stations, write_picks
 from hq.pick.phasenet import load_model, pick_prepared, prepare_station
 from hq.preprocess.chunks import (
     NEAR_GAP_EDGE,
@@ -84,6 +114,11 @@ from hq.preprocess.chunks import (
 )
 from hq.preprocess.profiles import TimeMap
 
+if TYPE_CHECKING:
+    # hq.pick imports this module eagerly; importing hq.pick.ab (pandas, scipy) at module level
+    # would load it into sys.modules too and make ``python -m hq.pick.ab`` warn. Used lazily.
+    from hq.pick.ab import StationInfo
+
 log = logging.getLogger(__name__)
 
 STAGE = "pick"
@@ -91,7 +126,12 @@ PICKS_FILE = "picks.parquet"
 REPORT_FILE = "pick_report.json"
 STATIONS_FILE = "stations.parquet"
 _SECONDS_PER_HOUR = 3600.0  # unit conversion for the report, not a knob
+# Float tolerance (s) when testing whether a window edge sits on a chunk boundary: absorbs float64
+# rounding of epoch seconds. Not a pipeline parameter.
+_ALIGN_TOL_S = 1e-6
+# Same shape as hq.cli (RUN-01): UTC wall clock, so worker lines interleave with the parent's.
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(processName)s %(name)s: %(message)s"
+_LOG_DATEFMT = "%H:%M:%S"
 
 WeightsSource = Literal["weightsByProfile", "defaultWeights"]
 
@@ -137,8 +177,11 @@ class StationReport:
     chunksEmpty: int = 0  # no samples on the station's channels
     chunksNoSegments: int = 0  # samples, but every segment too short for preprocessing
     chunksMissingComponents: int = 0  # a chunk without one of Z/N/E: not picked
-    blocks: int = 0
-    blocksPicked: int = 0
+    # Blocks are counted by the chunk whose keep interval they reach into, so a block lying wholly
+    # in a read overlap is not counted twice (the model still runs on it; its picks go to the
+    # neighbour or are discarded as outside_keep).
+    blocks: int = 0  # three-component blocks reaching into the keep interval
+    blocksPicked: int = 0  # of those, long enough for the model window
     blocksTooShort: int = 0  # shorter than the model window (3001 samples): skipped
     nOverlaps: int = 0
     nP: int = 0
@@ -191,7 +234,8 @@ class PickRunResult:
             "zeroPickStations": sum(1 for r in self.reports if r.zeroPickReason is not None),
             "cacheMissStations": sum(1 for r in self.reports if r.cacheMiss),
             "chunksPlanned": sum(r.chunksPlanned for r in self.reports),
-            "chunksPicked": sum(r.chunks for r in self.reports),
+            "chunksWithData": sum(r.chunks for r in self.reports),
+            "blocks": sum(r.blocks for r in self.reports),
             "blocksPicked": sum(r.blocksPicked for r in self.reports),
             "blocksTooShort": sum(r.blocksTooShort for r in self.reports),
         }
@@ -249,6 +293,8 @@ class StageIO:
 
 
 def default_stage_io() -> StageIO:
+    from hq.pick.ab import load_stations, write_picks  # lazy: see the TYPE_CHECKING import
+
     return StageIO(load_stations=load_stations, write_picks=write_picks)
 
 
@@ -293,11 +339,26 @@ def zero_pick_reason(rep: StationReport) -> str | None:
             return "all segments too short for preprocessing (minSegmentModelS / filter padding)"
         return "no data in window"
     if rep.blocks == 0:
-        return "no three-component data (a component is missing)"
+        if rep.chunksMissingComponents == rep.chunks:
+            return "no three-component data in window (a component is missing)"
+        if rep.chunksMissingComponents:
+            return (
+                "no three-component data in window (a component is missing in "
+                f"{rep.chunksMissingComponents} of {rep.chunks} chunks; elsewhere the Z, N and E "
+                "spans never overlap)"
+            )
+        return "no three-component data in window (the Z, N and E spans never overlap)"
     if rep.blocksPicked == 0:
         return "all segments shorter than model window"
+    if rep.droppedNearGap and rep.outsideKeep:
+        return (
+            f"every pick was dropped: {rep.droppedNearGap} within gapEdgeS of a data edge, "
+            f"{rep.outsideKeep} outside its chunk's keep interval"
+        )
     if rep.droppedNearGap:
         return "every pick was within gapEdgeS of a data edge"
+    if rep.outsideKeep:
+        return "every pick was outside its chunk's keep interval (read overlap only)"
     return "no picks above threshold"
 
 
@@ -348,10 +409,12 @@ def pick_station(task: StationTask, *, job: StationJob, io: PickIO) -> StationRe
         )
         if prepared.missingComponents:
             rep.chunksMissingComponents += 1
-        rep.blocks += len(prepared.blocks)
         rep.nOverlaps += prepared.nOverlaps
         for block in prepared.blocks:
             inside = _inside(block.startReal, block.endReal, keep)
+            if inside <= 0.0:  # wholly in the read overlap: the neighbouring chunk counts it
+                continue
+            rep.blocks += 1
             if block.npts < min_samples:
                 rep.blocksTooShort += 1
                 rep.secondsTooShort += inside
@@ -419,12 +482,38 @@ def pick_station(task: StationTask, *, job: StationJob, io: PickIO) -> StationRe
 
 
 def run_in_process(fn: StationFn, tasks: Sequence[StationTask]) -> list[StationResult]:
-    return [fn(task) for task in tasks]
+    results: list[StationResult] = []
+    for task in tasks:
+        try:
+            results.append(fn(task))
+        except Exception:
+            log.error(
+                "%s: picking failed; stopping the stage (%d of %d stations had finished; their "
+                "results are not written)",
+                task.stationId,
+                len(results),
+                len(tasks),
+            )
+            raise
+    return results
+
+
+def configure_logging(level: int | str) -> None:
+    """Root handler with UTC ``HH:MM:SS`` stamps (as ``hq.cli``) unless one is configured."""
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    formatter = logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT)
+    formatter.converter = time.gmtime
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(formatter)
+    root.addHandler(handler)
+    root.setLevel(level)
 
 
 def _init_worker(log_level: int) -> None:
-    """Spawned workers start with no logging config; give them the parent's level."""
-    logging.basicConfig(level=log_level, format=_LOG_FORMAT)
+    """Spawned workers start with no logging config; give them the parent's level, in UTC."""
+    configure_logging(log_level)
 
 
 def process_pool_runner(workers: int) -> Runner:
@@ -446,6 +535,13 @@ def process_pool_runner(workers: int) -> Runner:
                     try:
                         results.append(fut.result())
                     except Exception as exc:
+                        log.error(
+                            "%s: picking failed; stopping the stage (%d of %d stations had "
+                            "finished; their results are not written)",
+                            futures[fut],
+                            len(results),
+                            len(futures),
+                        )
                         raise RuntimeError(f"{futures[fut]}: picking failed") from exc
             except BaseException:
                 for fut in futures:
@@ -568,10 +664,16 @@ def pick_window(
         try:
             io.check_cached(task.stationId, job.cacheDir)
         except CacheMissError as exc:
-            if cfg.picker.run.onCacheMiss == "error":
-                raise
             missing[task.stationId] = str(exc)
-            log.warning("%s: %s; zero picks (picker.run.onCacheMiss = report)", task.stationId, exc)
+    if missing and cfg.picker.run.onCacheMiss == "error":
+        # every miss in one error, so they can all be fixed before the next run
+        raise CacheMissError(
+            f"{len(missing)} of {len(tasks)} usedInRun stations have nothing cached "
+            f"(picker.run.onCacheMiss = error): "
+            + "; ".join(f"{sid}: {why}" for sid, why in sorted(missing.items()))
+        )
+    for sid, why in sorted(missing.items()):
+        log.warning("%s: %s; zero picks (picker.run.onCacheMiss = report)", sid, why)
     todo = [task for task in tasks if task.stationId not in missing]
 
     workers = 1
@@ -649,12 +751,73 @@ def totals(result: PickRunResult, t0: float, t1: float) -> dict[str, Any]:
     }
 
 
-def build_report(result: PickRunResult, cfg: SignalConfig, t0: float, t1: float) -> dict[str, Any]:
+def weights_used_by_profile(tasks: Sequence[StationTask]) -> dict[str, str]:
+    """The weights each picked profile ran with (one set per profile by construction)."""
+    return {t.profile: t.weights for t in sorted(tasks, key=lambda t: t.profile)}
+
+
+def window_alignment_notes(t0: float, t1: float, length_s: float) -> list[str]:
+    """Warn when a window edge is off the chunk grid (picks then differ from an aligned run)."""
+    notes: list[str] = []
+    for edge, t, which in (("start", t0, "first"), ("end", t1, "last")):
+        if abs(t - round(t / length_s) * length_s) > _ALIGN_TOL_S:
+            notes.append(
+                f"window {edge} {_iso(t)} is not on a multiple of preprocess.chunks.lengthS "
+                f"({length_s:g} s): the {which} chunk's read span differs from that of a run over "
+                "an aligned window, so picks anywhere in that chunk can differ from such a run"
+            )
+    return notes
+
+
+def ab_disagreements(path: Path, tasks: Sequence[StationTask]) -> list[str]:
+    """Where ``known/ab.json`` (SEIS-04) disagrees with the profiles and weights of this run.
+
+    Only warns: the profile always comes from stations.parquet and the weights from signal.yaml.
+    """
+    if not path.is_file():
+        return []
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    adopted = doc.get("adoptedProfileByBase") if isinstance(doc, dict) else None
+    chosen = doc.get("chosenWeightsByProfile") if isinstance(doc, dict) else None
+    if not isinstance(adopted, dict) or not isinstance(chosen, dict):
+        return [f"{path} lacks adoptedProfileByBase / chosenWeightsByProfile; not compared"]
+    notes: list[str] = []
+    by_profile: dict[str, list[StationTask]] = {}
+    for task in tasks:
+        by_profile.setdefault(task.profile, []).append(task)
+    for profile, group in sorted(by_profile.items()):
+        target = adopted.get(profile)
+        if target is not None and target != profile:
+            notes.append(
+                f"known/ab.json adopts profile {target} for {profile} stations, but "
+                f"{len(group)} station(s) are picked with {profile} (stations.parquet "
+                "preprocessProfile); to adopt it, change the stations.profiles rule in signal.yaml "
+                "and rerun the inventory"
+            )
+        best = chosen.get(profile)
+        if best is not None and best != group[0].weights:
+            notes.append(
+                f"known/ab.json chose weights {best} for {profile}, but this run uses "
+                f"{group[0].weights} ({group[0].weightsSource}); copy the A/B winner into "
+                "picker.weightsByProfile to use it"
+            )
+    return notes
+
+
+def build_report(
+    result: PickRunResult,
+    cfg: SignalConfig,
+    t0: float,
+    t1: float,
+    *,
+    weights_used: Mapping[str, str] | None = None,
+    extra_notes: Sequence[str] = (),
+) -> dict[str, Any]:
     picker = cfg.picker
     blinding_over_gap = sorted(
         {r.profile for r in result.reports if r.blocksPicked and r.blindingEdgeS >= r.gapEdgeS}
     )
-    notes = []
+    notes = list(extra_notes)
     if blinding_over_gap:
         notes.append(
             f"On {', '.join(blinding_over_gap)} the blinding at each block edge "
@@ -672,6 +835,7 @@ def build_report(result: PickRunResult, cfg: SignalConfig, t0: float, t1: float)
         "thresholds": {"P": picker.pThreshold, "S": picker.sThreshold},
         "gapEdgeS": picker.gapEdgeS,
         "blindingSamples": list(picker.seisbench.blinding),
+        "weightsUsedByProfile": dict(weights_used or {}),
         "chunks": cfg.preprocess.chunks.model_dump(mode="json"),
         "execution": {
             "workers": result.workers,
@@ -684,24 +848,25 @@ def build_report(result: PickRunResult, cfg: SignalConfig, t0: float, t1: float)
 
 
 def format_table(result: PickRunResult, t0: float, t1: float) -> str:
+    # chunks = chunks with data; blocks = blocks in the window; blkPick = of those, picked
     head = (
         f"{'station':<10} {'profile':<11} {'weights':<9} {'chunks':>6} {'blocks':>6} "
-        f"{'nP':>6} {'nS':>6} {'nearGap':>7} {'blindS':>7} {'edgeExS':>7} {'pickedH':>7} "
-        f"{'runS':>7}  zeroPickReason"
+        f"{'blkPick':>7} {'nP':>6} {'nS':>6} {'nearGap':>7} {'blindS':>7} {'edgeExS':>7} "
+        f"{'pickedH':>7} {'runS':>7}  zeroPickReason"
     )
     lines = [head, "-" * len(head)]
     for r in result.reports:
         lines.append(
-            f"{r.stationId:<10} {r.profile:<11} {r.weights:<9} {r.chunks:>6} {r.blocksPicked:>6} "
-            f"{r.nP:>6} {r.nS:>6} {r.droppedNearGap:>7} {r.blindedS:>7.1f} "
+            f"{r.stationId:<10} {r.profile:<11} {r.weights:<9} {r.chunks:>6} {r.blocks:>6} "
+            f"{r.blocksPicked:>7} {r.nP:>6} {r.nS:>6} {r.droppedNearGap:>7} {r.blindedS:>7.1f} "
             f"{r.edgeExclusionS:>7.2f} {r.secondsPicked / _SECONDS_PER_HOUR:>7.2f} "
             f"{r.runtimeS:>7.1f}  {r.zeroPickReason or ''}"
         )
     tot = totals(result, t0, t1)
     lines.append("-" * len(head))
     lines.append(
-        f"{'TOTAL':<10} {len(result.reports):>2} stations          {tot['chunksPicked']:>6} "
-        f"{tot['blocksPicked']:>6} {tot['picksP']:>6} {tot['picksS']:>6} "
+        f"{'TOTAL':<10} {len(result.reports):>2} stations          {tot['chunksWithData']:>6} "
+        f"{tot['blocks']:>6} {tot['blocksPicked']:>7} {tot['picksP']:>6} {tot['picksS']:>6} "
         f"{tot['droppedNearGap']:>7} {tot['blindedS']:>7.1f} {'':>7} {tot['hoursPicked']:>7.2f} "
         f"{tot['workerRuntimeS']:>7.1f}  zero-pick stations {tot['zeroPickStations']}, "
         f"duplicates {tot['duplicates']}"
@@ -757,15 +922,21 @@ def run_picking(
     sio = stage_io if stage_io is not None else default_stage_io()
     stations = sio.load_stations(ctx.path(STATIONS_FILE))
     tasks = plan_tasks(stations, cfg.picker, station_ids)
+    weights_used = weights_used_by_profile(tasks)
+    notes = window_alignment_notes(t0, t1, cfg.preprocess.chunks.lengthS)
+    from hq.pick.ab import AB_JSON, KNOWN_DIR  # lazy: see the TYPE_CHECKING import
+
+    notes += ab_disagreements(ctx.path(KNOWN_DIR) / AB_JSON, tasks)  # SEIS-04's A/B, if it ran
+    for note in notes:
+        log.warning("%s", note)
     result = pick_window(tasks, cfg, t0, t1, cache_dir=ctx.cache_dir, io=io, runner=runner)
 
     picks_path = ctx.path(PICKS_FILE)
     sio.write_picks(result.picks, picks_path)
     report_path = ctx.path(REPORT_FILE)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(
-        json.dumps(build_report(result, cfg, t0, t1), indent=2) + "\n", encoding="utf-8"
-    )
+    report = build_report(result, cfg, t0, t1, weights_used=weights_used, extra_notes=notes)
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     counts = result.counts()
     log.info("wrote %s (%d picks) and %s", picks_path, len(result.picks), report_path)
     ctx.record(
@@ -774,14 +945,19 @@ def run_picking(
         counts=counts,
         params={
             **cfg.picker.model_dump(mode="json"),
+            "weightsUsedByProfile": weights_used,
             "chunks": cfg.preprocess.chunks.model_dump(mode="json"),
         },
     )
     update_run = getattr(ctx, "update_run", None)
     if callable(update_run):
+        # docs/02: pickerWeights is the chosen default; per-profile weights live in picker
         update_run(pickerModel=cfg.picker.model, pickerWeights=cfg.picker.defaultWeights)
         log.info(
-            "run.json: pickerModel=%s pickerWeights=%s", cfg.picker.model, cfg.picker.defaultWeights
+            "run.json: pickerModel=%s pickerWeights=%s (weights used by profile: %s)",
+            cfg.picker.model,
+            cfg.picker.defaultWeights,
+            weights_used,
         )
     else:
         log.info("context has no update_run; pickerModel / pickerWeights not set in run.json")
@@ -829,6 +1005,7 @@ class LocalContext:
 
 
 def _parse_utc(text: str) -> float:
+    """ISO 8601 with an explicit UTC offset (``Z`` or ``+00:00``) -> epoch seconds."""
     value = datetime.fromisoformat(text)
     offset = value.utcoffset()
     if offset is None or offset.total_seconds() != 0.0:
@@ -848,9 +1025,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--end", help="ISO UTC, exclusive")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
-    logging.basicConfig(level=args.log_level.upper(), format=_LOG_FORMAT)
+    configure_logging(args.log_level.upper())
     if (args.start is None) != (args.end is None):
         parser.error("--start and --end go together")
+    window = None
+    if args.start is not None:
+        try:
+            window = (_parse_utc(args.start), _parse_utc(args.end))
+        except ValueError as exc:
+            parser.error(str(exc))
+    from hq.pick.ab import load_signal_config  # lazy: see the TYPE_CHECKING import
+
     with (args.config_dir / "run.yaml").open(encoding="utf-8") as fh:
         run_section = RunSection.model_validate(yaml.safe_load(fh))
     ctx = LocalContext(
@@ -859,7 +1044,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         cache_dir=args.cache_dir,
         config=LocalConfig(run=run_section, signal=load_signal_config(args.config_dir)),
     )
-    window = None if args.start is None else (_parse_utc(args.start), _parse_utc(args.end))
     station_ids = None
     if args.stations:
         station_ids = [s.strip() for s in args.stations.split(",") if s.strip()]

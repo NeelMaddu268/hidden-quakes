@@ -443,14 +443,18 @@ class PickerABConfig(_Section):
 class PickerRunConfig(_Section):
     """Full-window picking (``hq.pick.run``, SEIS-06): how the station tasks are executed.
 
-    Execution only: the picks depend on the chunking (``preprocess.chunks``), the weights and the
-    thresholds, never on how many workers ran them or in which order they finished.
+    The picks depend on the chunking (``preprocess.chunks``), the weights and the thresholds.
+    ``workers`` and the finish order do not change them (results are assembled in station order);
+    ``torchThreadsPerWorker`` gave identical picks at 1, 3 and 12 threads when checked, which torch
+    does not guarantee in general. ``onCacheMiss`` decides whether a station with nothing cached stops the
+    stage or is reported with zero picks.
     """
 
     workers: int = Field(ge=1)  # station-parallel worker processes (spawned); 1 runs in-process
     torchThreadsPerWorker: int = Field(ge=1)  # torch intra-op threads in each worker
-    # A usedInRun station with nothing at all in the cache. "error": the stage stops before any
-    # picking. "report": the station gets zero picks and says why in pick_report.json.
+    # A usedInRun station with no cached file at all (manifest-only "nodata" stations count as
+    # cached). "error": the stage stops before any picking and names every such station.
+    # "report": the station gets zero picks and says why in pick_report.json.
     onCacheMiss: Literal["error", "report"]
 
 
