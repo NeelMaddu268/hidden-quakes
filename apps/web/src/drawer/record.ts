@@ -18,6 +18,7 @@ export function traceProblem(tr: WaveformSnippet): string | null {
   if (!isNum(tr.t0)) return "t0 is not a number";
   if (!isNum(tr.dt) || tr.dt <= 0) return "dt is not a positive number";
   if (!Array.isArray(tr.samples) || tr.samples.length < 2) return "fewer than 2 samples";
+  if (tr.samples.some(s => !isNum(s))) return "non-finite waveform sample";
   if (!isNum(tr.epiDistM)) return "epiDistM is not a number";
   return null;
 }

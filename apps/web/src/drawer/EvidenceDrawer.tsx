@@ -114,8 +114,8 @@ export function EvidenceDrawer() {
               <RecordSection
                 key={event.id}
                 status={evidence.status}
-                evidence={evidence.evidence}
-                message={evidence.message}
+                evidence={evidence.status === "ready" ? evidence.evidence : undefined}
+                message={evidence.status === "error" ? evidence.message : undefined}
                 originT={event.t}
               />
               {evidence.status !== "error" && (

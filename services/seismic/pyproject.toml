@@ -38,6 +38,10 @@ packages = ["hq"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# importlib mode: lanes may reuse test basenames (tests/signal/test_utils.py and
+# tests/seismology/test_utils.py). Put shared helpers in conftest.py fixtures or a package with
+# __init__.py; bare sibling imports (`from helpers import x`) do not resolve under importlib.
+addopts = "--import-mode=importlib"
 markers = ["smoke: fast offline tests (< 30 s per lane)"]
 
 [tool.ruff]

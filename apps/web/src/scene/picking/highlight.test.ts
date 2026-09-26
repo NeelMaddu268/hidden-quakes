@@ -8,7 +8,7 @@ import { createEventUniforms, EVENT_FRAGMENT_SHADER, EVENT_VERTEX_SHADER } from 
 // browser.
 
 describe("selection highlight uniforms", () => {
-  const u = createEventUniforms({ color: colors.recovered, size: 0.06, minPx: 2 });
+  const u = createEventUniforms({ color: colors.recovered, size: 0.06, minPx: 2, maxPx: 18 });
 
   it("starts with nothing selected", () => {
     expect(u.uSelected.value).toBe(-1);

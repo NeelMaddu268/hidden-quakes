@@ -4,11 +4,10 @@
 import type { DemoPhase, EventFilter } from "../../state/demo";
 import { candidateRevealUniform } from "../events/driver";
 import { TIER_INDEX } from "../events/instances";
-import { appearTimeOf } from "../reveal/timeline";
 import type { CatalogEvent } from "../types";
 
 /**
- * Whether candidate instance (tier index, reveal slot) is pickable in this demo state:
+ * Whether candidate instance (tier index, appearance time) is pickable in this demo state:
  * - never before the reveal or under PUBLIC (the candidate layer is hidden);
  * - under STRICT only Tier A (B and C are faded to 0.05, which reads as hidden);
  * - while revealing, only once the instance has appeared on the reveal clock.
@@ -19,11 +18,11 @@ export function candidatePickable(
   filter: EventFilter,
   revealElapsedS: number,
   tier: number,
-  slot: number,
+  appearAt: number,
 ): boolean {
   if (phase === "public" || filter === "public") return false;
   if (filter === "strict" && tier !== TIER_INDEX.A) return false;
-  if (phase === "revealing") return candidateRevealUniform(phase, revealElapsedS) >= appearTimeOf(slot);
+  if (phase === "revealing") return candidateRevealUniform(phase, revealElapsedS) >= appearAt;
   return true;
 }
 

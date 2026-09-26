@@ -5,6 +5,8 @@ import { useEffect, useMemo } from "react";
 import { Matrix4 } from "three";
 import { useDemo } from "../../state/demo";
 import type { EventInstances } from "../events/instances";
+import { POP_SCALE } from "../events/material";
+import { LOOK } from "../look";
 import { sceneFx } from "../fx";
 import type { CatalogEvent } from "../types";
 import { betterHit, isClick, pickNearest, PICK_THRESHOLD_PX, type PickHit, type PickQuery } from "./pick";
@@ -56,6 +58,7 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
         x: clientX - rect.left,
         y: clientY - rect.top,
         thresholdPx: PICK_THRESHOLD_PX,
+        maxRadiusPx: LOOK.maxGlyphPx * POP_SCALE,
         focalPx: (camera.projectionMatrix.elements[5] * rect.height) / 2,
       };
       const { phase, filter } = useDemo.getState();
@@ -63,7 +66,7 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
       const cand = pickNearest(candidates.positions, {
         ...base,
         radius: (i) => sizeKm.candidate * candidates.scales[i],
-        visible: (i) => candidatePickable(phase, filter, elapsed, candidates.tiers[i], candidates.revealAt[i]),
+        visible: (i) => candidatePickable(phase, filter, elapsed, candidates.tiers[i], candidates.appearAt[i]),
       });
       const pub = pickNearest(publicEvents.positions, {
         ...base,

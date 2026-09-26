@@ -9,7 +9,7 @@ const store = () => useDemo.getState();
 /** Wires the machine to the store the way RevealDriver does (synchronous subscription). */
 function wired(): { m: RevealMachine; unsubscribe: () => void } {
   const m = createRevealMachine();
-  m.onPhase(store().phase, store().phase);
+  m.sync(store().phase, store().revealProgress);
   const unsubscribe = useDemo.subscribe((s, prev) => {
     if (s.phase !== prev.phase) m.onPhase(prev.phase, s.phase);
   });
@@ -127,15 +127,16 @@ describe("reveal machine", () => {
     expect(m.mode).toBe("idle");
   });
 
-  it("reset(); reveal() in the same tick restarts the clock from 0", () => {
+  it("reset(); reveal() in the same tick restarts the clock from 0 without a terrain jump", () => {
     const { m, unsubscribe } = wired();
     store().reveal();
     runFrames(m, 1 / 60, () => m.elapsedS > 4);
+    const before = sceneFx.terrainOpacity;
     store().reset();
     store().reveal();
     expect(m.mode).toBe("revealing");
     expect(m.elapsedS).toBe(0);
-    expect(sceneFx.terrainOpacity).toBe(1);
+    expect(sceneFx.terrainOpacity).toBe(before); // continues from where it was, no flash to 1
     m.step(1 / 60);
     unsubscribe();
     expect(store().revealProgress).toBe(0);
@@ -145,9 +146,36 @@ describe("reveal machine", () => {
     for (const phase of ["revealed", "public"] as DemoPhase[]) {
       resetSceneFx();
       const m = createRevealMachine();
-      m.onPhase(phase, phase);
+      m.sync(phase, phase === "revealed" ? 1 : 0);
       if (phase === "revealed") expect(sceneFx.terrainOpacity).toBe(TIMELINE.terrainFade.to);
       else expect({ ...sceneFx }).toEqual({ ...INITIAL_SCENE_FX });
     }
+  });
+
+  it("mounting mid-reveal resumes where the counter is, so it never runs backwards", () => {
+    store().reveal();
+    useDemo.setState({ revealProgress: 0.4 });
+    const { m, unsubscribe } = wired();
+    expect(m.mode).toBe("revealing");
+    expect(m.elapsedS).toBeGreaterThan(TIMELINE.events.startS);
+    m.step(1 / 60);
+    unsubscribe();
+    expect(store().revealProgress).toBeGreaterThanOrEqual(0.4);
+  });
+
+  it("a reveal started mid-reset fades the terrain from where it is (no jump to 1)", () => {
+    const { m, unsubscribe } = wired();
+    store().reveal();
+    runFrames(m, 1 / 60, () => store().phase === "revealed");
+    store().reset();
+    for (let i = 0; i < 12; i++) m.step(1 / 60); // part-way back up
+    const mid = sceneFx.terrainOpacity;
+    expect(mid).toBeGreaterThan(TIMELINE.terrainFade.to);
+    expect(mid).toBeLessThan(1);
+    store().reveal();
+    expect(sceneFx.terrainOpacity).toBe(mid);
+    m.step(1 / 60);
+    unsubscribe();
+    expect(Math.abs(sceneFx.terrainOpacity - mid)).toBeLessThan(0.05);
   });
 });

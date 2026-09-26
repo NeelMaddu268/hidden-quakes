@@ -8,6 +8,8 @@ function station(id: string, e: number, n: number, over: Partial<Station> = {}):
   return {
     id,
     network: "XX",
+    location: "",
+    staticsS: {},
     station: id,
     latitude: 0,
     longitude: 0,

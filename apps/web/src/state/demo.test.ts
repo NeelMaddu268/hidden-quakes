@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { finishReveal, initialDemoState, setRevealProgress, useDemo, type DemoState } from "./demo";
+import {
+  finishReveal,
+  initialDemoState,
+  onDemoReset,
+  setRevealProgress,
+  useDemo,
+  type DemoState,
+} from "./demo";
 
 const s = () => useDemo.getState();
 
@@ -193,6 +200,32 @@ describe("reset()", () => {
     s().reveal();
     expect(s().phase).toBe("revealing");
     expect(s().revealProgress).toBe(0);
+  });
+});
+
+describe("onDemoReset() (scene-only)", () => {
+  it("fires on every reset(), including one that changes no field", () => {
+    const listener = vi.fn();
+    const off = onDemoReset(listener);
+    s().reset(); // already at the start frame
+    expect(listener).toHaveBeenCalledTimes(1);
+    s().reveal();
+    s().reset();
+    expect(listener).toHaveBeenCalledTimes(2);
+    off();
+    s().reset();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("fires after the state is back at the start frame", () => {
+    let seen: unknown = null;
+    const off = onDemoReset(() => {
+      seen = data(s());
+    });
+    s().reveal();
+    s().reset();
+    off();
+    expect(seen).toEqual(initialDemoState);
   });
 });
 

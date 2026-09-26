@@ -20,6 +20,7 @@ const ORIGIN = 1_000;
 // Test-local synthetic traces (rule 5).
 function tr(stationId: string, epiDistM: number, over: Partial<WaveformSnippet> = {}): WaveformSnippet {
   return {
+    pickP: null, pickS: null, probP: null, probS: null, predP: null, predS: null,
     stationId,
     channel: "HHZ",
     epiDistM,
@@ -141,3 +142,9 @@ describe("pick stagger", () => {
     expect(pickDelayMs(3, "S")).toBe(PICKS_START_MS + 525);
   });
 });
+
+ it("reports malformed samples instead of showing them as quiet waveform evidence", () => {
+   const prepared = prepareTraces([tr("BAD", 0, { samples: [0, NaN, 1] })]);
+   expect(prepared.traces).toHaveLength(0);
+   expect(prepared.skipped[0]).toContain("non-finite waveform sample");
+ });
