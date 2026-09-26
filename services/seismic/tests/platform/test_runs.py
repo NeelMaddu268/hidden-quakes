@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 from hq import cli, runs
 from hq.config import SECTIONS, ConfigError, RunConfig, lax_models, load_config
 from hq.config.export import EvidenceConfig, ExportConfig
+from hq.config.validate import ValidateConfig
 
 pytestmark = pytest.mark.smoke
 
@@ -97,6 +98,8 @@ def test_load_config_without_lane_sections(
     assert isinstance(cfg.export, ExportConfig)
     assert cfg.export.modes == ["showcase"]
     assert cfg.export.evidence.maxTraces <= 16
+    assert isinstance(cfg.validate, ValidateConfig)
+    assert cfg.validate.nullTest.nShuffles >= 2
     assert cfg.signal is None
     assert cfg.seismology is None
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
@@ -107,6 +110,7 @@ def test_load_config_without_lane_sections(
     with pytest.raises(ConfigError, match="H2 Seismology"):
         cfg.section("seismology")
     assert cfg.section("run") is cfg.run
+    assert cfg.section("validate") is cfg.validate
     with pytest.raises(ConfigError, match="unknown config section"):
         cfg.section("nope")
 
@@ -158,6 +162,24 @@ def test_unknown_nested_key_in_export_yaml_is_an_error(config_dir: Path) -> None
 def test_missing_required_section_names_owner(config_dir: Path) -> None:
     (config_dir / "run.yaml").unlink()
     with pytest.raises(ConfigError, match=r"run\.yaml.*H2 Seismology"):
+        load_config(config_dir)
+
+
+def test_missing_validate_yaml_names_h4(config_dir: Path) -> None:
+    (config_dir / "validate.yaml").unlink()
+    with pytest.raises(ConfigError, match=r"validate\.yaml.*H4 Platform"):
+        load_config(config_dir)
+
+
+def test_unknown_key_in_validate_yaml_is_an_error(config_dir: Path) -> None:
+    validate = config_dir / "validate.yaml"
+    text = validate.read_text()
+    assert "  shiftS: 30.0" in text
+    validate.write_text(text.replace("  shiftS: 30.0", "  shiftS: 30.0\n  shiftSec: 1"))
+    with pytest.raises(ConfigError, match="shiftSec"):
+        load_config(config_dir)
+    validate.write_text(text.replace("  nShuffles: 20", "  nShuffles: 1"))
+    with pytest.raises(ConfigError, match="nShuffles"):
         load_config(config_dir)
 
 
@@ -386,6 +408,8 @@ def test_registry_matches_pipeline_table() -> None:
     assert [s.name for s in runs.select_stages(["export", "pick"])] == ["pick", "export"]
     assert set(runs.STAGE_PARAM_FIELDS) <= {s.name for s in runs.STAGES}
     assert set(runs.STAGE_PARAM_FIELDS.values()) <= set(runs.PARAM_FIELDS)
+    assert [s.name for s in SECTIONS] == ["run", "signal", "seismology", "export", "validate"]
+    assert [s.name for s in SECTIONS if s.required] == ["run", "export", "validate"]
 
 
 def test_run_stages_stops_at_first_failure(
