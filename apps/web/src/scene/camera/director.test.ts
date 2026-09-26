@@ -162,7 +162,7 @@ describe("camera director", () => {
     expect(asked).toBe(1);
   });
 
-  it("mounting mid-reveal past the dolly window snaps straight to the destination", () => {
+  it("a reveal clock that jumps past the dolly window (a long hitch) lands straight on the destination", () => {
     const d = createCameraDirector();
     const cam = camera(P.oblique);
     d.onReveal(false);
