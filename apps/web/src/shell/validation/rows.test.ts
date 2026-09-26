@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AnalysisSummary, BaselineRow, Validation } from "@/providers";
-import { baselineRan, rows, type RowId, type SummaryInput, type ValidationInput } from "./rows";
+import { baselineRan, rows, strictComparison, type RowId, type SummaryInput, type ValidationInput } from "./rows";
 
 const SUMMARY: AnalysisSummary = {
   runId: "t",
@@ -50,7 +50,7 @@ const VALIDATION: Validation = {
 };
 
 const ids = (summary: SummaryInput, validation: ValidationInput) => rows(summary, validation).map((r) => r.id);
-const ALL: RowId[] = ["recall", "strict", "stations", "residual", "depth", "gain", "chance"];
+const ALL: RowId[] = ["recall", "strict", "stations", "residual", "depth", "strictCompare", "gain", "chance"];
 
 describe("rows()", () => {
   it("renders every row, in the lane doc's order, from a complete summary and validation", () => {
@@ -62,6 +62,7 @@ describe("rows()", () => {
     expect(byId.stations).toBe("7.5");
     expect(byId.residual).toBe("0.063 s");
     expect(byId.depth).toBe("±240 m");
+    expect(byId.strictCompare).toBe("100 vs 40");
     expect(byId.gain).toBe("2.5×");
     expect(byId.chance).toBe("1.3");
   });
@@ -104,7 +105,7 @@ describe("rows()", () => {
   });
 
   it("keeps only the validation-sourced rows without a summary, and none without either", () => {
-    expect(ids(null, VALIDATION)).toEqual(["depth", "chance"]);
+    expect(ids(null, VALIDATION)).toEqual(["depth", "strictCompare", "chance"]);
     expect(rows(undefined, null)).toEqual([]);
   });
 
@@ -126,8 +127,9 @@ describe("rows()", () => {
       expect(ids(SUMMARY, { ...VALIDATION, baseline: onlyFull })).toEqual(withoutGain);
       const noStaltaPOnly = VALIDATION.baseline.filter((r) => !(r.method === "stalta" && r.associationProfile === "p_only"));
       expect(ids(SUMMARY, { ...VALIDATION, baseline: noStaltaPOnly })).toEqual(withoutGain);
-      expect(ids(SUMMARY, { ...VALIDATION, baseline: [] })).toEqual(withoutGain);
-      expect(ids(SUMMARY, { ...VALIDATION, baseline: null })).toEqual(withoutGain);
+      const withoutTable = withoutGain.filter((id) => id !== "strictCompare");
+      expect(ids(SUMMARY, { ...VALIDATION, baseline: [] })).toEqual(withoutTable);
+      expect(ids(SUMMARY, { ...VALIDATION, baseline: null })).toEqual(withoutTable);
       expect(ids(SUMMARY, null)).not.toContain("gain");
       expect(baselineRan(null)).toBe(false);
     });
@@ -138,6 +140,53 @@ describe("rows()", () => {
       );
       expect(ids(SUMMARY, { ...VALIDATION, baseline: tied })).toEqual(ALL);
       expect(rows(SUMMARY, { ...VALIDATION, baseline: tied }).find((r) => r.id === "gain")!.value).toBe("2.5×");
+    });
+  });
+
+  describe("the strict-events comparison row: both full-profile rows of validation.baseline, right before the gain", () => {
+    const value = (validation: ValidationInput) => rows(SUMMARY, validation).find((r) => r.id === "strictCompare")?.value;
+
+    it("shows the two Tier A counts from the table, PhaseNet first", () => {
+      expect(value(VALIDATION)).toBe("100 vs 40");
+      expect(strictComparison(VALIDATION.baseline)).toEqual({ phasenet: 100, stalta: 40 });
+      const list = ids(SUMMARY, VALIDATION);
+      expect(list.indexOf("strictCompare")).toBe(list.indexOf("gain") - 1);
+    });
+
+    it("stays when STA/LTA has no strict event and no gain is claimed (REQ-H1-5)", () => {
+      const noStrictStalta = VALIDATION.baseline.map((r) => (r.method === "stalta" ? { ...r, tiers: { ...r.tiers, A: 0 } } : r));
+      const validation = { ...VALIDATION, baseline: noStrictStalta };
+      expect(value(validation)).toBe("100 vs 0");
+      expect(ids({ ...SUMMARY, baseline: null }, validation)).toEqual(ALL.filter((id) => id !== "gain"));
+    });
+
+    it("needs only the full profile: p_only rows may be missing, and the summary is not consulted", () => {
+      const onlyFull = VALIDATION.baseline.filter((r) => r.associationProfile === "full");
+      expect(value({ ...VALIDATION, baseline: onlyFull })).toBe("100 vs 40");
+      expect(rows(null, { ...VALIDATION, baseline: onlyFull }).map((r) => r.id)).toEqual(["depth", "strictCompare", "chance"]);
+    });
+
+    it("hides when either full-profile row, its count, or the table is missing", () => {
+      const noPhasenetFull = VALIDATION.baseline.filter((r) => !(r.method === "phasenet" && r.associationProfile === "full"));
+      expect(value({ ...VALIDATION, baseline: noPhasenetFull })).toBeUndefined();
+      const noStaltaFull = VALIDATION.baseline.filter((r) => !(r.method === "stalta" && r.associationProfile === "full"));
+      expect(value({ ...VALIDATION, baseline: noStaltaFull })).toBeUndefined();
+      const nullCount = VALIDATION.baseline.map((r) =>
+        r.method === "stalta" && r.associationProfile === "full" ? { ...r, tiers: { ...r.tiers, A: null } } : r,
+      ) as unknown as BaselineRow[];
+      expect(value({ ...VALIDATION, baseline: nullCount })).toBeUndefined();
+      const nanCount = VALIDATION.baseline.map((r) =>
+        r.method === "phasenet" && r.associationProfile === "full" ? { ...r, tiers: { ...r.tiers, A: Number.NaN } } : r,
+      );
+      expect(value({ ...VALIDATION, baseline: nanCount })).toBeUndefined();
+      expect(value({ ...VALIDATION, baseline: [] })).toBeUndefined();
+      expect(value({ ...VALIDATION, baseline: null })).toBeUndefined();
+      expect(value(null)).toBeUndefined();
+      expect(strictComparison(null)).toBeNull();
+    });
+
+    it("labels are words only", () => {
+      expect(rows(SUMMARY, VALIDATION).find((r) => r.id === "strictCompare")!.label).not.toMatch(/\d/);
     });
   });
 });
