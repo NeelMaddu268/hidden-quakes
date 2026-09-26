@@ -32,7 +32,7 @@ def associate_detailed(
     """``associate`` plus its counts and the ``ProcessingRun.associator`` record."""
     with prepared(stations, cfg, run, model=model, cache_dir=cache_dir) as setup:
         result, counts = associate_setup(picks, setup, cfg.associator)
-        return result, counts, record(cfg.associator, setup)
+        return result, counts, record(cfg.associator, setup, picks)
 
 
 def associate(
