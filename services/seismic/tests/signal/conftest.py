@@ -86,6 +86,7 @@ class FakeRunContext:
     cache_dir: Path
     config: FakeConfig
     records: dict[str, dict[str, Any]] = field(default_factory=dict)
+    updates: dict[str, Any] = field(default_factory=dict)
 
     def path(self, name: str) -> Path:
         return self.run_dir / name
@@ -109,6 +110,14 @@ class FakeRunContext:
             "params": params,
             "field": field,
         }
+
+    def update_run(self, **fields: Any) -> None:
+        from hq.runs import UPDATABLE_FIELDS  # H4's RunContext rejects any other field
+
+        unknown = sorted(set(fields) - set(UPDATABLE_FIELDS))
+        if unknown:
+            raise ValueError(f"update_run: {unknown} are not updatable ProcessingRun fields")
+        self.updates.update(fields)
 
 
 def load_yaml(name: str) -> dict:

@@ -891,6 +891,10 @@ def test_stage_writes_stations_parquet(
     rec = fake_ctx.records[inv.STAGE]
     assert rec["counts"]["selected"] == len(EXPECTED_IDS)
     assert rec["params"] == {inv.STAGE: cfg.model_dump(mode="json")}
+    # ProcessingRun.stationIds: the usedInRun stations, sorted
+    used = sorted(r["id"] for r in seeded.rows if r["usedInRun"])
+    assert fake_ctx.updates["stationIds"] == used
+    assert len(used) < len(EXPECTED_IDS)  # the fixture has an unused station; it must be left out
 
 
 @pytest.mark.smoke
