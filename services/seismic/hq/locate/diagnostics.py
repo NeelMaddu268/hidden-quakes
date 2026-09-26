@@ -753,6 +753,14 @@ def row_trend(
             f"No azimuthal trend above trendFlagS {dcfg.trendFlagS:g} s (largest "
             f"{float(az['amplitudeS'].max()):.3f} s): nothing here asks for 3D grids (LOC-07) yet."
         )
+    rep = inputs.statics
+    if rep is not None and rep.pass_number == 2:
+        conclusion = (
+            "Residuals here are after statics, which absorb a per-station delay: "
+            + conclusion + " The station terms themselves carry any lateral structure (Station "
+            "statics section: each term above the flag is tested against its nearest stations), "
+            "so this row can no longer show it, and 3D grids (LOC-07) remain the model-side fix."
+        )
     return Row(7, result, conclusion)
 
 
@@ -1050,6 +1058,10 @@ def catalog_section(
         f"Catalog uncertainties: {source}. {len(have)} of {len(comp)} public events have a "
         "candidate" + (f"; known events (known/windows.json): {', '.join(inputs.known_ids)}"
                        if inputs.known_ids else "") + "."
+        + (" Located with reference statics: a reference event's position here is its held-out "
+           "relocation (Station statics section), and every position is tied to the catalog's "
+           "frame through the terms, so these offsets are not independent of the catalog."
+           if inputs.statics is not None and inputs.statics.reference is not None else "")
     )
     lines.append("")
     if len(have):
@@ -1233,8 +1245,9 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
             f"{int(big['nEvents'])} events, MAD over those events {big['madS']:.3f} s); the "
             f"largest MAD over events of any estimated term is {active['madS'].max():.3f} s, so "
             "each term is a consistent delay across events, not the scatter of a few picks."
-            + (" The cap is a guard against a phase mix-up becoming a term; one that clips no "
-               "term this consistent leaves the lateral structure in place." if clipped.empty
+            + (" The cap bounds a term from a station with systematically wrong picks; one "
+               "that clips no term this consistent leaves the lateral structure in place."
+               if clipped.empty
                else " Clipped terms leave part of the station's delay in the residuals.")
         )
     if len(below):
@@ -1265,7 +1278,7 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
               + (f"{n_far} rest on the far-station hypothesis, which these terms can't test. "
                  if n_far else "")
               + "Verdicts: lateral = nearby stations share the delay (structure the 1D model "
-              "can't hold, row 7); path = P and S slowed in proportion to the model's Vp/Vs; "
+              "can't hold, row 7); path = P and S changed in proportion to the model's Vp/Vs; "
               "vpvs = the delay is mostly in S (the local Vp/Vs differs from the model's); "
               "timing = equal P and S delays; far = early at a distant station. Evidence rules: "
               "seismology.yaml `statics.explain`; the verdict is the first that holds, in that "
