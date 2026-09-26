@@ -3,7 +3,8 @@
 Layout (frozen; ``hq.ingest.download`` writes it, everyone else reads it through this module)::
 
     <cache_dir>/mseed/{net}.{sta}.{loc}.{cha}.{YYYYMMDD}.mseed   one file per channel and UTC day
-    <cache_dir>/mseed/{net}.{sta}.{loc}.{cha}.{YYYYMMDD}.json    manifest of the fetched chunks
+    <cache_dir>/mseed/{net}.{sta}.{loc}.{cha}.{YYYYMMDD}.json    manifest: fetched chunks and
+                                                                 the data file's size
     <cache_dir>/stationxml/{stationId}.xml                       response-level StationXML (SEIS-01)
 
 An empty location code gives two adjacent dots, e.g. ``6K.CS01..GNZ.20260910.mseed``. A
@@ -13,6 +14,7 @@ channel-day file holds exactly the samples the data center returned: gaps are ne
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -114,11 +116,15 @@ def split_station_id(station_id: str) -> tuple[str, str, str | None]:
     raise ValueError(f"station id must be NET.STA or NET.STA.LOC, got {station_id!r}")
 
 
-def station_keys(station_id: str, *, cache_dir: Path) -> list[tuple[ChannelDayKey, str]]:
-    """Every cached (key, suffix) for one station, filtered by location when the id has one.
+def station_keys(
+    station_id: str, *, cache_dir: Path, days: Collection[str] | None = None
+) -> list[tuple[ChannelDayKey, str]]:
+    """Cached (key, suffix) pairs for one station, filtered by location when the id has one and
+    by UTC day when ``days`` is given.
 
-    Raises ``CacheMissError`` if nothing at all is cached for the station, and
-    ``AmbiguousStationError`` if a bare ``NET.STA`` id spans several location codes.
+    Raises ``CacheMissError`` if nothing at all is cached for the station (on any day), and
+    ``AmbiguousStationError`` if a bare ``NET.STA`` id spans several location codes within the
+    selected days (another location cached on some other day does not make it ambiguous).
     """
     net, sta, loc = split_station_id(station_id)
     folder = mseed_dir(cache_dir)
@@ -136,6 +142,8 @@ def station_keys(station_id: str, *, cache_dir: Path) -> list[tuple[ChannelDayKe
             found.append((key, suffix))
     if not found:
         raise CacheMissError(f"nothing cached for station {station_id} under {folder}")
+    if days is not None:
+        found = [(key, suffix) for key, suffix in found if key.day in days]
     locations = sorted({k.location for k, _ in found})
     if loc is None and len(locations) > 1:
         raise AmbiguousStationError(
@@ -148,19 +156,15 @@ def station_keys(station_id: str, *, cache_dir: Path) -> list[tuple[ChannelDayKe
 def _window_files(station_id: str, t0: float, t1: float, cache_dir: Path) -> list[Path]:
     if t1 < t0:
         raise ValueError(f"window end {t1} is before start {t0}")
-    days = set(days_covering(t0, t1))
-    keys = station_keys(station_id, cache_dir=cache_dir)
-    return sorted(
-        mseed_path(cache_dir, key)
-        for key, suffix in keys
-        if suffix == MSEED_SUFFIX and key.day in days
-    )
+    keys = station_keys(station_id, cache_dir=cache_dir, days=set(days_covering(t0, t1)))
+    return sorted(mseed_path(cache_dir, key) for key, suffix in keys if suffix == MSEED_SUFFIX)
 
 
 def read_window(station_id: str, t0: float, t1: float, *, cache_dir: Path) -> obspy.Stream:
-    """Raw counts for ``[t0, t1]`` from the cache.
+    """Raw counts for ``[t0, t1]`` from the cache, both ends inclusive (ObsPy trim semantics).
 
-    Gaps stay gaps: every continuous run of samples is its own trace and nothing is ever
+    A sample stamped exactly at ``t1`` is returned, so consecutive windows ``[a, b]`` and
+    ``[b, c]`` share that one sample; drop it on one side when concatenating. Gaps stay gaps: every continuous run of samples is its own trace and nothing is ever
     zero-filled. Contiguous pieces (e.g. across midnight) are joined by ObsPy's cleanup merge,
     which never fills. Missing data gives fewer or shorter traces, not fabricated samples.
     Returns every cached channel of the station; callers select ``Station.channels``.
@@ -181,7 +185,8 @@ def window_segments(station_id: str, t0: float, t1: float, *, cache_dir: Path) -
     """Continuous sample runs overlapping ``[t0, t1)``, read from headers only (no samples).
 
     Used for gap accounting, so a day of 1,000 Hz data never has to be loaded into memory.
-    Segments are clipped to the window.
+    Segments are not clipped: one that starts before ``t0`` or ends after ``t1`` is returned
+    whole (``hq.ingest.download.channel_gaps`` clips).
     """
     raw: list[Segment] = []
     for path in _window_files(station_id, t0, t1, cache_dir):
