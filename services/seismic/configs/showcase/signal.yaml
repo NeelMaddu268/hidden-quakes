@@ -1,0 +1,66 @@
+# Signal lane config (H1). Parsed by hq.config.signal.SignalConfig; unknown keys are an error.
+# One block per ticket. Every pipeline knob of the signal lane lives here and is recorded in run.json.
+
+# --- SEIS-01: station inventory and channel selection ------------------------------------------------
+stations: {}
+
+# --- SEIS-05: full-window download and cache ---------------------------------------------------------
+download: {}
+
+# --- SEIS-02: known-event windows --------------------------------------------------------------------
+known: {}
+
+# --- SEIS-03: preprocessing profiles -----------------------------------------------------------------
+# Counts stay counts (no response removal): PhaseNet normalizes internally. Gaps are never bridged
+# or filled; every gap-separated segment is processed on its own (abutting pieces are joined first).
+preprocess:
+  targetRateHz: 100.0        # PhaseNet input rate; every for_picking output trace has exactly this rate
+  rateRelTol: 1.0e-9         # relative tolerance when matching an input rate to targetRateHz * M / L
+  maxUpsampleFactor: 2       # largest L in rate * L / M = target (250 Hz: x2 then /5); more -> raise
+  minSegmentModelS: 31.0     # shorter segments are dropped and counted. Model seconds (real s x TimeMap
+                             # factor). PhaseNet's window is 3001 samples = 30 s at 100 Hz; SeisBench
+                             # cannot window a shorter segment and would drop or merge it on its own
+                             # (with only a warning), so drop it here where it is counted. +1 s slack
+  joinMisalignmentSamples: 0.01   # pieces of one channel that abut (or overlap identically) with sample
+                                  # grids this close, in input samples, are joined; conflicting overlaps raise
+  detrend: linear
+  taper:                     # per segment, ObsPy Trace.taper
+    type: hann
+    maxPercentage: 0.05
+    maxLengthS: 1.0
+  antiAlias:                 # Chebyshev II, zero-phase, before every decimation; edges x output Nyquist
+    passbandEdgeFraction: 0.8     # 40 Hz at 100 Hz output
+    stopbandEdgeFraction: 1.0     # 50 Hz at 100 Hz output: nothing that can fold survives
+    passbandLossDb: 1.0           # per pass
+    stopbandAttenuationDb: 60.0   # per pass (zero-phase applies it twice)
+  componentRename: {"1": "N", "2": "E"}   # borehole horizontals of uncertain orientation, on a copy
+  modelComponents: ZNE       # every output trace must end in one of these (seisbench order "ZNE")
+  profiles:
+    surface-100:             # 100 Hz surface channels: detrend, taper, no filter
+      method: passthrough
+      minRateHz: 100.0
+      maxRateHz: 100.0
+    surface-hi:              # 200-250 Hz surface channels
+      method: decimate
+      minRateHz: 200.0
+      maxRateHz: 250.0
+      lowpassHz: 40.0
+      lowpassCorners: 4
+    borehole-A:              # default for borehole geophones (~1000 Hz, also 500 Hz)
+      method: decimate
+      minRateHz: 500.0
+      maxRateHz: 1000.0
+      lowpassHz: 40.0
+      lowpassCorners: 4
+    borehole-B:              # experiment: bandpass, relabel as 100 Hz; picks return via TimeMap
+      method: stretch
+      minRateHz: 1000.0
+      maxRateHz: 1000.0
+      bandpassHz: [5.0, 400.0]   # real Hz; at 1000 Hz input the model sees 0.5-40 Hz
+      bandpassCorners: 4
+
+# --- SEIS-04 / SEIS-06: PhaseNet picking -------------------------------------------------------------
+picker: {}
+
+# --- SEIS-07: STA/LTA baseline -----------------------------------------------------------------------
+baseline: {}
