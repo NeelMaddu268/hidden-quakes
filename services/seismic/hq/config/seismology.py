@@ -524,13 +524,15 @@ class MagnitudeWindowConfig(BaseModel):
 
 
 class ResponseRemovalConfig(BaseModel):
-    """Instrument response removal to ground displacement (ObsPy evalresp + water level)."""
+    """Instrument response removal to ground displacement (ObsPy evalresp in the sensor's input
+    units + water level, then integrated to displacement)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # ObsPy pre_filt: cosine frequency taper, 0 below f1, 1 between f2 and f3, 0 above f4 (Hz).
     preFiltHz: tuple[float, float, float, float]
-    waterLevelDb: float = Field(gt=0)  # ObsPy water_level, dB below the response maximum
+    # ObsPy water_level, dB below the maximum of the response in the sensor's own input units
+    waterLevelDb: float = Field(gt=0)
     # |response sample rate / data sample rate - 1| above this excludes the station.
     rateRelTol: float = Field(gt=0)
 
@@ -540,6 +542,16 @@ class ResponseRemovalConfig(BaseModel):
         if not 0.0 < value[0] < value[1] < value[2] < value[3]:
             raise ValueError(f"preFiltHz must be 0 < f1 < f2 < f3 < f4, got {list(value)}")
         return value
+
+
+class SaturationConfig(BaseModel):
+    """Digitizer clipping screen: a window whose raw horizontal counts reach ``maxFraction`` of
+    ``fullScaleCounts`` anywhere in its processed span gets status ``clipped`` (no magnitude)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    fullScaleCounts: float = Field(gt=0)  # largest |count| the digitizer can output
+    maxFraction: float = Field(gt=0, le=1)
 
 
 class WoodAndersonConfig(BaseModel):
@@ -584,6 +596,7 @@ class MagnitudeConfig(BaseModel):
     readChunkS: float = Field(gt=0)  # longest span read from the cache at once per station
     window: MagnitudeWindowConfig
     response: ResponseRemovalConfig
+    saturation: SaturationConfig
     woodAnderson: WoodAndersonConfig
     fit: MagnitudeFitConfig
 

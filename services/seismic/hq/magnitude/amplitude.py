@@ -18,15 +18,20 @@ is checked against ``Channel.sample_rate`` and flagged ``responseRateFromChannel
 ``measure_amplitudes`` reads each station's windows in groups spanning at most ``readChunkS``
 (one ``hq.ingest.cache.read_window`` call per group, so a station-day is read about once), and for
 each window and horizontal channel: linear detrend, cosine taper over ``padS`` at each end, FFT,
-times ``preFiltHz``'s cosine taper, times the inverted displacement response (water level
-``waterLevelDb``, as ObsPy's ``remove_response``), times the Wood-Anderson response
-``gain * s^2 / (s^2 + 2 h w0 s + w0^2)``, inverse FFT, in mm. The response spectrum is evaluated
-once per station, channel, sample interval and FFT length (evalresp costs about a second at
-1000 Hz).
+times ``preFiltHz``'s cosine taper, times the inverted response in the sensor's own input units
+(evalresp DISP, VEL or ACC; water level ``waterLevelDb`` below that response's maximum), divided
+by ``(2 pi i f)^k`` to ground displacement (k = 0, 1, 2 integrations), times the Wood-Anderson
+response ``gain * s^2 / (s^2 + 2 h w0 s + w0^2)``, inverse FFT, in mm. The water level acts in
+native units: an accelerometer's or a 1000 Hz sensor's response expressed as displacement peaks
+near Nyquist, and a water level there would high-pass the band itself. Where the water level
+still clips inside ``[preFiltHz f2, f3]`` (a steep analog roll-off), the station's clipped range
+is logged and recorded (``waterLevelClipHz``): the band is the same at every other station. The
+response spectrum is evaluated once per station, channel, sample interval and FFT length.
 The amplitude is the peak of ``sqrt(h1^2 + h2^2)`` in the S window; the noise level is the same
 peak in the noise window, and a window is usable when their ratio is at least ``minSnr``.
 A window whose processing span is not covered by one continuous trace on both horizontals is a
-``gap`` (gaps are never filled).
+``gap`` (gaps are never filled); one whose raw counts on either horizontal reach
+``saturation.maxFraction`` of ``saturation.fullScaleCounts`` anywhere in that span is ``clipped``.
 """
 
 from __future__ import annotations
@@ -50,7 +55,9 @@ from scipy.signal import detrend
 from scipy.signal.windows import tukey
 
 from hq.config.seismology import MagnitudeConfig, WoodAndersonConfig
-from hq.ingest.cache import CacheMissError, read_inventory, read_window, station_keys
+
+# docs/02 §5 API (read_window, read_inventory) and the error both raise when nothing is cached.
+from hq.ingest.cache import CacheMissError, read_inventory, read_window
 
 log = logging.getLogger(__name__)
 
@@ -62,8 +69,14 @@ AMPLITUDE_UNITS = "mm"  # Wood-Anderson trace amplitude
 DISTANCE_UNITS = "km"  # log10(R) with R in km
 M_TO_MM = 1000.0  # unit conversion, not a knob
 M_PER_KM = 1000.0
-RESPONSE_OUTPUT = "DISP"  # evalresp output: ground displacement (m)
-SUPPORTED_INPUT_UNITS = ("M", "M/S", "M/S**2")  # displacement, velocity, acceleration
+# Response input units -> (evalresp output in those units, integrations to displacement). The
+# water level acts on this native-unit response; the result is then divided by (2 pi i f)^k.
+NATIVE_OUTPUT: dict[str, tuple[str, int]] = {
+    "M": ("DISP", 0),
+    "M/S": ("VEL", 1),
+    "M/S**2": ("ACC", 2),
+}
+SUPPORTED_INPUT_UNITS = tuple(NATIVE_OUTPUT)  # displacement, velocity, acceleration
 PHASES = ("P", "S")
 
 # Window status values (one per event x station).
@@ -72,6 +85,7 @@ LOW_SNR = "lowSnr"
 GAP = "gap"
 RATE_MISMATCH = "rateMismatch"
 FLAT = "flat"  # zero amplitude in the S window: a dead channel, never a magnitude
+CLIPPED = "clipped"  # raw counts near full scale (magnitude.saturation): never a magnitude
 EXCLUDED = "stationExcluded"
 
 WINDOW_COLUMNS: tuple[str, ...] = (
@@ -266,8 +280,8 @@ def screen_station(
     data_rate = float(station["sampleRateHz"])
     if len(horizontals) != 2:
         return _excluded(station, horizontals, f"needs 2 horizontal channels, has {channels}")
-    try:
-        station_keys(sid, cache_dir=cache_dir)
+    try:  # a zero-length read: raises when nothing at all is cached for the station
+        read_window(sid, window[0], window[0], cache_dir=cache_dir)
     except CacheMissError:
         return _excluded(station, horizontals, "no waveform data in the cache")
     try:
@@ -362,16 +376,38 @@ def nfft_for(npts: int) -> int:
 
 def response_filter(
     response: Response, delta: float, nfft: int, cfg: MagnitudeConfig
-) -> ComplexArray:
-    """The rfft-domain filter from raw counts to Wood-Anderson mm: preFiltHz taper x inverted
-    displacement response (water level) x Wood-Anderson response x 1000."""
-    resp, freqs = response.get_evalresp_response(t_samp=delta, nfft=nfft, output=RESPONSE_OUTPUT)
+) -> tuple[ComplexArray, tuple[float, float] | None]:
+    """The rfft-domain filter from raw counts to Wood-Anderson mm, and the frequencies where the
+    water level clips it inside the flat part of the band.
+
+    Filter: preFiltHz taper x inverted native-unit response (``NATIVE_OUTPUT``: evalresp in the
+    sensor's input units, water level ``waterLevelDb`` below that response's maximum) / (2 pi i f)^k
+    (k integrations to displacement) x Wood-Anderson response x 1000. The water level acts in
+    native units because an acceleration or high-rate velocity response expressed as displacement
+    peaks near Nyquist, where a water level would clip (high-pass) the band itself.
+
+    Clip: ``(lowest, highest)`` frequency in ``[preFiltHz f2, f3]`` where the water level replaces
+    the true inverse (there the band differs from other stations'), or None when it clips nowhere
+    in that range."""
+    unit = str(response.instrument_sensitivity.input_units or "").upper()
+    if unit not in NATIVE_OUTPUT:
+        raise MagnitudeError(f"response input units {unit!r} are not ground motion")
+    output, integrations = NATIVE_OUTPUT[unit]
+    resp, freqs = response.get_evalresp_response(t_samp=delta, nfft=nfft, output=output)
     resp = np.asarray(resp, dtype=np.complex128)
+    freqs = np.asarray(freqs, dtype=np.float64)
+    floor = np.abs(resp).max() * 10.0 ** (-cfg.response.waterLevelDb / 20.0)
+    f1, f2, f3, f4 = cfg.response.preFiltHz
+    flat = (freqs >= f2) & (freqs <= f3)
+    clipped = freqs[flat & (np.abs(resp) < floor)]
+    clip = (float(clipped.min()), float(clipped.max())) if clipped.size else None
     invert_spectrum(resp, cfg.response.waterLevelDb)
-    taper = cosine_sac_taper(np.asarray(freqs), flimit=cfg.response.preFiltHz)
-    return np.asarray(
-        resp * taper * wood_anderson_response(np.asarray(freqs), cfg.woodAnderson) * M_TO_MM
-    )
+    to_disp = np.zeros_like(resp)
+    positive = freqs > 0.0  # 0 Hz: the preFiltHz taper is 0 there anyway (f1 > 0)
+    to_disp[positive] = (2j * np.pi * freqs[positive]) ** -integrations
+    taper = cosine_sac_taper(freqs, flimit=(f1, f2, f3, f4))
+    filt = resp * to_disp * taper * wood_anderson_response(freqs, cfg.woodAnderson) * M_TO_MM
+    return np.asarray(filt), clip
 
 
 def to_wood_anderson(data: FloatArray, filt: ComplexArray, pad_samples: int) -> FloatArray:
@@ -411,10 +447,12 @@ def read_groups(starts: FloatArray, ends: FloatArray, chunk_s: float) -> list[np
 
 @dataclass
 class _Filters:
-    """Response filters per (station, channel, delta, nfft), evaluated once each."""
+    """Response filters per (station, channel, delta, nfft), evaluated once each, and the
+    in-band water-level clip per (station, channel) over every evaluation (widest range)."""
 
     cfg: MagnitudeConfig
     cache: dict[tuple[str, str, float, int], ComplexArray] = field(default_factory=dict)
+    clips: dict[tuple[str, str], tuple[float, float] | None] = field(default_factory=dict)
     evaluations: int = 0
 
     def get(
@@ -422,9 +460,21 @@ class _Filters:
     ) -> ComplexArray:
         key = (station_id, cha, delta, nfft)
         if key not in self.cache:
-            self.cache[key] = response_filter(response, delta, nfft, self.cfg)
+            self.cache[key], clip = response_filter(response, delta, nfft, self.cfg)
             self.evaluations += 1
+            seen = self.clips.get((station_id, cha))
+            if seen is not None and clip is not None:
+                clip = (min(seen[0], clip[0]), max(seen[1], clip[1]))
+            self.clips[(station_id, cha)] = clip if clip is not None else seen
         return self.cache[key]
+
+    def station_clips(self, station_id: str) -> dict[str, list[float]]:
+        """Channel -> [lowest, highest] clipped frequency (Hz) in the flat band, clipped only."""
+        out: dict[str, list[float]] = {}
+        for (sid, cha), clip in sorted(self.clips.items()):
+            if sid == station_id and clip is not None:
+                out[cha] = [round(clip[0], 3), round(clip[1], 3)]
+        return out
 
 
 def _covering(st: obspy.Stream, location: str, cha: str, t0: float, t1: float) -> obspy.Trace | None:
@@ -448,9 +498,7 @@ def _measure_one(
     cfg: MagnitudeConfig,
 ) -> dict[str, Any]:
     t0, t1 = float(row["readStart"]), float(row["readEnd"])
-    wa: list[FloatArray] = []
-    start: float | None = None
-    delta = 0.0
+    pieces: list[obspy.Trace] = []
     for cha in screen.channels:
         tr = _covering(st, screen.location, cha, t0, t1)
         if tr is None:
@@ -458,35 +506,48 @@ def _measure_one(
         rate = float(tr.stats.sampling_rate)
         if abs(rate / screen.dataRateHz - 1.0) > cfg.response.rateRelTol:
             return {"status": RATE_MISMATCH}
-        piece = tr.slice(UTCDateTime(t0), UTCDateTime(t1))
+        pieces.append(tr.slice(UTCDateTime(t0), UTCDateTime(t1)))
+    # Raw counts near the digitizer's full scale anywhere in the processed span: the peak (or
+    # the FFT's view of it) may be clipped, so the window never gives a magnitude.
+    peak_counts = max(float(np.abs(p.data).max()) for p in pieces)
+    sat = cfg.saturation
+    if peak_counts >= sat.maxFraction * sat.fullScaleCounts:
+        return {"status": CLIPPED, "peakCounts": peak_counts}
+    wa: list[FloatArray] = []
+    for cha, piece in zip(screen.channels, pieces, strict=True):
         delta = float(piece.stats.delta)
         npts = piece.stats.npts
         filt = filters.get(screen.stationId, cha, screen.responses[cha], delta, nfft_for(npts))
         pad = round(cfg.window.padS / delta)
         wa.append(to_wood_anderson(piece.data, filt, pad))
-        if start is None:
-            start = piece.stats.starttime.timestamp
-    assert start is not None
+    start, delta = pieces[0].stats.starttime.timestamp, float(pieces[0].stats.delta)
     n = min(len(x) for x in wa)
     vec = np.hypot(wa[0][:n], wa[1][:n])
     t = start + np.arange(n) * delta
     sig = vec[(t >= row["signalStart"]) & (t <= row["signalEnd"])]
     noise = vec[(t >= row["noiseStart"]) & (t <= row["noiseEnd"])]
     if sig.size == 0 or noise.size == 0:
-        return {"status": GAP}
+        return {"status": GAP, "peakCounts": peak_counts}
     peak = float(sig.max())
     noise_peak = float(noise.max())
     if peak <= 0.0:
-        return {"status": FLAT, "ampMm": peak, "noiseMm": noise_peak}
+        return {"status": FLAT, "ampMm": peak, "noiseMm": noise_peak, "peakCounts": peak_counts}
     snr = peak / noise_peak if noise_peak > 0.0 else math.inf
     status = OK if snr >= cfg.minSnr else LOW_SNR
-    return {"status": status, "ampMm": peak, "noiseMm": noise_peak, "snr": snr}
+    return {
+        "status": status,
+        "ampMm": peak,
+        "noiseMm": noise_peak,
+        "snr": snr,
+        "peakCounts": peak_counts,
+    }
 
 
 @dataclass(frozen=True)
 class AmplitudeResult:
     """``table``: one row per planned window (``WINDOW_COLUMNS`` plus ``status``, ``ampMm``,
-    ``noiseMm``, ``snr``, ``logA``, ``logR``); ``record``: counts and timings for the run."""
+    ``noiseMm``, ``snr``, ``peakCounts`` (raw), ``logA``, ``logR``); ``record``: counts and timings
+    for the run."""
 
     table: pd.DataFrame
     record: dict[str, Any]
@@ -507,6 +568,7 @@ def measure_amplitudes(
     out["ampMm"] = np.nan
     out["noiseMm"] = np.nan
     out["snr"] = np.nan
+    out["peakCounts"] = np.nan
     filters = _Filters(cfg)
     reads = 0
     per_station: dict[str, dict[str, Any]] = {}
@@ -535,10 +597,20 @@ def measure_amplitudes(
                     out.at[label, key] = value
             del st
         statuses = out.loc[idx, "status"].value_counts().to_dict()
+        peak_counts = out.loc[idx, "peakCounts"].to_numpy(dtype=np.float64)
+        clips = filters.station_clips(str(sid))
         per_station[str(sid)] = {
             "reads": len(groups),
             "windows": len(idx),
             "status": {str(k): int(v) for k, v in statuses.items()},
+            # largest raw |counts| of any window, as a share of saturation.fullScaleCounts
+            "maxFullScaleFraction": (
+                round(float(np.nanmax(peak_counts)) / cfg.saturation.fullScaleCounts, 4)
+                if np.isfinite(peak_counts).any()
+                else None
+            ),
+            # channel -> [lowest, highest] Hz where the water level clips inside [f2, f3]
+            "waterLevelClipHz": clips,
             "runtimeS": round(time.perf_counter() - s_started, 3),
         }
         log.info(
@@ -546,6 +618,12 @@ def measure_amplitudes(
             sid, len(idx), len(groups), per_station[str(sid)]["status"],
             per_station[str(sid)]["runtimeS"],
         )  # fmt: skip
+        if clips:
+            log.warning(
+                "magnitude: station %s: the %.0f dB water level clips the inverse response inside "
+                "the flat band %s Hz at %s: its effective band is narrower there",
+                sid, cfg.response.waterLevelDb, list(cfg.response.preFiltHz[1:3]), clips,
+            )  # fmt: skip
     amp = out["ampMm"].to_numpy(dtype=np.float64)
     ok = (out["status"] == OK).to_numpy()
     out["logA"] = np.where(ok, np.log10(np.where(ok, amp, 1.0)), np.nan)
@@ -556,6 +634,9 @@ def measure_amplitudes(
         "status": status_counts,
         "reads": reads,
         "responseEvaluations": filters.evaluations,
+        "stationsWithWaterLevelClip": sorted(
+            s for s, r in per_station.items() if r["waterLevelClipHz"]
+        ),
         "perStation": per_station,
         "runtimeS": round(time.perf_counter() - started, 3),
     }
