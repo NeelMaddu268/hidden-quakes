@@ -5,3 +5,6 @@ export { ValidationPanel } from "./validation/ValidationPanel";
 export { rows as validationRows, baselineRan, staltaStrict } from "./validation/rows";
 export { RunDetailsPanel, RunDetailsButton, useRunDetailsKey, RUN_DETAILS_KEY } from "./run-details/RunDetailsPanel";
 export { SweepPlot } from "./run-details/SweepPlot";
+export { DownloadButton } from "./download/DownloadButton";
+export { catalogCsv, catalogGeoJson, catalogFileName, CAVEAT as CATALOG_CAVEAT } from "./download/catalog";
+export { eventShareLink, withoutEventParam, parseEventParam, openEventAfterReveal, useShareLink, EVENT_PARAM } from "./share";

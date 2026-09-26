@@ -291,3 +291,62 @@ describe("controls", () => {
     expect(state().filter).toBe("public");
   });
 });
+
+describe("download candidate catalog (overnight feature 2)", () => {
+  it("appears once the reveal starts and saves CSV and GeoJSON built from the bundle", async () => {
+    await mountReady();
+    expect(screen.queryByTestId("download-catalog")).toBeNull();
+    press(" ");
+    const group = screen.getByTestId("download-catalog");
+    expect(group.getAttribute("aria-label")).toBe("Download candidate catalog");
+    // jsdom has no Blob URLs or downloads: capture the anchor the button clicks.
+    const saved: { name: string; href: string }[] = [];
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: () => "blob:test", revokeObjectURL: () => {} }));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push({ name: this.download, href: this.href });
+    });
+    fireEvent.click(screen.getByTestId("download-csv"));
+    fireEvent.click(screen.getByTestId("download-geojson"));
+    click.mockRestore();
+    expect(saved.map((s) => s.name)).toEqual([
+      "synthetic-hidden-quakes-candidates-mock-run.csv",
+      "synthetic-hidden-quakes-candidates-mock-run.geojson",
+    ]);
+    expect(saved.every((s) => s.href === "blob:test")).toBe(true);
+  });
+});
+
+describe("share links (overnight feature 3)", () => {
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("?event=<id> for a bundled event starts the reveal and opens its drawer once revealed", async () => {
+    window.history.replaceState(null, "", "/?mode=mock&event=ev-1");
+    await mountReady();
+    expect(state().phase).toBe("revealing");
+    expect(state().selectedEventId).toBeNull();
+    sceneFinishesReveal();
+    expect(state().selectedEventId).toBe("ev-1");
+    expect(window.location.search).toBe("?mode=mock&event=ev-1");
+  });
+
+  it("ignores an id the bundle does not have", async () => {
+    window.history.replaceState(null, "", "/?event=not-in-this-run");
+    await mountReady();
+    expect(state().phase).toBe("public");
+    expect(state().selectedEventId).toBeNull();
+  });
+
+  it("mirrors the selection into the address bar and removes it when the drawer closes", async () => {
+    window.history.replaceState(null, "", "/?mode=mock");
+    await mountReady();
+    press(" ");
+    sceneFinishesReveal();
+    press("e");
+    expect(state().selectedEventId).toBe(HERO_EVENT_ID);
+    expect(window.location.search).toBe(`?mode=mock&event=${HERO_EVENT_ID}`);
+    press("Escape");
+    expect(window.location.search).toBe("?mode=mock");
+  });
+});
