@@ -84,6 +84,10 @@ export function rulerLayout(
  * last (deepest) one shows too, displacing the nearest intermediate label if it has to. Writes into
  * `out` (1 = visible) so the per-frame caller doesn't allocate.
  */
+function labelsClear(xs: ArrayLike<number>, ys: ArrayLike<number>, w: number, h: number, i: number, j: number): boolean {
+  return Math.abs(xs[i] - xs[j]) >= w || Math.abs(ys[i] - ys[j]) >= h;
+}
+
 export function declutterLabels(
   screenX: ArrayLike<number>,
   screenY: ArrayLike<number>,
@@ -92,22 +96,20 @@ export function declutterLabels(
   out: Uint8Array,
 ): Uint8Array {
   const n = screenY.length;
-  const clear = (i: number, j: number) =>
-    Math.abs(screenX[i] - screenX[j]) >= boxW || Math.abs(screenY[i] - screenY[j]) >= boxH;
   let last = -1;
   for (let i = 0; i < n; i++) {
-    out[i] = last < 0 || clear(i, last) ? 1 : 0;
+    out[i] = last < 0 || labelsClear(screenX, screenY, boxW, boxH, i, last) ? 1 : 0;
     if (out[i]) last = i;
   }
   const end = n - 1;
   if (n >= 2 && !out[end]) {
     // Make room for the deepest label by dropping intermediate labels from the bottom up.
-    while (last > 0 && !clear(end, last)) {
+    while (last > 0 && !labelsClear(screenX, screenY, boxW, boxH, end, last)) {
       out[last] = 0;
       do last--;
       while (last > 0 && !out[last]);
     }
-    out[end] = clear(end, last) ? 1 : 0;
+    out[end] = labelsClear(screenX, screenY, boxW, boxH, end, last) ? 1 : 0;
   }
   return out;
 }

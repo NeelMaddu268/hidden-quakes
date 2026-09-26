@@ -7,12 +7,12 @@ import { useEffect, useMemo, useRef } from "react";
 import { AdditiveBlending, Color, type ShaderMaterial } from "three";
 import { verticalExaggerationOf } from "../coords";
 import type { GeoFeature, SceneMeta } from "../types";
+import { RENDER_ORDER } from "../terrain/renderOrder";
 import { featureGeometry, featureIssue, featureLabelAnchor, featureStyle, type FeatureGeometry, type FeatureStyle } from "./features";
 import { LABEL_Z_RANGE, labelStyle } from "./labels";
 
 // The geothermal reference reads in every view, over the terrain and through it: an annotation
 // layer (no depth test), drawn after the terrain and the reference lines.
-const FEATURE_RENDER_ORDER = 7;
 const LINE_WIDTH_PX = 1.75;
 const GLOW_WIDTH_PX = 7;
 const GLOW_OPACITY = 0.18;
@@ -76,7 +76,7 @@ function FeatureLine({ points, style }: { points: [number, number, number][]; st
           blending={AdditiveBlending}
           depthTest={false}
           depthWrite={false}
-          renderOrder={FEATURE_RENDER_ORDER}
+          renderOrder={RENDER_ORDER.featureGlow}
         />
       )}
       <Line
@@ -89,7 +89,7 @@ function FeatureLine({ points, style }: { points: [number, number, number][]; st
         transparent
         depthTest={false}
         depthWrite={false}
-        renderOrder={FEATURE_RENDER_ORDER + 1}
+        renderOrder={RENDER_ORDER.feature}
       />
     </>
   );
@@ -112,7 +112,7 @@ function FacilityMarkers({ points }: { points: { at: [number, number, number]; d
     if (m) m.uniforms.uSizePx.value = MARKER_SIZE_PX * state.viewport.dpr;
   });
   return (
-    <points key={points.length} frustumCulled={false} renderOrder={FEATURE_RENDER_ORDER + 1}>
+    <points key={points.length} frustumCulled={false} renderOrder={RENDER_ORDER.feature}>
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" args={[positions, 3]} />
         <bufferAttribute attach="attributes-aDashed" args={[dashed, 1]} />

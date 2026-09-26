@@ -60,10 +60,12 @@ describe("borehole sensors (acceptance: markers sit at sensorElevM)", () => {
 
   it("draws a marker at depth, a wellhead ring, and the line between them", () => {
     const g = buildStationGlyphs([bh], scene);
-    expect(g.count).toBe(2);
-    expect([...g.shapes]).toEqual([STATION_SHAPE.borehole, STATION_SHAPE.wellhead]);
-    expect(g.positions[1]).toBeCloseTo(elevMToSceneY(bh.sensorElevM, scene), 6);
-    expect(g.positions[4]).toBeCloseTo(elevMToSceneY(bh.surfaceElevM, scene), 6);
+    expect(g.underground.count).toBe(1);
+    expect(g.surface.count).toBe(1);
+    expect([...g.underground.shapes]).toEqual([STATION_SHAPE.borehole]);
+    expect([...g.surface.shapes]).toEqual([STATION_SHAPE.wellhead]);
+    expect(g.underground.positions[1]).toBeCloseTo(elevMToSceneY(bh.sensorElevM, scene), 6);
+    expect(g.surface.positions[1]).toBeCloseTo(elevMToSceneY(bh.surfaceElevM, scene), 6);
     expect(g.boreholeSegments).toEqual([wellheadPosition(bh, scene), sensorPosition(bh, scene)]);
   });
 });
@@ -78,21 +80,26 @@ describe("buildStationGlyphs", () => {
   const g = buildStationGlyphs(stations, scene);
 
   it("draws one glyph per sensor plus one wellhead per borehole", () => {
-    expect(g.count).toBe(6);
-    expect([...g.shapes]).toEqual([0, 0, 1, 1, 2, 2]);
+    expect(g.surface.count).toBe(4);
+    expect(g.underground.count).toBe(2);
+    expect([...g.surface.shapes]).toEqual([0, 0, 2, 2]);
+    expect([...g.underground.shapes]).toEqual([1, 1]);
     expect(g.boreholeSegments).toHaveLength(4);
   });
 
   it("puts surface sensors at their sensor elevation", () => {
-    expect(g.positions[1]).toBeCloseTo(elevMToSceneY(1650, scene), 6);
+    expect(g.surface.positions[1]).toBeCloseTo(elevMToSceneY(1650, scene), 6);
   });
 
   it("dims stations the run didn't use instead of hiding them", () => {
-    expect([...g.alphas]).toEqual([1, UNUSED_STATION_ALPHA, 1, 1, 1, 1].map((a) => Math.fround(a)));
+    expect([...g.surface.alphas]).toEqual([1, UNUSED_STATION_ALPHA, 1, 1].map((a) => Math.fround(a)));
+    expect([...g.underground.alphas]).toEqual([1, 1]);
   });
 
   it("handles an empty station list", () => {
-    expect(buildStationGlyphs([], scene).count).toBe(0);
+    const empty = buildStationGlyphs([], scene);
+    expect(empty.surface.count).toBe(0);
+    expect(empty.underground.count).toBe(0);
   });
 
   it("flags sensorElevM that doesn't equal surfaceElevM − sensorDepthM", () => {
