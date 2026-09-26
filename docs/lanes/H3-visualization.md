@@ -166,7 +166,7 @@ Type: Inter for UI, JetBrains Mono with tabular figures for numbers. Motion: 150
 
 - 60 fps with 2,000 events + terrain + bloom on the demo laptop.
 - First frame under 1.5 s from a warm cache; the reveal never waits on a network request.
-- No per-frame allocations in `useFrame`; per-instance data lives in typed-array attributes.
+- No per-frame allocations in `useFrame`; per-instance data lives in typed-array attributes. One deliberate exception: during the ~5 s reveal the scene calls `setRevealProgress` once per frame, which is one small zustand `set` (docs/02 routes `revealProgress` to the shell through the store).
 
 ### Visual QA checklist (WEB-08)
 
