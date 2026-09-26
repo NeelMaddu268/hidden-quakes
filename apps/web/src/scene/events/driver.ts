@@ -15,13 +15,15 @@ export function candidateLayerOpacity(filter: EventFilter): number {
   return filter === "public" ? 0 : 1;
 }
 
+/** Reveal-clock value for "revealed": far past every appearance and pop. */
+export const REVEALED_ELAPSED_S = 1e4;
+
 /**
- * The `uReveal` threshold for the candidate layer. Before the reveal nothing shows; after it every
- * instance is past its pop. During "revealing", `eventSlot` is where the reveal timeline is in
- * revealAt units (0 = first event appears, 1 = last event appears).
+ * `uRevealElapsed` for the candidate layer. Before the reveal nothing shows (−1 is before every
+ * appearance time); while revealing it's the reveal clock; once revealed, every instance has settled.
  */
-export function candidateRevealUniform(phase: DemoPhase, eventSlot: number, popWidth: number): number {
+export function candidateRevealUniform(phase: DemoPhase, elapsedS: number): number {
   if (phase === "public") return -1;
-  if (phase === "revealed") return 1 + popWidth;
-  return eventSlot;
+  if (phase === "revealed") return REVEALED_ELAPSED_S;
+  return elapsedS;
 }
