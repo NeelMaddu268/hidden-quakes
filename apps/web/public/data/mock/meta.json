@@ -157,7 +157,7 @@
     "originElevM": 1627.7,
     "originLat": 38.51,
     "originLon": -112.9,
-    "projection": "local equirectangular minus origin (mock)",
+    "projection": "EPSG:32612 minus origin",
     "refSurfaceElevM": 1627.7,
     "runId": "mock-13",
     "verticalExaggeration": 1.0

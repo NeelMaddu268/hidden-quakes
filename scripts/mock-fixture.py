@@ -26,8 +26,9 @@ streams come from ``numpy.random.Generator``, so the bytes also depend on the nu
 pinned in ``services/seismic/uv.lock``; nothing else in the environment leaks into the output.
 
 Coordinates follow docs/01 -> Conventions: one vertical (``elevM``, m ASL); ``enu`` is offset
-from the run.yaml origin (a local equirectangular approximation stands in for UTM 12N here, and
-``SceneMeta.projection`` says so); ``depthKm = (refSurfaceElevM - elevM) / 1000``. The window,
+from the run.yaml origin, with latitude/longitude derived from the synthetic ENU offsets through
+the frozen EPSG:32612-minus-origin convention (H2's ``hq.locate.coords``), so the baked terrain
+lines up (REQ-H3-4); ``depthKm = (refSurfaceElevM - elevM) / 1000``. The window,
 bbox, origin and reference surface come from ``configs/showcase/run.yaml`` so the mock sits in
 the real region. Evidence traces are placed by their own ``t0`` (each window opens
 ``evidence_pre_p_s`` before that trace's predicted P); windows need not share an origin.
@@ -47,7 +48,8 @@ import numpy as np
 import yaml
 from hq_contracts import models as m
 
-from hq.config.run import RunSection
+from hq.config.run import Origin, RunSection
+from hq.locate.coords import from_enu
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_YAML = REPO_ROOT / "services" / "seismic" / "configs" / "showcase" / "run.yaml"
@@ -65,9 +67,6 @@ BUNDLE_FILES: tuple[str, ...] = (
     "validation.json",
 )
 
-# Local equirectangular scale: the mock derives latitude/longitude from ENU meters with this
-# (the pipeline uses UTM 12N; docs/01). Longitude uses M_PER_DEG_LAT * cos(originLat).
-M_PER_DEG_LAT = 111_320.0
 
 
 # ------------------------------------------------------------------------------------------
@@ -101,9 +100,7 @@ class Knobs:
     # this is a mock, not a run of record, and the id should say so wherever it is displayed.
     run_id_prefix: str = "mock"  # runId = "mock-<seed>"
     git_sha: str = "mock0000"
-    projection: str = (
-        "local equirectangular minus origin (mock)"  # pipeline: EPSG:32612 minus origin
-    )
+    projection: str = "EPSG:32612 minus origin"  # docs/01 convention; same as the DEM and the exporter
     created_at: str = "2026-09-11T01:00:00Z"  # fixed so output is byte-identical per seed
     picker_model: str = "seisbench.PhaseNet"
     picker_weights: str = "synthetic"  # picks are invented; picker id "phasenet:synthetic"
@@ -430,12 +427,19 @@ class Frame:
     ref_surface_elev_m: float
     k: Knobs
 
-    def latitude(self, n: float) -> float:
-        return rnd(self.origin_lat + n / M_PER_DEG_LAT, self.k.dec_deg)
+    @property
+    def origin(self) -> Origin:
+        return Origin(lat=self.origin_lat, lon=self.origin_lon, elevM=self.origin_elev_m)
 
-    def longitude(self, e: float) -> float:
-        scale = M_PER_DEG_LAT * math.cos(math.radians(self.origin_lat))
-        return rnd(self.origin_lon + e / scale, self.k.dec_deg)
+    def latitude(self, n: float, e: float = 0.0) -> float:
+        """Latitude of an ENU offset, through the inverse UTM 12N projection (docs/01)."""
+        lat, _, _ = from_enu([e], [n], [0.0], self.origin)
+        return rnd(float(lat[0]), self.k.dec_deg)
+
+    def longitude(self, e: float, n: float = 0.0) -> float:
+        """Longitude of an ENU offset, through the inverse UTM 12N projection (docs/01)."""
+        _, lon, _ = from_enu([e], [n], [0.0], self.origin)
+        return rnd(float(lon[0]), self.k.dec_deg)
 
     def elev(self, elev_m: float) -> float:
         """Canonical rounded ``elevM``; every other vertical field derives from this value."""
@@ -711,8 +715,8 @@ def station_models(
                 id=st.id,
                 network=net,
                 station=sta,
-                latitude=frame.latitude(st.n),
-                longitude=frame.longitude(st.e),
+                latitude=frame.latitude(st.n, st.e),
+                longitude=frame.longitude(st.e, st.n),
                 surfaceElevM=st.surface_elev_m,
                 sensorDepthM=st.sensor_depth_m,
                 sensorElevM=rnd(st.sensor_elev_m, k.dec_m),
@@ -965,8 +969,8 @@ def event_models(
             runId=run_id,
             source="hq-pipeline",
             t=ev.t,
-            latitude=frame.latitude(ev.n),
-            longitude=frame.longitude(ev.e),
+            latitude=frame.latitude(ev.n, ev.e),
+            longitude=frame.longitude(ev.e, ev.n),
             elevM=ev.elev_m,
             depthKm=frame.depth_km(ev.elev_m),
             enu=frame.enu(ev.e, ev.n, ev.elev_m),
@@ -1071,8 +1075,8 @@ def make_catalog(
                 id=cat_id,
                 source=k.catalog_source,
                 t=row.t,
-                latitude=frame.latitude(row.n),
-                longitude=frame.longitude(row.e),
+                latitude=frame.latitude(row.n, row.e),
+                longitude=frame.longitude(row.e, row.n),
                 depthKm=row.depth_km,
                 depthDatum=k.catalog_depth_datum,
                 elevM=elev_m,
