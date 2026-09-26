@@ -18,12 +18,25 @@ import {
  */
 const NO_RAYCAST = () => undefined;
 
+const identityIds = new WeakMap<object, number>();
+let nextIdentityId = 0;
+
+/** A stable number per object identity, so a React key can follow an object without copying its deps. */
+function identityKey(o: object): number {
+  let id = identityIds.get(o);
+  if (id === undefined) {
+    id = ++nextIdentityId;
+    identityIds.set(o, id);
+  }
+  return id;
+}
+
 export interface EventsLayerProps {
   instances: EventInstances;
   color: string;
   /** Base radius in km before tier scaling. */
   size: number;
-  /** Minimum on-screen radius, CSS pixels (scaled by DPR internally). */
+  /** Minimum on-screen radius of a Tier A glyph, CSS pixels (scaled by DPR internally); lower tiers scale down from it. */
   minPx: number;
   /** Maximum on-screen radius, CSS pixels (scaled by DPR internally). */
   maxPx: number;
@@ -63,8 +76,8 @@ export function EventsLayer({
     [color, size, minPx, maxPx, glow, depthFog, surfaceY],
   );
   // three.js caches a material's uniforms object when it compiles the program, so new uniforms need a
-  // new material: key it on everything that rebuilds them.
-  const materialKey = `${color}|${size}|${minPx}|${maxPx}|${glow}|${depthFog}|${surfaceY}`;
+  // new material: key the material on the uniforms object's identity.
+  const materialKey = identityKey(uniforms);
 
   useLayoutEffect(() => {
     const m = mesh.current;
