@@ -11,13 +11,18 @@ download: {}
 known: {}
 
 # --- SEIS-03: preprocessing profiles -----------------------------------------------------------------
-# Counts stay counts (no response removal): PhaseNet normalizes internally. Gaps are never merged
-# or filled; every gap-separated segment is processed on its own.
+# Counts stay counts (no response removal): PhaseNet normalizes internally. Gaps are never bridged
+# or filled; every gap-separated segment is processed on its own (abutting pieces are joined first).
 preprocess:
   targetRateHz: 100.0        # PhaseNet input rate; every for_picking output trace has exactly this rate
   rateRelTol: 1.0e-9         # relative tolerance when matching an input rate to targetRateHz * M / L
   maxUpsampleFactor: 2       # largest L in rate * L / M = target (250 Hz: x2 then /5); more -> raise
-  minSegmentS: 10.0          # gap-separated segments shorter than this (real seconds) are dropped, counted
+  minSegmentModelS: 31.0     # shorter segments are dropped and counted. Model seconds (real s x TimeMap
+                             # factor). PhaseNet's window is 3001 samples = 30 s at 100 Hz; SeisBench
+                             # cannot window a shorter segment and would drop or merge it on its own
+                             # (with only a warning), so drop it here where it is counted. +1 s slack
+  joinMisalignmentSamples: 0.01   # pieces of one channel that abut (or overlap identically) with sample
+                                  # grids this close, in input samples, are joined; conflicting overlaps raise
   detrend: linear
   taper:                     # per segment, ObsPy Trace.taper
     type: hann
