@@ -81,3 +81,32 @@ catalog:
         - https://quake.utah.edu/resources/catalog-details/
         - https://earthquake.usgs.gov/data/comcat/index.php#depth
         - https://quake.ethz.ch/quakeml/Documents
+
+# Catalog matching (stage "match", hq.match, MATCH-02): one-to-one assignment of located events to
+# public-catalog events with scipy's linear_sum_assignment. Distance is epicentral, from the
+# horizontal ENU of both tables. Magnitude is never in the cost: magnitudes are calibrated on these
+# same matches.
+matching:
+  # cost = |dt| / dtScaleS + distance / distScaleM, summed over the chosen pairs and minimised
+  # among the one-to-one sets with the most admissible pairs.
+  dtScaleS: 2.0
+  distScaleM: 5000.0
+  # A pair is admissible only if |dt| <= maxDtS and distance <= maxDistM (both edges admissible).
+  # An inadmissible pair is never matched.
+  maxDtS: 2.0
+  maxDistM: 5000.0
+  # Tolerance pairs for match_sensitivity.parquet. Each pair reruns the full assignment with that
+  # pair as both the admissibility limit and the cost scale.
+  sensitivity:
+    - {dtS: 1.0, distM: 3000.0}
+    - {dtS: 2.0, distM: 5000.0}
+    - {dtS: 3.0, distM: 8000.0}
+  # Reasons for unmatched public events (hq.match.reasons), from the evidence files in the run dir.
+  reasons:
+    # A public event whose expected arrival windows have waveform data, picks, or associated picks
+    # on fewer than this many used stations gets that reason. 4 is the smallest station count in
+    # the association sweep (lane doc), so no swept associator setting can form an event below it.
+    minStations: 4
+    # Each expected arrival window [R / vMax, R / vMin] after the public origin time is widened by
+    # this much on both sides (s), for public origin-time and location error and pick error.
+    arrivalPadS: 1.0
