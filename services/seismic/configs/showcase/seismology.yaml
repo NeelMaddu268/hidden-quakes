@@ -107,6 +107,9 @@ associator:
   nSPicks: 1
   nPAndSPicks: 0
   toleranceS: 0.3                     # velocity model tolerance
+  # Not knobs, fixed by design and recorded with the others: second_pass_overwrites null (no
+  # second pass), velocity_model_location null (location uses the association model), crs null
+  # (coordinates are projected in hq.associate.frame).
   associationCutoffDistanceKm: null   # null: every station takes part in the space partitioning
   # Overlap between time slices. Must cover the largest S travel time from any station to any
   # point of the search volume; the stage computes that from the tables and fails if it does not.

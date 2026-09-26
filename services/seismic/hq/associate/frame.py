@@ -1,14 +1,17 @@
 """PyOcto's coordinate frame and our search volume (LOC-03).
 
-PyOcto 0.2.0 works in a local Cartesian frame in km with z pointing down. Its docs
-(``data_formats.rst``) and ``OctoAssociator.transform_stations`` put ``z = -elevation / 1000``: km
-below sea level, the same datum as our ``elevM``. The station-specific 1D model looks a point up at
+PyOcto 0.2.0 works in a local Cartesian frame in km with z pointing down.
+``OctoAssociator.transform_stations`` (``associator.py``) puts ``z = -elevation / 1000`` and the
+``StationSpecificVelocityModel1D`` docstring measures depth below sea level: km below sea level,
+the same datum as our ``elevM``. The station-specific 1D model looks a point up at
 table depth ``z - station.z + n_padding * delta`` (``VelocityModel.cpp``), so the event and the
 station must share that datum; both use ``z = -elevM / 1000``, stations at ``sensorElevM``.
 
 Horizontally, PyOcto's ``x``/``y`` are our ENU ``e``/``n`` in km (UTM 12N minus the run origin,
-``hq.locate.coords``). PyOcto measures distance as the Euclidean norm in that frame; UTM's scale
-factor is about 0.99993 here, a 7 m error over 100 km, so no other projection is needed.
+``hq.locate.coords``). PyOcto measures distance as the Euclidean norm in that frame. UTM's scale
+factor across the showcase bbox is 0.99984-1.00006 (0.99994 at the origin; pyproj
+``get_factors``), at most 16 m per 100 km, negligible next to ``minNodeSizeLocationKm``, so no
+other projection is needed.
 """
 
 from dataclasses import dataclass
