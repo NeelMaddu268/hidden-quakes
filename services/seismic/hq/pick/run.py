@@ -74,8 +74,9 @@ hold stations.parquet, and does not touch run.json)::
         [--stations UU.FORK,UU.NMU] [--start 2026-09-10T09:00:00Z --end 2026-09-10T11:00:00Z]
 
 ``python -m hq.pick.run`` prints a harmless runpy ``RuntimeWarning`` ("found in sys.modules"):
-``hq.pick`` imports this module to expose the stage function as ``hq.pick.run`` (H4's registry
-calls ``getattr(hq.pick, "run")``), so the module is already loaded when runpy starts it. The
+``hq.pick`` imports this module to expose the stage function as ``hq.pick.run`` (a convenience:
+H4's registry imports this module and takes its ``run``), so the module is already loaded when
+runpy starts it. The
 ``__main__`` block below hands off to that imported copy, so spawned workers always unpickle
 ``hq.pick.run.*``. For the same reason ``import hq.pick.run as m`` binds the stage FUNCTION; use
 ``from hq.pick.run import ...`` or ``importlib.import_module("hq.pick.run")`` for the module.

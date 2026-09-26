@@ -11,7 +11,8 @@ data file is noticed and that channel-day is fetched again instead of being trus
 Works for any window: the showcase day, a 10-minute event window, or the last two hours in Live
 mode (chunks that ended less than ``provisionalLagS`` before they were fetched are refetched).
 Live mode calls ``download_window`` directly with its own station list: the stage below keeps
-only ``usedInRun`` stations, which SEIS-01 derives from daily availability.
+only ``usedInRun`` stations, which SEIS-01 derives from MUSTANG daily availability and, where that
+has no measurement, from its rate probes.
 """
 
 from __future__ import annotations

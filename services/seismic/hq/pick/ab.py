@@ -23,9 +23,11 @@ base profile.
 Writes to ``runs/<id>/known/``: ``ab.csv`` (one row per event x weights x profile, one summary
 row per weights x profile, and the like-for-like variant comparison rows), ``ab.json`` (chosen
 weights, adopted profiles, Check B), ``picks.parquet`` (every pick >= threshold from the chosen
-combination, ``Pick`` schema) and one ``record_section_<eventId>.png`` per event.
+combination, ``Pick`` schema) and one ``record_section_<eventId>.png`` per event; ``run(ctx)``
+also writes ``pick_known.record.json`` (runtime, counts, params).
 
-CLI (does not update ``run.json``; the stage entry point ``run(ctx)`` does)::
+CLI: writes everything above except ``known/pick_known.record.json``, which only ``run(ctx)``
+writes; neither touches ``run.json`` (pick_known is a sub-step, not a registered stage)::
 
     uv run python -m hq.pick.ab --run-dir <dir> --config-dir configs/showcase --cache-dir <dir>
 """
@@ -1228,7 +1230,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print()
     for name, path in result.paths.items():
         print(f"{name}: {path}")
-    print("(CLI run: run.json is not updated; run the stage through hq to record it)")
+    print("(CLI run: known/pick_known.record.json not written; hq.pick.ab.run(ctx) writes it)")
     return 0
 
 

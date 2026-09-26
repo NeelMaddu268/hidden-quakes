@@ -164,8 +164,9 @@ def read_window(station_id: str, t0: float, t1: float, *, cache_dir: Path) -> ob
     """Raw counts for ``[t0, t1]`` from the cache, both ends inclusive (ObsPy trim semantics).
 
     A sample stamped exactly at ``t1`` is returned, so consecutive windows ``[a, b]`` and
-    ``[b, c]`` share that one sample; drop it on one side when concatenating. Gaps stay gaps: every continuous run of samples is its own trace and nothing is ever
-    zero-filled. Contiguous pieces (e.g. across midnight) are joined by ObsPy's cleanup merge,
+    ``[b, c]`` share that one sample; drop it on one side when concatenating. Gaps stay gaps:
+    every continuous run of samples is its own trace and nothing is ever zero-filled. Contiguous
+    pieces (e.g. across midnight) are joined by ObsPy's cleanup merge,
     which never fills. Missing data gives fewer or shorter traces, not fabricated samples.
     Returns every cached channel of the station; callers select ``Station.channels``.
     Read an hour or so at a time: a day of a 1,000 Hz triplet is about 1 GB in memory.
