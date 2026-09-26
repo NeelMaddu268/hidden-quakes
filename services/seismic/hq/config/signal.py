@@ -499,8 +499,117 @@ class PickerConfig(_Section):
 # --- SEIS-07: STA/LTA baseline ----------------------------------------------------------------------
 
 
+def _strictly_increasing(name: str, values: tuple[float, ...]) -> None:
+    if list(values) != sorted(set(values)):
+        raise ValueError(f"{name} must be strictly increasing, got {values}")
+
+
+class BaselinePhase(_Section):
+    """Recursive STA/LTA windows for one phase, in REAL seconds (also for time-stretched input)."""
+
+    components: str = Field(min_length=1)  # model component letters, e.g. "Z" or "NE"
+    staS: float = Field(gt=0.0)
+    ltaS: float = Field(gt=0.0)
+    warmupS: float = Field(gt=0.0)  # CF is zeroed this long after every segment start
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselinePhase":
+        if len(set(self.components)) != len(self.components):
+            raise ValueError(f"components has duplicates: {self.components!r}")
+        if self.staS >= self.ltaS:
+            raise ValueError(f"staS {self.staS} must be below ltaS {self.ltaS}")
+        if self.warmupS < self.ltaS:
+            raise ValueError(f"warmupS {self.warmupS} must be at least ltaS {self.ltaS}")
+        return self
+
+
+class BaselineBandpass(_Section):
+    """Causal Butterworth bandpass applied before the STA/LTA, in real Hz."""
+
+    lowHz: float = Field(gt=0.0)
+    highHz: float = Field(gt=0.0)
+    corners: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselineBandpass":
+        if self.lowHz >= self.highHz:
+            raise ValueError(f"lowHz {self.lowHz} must be below highHz {self.highHz}")
+        return self
+
+
+class BaselineThresholds(_Section):
+    """STA/LTA trigger on/off levels (``trigger_onset`` thres1/thres2) for P and S."""
+
+    pOn: float = Field(gt=0.0)
+    pOff: float = Field(gt=0.0)
+    sOn: float = Field(gt=0.0)
+    sOff: float = Field(gt=0.0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselineThresholds":
+        if self.pOff >= self.pOn or self.sOff >= self.sOn:
+            raise ValueError(f"off thresholds must be below on thresholds: {self}")
+        return self
+
+
+class BaselineSweep(_Section):
+    """Grid pOn x sOn x offLevels; each off level is used for both phases at that grid point."""
+
+    pOn: tuple[float, ...] = Field(min_length=1)
+    sOn: tuple[float, ...] = Field(min_length=1)
+    offLevels: tuple[float, ...] = Field(min_length=1)
+    scoreWithH2: bool  # score every grid point through H2's associate..assign_tiers, once merged
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselineSweep":
+        for name in ("pOn", "sOn", "offLevels"):
+            _strictly_increasing(f"sweep.{name}", getattr(self, name))
+        if self.offLevels[0] <= 0.0:
+            raise ValueError(f"sweep.offLevels must be positive, got {self.offLevels}")
+        if self.offLevels[-1] >= min(self.pOn[0], self.sOn[0]):
+            raise ValueError("every sweep.offLevels value must be below every sweep on level")
+        return self
+
+
 class BaselineConfig(_Section):
-    """Classical recursive STA/LTA picker and its threshold sweep."""
+    """Classical recursive STA/LTA picker and its threshold sweep (``hq.baseline``).
+
+    The gap-edge distance is not here: the baseline uses ``picker.gapEdgeS``, the same number
+    PhaseNet's full-window stage passes to ``hq.preprocess.chunks.pick_is_kept``.
+    """
+
+    prob: float = Field(ge=0.0, le=1.0)  # Pick.prob of every trigger; see signal.yaml
+    minSegmentMarginS: float = Field(ge=0.0)  # segments shorter than warmupS + this are skipped
+    maxWorkers: int = Field(ge=1)  # stations processed in parallel (threads); 1 = inline
+    settleLtaMultiple: float = Field(gt=0.0)  # overlapS must hold this many ltaS before a keep
+    prefilter: dict[str, BaselineBandpass] = Field(min_length=1)  # per preprocess profile
+    p: BaselinePhase
+    s: BaselinePhase
+    pHorizontalTolS: float = Field(ge=0.0)  # per horizontal: a trigger on this near a P is the P
+    minSMinusPS: float = Field(ge=0.0)  # S is the first horizontal trigger in
+    maxSMinusPS: float = Field(gt=0.0)  # [tP + minSMinusPS, tP + maxSMinusPS]
+    chosen: BaselineThresholds  # thresholds of picks_stalta.parquet; must be a sweep grid point
+    sweep: BaselineSweep
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselineConfig":
+        if self.minSMinusPS >= self.maxSMinusPS:
+            raise ValueError(
+                f"minSMinusPS {self.minSMinusPS} must be below maxSMinusPS {self.maxSMinusPS}"
+            )
+        shared = set(self.p.components) & set(self.s.components)
+        if shared:
+            raise ValueError(f"p and s components overlap: {sorted(shared)}")
+        c, sw = self.chosen, self.sweep
+        on_grid = (
+            c.pOff == c.sOff and c.pOn in sw.pOn and c.sOn in sw.sOn and c.pOff in sw.offLevels
+        )
+        if not on_grid:
+            raise ValueError(
+                f"chosen {c.model_dump()} is not a sweep grid point: needs pOn in sweep.pOn, "
+                "sOn in sweep.sOn and pOff == sOff in sweep.offLevels"
+            )
+        return self
 
 
 class SignalConfig(_Section):
