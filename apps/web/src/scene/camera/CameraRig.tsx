@@ -5,34 +5,28 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { motion } from "@hq/visualization";
 import { useEffect, useLayoutEffect, useRef, type ComponentRef } from "react";
 import type { Camera } from "three";
-import { useDemo } from "../../state/demo";
+import { onDemoReset, useDemo } from "../../state/demo";
 import type { SceneBounds } from "./bounds";
 import { presetPose, type CameraPose } from "./presets";
+import { aspectOf, boundsSignature, dropOrbitMomentum, ORBIT } from "./rig";
 import { createTween, startTween, stepTween, type PoseTween } from "./tween";
 
 type Controls = ComponentRef<typeof OrbitControls>;
 
-/** Drops any leftover damping velocity so a programmatic pose isn't nudged afterwards. */
-function settleControls(c: Controls): void {
-  const damping = c.enableDamping;
-  c.enableDamping = false;
-  c.update();
-  c.enableDamping = damping;
-}
-
 /** Puts camera and orbit target exactly on `pose` and cancels any running move. */
 function snapTo(camera: Camera, c: Controls, pose: CameraPose, tween: PoseTween): void {
   tween.active = false;
+  dropOrbitMomentum(c, camera.position);
   camera.position.set(pose.position[0], pose.position[1], pose.position[2]);
   c.target.set(pose.target[0], pose.target[1], pose.target[2]);
+  c.update();
   c.enabled = true;
-  settleControls(c);
 }
 
 /**
  * Orbit camera with the docs/02 presets. `setView` tweens to a preset over `motion.scene`; `reset()`
- * (phase back to "public") tweens back to the view's preset. User orbiting works between moves and
- * is disabled while one runs.
+ * tweens back to the view's preset (even when no store field changed, e.g. R after orbiting). User
+ * orbiting works between moves and is disabled while one runs.
  */
 export function CameraRig({ bounds }: { bounds: SceneBounds }) {
   const camera = useThree((s) => s.camera);
@@ -40,38 +34,49 @@ export function CameraRig({ bounds }: { bounds: SceneBounds }) {
   const height = useThree((s) => s.size.height);
   const controls = useRef<Controls>(null);
   const tween = useRef<PoseTween>(createTween());
-  const aspect = useRef(1);
+  const aspect = useRef(aspectOf(width, height));
+  const framed = useRef<string | null>(null);
 
   useLayoutEffect(() => {
-    aspect.current = width / Math.max(height, 1);
+    aspect.current = aspectOf(width, height);
   }, [width, height]);
 
-  // New framing (a bundle loaded or changed): snap to the current view's preset.
+  // New framing: snap to the current view's preset, but only when the framing really changed and the
+  // demo is at its start (a refetch returning equal data never yanks the camera mid-orbit or mid-reveal).
   useLayoutEffect(() => {
     const c = controls.current;
     if (!c) return;
-    snapTo(camera, c, presetPose(useDemo.getState().view, bounds, aspect.current), tween.current);
+    const signature = boundsSignature(bounds);
+    const first = framed.current === null;
+    if (signature === framed.current) return;
+    framed.current = signature;
+    const { view, phase } = useDemo.getState();
+    if (first || phase === "public") snapTo(camera, c, presetPose(view, bounds, aspect.current), tween.current);
   }, [bounds, camera]);
 
-  useEffect(
-    () =>
-      useDemo.subscribe((s, prev) => {
-        const viewChanged = s.view !== prev.view;
-        const wasReset = s.phase === "public" && prev.phase !== "public";
-        const c = controls.current;
-        if (!c || !(viewChanged || wasReset)) return;
-        const pose = presetPose(s.view, bounds, aspect.current);
-        startTween(tween.current, camera.position.toArray(), c.target.toArray(), pose, motion.scene / 1000);
-        c.enabled = false;
-      }),
-    [bounds, camera],
-  );
+  useEffect(() => {
+    const moveTo = (pose: CameraPose) => {
+      const c = controls.current;
+      if (!c) return;
+      dropOrbitMomentum(c, camera.position);
+      startTween(tween.current, camera.position.toArray(), c.target.toArray(), pose, motion.scene / 1000);
+      c.enabled = false;
+    };
+    const offView = useDemo.subscribe((s, prev) => {
+      if (s.view !== prev.view) moveTo(presetPose(s.view, bounds, aspect.current));
+    });
+    const offReset = onDemoReset(() => moveTo(presetPose(useDemo.getState().view, bounds, aspect.current)));
+    return () => {
+      offView();
+      offReset();
+    };
+  }, [bounds, camera]);
 
   useFrame((_, delta) => {
     const c = controls.current;
     if (!c || !tween.current.active) return;
     const done = stepTween(tween.current, delta, camera.position, c.target);
-    settleControls(c);
+    c.update();
     if (done) c.enabled = true;
   });
 
@@ -80,9 +85,9 @@ export function CameraRig({ bounds }: { bounds: SceneBounds }) {
       ref={controls}
       makeDefault
       enableDamping
-      dampingFactor={0.08}
-      minDistance={0.3}
-      maxDistance={bounds.radius * 20}
+      dampingFactor={ORBIT.dampingFactor}
+      minDistance={ORBIT.minDistanceKm}
+      maxDistance={bounds.radius * ORBIT.maxDistanceRadii}
     />
   );
 }
