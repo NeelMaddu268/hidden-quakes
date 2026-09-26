@@ -681,10 +681,29 @@ def test_stage_gate_leaves_magnitudes_null(
 def test_stage_fails_loudly_without_enough_calibration_events(
     world: World, make_ctx: Any, run_section: RunSection, seismology_config: SeismologyConfig
 ) -> None:
+    """A failure clears what an earlier run left: magnitude.json, magnitudes, the record."""
+    stale = MagCalibration(n=9, looMae=0.05, coefficients={"a": 1.0, "b": 1.0, "c": 0.0})
+    world.path("magnitude.json").write_text(stale.model_dump_json())
+    events = read_table(world.path("events.parquet"))
+    events["magnitude_value"] = 1.5
+    events["magnitude_type"] = pd.array(["ML_cal"] * len(events), dtype="string")
+    write_table(events, world.path("events.parquet"), "SeismicEvent")
+    before = pq.read_table(world.path("events.parquet"))
     cfg = _stage_cfg(seismology_config, minStations=5)  # only four stations are usable
+    ctx = _ctx(make_ctx, world, run_section, cfg)
     with pytest.raises(MagnitudeError, match="calibration events"):
-        magnitude_pkg.run(_ctx(make_ctx, world, run_section, cfg))
+        magnitude_pkg.run(ctx)
     assert not world.path("magnitude.json").exists()
+    after = pq.read_table(world.path("events.parquet"))
+    for name in before.schema.names:
+        if not name.startswith("magnitude_"):
+            assert after.column(name).equals(before.column(name)), name
+    out = read_table(world.path("events.parquet"))
+    assert out["magnitude_value"].isna().all() and out["magnitude_type"].isna().all()
+    [rec] = ctx.records
+    assert rec["counts"] == {"magnitudes": 0, "failed": 1}
+    assert "calibration events" in rec["params"]["magnitude"]["failed"]
+    assert not list(world.run_dir.glob("*.part"))
 
 
 def test_stage_rejects_stale_matches(

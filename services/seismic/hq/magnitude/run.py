@@ -16,8 +16,14 @@ Reads ``events.parquet`` (stage ``tier``), ``arrivals.parquet``, ``stations.parq
    ``minStations`` usable station magnitudes, only when ``looMae <= maxLooMae``. Otherwise (the
    docs/03 kill switch) every magnitude is null and the stage logs it as an error. Every other
    ``events.parquet`` column is kept identical (checked on the written file with pyarrow before it
-   replaces the old one); both files are written under ``.part`` names and moved into place
-   together.
+   replaces the old one). Both files are written and checked under ``.part`` names; then the old
+   ``magnitude.json`` is removed, ``events.parquet`` moved into place, then ``magnitude.json``
+   (two moves, not one atomic step: a crash between them leaves no ``magnitude.json``).
+
+On any failure (too few calibration events, stale matches, a missing column, ...) the stage
+removes ``magnitude.json``, sets every ``events.parquet`` magnitude to null, records the failure
+under ``ProcessingRun.matching["magnitude"]["failed"]`` and raises again, so no calibration or
+magnitude from an earlier run stays next to tables it was not computed from.
 
 ``n`` is the number of calibration events with a leave-one-event-out prediction (the events the
 MAE averages over). ``ctx.record`` gets the counts and, under ``ProcessingRun.matching["magnitude"]``
@@ -268,11 +274,52 @@ def _write(
         text = json.dumps(calibration.model_dump(mode="json"), indent=2, allow_nan=False)
         _part(json_path).write_text(text + "\n", encoding="utf-8")
         MagCalibration.model_validate_json(_part(json_path).read_text(encoding="utf-8"))
-        for path in targets:
-            os.replace(_part(path), path)
+        # Not atomic as a pair: the old magnitude.json goes first, so a crash between the two
+        # moves leaves the new events.parquet with no magnitude.json, never with the old one.
+        json_path.unlink(missing_ok=True)
+        os.replace(_part(events_path), events_path)
+        os.replace(_part(json_path), json_path)
     finally:
         for path in targets:
             _part(path).unlink(missing_ok=True)
+
+
+def _clear_outputs(ctx: RunContext, error: BaseException, runtime_s: float) -> None:
+    """After a failure: no magnitude.json, no magnitude in events.parquet, and a run record that
+    says the stage failed, so nothing from an earlier run outlives the tables it came from."""
+    json_path = ctx.path(MAGNITUDE_JSON)
+    removed = json_path.is_file()
+    json_path.unlink(missing_ok=True)
+    events_path = ctx.path(EVENTS_TABLE)
+    nulled = 0
+    if events_path.is_file():
+        events = read_table(events_path)
+        nulled = int(events["magnitude_value"].notna().sum())
+        if nulled:
+            events_out = _with_magnitudes(events, None)
+            try:
+                write_table(events_out, _part(events_path), SeismicEvent.__name__)
+                check_round_trip(events_path, _part(events_path), events_out)
+                os.replace(_part(events_path), events_path)
+            finally:
+                _part(events_path).unlink(missing_ok=True)
+    log.error(
+        "magnitude: stage failed (%s: %s); %s, %d events.parquet magnitudes set to null",
+        type(error).__name__, error,
+        f"removed {MAGNITUDE_JSON}" if removed else f"no {MAGNITUDE_JSON} to remove", nulled,
+    )  # fmt: skip
+    ctx.record(
+        STAGE,
+        runtime_s=runtime_s,
+        counts={"magnitudes": 0, "failed": 1},
+        params={
+            RECORD_KEY: {
+                "failed": f"{type(error).__name__}: {error}",
+                "outputs": f"{MAGNITUDE_JSON} removed and every {EVENTS_TABLE} magnitude null",
+            }
+        },
+        field=RECORD_FIELD,
+    )
 
 
 def _preprocessing_record(ctx: RunContext) -> dict[str, Any]:
@@ -323,8 +370,17 @@ def _preprocessing_record(ctx: RunContext) -> dict[str, Any]:
 
 
 def run(ctx: RunContext) -> None:
-    """Stage ``magnitude`` (docs/02 §4); see the module docstring."""
+    """Stage ``magnitude`` (docs/02 §4); see the module docstring. On any failure the outputs of
+    an earlier run are cleared (``_clear_outputs``) and the error is raised again."""
     started = time.perf_counter()
+    try:
+        _run(ctx, started)
+    except Exception as error:
+        _clear_outputs(ctx, error, time.perf_counter() - started)
+        raise
+
+
+def _run(ctx: RunContext, started: float) -> None:
     cfg = ctx.config.seismology.magnitude
     run_section = ctx.config.run
     events_path = ctx.path(EVENTS_TABLE)
