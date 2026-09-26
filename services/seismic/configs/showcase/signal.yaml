@@ -1,0 +1,20 @@
+# Signal lane config (H1). Parsed by hq.config.signal.SignalConfig; unknown keys are an error.
+# One block per ticket. Every pipeline knob of the signal lane lives here and is recorded in run.json.
+
+# --- SEIS-01: station inventory and channel selection ------------------------------------------------
+stations: {}
+
+# --- SEIS-05: full-window download and cache ---------------------------------------------------------
+download: {}
+
+# --- SEIS-02: known-event windows --------------------------------------------------------------------
+known: {}
+
+# --- SEIS-03: preprocessing profiles -----------------------------------------------------------------
+preprocess: {}
+
+# --- SEIS-04 / SEIS-06: PhaseNet picking -------------------------------------------------------------
+picker: {}
+
+# --- SEIS-07: STA/LTA baseline -----------------------------------------------------------------------
+baseline: {}
