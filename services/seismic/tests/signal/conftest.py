@@ -44,6 +44,10 @@ class FakeRunContext:
         params: dict | None = None,
         field: str | None = None,
     ) -> None:
+        from hq.runs import STAGES  # H4's registry: record() rejects any other stage name
+
+        if stage not in {s.name for s in STAGES}:
+            raise ValueError(f"unknown stage {stage!r}: RunContext.record would reject it")
         self.records[stage] = {
             "runtime_s": runtime_s,
             "counts": counts,

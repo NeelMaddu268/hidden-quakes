@@ -64,6 +64,7 @@ stations:
     backoffS: 2.0
     cacheFile: availability_mustang.json   # raw replies; delete it to re-query
     onMissing: used             # no measurement (MUSTANG lag): coverage null, usedInRun true
+    onMissingNoProbeData: unused  # ...unless no rate probe got data either (full-day window)
   rateCheck:
     # StationXML can disagree with the data (an epoch saying 200 Hz that serves 100 Hz). The
     # profile follows the rate, so each chosen triplet is probed with a few seconds of dataselect.

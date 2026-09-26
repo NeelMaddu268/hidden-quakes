@@ -976,7 +976,10 @@ def test_run_known_windows_end_to_end(fake_ctx, run_section: RunSection) -> None
     cfg = fake_ctx.config.signal.known
     assert [e["eventId"] for e in doc["events"]] == ["ev3", "ev2", "ev1"][: cfg.nEvents]
     assert load_windows(fake_ctx.path("known") / "windows.json") == doc
-    record = fake_ctx.records["known_windows"]
+    assert "known_windows" not in fake_ctx.records  # a sub-step, not a registered stage
+    record = json.loads(
+        (fake_ctx.path("known") / "known_windows.record.json").read_text(encoding="utf-8")
+    )
+    assert record["step"] == "known_windows" and record["runtimeS"] >= 0
     assert record["counts"]["events"] == len(doc["events"])
-    assert record["params"] == {"known_windows": cfg.model_dump(mode="json")}
-    assert record["field"] == "picker"
+    assert record["params"] == cfg.model_dump(mode="json")
