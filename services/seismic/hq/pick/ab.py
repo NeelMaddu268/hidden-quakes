@@ -1168,6 +1168,8 @@ class StageContext(Protocol):
     @property
     def config(self) -> Any: ...
 
+    def path(self, name: str) -> Path: ...
+
     def record(
         self,
         stage: str,
@@ -1186,14 +1188,13 @@ def run(ctx: StageContext) -> None:
     """
     from hq.ingest.windows import KNOWN_DIR, write_step_record
 
-    result = run_ab(ctx.run_dir, ctx.cache_dir, ctx.config.signal)
-    write_step_record(
-        ctx.path(KNOWN_DIR),
-        STAGE,
-        result.runtimeS,
-        result.counts,
-        ctx.config.signal.picker.model_dump(mode="json"),
-    )
+    signal = ctx.config.signal
+    result = run_ab(ctx.run_dir, ctx.cache_dir, signal)
+    params = {
+        **signal.picker.model_dump(mode="json"),
+        "preprocess": signal.preprocess.model_dump(mode="json"),  # the profiles decide the picks
+    }
+    write_step_record(ctx.path(KNOWN_DIR), STAGE, result.runtimeS, result.counts, params)
 
 
 def load_signal_config(config_dir: Path) -> SignalConfig:

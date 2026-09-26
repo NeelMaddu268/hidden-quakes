@@ -946,7 +946,8 @@ def run_picking(
         params={
             **cfg.picker.model_dump(mode="json"),
             "weightsUsedByProfile": weights_used,
-            "chunks": cfg.preprocess.chunks.model_dump(mode="json"),
+            "chunks": cfg.preprocess.chunks.model_dump(mode="json"),  # also in preprocess; kept
+            "preprocess": cfg.preprocess.model_dump(mode="json"),  # every knob (CLAUDE.md rule 8)
         },
     )
     update_run = getattr(ctx, "update_run", None)
