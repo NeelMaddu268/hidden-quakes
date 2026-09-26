@@ -1,0 +1,24 @@
+# Pinned copy of configs/showcase/run.yaml (LOC-00) for the SEIS-01 inventory tests. The recorded
+# fixtures next to this file (channels.xml, dem.json, mustang_percent_availability.json) were
+# captured for this window and bbox, so the tests must not follow later edits of run.yaml.
+
+name: showcase
+
+# One UTC day, start inclusive, end exclusive. Catalog query and waveform window share these bounds.
+windowStart: "2026-09-10T00:00:00Z"
+windowEnd: "2026-09-11T00:00:00Z"
+
+# minLon, minLat, maxLon, maxLat (degrees, WGS84). About 52 km x 51 km centered on the origin.
+bbox: [-113.20, 38.28, -112.60, 38.74]
+
+# Round-number reference point near the center of the region's public-catalog activity.
+# It is a coordinate reference only, not the location of any well or facility.
+# elevM is the ground surface there from the USGS 3DEP 1 m DEM (EPQS query, 1627.74 m ASL).
+origin:
+  lat: 38.51
+  lon: -112.90
+  elevM: 1627.7
+
+# Datum for the display depth: depthKm = (refSurfaceElevM - elevM) / 1000.
+# Same ground surface as the origin, so depth 0 is the ground at the origin.
+refSurfaceElevM: 1627.7
