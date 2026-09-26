@@ -1,0 +1,34 @@
+# Export section (RUN-01, H4). Parsed by hq.config.export.ExportConfig; unknown keys are an error.
+# Every knob the exporter (hq.export) uses lives here, so no number in the bundle comes from code.
+
+# Bundles to write, one per data mode, into apps/web/public/data/<mode>/.
+# "mock" is not allowed: synthetic bundles come only from scripts/mock-fixture.py.
+modes: [showcase]
+
+# How SceneMeta.heroEventId is chosen (the event the E key opens).
+# tierA_most_stations: the Tier A event located with the most stations.
+heroRule: tierA_most_stations
+
+# Waveform snippets for the evidence drawer (EventEvidence).
+evidence:
+  # Seconds of waveform before the predicted P arrival at each station.
+  beforeS: 2.0
+  # Seconds after it. A snippet is beforeS + afterS long and must fit [minLengthS, maxLengthS].
+  afterS: 4.0
+  # Shortest snippet worth showing in the drawer, s (the contract describes 4-8 s snippets).
+  minLengthS: 4.0
+  # Longest snippet, s. Longer snippets make every evidence file heavier for no extra evidence.
+  maxLengthS: 8.0
+  # Zero-phase bandpass for the display copy, Hz (low, high). Recorded as EventEvidence.filterHz.
+  bandHz: [2.0, 20.0]
+  # Traces per event, closest stations first. The contract caps this at 16; the "evidence drawer"
+  # kill switch in docs/03 says drop to 8 if the drawer is slow or heavy.
+  maxTraces: 16
+  # Sample rate of the display copy, Hz. WaveformSnippet.dt = 1 / displayRateHz.
+  displayRateHz: 100.0
+  # Evidence files the web app fetches up front: the hero plus the first N in reveal order.
+  preloadCount: 20
+
+# Geothermal reference features (wells, facilities, boundaries), each with a cited SourceRef.
+# Empty until FEAT-01 sources a verified reference; the exporter then writes features.json from it.
+features: []
