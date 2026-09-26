@@ -4,6 +4,8 @@ Every interface one lane consumes from another is defined here. **Frozen at 8:30
 
 Treat everything below as a spec. H4's CONTRACT-01 agent implements the Python models and generates the TS; nobody pastes these blocks as code.
 
+Implementation notes (CONTRACT-01): every model rejects unknown keys (`extra="forbid"`), so a stray JSON key or a misspelled field is an error, not a silent drop. Python always serializes defaulted fields, so the generated TS has no optional fields.
+
 ## 1. Data models (Python source of truth)
 
 `packages/contracts/python/hq_contracts/models.py`. TS in `packages/contracts/ts/src/index.ts` is generated from these (`scripts/gen-contracts.sh`: `Bundle.model_json_schema()` → `json-schema-to-typescript`).
@@ -281,7 +283,7 @@ CONTRACT-01 also ships `packages/contracts/python/hq_contracts/io.py`:
 
 - `to_frame(models: list[BaseModel]) -> pd.DataFrame` and `from_frame(df, Model) -> list[Model]`
 - `write_table(df, path, model_name)` / `read_table(path) -> pd.DataFrame`: parquet with `schemaVersion` and `model` in the file metadata
-- **Flattening rule:** nested models become prefixed columns joined by `_` (`enu_e`, `quality_nStations`, `catalogMatch_dtS`). Lists stay list columns. `None` stays null. Times stay float64 epoch seconds.
+- **Flattening rule:** nested models become prefixed columns joined by `_` (`enu_e`, `quality_nStations`, `catalogMatch_dtS`). Lists stay list columns. `None` stays null. Times stay float64 epoch seconds. `dict`-typed fields (`Station.staticsS`, `SweepPoint.params`) are one JSON-text column, because a parquet struct can't hold a row-dependent key set; build frames with `to_frame` and read them with `from_frame` and you never see it.
 
 Every lane reads and writes run tables only through these helpers, so a column rename can't silently break a neighbor.
 
