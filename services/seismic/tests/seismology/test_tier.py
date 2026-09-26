@@ -297,6 +297,54 @@ def test_nearest_station_rule(cfg: SeismologyConfig) -> None:
     assert "refSurfaceElevM - elevM" in focal
 
 
+def test_nearest_station_rule_measures_depth_below_the_nearest_used_sensor(
+    cfg: SeismologyConfig,
+) -> None:
+    """With arrivals and stations the focal depth is the depth below the nearest used station's
+    sensor, so a borehole sensor tightens the rule and a sensor above the reference loosens it."""
+    factor = cfg.tiering.strictNearestStationFactor
+    models = [event(k, depth_m=3000.0, minEpiDistM=100.0) for k in range(12)]
+    borehole = REF - 500.0
+    below_borehole = borehole - event(13, depth_m=2000.0).elevM  # as the rule computes it
+    cases = [  # (depth below REF, minEpiDistM, nearest used sensor's elevation)
+        (2000.0, 5000.0, REF + 600.0),  # 2600 m below a high sensor: passes (fails vs REF)
+        (2000.0, factor * below_borehole, borehole),  # on the limit below a borehole: passes
+        (2000.0, factor * below_borehole + 1.0, borehole),  # just past it (passes vs REF)
+        (300.0, 100.0, borehole),  # above the borehole sensor: fails (passes vs REF)
+    ]
+    extra = [event(12 + i, depth_m=d, minEpiDistM=m) for i, (d, m, _) in enumerate(cases)]
+    events = located(models + extra)
+    matches = matches_for(events, [m.id for m in models])
+    _, arrivals = picks_and_arrivals(events)
+    stations = stations_for(events, {12 + i: elev for i, (_, _, elev) in enumerate(cases)})
+    reference = assign_tiers(events, matches, cfg)
+    out = assign_tiers(events, matches, cfg, arrivals=arrivals, stations=stations)
+    assert list(reference.events["tier"].iloc[12:]) == ["B", "A", "A", "A"]
+    assert list(out.events["tier"].iloc[:12]) == ["A"] * 12
+    assert list(out.events["tier"].iloc[12:]) == ["A", "A", "B", "B"]
+    assert out.events["tierReasons"].iloc[14][-1] == (
+        f"nearest station {station_id(14, 0)} 3001 m > {factor:g} x focal depth 1500 m "
+        "(epicentral, depth below its sensor): fails A"
+    )
+    assert out.events["tierReasons"].iloc[15][-1].endswith("focal depth -200 m (epicentral, "
+                                                            "depth below its sensor): fails A")
+    rule = out.tiering["rules"]["A"]["nearestStation"]
+    assert rule["focalDepthBelow"] == "nearestUsedSensor"
+    assert "sensorElevM - elevM" in rule["focalDepth"]
+    assert reference.tiering["rules"]["A"]["nearestStation"]["focalDepthBelow"] == (
+        "refSurfaceElevM"
+    )
+    moved = stations.copy()  # stored minEpiDistM no longer matches the station table
+    moved.loc[moved["id"] == station_id(12, 0), "enu_e"] += 1.0
+    with pytest.raises(TierError, match="minEpiDistM"):
+        assign_tiers(events, matches, cfg, arrivals=arrivals, stations=moved)
+    with pytest.raises(TierError, match="together"):
+        assign_tiers(events, matches, cfg, arrivals=arrivals)
+    lonely = arrivals[arrivals["eventId"] != events["id"].iloc[3]]
+    with pytest.raises(TierError, match="no used arrival"):
+        assign_tiers(events, matches, cfg, arrivals=lonely, stations=stations)
+
+
 # --- the final table ------------------------------------------------------------------------------
 
 
@@ -390,22 +438,45 @@ def test_inconsistent_inputs_fail_loudly(cfg: SeismologyConfig) -> None:
 # --- event picks ----------------------------------------------------------------------------------
 
 
+def station_id(i: int, j: int) -> str:
+    """The station of event ``i``'s ``j``-th pick (``stations_for`` places it)."""
+    return f"T.E{i:03d}{j}"
+
+
 def picks_and_arrivals(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     picks, arrivals = [], []
-    for eid, pids in zip(events["id"], events["pickIds"], strict=True):
+    for i, (eid, pids) in enumerate(zip(events["id"], events["pickIds"], strict=True)):
         for j, pid in enumerate(pids):
             phase = pid.rsplit(":", 1)[1]
-            picks.append(Pick(id=pid, stationId=f"T.S{j:02d}", phase=phase, t=T0, prob=0.7,
+            picks.append(Pick(id=pid, stationId=station_id(i, j), phase=phase, t=T0, prob=0.7,
                               picker="phasenet:test"))
-            arrivals.append({"eventId": eid, "stationId": f"T.S{j:02d}", "phase": phase,
+            arrivals.append({"eventId": eid, "stationId": station_id(i, j), "phase": phase,
                              "tPred": T0, "tObs": T0 + 0.01 * j, "residualS": 0.01 * j,
                              "pickId": pid, "usedInLocation": True})
         arrivals.append({"eventId": eid, "stationId": "T.S99", "phase": "P", "tPred": T0,
                          "tObs": T0, "residualS": 0.5, "pickId": f"dropped:{eid}",
                          "usedInLocation": False})  # outlier-dropped: not in pickIds
-    picks.append(Pick(id="unassociated", stationId="T.S00", phase="P", t=T0, prob=0.2,
+    picks.append(Pick(id="unassociated", stationId="T.S99", phase="P", t=T0, prob=0.2,
                       picker="phasenet:test"))
     return to_frame(picks, Pick), pd.DataFrame(arrivals)
+
+
+def stations_for(events: pd.DataFrame, nearest_elev: dict[int, float] | None = None
+                 ) -> pd.DataFrame:
+    """Stations consistent with each event's ``quality.minEpiDistM``: its first pick's station
+    exactly that far east of the epicentre (sensorElevM REF, or ``nearest_elev[i]``), later ones
+    500 m farther apart with sensors 5 km up (they would pass the rule if wrongly taken as the
+    nearest), and T.S99 (dropped arrivals only) on event 0's epicentre, 5 km up."""
+    rows = []
+    for i, (e, n, d, pids) in enumerate(zip(events["enu_e"], events["enu_n"],
+                                            events["quality_minEpiDistM"], events["pickIds"],
+                                            strict=True)):
+        for j in range(len(pids)):
+            elev = (nearest_elev or {}).get(i, REF) if j == 0 else REF + 5000.0
+            rows.append({"id": station_id(i, j), "enu_e": e + d + 500.0 * j, "enu_n": n,
+                         "sensorElevM": elev})
+    rows.append({"id": "T.S99", "enu_e": 0.0, "enu_n": 0.0, "sensorElevM": REF + 5000.0})
+    return pd.DataFrame(rows)
 
 
 def test_event_picks_carry_event_and_residual(cfg: SeismologyConfig) -> None:
@@ -437,6 +508,7 @@ def write_run(ctx: Any, *, flags: bool = True) -> tuple[pd.DataFrame, pd.DataFra
     events, matches, _ = seeded_world()
     final = assign_tiers(events, matches, ctx.config.seismology).events
     picks, arrivals = picks_and_arrivals(final)
+    write_table(stations_for(events), ctx.path("stations.parquet"), "Station")
     write_table(events, ctx.path("events_located.parquet"), "LocatedEvent")
     write_table(matches, ctx.path("matches.parquet"), "Match")
     write_table(arrivals, ctx.path("arrivals.parquet"), "Arrival")
@@ -470,19 +542,24 @@ def test_stage_writes_final_tables_and_record(
     assert params["thresholds"]["A"]["rmsS"]["label"] == "p75 of matched"
     assert params["thresholds"]["nMatched"] == N_MATCHED
     assert params["rules"]["A"]["mapOnVolumeTop"]["applied"]
+    assert params["rules"]["A"]["nearestStation"]["focalDepthBelow"] == "nearestUsedSensor"
+    assert params["input"]["stations"] == "stations.parquet"
     assert params["sweep"] == {"enabled": False}
     assert params["config"]["quantiles"] == {"A": 0.25, "B": 0.0}
 
 
-def test_stage_fails_on_a_depth_from_another_run(
+def test_stage_checks_depth_against_the_run_section(
     make_ctx: Any, run: RunSection, cfg: SeismologyConfig
 ) -> None:
     stage = importlib.import_module("hq.tier.run")
-    other = run.model_copy(update={"refSurfaceElevM": REF + 10.0})
-    ctx = make_ctx(other, cfg)
-    write_run(ctx, flags=False)
+    tol_m = cfg.tiering.consistencyTolM
+    close = make_ctx(run.model_copy(update={"refSurfaceElevM": REF + 0.5 * tol_m}), cfg)
+    write_run(close, flags=False)
+    stage.run(close)  # within tiering.consistencyTolM: round-off from another writer passes
+    other = make_ctx(run.model_copy(update={"refSurfaceElevM": REF + 10.0}), cfg)
+    write_run(other, flags=False)
     with pytest.raises(TierError, match="depthKm"):
-        stage.run(ctx)
+        stage.run(other)
 
 
 @pytest.mark.parametrize("first", [None, "hq.tier.run"])
@@ -521,8 +598,8 @@ def test_sweep_counts_tier_a_with_the_configured_runs_bars(
             typed_frame(None, PICK_DTYPES),
         )
 
-    def fake_locate(a: AssocResult) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-        return events.iloc[: len(a.events)].reset_index(drop=True), None
+    def fake_locate(a: AssocResult) -> tuple[pd.DataFrame, None, None]:
+        return events.iloc[: len(a.events)].reset_index(drop=True), None, None
 
     def fake_match(ev: pd.DataFrame) -> pd.DataFrame:  # only 3 matches: far below minMatched
         return matches_for(ev, list(ev["id"].iloc[:3]))
@@ -535,7 +612,7 @@ def test_sweep_counts_tier_a_with_the_configured_runs_bars(
         return [SweepRow(params=p, candidates=len(r.events), counts={}, score=evaluate(r),
                          runtime_s=0.5) for p, r in zip(grid, results, strict=True)]
 
-    points, record = score_sweep(run_points, SweepPipeline(fake_locate, fake_match),
+    points, record = score_sweep(run_points, SweepPipeline(fake_locate, fake_match, None),
                                  cfg, main)
     expected_a = [0 if n == 0 else int((assign_tiers(
         events.iloc[:n], matches_for(events.iloc[:n], []), cfg, thresholds=main
@@ -568,8 +645,7 @@ def test_stage_writes_sweep_parquet_when_enabled(
     stage = importlib.import_module("hq.tier.run")
     ctx = make_ctx(run, cfg_with(cfg, sweep={"enabled": True}))
     write_run(ctx)
-    for name, model in (("stations.parquet", "Station"), ("catalog.parquet", "CatalogEvent")):
-        write_table(pd.DataFrame({"id": ["x"]}), ctx.path(name), model)
+    write_table(pd.DataFrame({"id": ["x"]}), ctx.path("catalog.parquet"), "CatalogEvent")
     seen: list[Thresholds] = []
 
     def fake_score(run_points: Any, pipeline: Any, cfg: Any, thresholds: Thresholds) -> Any:
