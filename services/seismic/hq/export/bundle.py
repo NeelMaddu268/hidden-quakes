@@ -31,6 +31,7 @@ from hq_contracts.models import BundleMeta, GeoFeature, SeismicEvent, Station
 
 from hq.config.export import ExportConfig, ExportMode
 from hq.config.run import RunSection
+from hq.config.validate import BaselineConfig
 from hq.export.check import check_bundle
 from hq.export.errors import ExportError
 from hq.export.evidence import build_evidence
@@ -201,11 +202,14 @@ def _build(
     source: WaveformSource,
     cache_dir: Path,
     features_loader: FeaturesLoader,
+    baseline_cfg: BaselineConfig,
 ) -> tuple[dict[str, int], dict[str, int]]:
     events, catalog = apply_matches(tables.events, tables.catalog, tables.matches)
     events = assign_reveal_order(events)
     hero_id = choose_hero(events, cfg.heroRule)
-    summary = analysis_summary(tables.run.id, events, catalog, tables.validation, cfg.rounding)
+    summary = analysis_summary(
+        tables.run.id, events, catalog, tables.validation, cfg.rounding, baseline_cfg
+    )
     meta = BundleMeta(
         mode=mode,
         scene=scene_meta(tables.run.id, section, cfg, hero_id, tables.run.isSynthetic),
@@ -311,9 +315,12 @@ def export_bundle(
     *,
     cache_dir: Path,
     out_dir: Path,
+    baseline_cfg: BaselineConfig,
     features_loader: FeaturesLoader = load_features_lazily,
 ) -> ExportResult:
-    """Write the bundle for ``mode`` to ``out_dir`` (replaced atomically) and report counts."""
+    """Write the bundle for ``mode`` to ``out_dir`` (replaced atomically) and report counts.
+    ``baseline_cfg`` (the run's ``validate.yaml`` baseline section) is the rule for
+    ``AnalysisSummary.baseline``."""
     started = time.perf_counter()
     if mode not in cfg.modes:
         raise ExportError(f"mode {mode!r} is not in export.yaml modes {cfg.modes}")
@@ -325,7 +332,9 @@ def export_bundle(
     out_dir = Path(out_dir)
     log.info("export: writing %s bundle for run %s to %s", mode, tables.run.id, out_dir)
     sizes, counts = replace_directory(
-        lambda tmp: _build(tmp, tables, cfg, section, mode, source, cache_dir, features_loader),
+        lambda tmp: _build(
+            tmp, tables, cfg, section, mode, source, cache_dir, features_loader, baseline_cfg
+        ),
         out_dir,
     )
     runtime_s = time.perf_counter() - started

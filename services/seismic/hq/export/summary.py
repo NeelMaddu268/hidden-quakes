@@ -11,7 +11,6 @@ import pandas as pd
 from hq_contracts.models import (
     AnalysisSummary,
     BaselineGain,
-    BaselineRow,
     CatalogEvent,
     CatalogMatch,
     SceneMeta,
@@ -23,8 +22,11 @@ from hq_contracts.models import (
 
 from hq.config.export import ExportConfig, HeroRule, RoundingConfig
 from hq.config.run import RunSection
+from hq.config.validate import BaselineConfig
 from hq.export.errors import ExportError
 from hq.export.tables import str_or_none
+from hq.validate.baseline import baseline_gain as validate_baseline_gain
+from hq.validate.errors import ValidateError
 
 log = logging.getLogger(__name__)
 
@@ -33,8 +35,6 @@ TIER_RANK: dict[str, int] = {tier: rank for rank, tier in enumerate(TIERS)}
 STRICT_TIER = TIERS[0]  # "strict" in the summary and the UI means Tier A
 # SceneMeta.projection: the ENU convention every lane shares (docs/01 -> Conventions, docs/02 §1).
 PROJECTION = "EPSG:32612 minus origin"
-BASELINE_PROFILES: tuple[str, ...] = ("full", "p_only")
-GAIN_PROFILE = "full"  # the profile whose gain the summary quotes
 
 
 def rnd(value: float, decimals: int) -> float:
@@ -149,41 +149,23 @@ def tier_counts(events: list[SeismicEvent]) -> TierCounts:
     return TierCounts(**counts)
 
 
-def baseline_gain(validation: Validation | None, rounding: RoundingConfig) -> BaselineGain | None:
-    """``AnalysisSummary.baseline``: the strict-count gain of PhaseNet over STA/LTA, quoted
-    only when both association profiles are in the table and the gain exceeds 1 in both."""
-    if validation is None or not validation.baseline:
+def baseline_gain(
+    validation: Validation | None, rounding: RoundingConfig, cfg: BaselineConfig | None
+) -> BaselineGain | None:
+    """``AnalysisSummary.baseline``: ``hq.validate.baseline.baseline_gain`` (the one rule: the
+    ``full`` profile's PhaseNet / STA/LTA Tier A ratio, claimed only when it holds in both
+    profiles) with the gain rounded for display. ``cfg`` is the run's ``validate.yaml``
+    baseline section; ``None`` means the caller has no run config and claims nothing
+    (``check_bundle`` verifies a claimed gain against its own row instead)."""
+    if validation is None or cfg is None:
         return None
-    rows: dict[tuple[str, str], BaselineRow] = {}
-    for row in validation.baseline:
-        key = (row.method, row.associationProfile)
-        if key in rows:
-            raise ExportError(f"validation.baseline has several rows for {key}")
-        rows[key] = row
-    needed = [(m, p) for p in BASELINE_PROFILES for m in ("phasenet", "stalta")]
-    missing = [key for key in needed if key not in rows]
-    if missing:
-        log.warning("export: baseline table lacks %s; no gain claimed", missing)
+    try:
+        gain = validate_baseline_gain(validation.baseline, cfg)
+    except ValidateError as exc:
+        raise ExportError(f"validation.baseline: {exc}") from exc
+    if gain is None:
         return None
-    gains: dict[str, float] = {}
-    for profile in BASELINE_PROFILES:
-        strict_stalta = rows[("stalta", profile)].tiers.A
-        strict_phasenet = rows[("phasenet", profile)].tiers.A
-        if strict_stalta == 0:
-            log.warning(
-                "export: STA/LTA has no Tier A events in profile %s; no gain claimed", profile
-            )
-            return None
-        gains[profile] = strict_phasenet / strict_stalta
-    if not all(g > 1.0 for g in gains.values()):
-        log.info("export: PhaseNet gain does not hold in every profile (%s); not claimed", gains)
-        return None
-    return BaselineGain(
-        associationProfile=GAIN_PROFILE,
-        strictPhasenet=rows[("phasenet", GAIN_PROFILE)].tiers.A,
-        strictStalta=rows[("stalta", GAIN_PROFILE)].tiers.A,
-        gain=rnd(gains[GAIN_PROFILE], rounding.gain),
-    )
+    return gain.model_copy(update={"gain": rnd(gain.gain, rounding.gain)})
 
 
 def analysis_summary(
@@ -192,8 +174,10 @@ def analysis_summary(
     catalog: list[CatalogEvent],
     validation: Validation | None,
     rounding: RoundingConfig,
+    baseline_cfg: BaselineConfig | None,
 ) -> AnalysisSummary:
-    """Every count from the event and catalog lists (``check_bundle`` recomputes them)."""
+    """Every count from the event and catalog lists (``check_bundle`` recomputes them);
+    ``baseline`` from ``validation.baseline`` under the run's ``baseline_cfg`` rule."""
     public = len(catalog)
     recovered = sum(1 for c in catalog if c.matchedEventId is not None)
     additional = [e for e in events if e.catalogMatch is None]
@@ -218,7 +202,7 @@ def analysis_summary(
             if events
             else 0.0
         ),
-        baseline=baseline_gain(validation, rounding),
+        baseline=baseline_gain(validation, rounding, baseline_cfg),
     )
 
 
