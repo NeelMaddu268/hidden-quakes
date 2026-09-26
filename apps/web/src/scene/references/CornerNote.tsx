@@ -23,8 +23,8 @@ export function cornerNoteAnchor(width: number, height: number, slot: number): {
 
 /**
  * A small permanent note pinned to the canvas's bottom-right corner, whatever the camera does.
- * Notes stack upward by `slot` (0 = bottom), so the scene's notes never overlap:
- * slot 0 = "Vertical ×N" (references), slot 1 = the abstract-surface note (terrain).
+ * Notes stack upward by `slot` (0 = bottom), so the scene's notes never overlap: the legend takes the
+ * bottom LEGEND_SLOTS (SceneLegend), then "Vertical ×N" (references), then the abstract-surface note.
  */
 export function CornerNote({ slot, testId, children }: { slot: number; testId: string; children: ReactNode }) {
   const width = useThree((s) => s.size.width);
