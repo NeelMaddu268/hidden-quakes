@@ -193,6 +193,16 @@ def test_bars_are_quantiles_of_the_matched_set(cfg: SeismologyConfig) -> None:
     assert assign_tiers(shifted, matches, cfg).tiering["thresholds"] == th
 
 
+def test_a_bar_on_the_metrics_bound_is_flagged(cfg: SeismologyConfig) -> None:
+    """A quarter of M without S picks puts the A bar at nS >= 0: recorded as excluding nothing."""
+    models = [event(k, nS=0 if k < 4 else 4) for k in range(12)]  # the 9th best of 12 is a 0
+    events = located(models)
+    bars = assign_tiers(events, matches_for(events, [m.id for m in models]), cfg).tiering[
+        "thresholds"]["A"]
+    assert bars["nS"]["value"] == 0 and bars["nS"]["excludesNothing"]
+    assert not any(bars[m.name]["excludesNothing"] for m in METRICS if m.name != "nS")
+
+
 def test_boundary_equality_passes(cfg: SeismologyConfig) -> None:
     """Every matched event identical: each bar equals every value, and all of them pass A."""
     models = [event(k) for k in range(12)]

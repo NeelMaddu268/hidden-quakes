@@ -86,8 +86,9 @@ REVEAL_ORDER_UNSET = -1  # docs/02: H2 writes -1, the exporter assigns the real 
 
 DEFINITION = (
     "Per metric and tier, the bar is an actual matched event's value: sort the events of the "
-    "matched set M with a value on the metric from best to worst and take the ceil((1 - q) * n)-th, "
-    "n = their count, q = tiering.quantiles[tier]; at least (1 - q) of them meets or beats the bar "
+    "matched set M with a value on the metric from best to worst and take the "
+    "ceil((1 - q) * n)-th, n = their count, q = tiering.quantiles[tier]; at least (1 - q) of them "
+    "meets or beats the bar "
     "(boundary equality passes). A (Strict): every A bar, depthOnEdge false, mapOnVolumeTop "
     "false when locate flags are given, and "
     "quality.minEpiDistM <= strictNearestStationFactor * focal depth. B (Good): every B bar. "
@@ -144,6 +145,7 @@ class Metric:
     better: Better
     nullable: bool  # docs/02 allows None (hErrM, vErrM)
     decimals: int  # tierReasons display; more when needed to tell a value from its bar
+    bound: float | None  # the worst value the metric can take by definition; None: unbounded
 
     @property
     def column(self) -> str:
@@ -159,13 +161,13 @@ class Metric:
 
 
 METRICS: tuple[Metric, ...] = (
-    Metric("nStations", "higher", False, 0),
-    Metric("nP", "higher", False, 0),
-    Metric("nS", "higher", False, 0),
-    Metric("rmsS", "lower", False, 3),
-    Metric("hErrM", "lower", True, 0),
-    Metric("vErrM", "lower", True, 0),
-    Metric("gapDeg", "lower", False, 0),
+    Metric("nStations", "higher", False, 0, 0.0),
+    Metric("nP", "higher", False, 0, 0.0),
+    Metric("nS", "higher", False, 0, 0.0),
+    Metric("rmsS", "lower", False, 3, None),
+    Metric("hErrM", "lower", True, 0, None),
+    Metric("vErrM", "lower", True, 0, None),
+    Metric("gapDeg", "lower", False, 0, 360.0),
 )
 METRIC_BY_NAME: dict[str, Metric] = {m.name: m for m in METRICS}
 
@@ -192,10 +194,16 @@ class Bar:
             return values >= self.value
         return values <= self.value
 
+    @property
+    def excludes_nothing(self) -> bool:
+        """The bar sits on the metric's bound (nS >= 0, gapDeg <= 360): no event can fail it."""
+        return METRIC_BY_NAME[self.metric].bound == self.value
+
     def to_record(self) -> dict[str, Any]:
         return {
             "op": METRIC_BY_NAME[self.metric].op,
             "value": self.value,
+            "excludesNothing": self.excludes_nothing,
             "quantile": self.level,
             "label": self.label,
             "n": self.n,
@@ -465,6 +473,11 @@ def derive_thresholds(matched: pd.DataFrame, tcfg: TieringConfig) -> Thresholds:
         tier: {m.name: derive_bar(values[m.name], m, q) for m in METRICS}
         for tier, q in quantiles.items()
     }
+    for bar in bars["A"].values():
+        if bar.excludes_nothing:
+            log.warning("tier: the A bar on %s is %s %g, the metric's bound, so Strict places no "
+                        "limit on %s (%s of matched, n=%d)", bar.metric,
+                        METRIC_BY_NAME[bar.metric].op, bar.value, bar.metric, bar.label, bar.n_used)
     return Thresholds(quantiles=quantiles, bars=bars, n_matched=n)
 
 
