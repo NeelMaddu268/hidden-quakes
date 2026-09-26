@@ -55,7 +55,7 @@
 ### FIX-01 · P0 · 8:25–8:45 PM — Mock fixture
 
 - **Goal:** `scripts/mock-fixture.py`, written from scratch, generating a full mock bundle that exercises every UI path. Everything is invented; nothing derives from pre-event outputs.
-- **Contents:** `meta.isSynthetic = true`; 43 public points; ~500 candidates (Tier A ~150 in a compact synthetic cluster, B ~200 around it, C ~150 scattered); origin times spread over 24 h with some clustering; 15 stations (12 surface in a ~20 km ring, 3 borehole with nonzero `sensorDepthM`); one synthetic well path with `verified: false`; 20 evidence files with synthetic wavelets at predicted times plus noise; a `validation.json` with every field filled; a `heroEventId`.
+- **Contents:** `meta.isSynthetic = true`; 43 public points; ~500 candidates (Tier A ~150 in a compact synthetic cluster, B ~200 around it, C ~150 scattered); origin times spread over 24 h with some clustering; 17 stations (14 surface in a ~20 km ring, one of them `usedInRun: false`, 3 borehole with nonzero `sensorDepthM`; 16 used, so the hero carries 16 traces); one synthetic well path with `verified: false`; 20 evidence files with synthetic wavelets at predicted times plus noise; a `validation.json` with every field filled; a `heroEventId`.
 - **Accept:** every file validates with the Pydantic models; H3's scene loads it; the SYNTHETIC banner shows.
 
 ### API-01 · P0 · 8:45–9:15 PM — Providers and hooks
