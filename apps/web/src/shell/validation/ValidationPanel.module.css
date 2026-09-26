@@ -1,0 +1,51 @@
+/* Validation card: bottom-left, stacked above the mode pills. Tokens only (--hq-*), like Shell.module.css.
+   --validation-bottom is the one knob if the mode-pill row or H3's scrubber changes height. */
+
+.panel {
+  --validation-bottom: calc(var(--shell-inset) + 2.75rem);
+  position: absolute;
+  left: var(--shell-inset);
+  bottom: var(--validation-bottom);
+  min-width: 16rem;
+  max-width: min(22rem, calc(100vw - 2 * var(--shell-inset)));
+  padding: 0.75rem 0.9rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--hq-contour) 80%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--hq-surface) 86%, transparent);
+  pointer-events: auto;
+  user-select: text;
+}
+
+.heading {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hq-text-dim);
+}
+
+.rows {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.25rem;
+}
+
+.label {
+  font-size: 0.72rem;
+  color: var(--hq-text-dim);
+  white-space: nowrap;
+}
+
+.value {
+  font-size: 0.82rem;
+  color: var(--hq-text);
+  white-space: nowrap;
+}

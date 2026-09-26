@@ -47,10 +47,11 @@
 
 ### SEIS-02 · P0 · Start ~8:30 PM — Known-event windows
 
-- **Goal:** download 10-minute windows around the 3 largest public events in the showcase window.
+- **Goal:** cut 10-minute windows around the 3 largest public events in the showcase window.
 - **Files:** `hq/ingest/windows.py`, `tests/signal/test_windows.py`
-- **In → out:** `catalog.parquet` + `stations.parquet` → mseed windows in `data/cache/mseed/`
-- **Depends on:** SEIS-01, MATCH-01 (H2)
+- **In → out:** `catalog.parquet` + `stations.parquet` → `runs/<id>/known/windows.json` + a gap report per event, with waveforms read through `read_window` from the channel-day cache in `data/cache/mseed/`
+- **Depends on:** SEIS-01, SEIS-05 (cache), MATCH-01 (H2)
+- **Decision (Fri night):** SEIS-02 never downloads. The channel-day cache has one writer (SEIS-05's downloader), and a second process writing the same channel-day files would lose chunks. If an event's hours aren't cached, the window reports "not downloaded" rather than fetching.
 - **Accept:** at least 8 stations with three-component data per window; a gap report per window.
 
 ### SEIS-05 · P0 · Start ~8:30 PM — Full-window ingestion
@@ -97,7 +98,8 @@
 - ObsPy ≥ 1.5: `Client("EARTHSCOPE")`. Older ObsPy: `Client("https://service.earthscope.org/")`. EarthScope FDSNWS credentials go in env vars, never in the repo.
 - Request in hour chunks. Large dataselect requests can stall for minutes before returning; use timeouts, retries with backoff, and resume from the cache.
 - Channel priority for picking: broadband/short-period velocity (`HH?`, `EH?`) and borehole geophones (`DP?` or similar) first; strong-motion (`HN?`) only if nothing else exists at that site. Three components or skip.
-- **Sensor depth:** StationXML station elevation is the surface (the wellhead for boreholes). The sensor depth lives on each **channel's** `depth`. Ignoring it on deep borehole sensors shifts S arrivals by a large fraction of a second and smears every depth downstream. This is suspected cause #1 of the prototype's broad depths.
+- **Sensor depth:** The sensor depth lives on each **channel's** `depth`. Ignoring it on deep borehole sensors shifts S arrivals by a large fraction of a second and smears every depth downstream. This is suspected cause #1 of the prototype's broad depths.
+- **Station elevation is not always the surface.** Networks disagree on what StationXML's station elevation means: for some borehole stations in this region it is already the sensor level, so `stationElev − depth` would count the depth twice. SEIS-01 therefore checks every station against the USGS 3DEP DEM (EPQS) at the sensor position and resolves the convention per station: surface (`surfaceElevM = stationElev`) or sensor level (`surfaceElevM = stationElev + depth`). Ambiguous cases fail loudly. `sensorElevM = surfaceElevM − sensorDepthM` always holds, and every decision with its numbers is in `runs/<id>/inventory_report.json`.
 
 ### Gaps and noise
 
