@@ -13,8 +13,9 @@ from hq_contracts.models import ALL_MODELS, SCHEMA_VERSION, Bundle
 
 
 def _strip_property_titles(node: object) -> None:
-    """Drop the per-field ``title`` pydantic adds (so json2ts names only models, not fields)
-    and rewrite tuples into the draft-4 form json2ts understands."""
+    """Normalize pydantic's schema for json2ts: drop per-field ``title`` (so only models get
+    names), mark every field required (Python writes defaults too), and rewrite tuples into the
+    draft-4 form json2ts understands."""
     if isinstance(node, dict):
         if "prefixItems" in node:
             # json2ts reads draft-4 tuple syntax (`items: [...]`), not 2020-12 `prefixItems`.
@@ -22,6 +23,8 @@ def _strip_property_titles(node: object) -> None:
             node["additionalItems"] = False
         for key, value in node.items():
             if key == "properties" and isinstance(value, dict):
+                # Python serializes every field, defaults included, so every field is required.
+                node["required"] = sorted(value)
                 for prop in value.values():
                     if isinstance(prop, dict):
                         prop.pop("title", None)
@@ -34,8 +37,7 @@ def _strip_property_titles(node: object) -> None:
 
 
 def bundle_schema() -> dict:
-    """JSON schema of everything, in serialization mode: Python always writes defaulted fields,
-    so the TS marks them required (``isSynthetic: boolean``, not ``isSynthetic?: boolean``)."""
+    """JSON schema of everything, normalized so the generated TS has no optional fields."""
     schema = Bundle.model_json_schema(mode="serialization")
     defs = schema.setdefault("$defs", {})
     # Every model is reachable from Bundle today; keep this loop so an unreachable one still exports.
