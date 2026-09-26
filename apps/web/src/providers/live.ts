@@ -1,7 +1,13 @@
 /**
- * `LiveProvider` (P1 stub, docs/02 §7): reads the live worker's routes for meta, events and
- * evidence, and borrows stations, catalog and features from a fallback static provider (the
- * snapshot bundle), because the live API doesn't serve them. API-05 adds the 5 s failover.
+ * `LiveProvider` (docs/02 §7): reads the live worker's routes for meta, events and evidence,
+ * and borrows stations, catalog and features from a fallback static provider (the snapshot
+ * bundle), because the live API doesn't serve them.
+ *
+ * Every live request is bounded by `LIVE_FETCH_TIMEOUT_MS`: one that has not answered by then
+ * is aborted and rejects with a `BundleFetchError`, the same error a refused connection or a
+ * 503 produces. `ProviderRoot` turns any `BundleFetchError` from this provider into snapshot
+ * failover (API-05); the fallback it switches to is `fallback`, so live and failed-over views
+ * read the same snapshot files.
  */
 import {
   SCHEMA_VERSION,
@@ -14,7 +20,7 @@ import {
   type Station,
   type Validation,
 } from "@hq/contracts";
-import { LIVE_API_BASE } from "./config";
+import { LIVE_API_BASE, LIVE_FETCH_TIMEOUT_MS } from "./config";
 import { BundleFetchError, SchemaVersionError, defaultFetch, fetchJson, type FetchLike } from "./fetch";
 import { StaticBundleProvider } from "./static";
 import type { ModeInfo, SeismicDataProvider } from "./types";
@@ -28,6 +34,8 @@ export interface LiveProviderOptions {
   fallback?: SeismicDataProvider;
   /** Clock for "updated n min ago"; injectable for tests. Returns epoch seconds. */
   now?: () => number;
+  /** Per-request deadline; defaults to `LIVE_FETCH_TIMEOUT_MS`. */
+  timeoutMs?: number;
 }
 
 const SECONDS_PER_MINUTE = 60;
@@ -45,10 +53,31 @@ export function liveLabel(status: LiveStatusSummary, nowS: number): string {
   return `Live · last ${formatWindow(status.windowS)} · updated ${minutesAgo} min ago`;
 }
 
+/**
+ * `fetchJson` with a deadline. On timeout the request is aborted (when the runtime has
+ * `AbortController`) and the result is a `BundleFetchError` naming the deadline, so a hanging
+ * worker fails over exactly like a refused connection.
+ */
+export function fetchWithTimeout<T>(fetchImpl: FetchLike, url: string, timeoutMs: number): Promise<T | null> {
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort();
+      reject(new BundleFetchError(url, null, `no response within ${timeoutMs} ms`));
+    }, timeoutMs);
+  });
+  return Promise.race([fetchJson<T>(fetchImpl, url, { signal: controller?.signal }), deadline]).finally(() =>
+    clearTimeout(timer),
+  );
+}
+
 export class LiveProvider implements SeismicDataProvider {
   readonly apiBase: string;
+  /** Source of stations, catalog and features, and the failover target (the snapshot bundle). */
+  readonly fallback: SeismicDataProvider;
+  readonly timeoutMs: number;
   private readonly fetchImpl: FetchLike;
-  private readonly fallback: SeismicDataProvider;
   private readonly now: () => number;
   /** Single-flight: concurrent calls for one route share a request; the next call refetches. */
   private readonly inflight = new Map<string, Promise<unknown>>();
@@ -58,13 +87,14 @@ export class LiveProvider implements SeismicDataProvider {
     this.fetchImpl = options.fetchImpl ?? defaultFetch;
     this.fallback = options.fallback ?? new StaticBundleProvider("snapshot", { fetchImpl: this.fetchImpl });
     this.now = options.now ?? (() => Date.now() / 1000);
+    this.timeoutMs = options.timeoutMs ?? LIVE_FETCH_TIMEOUT_MS;
   }
 
   private get<T>(route: string): Promise<T> {
     const hit = this.inflight.get(route);
     if (hit) return hit as Promise<T>;
     const url = `${this.apiBase}/${route}`;
-    const promise = fetchJson<T>(this.fetchImpl, url)
+    const promise = fetchWithTimeout<T>(this.fetchImpl, url, this.timeoutMs)
       .then((value) => {
         if (value === null) throw new BundleFetchError(url, 404);
         return value;

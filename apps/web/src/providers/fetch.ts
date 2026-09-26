@@ -4,7 +4,12 @@ export interface FetchResponseLike {
   status: number;
   json(): Promise<unknown>;
 }
-export type FetchLike = (url: string) => Promise<FetchResponseLike>;
+/** The subset of `RequestInit` the providers use: an abort signal for timed-out live requests. */
+export interface FetchInit {
+  signal?: AbortSignal;
+}
+/** Fakes in tests may ignore `init`; the real `fetch` honours the signal. */
+export type FetchLike = (url: string, init?: FetchInit) => Promise<FetchResponseLike>;
 
 export class BundleFetchError extends Error {
   readonly url: string;
@@ -31,17 +36,17 @@ export class SchemaVersionError extends Error {
   }
 }
 
-export const defaultFetch: FetchLike = (url) => fetch(url);
+export const defaultFetch: FetchLike = (url, init) => fetch(url, init);
 
 /** GET + JSON, with a typed error on a non-2xx status. `notFoundAsNull` turns 404 into `null`. */
 export async function fetchJson<T>(
   fetchImpl: FetchLike,
   url: string,
-  options: { notFoundAsNull?: boolean } = {},
+  options: { notFoundAsNull?: boolean; signal?: AbortSignal } = {},
 ): Promise<T | null> {
   let response: FetchResponseLike;
   try {
-    response = await fetchImpl(url);
+    response = await fetchImpl(url, options.signal ? { signal: options.signal } : undefined);
   } catch (error) {
     throw new BundleFetchError(url, null, error instanceof Error ? error.message : String(error));
   }
