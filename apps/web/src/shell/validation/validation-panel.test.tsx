@@ -12,6 +12,7 @@ import mockValidation from "../../../public/data/mock/validation.json";
 import { Shell } from "../Shell";
 import { bundleFiles, fakeFetch, type FixtureOptions } from "../test-fixture";
 import { formatNumber } from "./format";
+import { STRICT_COMPARE_NOTE } from "./rows";
 
 const validation = mockValidation as unknown as Validation;
 const summary = mockMeta.summary as unknown as AnalysisSummary;
@@ -73,6 +74,11 @@ describe("validation panel", () => {
     expect(rowText("strictCompare")).toBe(`${formatNumber(full("phasenet"), 0)} vs ${formatNumber(full("stalta"), 0)}`);
     expect(rowText("gain")).toBe(`${formatNumber(summary.baseline!.gain, 2)}×`);
     expect(rowText("chance")).toBe(formatNumber(validation.nullTest!.meanChanceEvents, 1));
+    // The comparison's PhaseNet count is a rerun on one statics table, so its row carries the
+    // note that keeps it from being read against "Strict events" unqualified; no other row does.
+    expect(screen.getByTestId("validation-note-strictCompare").textContent).toBe(STRICT_COMPARE_NOTE);
+    expect(screen.queryByTestId("validation-note-strict")).toBeNull();
+    expect(screen.queryByTestId("validation-note-chance")).toBeNull();
   });
 
   it("drops the validation-sourced rows when the bundle has no validation.json", async () => {
