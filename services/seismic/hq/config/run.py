@@ -4,9 +4,30 @@ Every lane reads these values. The catalog query and the waveform window use the
 and every ENU coordinate is measured from ``origin`` (docs/01 -> Conventions).
 """
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_NS_PER_S = 1_000_000_000
+_NS_PER_US = 1_000
+
+
+def epoch_s(ns: int) -> float:
+    """Integer epoch nanoseconds UTC -> ``t``, float epoch seconds UTC (docs/01 -> Conventions).
+
+    The one conversion to the canonical ``t`` form: exact integer division, so the result is the
+    correctly rounded double of the instant. ``RunSection.window_start_s``/``window_end_s`` and
+    H2's origin times (``epoch_s(UTCDateTime.ns)``) both go through it, so an instant exactly on a
+    window edge compares equal to that edge. ObsPy's ``UTCDateTime.timestamp`` divides by the float
+    ``1e9`` and lands one ulp low at many sub-second instants; don't mix it with these values.
+    """
+    return ns / _NS_PER_S
+
+
+def epoch_ns(instant: datetime) -> int:
+    """Exact epoch nanoseconds UTC of an aware datetime (microsecond resolution)."""
+    return (instant - _EPOCH) // timedelta(microseconds=1) * _NS_PER_US
 
 
 class Origin(BaseModel):
@@ -47,10 +68,10 @@ class RunSection(BaseModel):
 
     @property
     def window_start_s(self) -> float:
-        """``windowStart`` as epoch seconds UTC, the canonical ``t`` form."""
-        return self.windowStart.timestamp()
+        """``windowStart`` as epoch seconds UTC, the canonical ``t`` form (``epoch_s``)."""
+        return epoch_s(epoch_ns(self.windowStart))
 
     @property
     def window_end_s(self) -> float:
-        """``windowEnd`` as epoch seconds UTC, the canonical ``t`` form."""
-        return self.windowEnd.timestamp()
+        """``windowEnd`` as epoch seconds UTC, the canonical ``t`` form (``epoch_s``)."""
+        return epoch_s(epoch_ns(self.windowEnd))
