@@ -108,6 +108,7 @@
 - **Files:** `hq/locate/tt_grid3d.py`, `tests/seismology/test_tt_grid3d.py`
 - **Depends on:** LOC-02, the 3D download
 - **Accept:** synthetic test passes with 3D grids; a 1D vs 3D residual and depth-shift comparison is saved in `diagnostics.md`.
+- **Status (LOC-07 builder):** `locator.method: grid3d` runs the same locator on per-station 3D tables (`hq/locate/tt_grid3d.py`: the model's CRS, vertical datum and air values confirmed from the paper and the file, evidence in its docstring and in `diagnostics.md`). `grid1d` stays the default. On the showcase run's acceptance (`_runners/LOC-07_acceptance.out`), with `referenceEvents` statics grid3d and grid1d locate the events within the held-out scatter of each other; without statics grid3d removes the azimuthal residual trend at the public regional catalog's hypocentres but moves depths well above the catalog's. Recommendation: keep grid1d + statics for the showcase (lead call).
 
 ### LOC-08 · P1 · Only if the depth gate fails at 4 AM — Relative relocation
 
