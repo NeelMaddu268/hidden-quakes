@@ -35,6 +35,12 @@ referenceEvents (the showcase default)
     (logged: the statics pass needs a match first). ``locate()`` (docs/02 §5) has no matches, so
     in this mode it always runs pass 1 (no statics).
 
+Pick harvest (LOC-10, ``hq.locate.harvest``, when ``harvest.enabled``) runs on the final
+statics-corrected locate only: pass 2's (each reference event with its held-out map) and
+selfConsistent's last iteration. The terms are always estimated from the association's picks, so
+they, and ``statics.parquet``, are the same with harvest on or off. Pass 2's ``reference`` then
+also holds each reference event's held-out offsets before the harvest (``afterNoHarvest*``).
+
 Both modes: ``statics.parquet`` holds the station-phase terms (``nEvents`` = the events each was
 estimated from, so a term zeroed for too few events shows it), ``quality.statics`` is true on
 events whose used picks carry a non-zero static, every static above
@@ -63,7 +69,13 @@ from hq.locate import (
     used_stations,
 )
 from hq.locate.coords import to_enu
-from hq.locate.locator import Locator, LocatorSetup, build_locator, weighted_median
+from hq.locate.locator import (
+    EventLocation,
+    Locator,
+    LocatorSetup,
+    build_locator,
+    weighted_median,
+)
 from hq.locate.tt_grid import PHASES
 from hq.locate.tt_grid3d import Model3dSource
 from hq.locate.velocity import LayerModel, load_configured_model
@@ -142,14 +154,17 @@ def reference_pairs(
 
 
 def check_same_association(pairs: pd.DataFrame, assoc_picks: pd.DataFrame) -> None:
-    """Raise unless every reference event's located picks belong to its association event in
-    ``assoc_picks``: an association rerun since the match renumbers or regroups events."""
+    """Raise unless every reference event's located picks that are in an association event
+    belong to its own association event in ``assoc_picks``: an association rerun since the match
+    renumbers or regroups events. Located picks in no association event are the pick harvest's
+    (LOC-10) and are left out of the check."""
     groups: dict[str, set[str]] = {}
     for aid, pid in zip(assoc_picks["assocId"].astype(str), assoc_picks["pickId"].astype(str),
                         strict=True):
         groups.setdefault(aid, set()).add(pid)
+    associated = set().union(*groups.values()) if groups else set()
     bad = [str(r.catalogId) for r in pairs.itertuples(index=False)
-           if not set(map(str, r.pickIds)) <= groups.get(str(r.assocId), set())]
+           if not set(map(str, r.pickIds)) & associated <= groups.get(str(r.assocId), set())]
     if bad:
         raise ValueError(
             f"reference events {bad[:5]} were located from another association than "
@@ -586,12 +601,13 @@ class StaticsReport:
 
     def offsets_summary(self) -> dict[str, dict[str, float]]:
         """Median and p90 of the horizontal and |vertical| offsets: before (no statics), after
-        (held-out terms) and inSample (all-reference terms, the held-out events included)."""
+        (held-out terms), afterNoHarvest (held-out terms, before the pick harvest; only when it
+        ran) and inSample (all-reference terms, the held-out events included)."""
         ref = self.reference
         if ref is None or ref.empty:
             return {}
         out = {}
-        for when in ("before", "after", "inSample"):
+        for when in ("before", "after", "afterNoHarvest", "inSample"):
             if f"{when}HM" not in ref.columns:
                 continue
             h = ref[f"{when}HM"].to_numpy(dtype=np.float64)
@@ -666,12 +682,15 @@ def _report(
     )
 
 
-def _offsets(details: LocateDetails, pairs: pd.DataFrame, prefix: str) -> pd.DataFrame:
+def _offsets(details: LocateDetails, pairs: pd.DataFrame, prefix: str,
+             instead: Mapping[str, EventLocation] | None = None) -> pd.DataFrame:
+    """Per reference event: ``details``' location (or ``instead``'s, by assocId) minus the
+    catalog hypocentre."""
     at = {aid: k for k, aid in enumerate(details.assoc_ids)}
     ids = details.result.events["id"].astype(str).tolist()
     rows = []
     for r in pairs.itertuples(index=False):
-        loc = details.locations[at[str(r.assocId)]]
+        loc = (instead or {}).get(str(r.assocId), details.locations[at[str(r.assocId)]])
         de, dn = loc.e_m - r.catalogE, loc.n_m - r.catalogN
         rows.append({"assocId": str(r.assocId), f"{prefix}EventId": ids[at[str(r.assocId)]],
                      f"{prefix}HM": math.hypot(de, dn), f"{prefix}DeM": de, f"{prefix}DnM": dn,
@@ -722,7 +741,8 @@ def locate_with_statics(
             current = self_consistent_terms(details, statics_map(current), cfg)
             details = locate_detailed(assoc, picks, stations, cfg, run,
                                       statics=statics_map(current),
-                                      static_events=_counts(current), **kw)
+                                      static_events=_counts(current),
+                                      harvest=k == scfg.iterations, **kw)
             cal = well_constrained(details, cfg)
             history.append(_history_row(k, details, len(cal), current))
             log.info("statics selfConsistent iteration %d: median rmsS %.3f s, %d non-zero "
@@ -784,10 +804,15 @@ def locate_with_statics(
     in_sample = locate_detailed(subset, picks, stations, cfg, run, statics=statics_map(terms),
                                 static_events=_counts(terms), **kw)
     details = locate_detailed(assoc, picks, stations, cfg, run, statics=statics_map(terms),
-                              event_statics=held_out, static_events=_counts(terms), **kw)
+                              event_statics=held_out, static_events=_counts(terms),
+                              harvest=True, **kw)
     ref = pairs[["catalogId", "assocId"]].assign(fold=folds.reindex(pairs["assocId"]).to_numpy())
     ref = ref.merge(_offsets(before, pairs, "before"), on="assocId").merge(
-        _offsets(details, pairs, "after"), on="assocId").merge(
+        _offsets(details, pairs, "after"), on="assocId")
+    if details.harvest is not None:
+        ref = ref.merge(_offsets(details, pairs, "afterNoHarvest", details.harvest.before).drop(
+            columns="afterNoHarvestEventId"), on="assocId")
+    ref = ref.merge(
         _offsets(in_sample, pairs, "inSample").drop(columns="inSampleEventId"), on="assocId")
     k_desc = "leave-one-out" if scfg.folds is None else f"{scfg.folds}-fold"
     report = _report(
