@@ -1,13 +1,14 @@
 "use client";
 
 import { motion } from "@hq/visualization";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useBundle, useEvidence } from "../scene/data";
 import type { SeismicEvent, Station } from "../scene/types";
 import { useDemo } from "../state/demo";
 import { Figures } from "./Figures";
 import { evidenceStations } from "./geometry";
 import { Header } from "./Header";
+import { formatOpenLatency } from "./latency";
 import { RecordSection } from "./RecordSection";
 import { DRAWER_CSS } from "./styles";
 
@@ -60,16 +61,21 @@ export function EvidenceDrawer() {
     return evidenceStations(evidence.evidence.traces, stationById);
   }, [evidence, stationById]);
 
-  // Open latency: select() → the first painted frame with traces on screen (double rAF = after paint).
+  // Open latency, logged per open, in three stages after select(): traces committed to the DOM (layout
+  // effect), the frame that paints them starts (rAF), and the frame after it starts (double rAF, so the
+  // paint has happened). A slow third number with fast first two means the compositor, not the drawer.
   const tracesOnScreen = open && event !== null && evidence.status === "ready";
-  useEffect(() => {
+  useLayoutEffect(() => {
     const start = openedAt.current;
     if (!tracesOnScreen || start === null || typeof requestAnimationFrame !== "function") return;
     openedAt.current = null;
+    const committed = performance.now() - start;
+    let frame = 0;
     let inner = 0;
     const outer = requestAnimationFrame(() => {
+      frame = performance.now() - start;
       inner = requestAnimationFrame(() => {
-        console.info(`[drawer] ${shownId}: traces on screen ${(performance.now() - start).toFixed(1)} ms after select()`);
+        console.info(formatOpenLatency(shownId ?? "", committed, frame, performance.now() - start));
       });
     });
     return () => {
@@ -112,7 +118,9 @@ export function EvidenceDrawer() {
                 message={evidence.message}
                 originT={event.t}
               />
-              <Figures event={event} meta={ready.meta} stations={evStations.stations} missing={evStations.missing} />
+              {evidence.status !== "error" && (
+                <Figures event={event} meta={ready.meta} stations={evStations.stations} missing={evStations.missing} />
+              )}
             </>
           )}
         </>

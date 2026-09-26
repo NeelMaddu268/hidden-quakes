@@ -429,6 +429,8 @@ describe("loading and errors", () => {
     select(HERO);
     expect(screen.getByText(/HTTP 404/)).toBeTruthy();
     expect(rows()).toHaveLength(0);
+    // No figure placeholders that would read as a load that never finishes.
+    expect(document.querySelector('[aria-label="Station geometry"]')).toBeNull();
   });
 
   it("bundle still loading: the id and a loading line", () => {
