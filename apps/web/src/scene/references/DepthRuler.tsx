@@ -4,14 +4,25 @@ import { Line } from "@react-three/drei";
 import { SceneHtml as Html } from "./SceneHtml";
 import { useFrame } from "@react-three/fiber";
 import { colors } from "@hq/visualization";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Matrix4, Vector3, Vector4, type Group } from "three";
 import type { SceneBounds } from "../camera/bounds";
 import type { SceneMeta } from "../types";
 import { RENDER_ORDER } from "../terrain/renderOrder";
-import { ABSTRACT_SURFACE_LABEL } from "../terrain/surface";
+import { sceneFx } from "../fx";
+import { TIMELINE } from "../reveal/timeline";
+import {
+  clearRects,
+  pushRulerTickRect,
+  pushRulerTitleRect,
+  RULER_TICK_GAP_PX,
+  RULER_TITLE_INSET_PX,
+  RULER_TITLE_RISE_PX,
+  type RectList,
+} from "./labelPlacement";
 import { LABEL_Z_RANGE, labelStyle, numericLabelStyle } from "./labels";
-import { declutterLabels, rulerAnchor, rulerLayout, stickyTitleT } from "./ruler";
+import { useLabelElements } from "./useLabelElements";
+import { declutterLabels, rulerAnchor, rulerLayout, rulerRevealOpacity, stickyTitleT } from "./ruler";
 
 /** Approximate tick-label box (CSS px): labels whose boxes would overlap are hidden (plan view). */
 const LABEL_BOX_W_PX = 40;
@@ -45,21 +56,61 @@ function makeScratch(n: number): Scratch {
  * 0–6 km below the site surface with 1 km ticks, just west of the framed data. Drawn on top of the
  * terrain (no depth test) so it reads in every camera preset. The title is SceneMeta.depthLabel; it
  * sits at the top of the ruler and slides down the spine when the surface is out of frame, so the
- * label stays visible whenever the ruler is. Overlapping tick labels are hidden (plan view).
+ * label stays visible whenever the ruler is. Overlapping tick labels are hidden (plan view). Each frame
+ * the shown title and tick-label boxes are written to `obstacles`, so the feature labels (placed after
+ * this hook) keep clear of them; the list is empty while the ruler is hidden.
  */
-export function DepthRuler({ scene, bounds, abstractSurface = false }: { scene: SceneMeta; bounds: SceneBounds; abstractSurface?: boolean }) {
+export function DepthRuler({ scene, bounds, obstacles }: { scene: SceneMeta; bounds: SceneBounds; obstacles?: RectList }) {
   const layout = useMemo(() => rulerLayout(scene, rulerAnchor(bounds)), [scene, bounds]);
-  const labelEls = useRef<(HTMLDivElement | null)[]>([]);
+  // DOM labels: [0] is the title, [1 + i] is tick i. Sizes feed the obstacle boxes.
+  const labels = useLabelElements();
   const title = useRef<Group>(null);
+  const ruler = useRef<Group>(null);
+  const lastOpacity = useRef(-1);
+  const lastLabelsVersion = useRef(-1);
   const scratch = useRef<Scratch | null>(null);
   useLayoutEffect(() => {
     scratch.current = makeScratch(layout.ticks.length);
   }, [layout.ticks.length]);
 
+  // Leaving (plan view, unmount) clears this ruler's obstacles.
+  useEffect(
+    () => () => {
+      if (obstacles) clearRects(obstacles);
+    },
+    [obstacles],
+  );
+
   // Priority −1: runs before drei's <Html> frame hooks, so labels follow the camera without a lag.
   useFrame(({ camera, size }) => {
     const n = layout.ticks.length;
     if (!scratch.current) return;
+
+    // Fade with the reveal (hidden on the pre-reveal frame). DOM and material are touched only when the
+    // quantized opacity changes (or a label element (re)mounts), so a settled scene writes nothing.
+    const alpha = Math.round(rulerRevealOpacity(sceneFx.terrainOpacity, TIMELINE.terrainFade.to) * 100) / 100;
+    if (alpha !== lastOpacity.current || labels.version !== lastLabelsVersion.current) {
+      lastOpacity.current = alpha;
+      lastLabelsVersion.current = labels.version;
+      const g = ruler.current;
+      if (g) {
+        g.visible = alpha > 0;
+        g.traverse((o) => {
+          const m = (o as unknown as { material?: { opacity: number; transparent: boolean } }).material;
+          if (m) {
+            m.transparent = true;
+            m.opacity = alpha;
+          }
+        });
+      }
+      const css = alpha > 0 ? String(alpha) : "0";
+      for (let i = 0; i <= n; i++) {
+        const el = labels.el(i);
+        if (el) el.style.opacity = css;
+      }
+    }
+    if (obstacles) clearRects(obstacles);
+    if (alpha === 0) return;
     const { v, clipTop, clipBottom, viewProj, xs, ys, mask } = scratch.current;
 
     // Sticky title: find where the spine enters the viewport (exact, in clip space).
@@ -71,7 +122,13 @@ export function DepthRuler({ scene, bounds, abstractSurface = false }: { scene: 
     clipBottom.set(bottom[0], bottom[1], bottom[2], 1).applyMatrix4(viewProj);
     const ndcTop = 1 - (2 * TITLE_TOP_MARGIN_PX) / Math.max(size.height, 1);
     const t = stickyTitleT(clipTop.y, clipTop.w, clipBottom.y, clipBottom.w, ndcTop);
-    title.current?.position.set(top[0], top[1] + t * (bottom[1] - top[1]), top[2]);
+    const titleY = top[1] + t * (bottom[1] - top[1]);
+    title.current?.position.set(top[0], titleY, top[2]);
+    if (obstacles && labels.width(0) > 0) {
+      v.set(top[0], titleY, top[2]).project(camera);
+      const x = (v.x * 0.5 + 0.5) * size.width;
+      pushRulerTitleRect(obstacles, x, (-v.y * 0.5 + 0.5) * size.height, labels.width(0), labels.height(0));
+    }
 
     // Tick-label declutter against projected screen positions (no allocation).
     for (let i = 0; i < n; i++) {
@@ -82,40 +139,51 @@ export function DepthRuler({ scene, bounds, abstractSurface = false }: { scene: 
     }
     declutterLabels(xs, ys, LABEL_BOX_W_PX, LABEL_BOX_H_PX, mask);
     for (let i = 0; i < n; i++) {
-      const el = labelEls.current[i];
+      const el = labels.el(i + 1);
       if (!el) continue;
       const vis = mask[i] ? "visible" : "hidden";
       if (el.style.visibility !== vis) el.style.visibility = vis;
+      if (obstacles && mask[i] && labels.width(i + 1) > 0) {
+        pushRulerTickRect(obstacles, xs[i], ys[i], labels.width(i + 1), labels.height(i + 1));
+      }
     }
   }, -1);
 
   return (
     <group name="depth-ruler">
-      <Line
-        points={layout.segments}
-        segments
-        color={colors.contour}
-        lineWidth={1.5}
-        transparent
-        depthTest={false}
-        depthWrite={false}
-        renderOrder={RENDER_ORDER.ruler}
-      />
+      <group ref={ruler}>
+        <Line
+          points={layout.segments}
+          segments
+          color={colors.contour}
+          lineWidth={1.5}
+          transparent
+          depthTest={false}
+          depthWrite={false}
+          renderOrder={RENDER_ORDER.ruler}
+        />
+      </group>
       <group ref={title} position={layout.titleAt}>
         <Html zIndexRange={LABEL_Z_RANGE} pointerEvents="none">
-          <div data-testid="depth-ruler-title" style={{ ...labelStyle, transform: "translate(-4px, calc(-100% - 10px))" }}>
+          <div
+            ref={labels.ref(0)}
+            data-testid="depth-ruler-title"
+            style={{
+              ...labelStyle,
+              opacity: 0,
+              transform: `translate(-${RULER_TITLE_INSET_PX}px, calc(-100% - ${RULER_TITLE_RISE_PX}px))`,
+            }}
+          >
             <div>{layout.title}</div>
-            {abstractSurface && <div data-testid="abstract-surface-note">{ABSTRACT_SURFACE_LABEL}</div>}
           </div>
         </Html>
       </group>
       {layout.ticks.map((t, i) => (
         <Html key={t.depthKm} position={t.labelAt} zIndexRange={LABEL_Z_RANGE} pointerEvents="none">
           <div
-            ref={(el) => {
-              labelEls.current[i] = el;
-            }}
-            style={{ ...numericLabelStyle, transform: "translate(calc(-100% - 5px), -50%)" }}
+            ref={labels.ref(i + 1)}
+            data-testid="depth-ruler-tick"
+            style={{ ...numericLabelStyle, opacity: 0, transform: `translate(calc(-100% - ${RULER_TICK_GAP_PX}px), -50%)` }}
           >
             {t.label}
           </div>
