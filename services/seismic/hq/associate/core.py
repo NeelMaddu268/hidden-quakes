@@ -4,7 +4,10 @@ Flow for one setting of the knobs:
 
 1. Picks: validated (docs/02 ``Pick`` columns), kept at ``prob >= minPickProb``. PyOcto 0.2.0 has
    no per-pick weight (its ``Pick`` is index, time, station, phase), so ``prob`` is used only as
-   that threshold. Nothing depends on ``picker``: STA/LTA picks run through unchanged.
+   that threshold. Nothing depends on ``picker``: STA/LTA picks run through unchanged. Picks from
+   a station that is in ``stations.parquet`` with ``usedInRun`` false (H1's known-event picker
+   picks those on purpose) are dropped and counted, or rejected, per
+   ``picksFromUnusedStations``; a pick from a station missing from the table always fails.
 2. PyOcto with ``StationSpecificVelocityModel1D`` tables built from the layer model
    (``hq.associate.tables``), stations at ``sensorElevM``, in the frame of ``hq.associate.frame``.
 3. Duplicate merge: events whose origin times differ by at most ``mergeWithinS`` and that share at
@@ -95,6 +98,7 @@ class Setup:
     window_s: tuple[float, float]  # run window [start, end), epoch s UTC
     velocity_model: dict[str, Any]  # LayerModel.to_record() of the (extended) model used
     station_note: dict[str, Any]
+    unused_station_ids: frozenset[str]  # in stations.parquet with usedInRun false
 
 
 @dataclass(frozen=True)
@@ -105,6 +109,7 @@ class RawAssociation:
     assignments: pd.DataFrame  # eid, pickId, station, phase, residual
     picks_in: int
     picks_used: int
+    picks_unused_stations: int  # dropped: from stations with usedInRun false
     runtime_s: float
 
 
@@ -154,8 +159,18 @@ def station_geometry(
     return ids, np.asarray(e), np.asarray(n), elev, note
 
 
-def select_picks(picks: pd.DataFrame, min_prob: float, station_ids: set[str]) -> pd.DataFrame:
-    """Validated picks at ``prob >= min_prob`` in PyOcto's format plus ``pickId``."""
+def select_picks(
+    picks: pd.DataFrame,
+    min_prob: float,
+    station_ids: set[str],
+    unused_station_ids: frozenset[str],
+    unused_policy: str,
+) -> tuple[pd.DataFrame, int]:
+    """Validated picks at ``prob >= min_prob`` in PyOcto's format plus ``pickId``.
+
+    Also returns how many picks were dropped for coming from a ``usedInRun`` false station
+    (``unused_policy`` "drop"; "reject" raises instead).
+    """
     _missing(picks, PICK_COLUMNS, "picks")
     ids = picks["id"].astype(str)
     if ids.duplicated().any():
@@ -171,10 +186,23 @@ def select_picks(picks: pd.DataFrame, min_prob: float, station_ids: set[str]) ->
     if np.any((prob < 0) | (prob > 1)):
         raise ValueError("pick prob must lie in [0, 1]")
     station = picks["stationId"].astype(str)
-    unknown = sorted(set(station) - station_ids)
+    unknown = sorted(set(station) - station_ids - unused_station_ids)
     if unknown:
-        raise ValueError(f"picks reference stations not used in the run: {unknown}")
-    keep = prob >= min_prob
+        raise ValueError(f"picks reference stations missing from the stations table: {unknown}")
+    from_unused = station.isin(unused_station_ids).to_numpy()
+    if from_unused.any():
+        names = sorted(set(station[from_unused]))
+        if unused_policy != "drop":
+            raise ValueError(
+                f"{int(from_unused.sum())} picks come from stations with usedInRun false {names} "
+                f"(associator.picksFromUnusedStations: {unused_policy})"
+            )
+        log.warning(
+            "associate: dropped %d picks from stations with usedInRun false %s "
+            "(associator.picksFromUnusedStations: drop)",
+            int(from_unused.sum()), names,
+        )
+    keep = (prob >= min_prob) & ~from_unused
     return pd.DataFrame(
         {
             "station": station[keep].to_numpy(dtype=object),
@@ -182,7 +210,7 @@ def select_picks(picks: pd.DataFrame, min_prob: float, station_ids: set[str]) ->
             "time": t[keep],
             "pickId": ids[keep].to_numpy(dtype=object),
         }
-    )
+    ), int(from_unused.sum())
 
 
 # --- setup ---------------------------------------------------------------------------------------
@@ -223,6 +251,9 @@ def prepared(
             window_s=(run.window_start_s, run.window_end_s),
             velocity_model=extended.to_record(),
             station_note=note,
+            unused_station_ids=frozenset(
+                str(s) for s in stations.loc[~stations["usedInRun"].astype(bool), "id"]
+            ),
         )
 
     if cache_dir is None:
@@ -290,7 +321,13 @@ def run_pyocto(picks: pd.DataFrame, setup: Setup, acfg: AssociatorConfig) -> Raw
     """Filter ``picks`` (docs/02 Pick rows) at ``acfg.minPickProb`` and run PyOcto on them."""
     started = time.perf_counter()
     check_time_before(acfg, setup)
-    selected = select_picks(picks, acfg.minPickProb, set(setup.stations["id"]))
+    selected, from_unused = select_picks(
+        picks,
+        acfg.minPickProb,
+        set(setup.stations["id"]),
+        setup.unused_station_ids,
+        acfg.picksFromUnusedStations,
+    )
     empty_events = pd.DataFrame(
         {"eid": pd.Series([], dtype="int64"), **{c: pd.Series([], dtype="float64")
                                                for c in ("t", "x", "y", "z")}}
@@ -306,7 +343,7 @@ def run_pyocto(picks: pd.DataFrame, setup: Setup, acfg: AssociatorConfig) -> Raw
     )
     if selected.empty:
         # PyOcto 0.2.0 indexes the first pick unconditionally; never call it without picks.
-        return RawAssociation(empty_events, empty_assign, len(picks), 0,
+        return RawAssociation(empty_events, empty_assign, len(picks), 0, from_unused,
                               time.perf_counter() - started)
     associator = pyocto.OctoAssociator(
         velocity_model=pyocto.StationSpecificVelocityModel1D(**velocity_kwargs(acfg, setup)),
@@ -340,7 +377,7 @@ def run_pyocto(picks: pd.DataFrame, setup: Setup, acfg: AssociatorConfig) -> Raw
         "(%d in) in %.2f s",
         len(raw_events), len(raw_assign), len(selected), acfg.minPickProb, len(picks), runtime,
     )
-    return RawAssociation(raw_events, raw_assign, len(picks), len(selected), runtime)
+    return RawAssociation(raw_events, raw_assign, len(picks), len(selected), from_unused, runtime)
 
 
 # --- post-processing -----------------------------------------------------------------------------
@@ -537,6 +574,7 @@ def finish(
     result = to_result(events, assign, setup.origin)
     counts = {
         "picksIn": raw.picks_in,
+        "picksFromUnusedStationsDropped": raw.picks_unused_stations,
         "picksAboveMinProb": raw.picks_used,
         "pyoctoEvents": len(raw.events),
         "pyoctoAssignments": len(raw.assignments),
@@ -596,6 +634,8 @@ def record(acfg: AssociatorConfig, setup: Setup, picks: pd.DataFrame) -> dict[st
         "picks": {
             "minPickProb": acfg.minPickProb,
             "weights": "none: PyOcto 0.2.0 has no per-pick weight; prob is only the threshold",
+            "fromUnusedStations": f"{acfg.picksFromUnusedStations}: picks from stations with "
+            "usedInRun false (counts.picksFromUnusedStationsDropped)",
             "nIn": len(picks),
             "tMinS": float(t.min()) if t.size else None,
             "tMaxS": float(t.max()) if t.size else None,

@@ -609,7 +609,8 @@ def test_duplicates_from_pyocto_are_merged_in_finish(world: dict[str, Any]) -> N
             events=pd.concat([raw.events, dup_event], ignore_index=True),
             assignments=pd.concat([raw.assignments, dup_rows.assign(eid=dup_eid)],
                                   ignore_index=True),
-            picks_in=raw.picks_in, picks_used=raw.picks_used, runtime_s=raw.runtime_s,
+            picks_in=raw.picks_in, picks_used=raw.picks_used,
+            picks_unused_stations=raw.picks_unused_stations, runtime_s=raw.runtime_s,
         )
         merged, counts = finish(doubled, cfg, setup)
     assert counts["mergedDuplicates"] == clean_counts["mergedDuplicates"] + 1
@@ -649,7 +650,7 @@ def test_events_outside_the_run_window_are_dropped(world: dict[str, Any]) -> Non
 @pytest.mark.smoke
 def test_inputs_fail_loudly(world: dict[str, Any]) -> None:
     picks, stations = world["picks"], world["stations"]
-    with pytest.raises(ValueError, match="not used in the run"):
+    with pytest.raises(ValueError, match="missing from the stations table"):
         _associate_toy(world, picks=pd.concat([picks, pd.DataFrame(
             [pick_row("XX.NOPE", "P", float(picks.t.iloc[0]), 0.9)])]))
     with pytest.raises(ValueError, match="duplicate pick ids"):
@@ -663,6 +664,33 @@ def test_inputs_fail_loudly(world: dict[str, Any]) -> None:
                            cache_dir=world["cache"])
     with pytest.raises(ValueError, match="timeBeforeS"):
         _associate_toy(world, cfg=_cfg(world["cfg"], timeBeforeS=1.0))
+
+
+@pytest.mark.smoke
+def test_picks_from_stations_not_used_in_the_run(world: dict[str, Any]) -> None:
+    """H1 picks usedInRun-false stations on purpose: dropped and counted, or rejected (config)."""
+    stations = world["stations"].copy()
+    stations.loc[stations["id"] == "XX.S05", "usedInRun"] = False
+    from_unused = int((world["picks"]["stationId"] == "XX.S05").sum())
+    assert from_unused > 0
+    with_all, counts_all, _ = _associate_toy(world)
+    dropped, counts, rec = associate_detailed(
+        world["picks"], stations, world["cfg"], world["run"], model=HOMOGENEOUS,
+        cache_dir=world["cache"],
+    )
+    assert counts_all["picksFromUnusedStationsDropped"] == 0
+    assert counts["picksFromUnusedStationsDropped"] == from_unused
+    assert rec["stations"]["nStations"] == len(stations) - 1
+    assert rec["picks"]["fromUnusedStations"].startswith("drop")
+    kept_stations = set(
+        world["picks"].set_index("id").loc[dropped.picks["pickId"], "stationId"].astype(str)
+    )
+    assert "XX.S05" not in kept_stations and len(dropped.events) == len(with_all.events)
+    with pytest.raises(ValueError, match="usedInRun false"):
+        associate_detailed(
+            world["picks"], stations, _cfg(world["cfg"], picksFromUnusedStations="reject"),
+            world["run"], model=HOMOGENEOUS, cache_dir=world["cache"],
+        )
 
 
 @pytest.mark.smoke
