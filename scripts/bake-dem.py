@@ -18,7 +18,9 @@ Reads the origin from ``services/seismic/configs/showcase/run.yaml``, downloads 
   G = low byte, B = 0). Browsers decode 16-bit PNGs to 8 bits in canvas/WebGL, so a true 16-bit
   PNG would lose precision on the way into the scene. v = 0..65535 maps linearly onto
   ``elevMinM..elevMaxM``.
-* ``hillshade.png``: 8-bit grayscale Horn/ESRI hillshade computed here from the same grid.
+* ``hillshade.png``: 8-bit Horn/ESRI hillshade computed here from the same grid, stored as an RGB PNG
+  with R = G = B (WebKit/Safari alters grayscale PNGs on decode, even with colour conversion off, so
+  the browser checksum failed there; RGB decodes bit-exactly everywhere, like height.png).
 * ``meta.json``: grid geometry, encoding, origin, source + attribution, hillshade parameters and
   checksums the browser uses to prove its decode is bit-exact.
 
@@ -365,6 +367,14 @@ def load_mosaic(
     return mosaic, names
 
 
+def gray_to_rgb(gray: U8Array) -> U8Array:
+    """(h, w) uint8 -> (h, w, 3) with R = G = B: browsers decode RGB PNGs bit-exactly, gray ones not always."""
+    g = np.asarray(gray, dtype=np.uint8)
+    if g.ndim != 2:
+        raise ValueError(f"gray_to_rgb needs a 2-D array, got shape {g.shape}")
+    return np.repeat(g[..., None], 3, axis=2)
+
+
 def save_png(pixels: U8Array, path: Path, mode: str) -> int:
     """Write a PNG with no ancillary chunks (time, gamma, ICC): reruns are byte-identical."""
     Image.fromarray(pixels, mode=mode).save(path, format="PNG", optimize=True)
@@ -473,14 +483,19 @@ def bake(args: BakeArgs) -> dict[str, object]:
     height_path = args.out_dir / "height.png"
     shade_path = args.out_dir / "hillshade.png"
     height_bytes = save_png(height_rgb, height_path, "RGB")
-    shade_bytes = save_png(shade_u8, shade_path, "L")
+    shade_bytes = save_png(gray_to_rgb(shade_u8), shade_path, "RGB")
 
-    # Verify what's on disk, exactly as the browser will read it.
+    # Verify what's on disk, exactly as the browser will read it (the browser reads R of hillshade).
     with Image.open(height_path) as im:
         back = np.asarray(im.convert("RGB"), dtype=np.uint8)
     with Image.open(shade_path) as im:
-        shade_back = np.asarray(im, dtype=np.uint8)
-    if not np.array_equal(back, height_rgb) or not np.array_equal(shade_back, shade_u8):
+        shade_back_rgb = np.asarray(im.convert("RGB"), dtype=np.uint8)
+    shade_back = shade_back_rgb[..., 0]
+    if (
+        not np.array_equal(back, height_rgb)
+        or not np.array_equal(shade_back, shade_u8)
+        or not np.array_equal(shade_back_rgb, gray_to_rgb(shade_u8))
+    ):
         raise SystemExit("PNG read-back differs from what was written")
     step_m = (elev_max - elev_min) / RG16_MAX
     max_err = float(np.max(np.abs(rg16_decode(back, elev_min, elev_max) - elev)))
@@ -532,6 +547,7 @@ def bake(args: BakeArgs) -> dict[str, object]:
             "zFactor": 1.0,
             "method": "Horn (1981) gradient, ESRI hillshade formula",
             "flatValue": flat_u8,
+            "storage": "8-bit value in R = G = B of an RGB PNG (WebKit alters grayscale PNGs on decode)",
         },
         "checksums": {
             "heightSumV": int(rg16_values(height_rgb).sum()),
@@ -592,6 +608,12 @@ def _test_rg16_round_trip() -> None:
     )
     ends = rg16_quantize(np.array([lo, hi]), lo, hi)
     _check(int(ends[0]) == 0 and int(ends[1]) == RG16_MAX, "rg16 endpoints map to 0 and 65535")
+    gray = np.arange(256, dtype=np.uint8).reshape(16, 16)
+    rgb_gray = gray_to_rgb(gray)
+    _check(
+        rgb_gray.shape == (16, 16, 3) and all(np.array_equal(rgb_gray[..., c], gray) for c in range(3)),
+        "hillshade gray is stored in R = G = B",
+    )
     flat_lo, flat_hi = rg16_range(np.full((3, 3), 1600.0))
     _check(flat_hi > flat_lo, "rg16 range never empty")
 
