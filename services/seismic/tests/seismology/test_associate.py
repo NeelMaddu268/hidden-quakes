@@ -27,6 +27,7 @@ from hq.associate.core import (
     merge_duplicates,
     pick_counts,
     prepared,
+    require_pyocto,
     resolve_shared_picks,
     run_pyocto,
 )
@@ -236,6 +237,14 @@ def _score(result: AssocResult, truth: dict[str, int]) -> dict[str, Any]:
 
 
 # --- frame and tables ---------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+def test_other_pyocto_versions_fail_loudly() -> None:
+    require_pyocto(pyocto.__version__)  # the installed one passes (the module imported)
+    for version in ("0.1.4", "0.2.1"):
+        with pytest.raises(ImportError, match=r"pyocto==0\.2\.0"):
+            require_pyocto(version)
 
 
 @pytest.mark.smoke

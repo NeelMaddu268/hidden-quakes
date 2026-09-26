@@ -46,13 +46,30 @@ from hq.associate.result import (
     empty_result,
     typed_frame,
 )
-from hq.associate.tables import TableSet, build_tables
+from hq.associate.tables import PYOCTO_VERSION, TableSet, build_tables
 from hq.config.run import Origin, RunSection
 from hq.config.seismology import AssociatorConfig, SeismologyConfig
 from hq.locate.coords import from_enu, to_enu
 from hq.locate.velocity import LayerModel, load_configured_model
 
 log = logging.getLogger(__name__)
+
+
+def require_pyocto(version: str) -> None:
+    """Raise unless ``version`` is the PyOcto release this package was written for.
+
+    PyOcto 0.1.x (what uv resolves on Python 3.11) has no ``StationSpecificVelocityModel1D`` and
+    no ``second_pass_overwrites``; a newer release may change the table format or the z datum.
+    """
+    if version != PYOCTO_VERSION:
+        raise ImportError(
+            f"hq.associate needs pyocto=={PYOCTO_VERSION} (its travel-time table format, z datum "
+            f"and arguments were checked against that release); pyocto {version} is installed. "
+            "PyOcto 0.2.0 needs Python >= 3.12 in this lock."
+        )
+
+
+require_pyocto(pyocto.__version__)
 
 PICK_COLUMNS = ("id", "stationId", "phase", "t", "prob")  # the docs/02 Pick fields used here
 STATION_COLUMNS = ("id", "latitude", "longitude", "sensorElevM", "usedInRun", "enu_e", "enu_n", "enu_u")
