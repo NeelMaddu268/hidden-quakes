@@ -685,7 +685,7 @@ def _exercise_stage(io, fake_ctx, monkeypatch) -> None:
     rec = fake_ctx.records["download"]
     assert rec["counts"]["usefulStations"] == 0 and rec["counts"]["gapRows"] == 1
     assert rec["counts"]["requests"] == len(plan_chunks(t0 - cfg.padS, t1 + cfg.padS, cfg.chunkS))
-    assert rec["params"] == cfg.model_dump(mode="json")
+    assert rec["params"] == {"download": cfg.model_dump(mode="json")}
     report = json.loads(fake_ctx.path("download_report.json").read_text(encoding="utf-8"))
     assert report["pass"] is False and report["stations"][0]["componentsPresent"] == 2
 

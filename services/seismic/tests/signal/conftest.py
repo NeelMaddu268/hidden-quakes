@@ -42,8 +42,18 @@ class FakeRunContext:
         runtime_s: float,
         counts: dict[str, int],
         params: dict | None = None,
+        field: str | None = None,
     ) -> None:
-        self.records[stage] = {"runtime_s": runtime_s, "counts": counts, "params": params}
+        from hq.runs import STAGES  # H4's registry: record() rejects any other stage name
+
+        if stage not in {s.name for s in STAGES}:
+            raise ValueError(f"unknown stage {stage!r}: RunContext.record would reject it")
+        self.records[stage] = {
+            "runtime_s": runtime_s,
+            "counts": counts,
+            "params": params,
+            "field": field,
+        }
 
 
 def load_yaml(name: str) -> dict:

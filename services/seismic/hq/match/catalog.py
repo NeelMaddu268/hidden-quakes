@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+from hq_contracts.io import write_table
 from obspy import UTCDateTime, read_events
 from obspy.clients.fdsn import Client
 from obspy.clients.fdsn.header import FDSNNoDataException
@@ -77,7 +78,6 @@ _CATALOG_SCHEMA = pa.schema(
 _ROW_COLUMNS = [
     n for n in _CATALOG_SCHEMA.names if not n.startswith("enu_") and n != "matchedEventId"
 ]
-_SCHEMA_VERSION = "1.0"  # docs/02 SCHEMA_VERSION
 _MODEL_NAME = "CatalogEvent"
 # In-memory column types, so the frame itself carries the docs/02 types (any writer, zero rows,
 # all-null columns). Strings use pandas' default ``str`` semantics (a missing value is NaN, as in
@@ -380,13 +380,16 @@ def build_catalog(
     return rows[_CATALOG_SCHEMA.names], counts
 
 
-def _write_table(df: pd.DataFrame, path: Path) -> None:
-    # CONTRACT-01: replace with hq_contracts.io.write_table once it lands
-    table = pa.Table.from_pandas(df, schema=_CATALOG_SCHEMA, preserve_index=False)
-    metadata = dict(table.schema.metadata or {})
-    metadata[b"schemaVersion"] = _SCHEMA_VERSION.encode()
-    metadata[b"model"] = _MODEL_NAME.encode()
-    pq.write_table(table.replace_schema_metadata(metadata), path)
+def write_catalog(df: pd.DataFrame, path: Path) -> None:
+    """Write ``catalog.parquet`` through ``hq_contracts.io.write_table`` with the docs/02 types.
+
+    The frame is cast to the typed columns first (so zero rows and all-null columns keep their
+    types), and the written Arrow schema is checked against ``_CATALOG_SCHEMA``.
+    """
+    write_table(df[_CATALOG_SCHEMA.names].astype(_FRAME_DTYPES), path, _MODEL_NAME)
+    written = pq.read_schema(path).remove_metadata()
+    if not written.equals(_CATALOG_SCHEMA):
+        raise ValueError(f"{path}: written schema {written} is not the CatalogEvent schema")
 
 
 def _client(cfg: CatalogConfig) -> Client:
@@ -443,7 +446,7 @@ def run(ctx: "RunContext") -> None:
                 cfg.arrivalsProductType,
             )
 
-        _write_table(rows, table_part)
+        write_catalog(rows, table_part)
         os.replace(table_part, table_path)
         os.replace(quakeml_part, quakeml_path)
     finally:

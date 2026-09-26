@@ -362,7 +362,7 @@ def test_missing_magnitude_gives_nulls(
     event.preferred_magnitude_id = None
     rows, _ = catalog_stage.build_catalog(served, run_section, seismology_config.catalog)
     path = tmp_path / "catalog.parquet"
-    catalog_stage._write_table(rows, path)
+    catalog_stage.write_catalog(rows, path)
     table = pq.read_table(path).to_pylist()
     row = next(r for r in table if r["id"] == MIDDLE_ID)
     assert row["mag"] is None and row["magType"] is None
@@ -1023,7 +1023,7 @@ def test_null_strings_read_back_as_nan_like_every_run_table(
     event.preferred_magnitude_id = None
     rows, _ = catalog_stage.build_catalog(served, run_section, seismology_config.catalog)
     path = tmp_path / "catalog.parquet"
-    catalog_stage._write_table(rows, path)
+    catalog_stage.write_catalog(rows, path)
 
     default_str = pd.Series(["x", None]).dtype  # pandas' default string dtype (missing = NaN)
     string_columns = [c for c, t in DOCS02_TYPES.items() if t == pa.string()]
