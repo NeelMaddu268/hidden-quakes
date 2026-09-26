@@ -44,6 +44,8 @@ export const initialDemoState: Readonly<DemoData> = Object.freeze({
   view: "oblique",
 });
 
+const resetListeners = new Set<() => void>();
+
 export const useDemo: UseBoundStore<StoreApi<DemoState>> = create<DemoState>()((set, get) => ({
   ...initialDemoState,
 
@@ -66,6 +68,7 @@ export const useDemo: UseBoundStore<StoreApi<DemoState>> = create<DemoState>()((
   // camera view reset too, because the reveal must restart from a pixel-identical frame (WEB-03).
   reset() {
     set({ ...initialDemoState });
+    for (const listener of resetListeners) listener();
   },
 
   setFilter(f) {
@@ -96,6 +99,18 @@ export const useDemo: UseBoundStore<StoreApi<DemoState>> = create<DemoState>()((
 }));
 
 // ---- Scene-only helpers (not part of DemoState) -------------------------------------------------
+
+/**
+ * Scene-only: run `listener` after every reset(), even when reset() changes no field (e.g. R pressed
+ * before the reveal after orbiting): the camera still has to return to the start pose. Returns the
+ * unsubscribe function.
+ */
+export function onDemoReset(listener: () => void): () => void {
+  resetListeners.add(listener);
+  return () => {
+    resetListeners.delete(listener);
+  };
+}
 //
 // Reveal timeline (docs/lanes/H3 → The reveal): revealProgress is the *counter* clock. It is 0 from
 // reveal() until events start appearing (~1.0 s), climbs to exactly 1 as the last event appears

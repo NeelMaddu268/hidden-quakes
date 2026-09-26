@@ -29,13 +29,15 @@ const CANDIDATE_SIZE_KM = 0.06;
 const CANDIDATE_MIN_PX = 1.8;
 const PUBLIC_SIZE_KM = 0.08;
 const PUBLIC_MIN_PX = 2.6;
+/** No glyph grows past this on-screen radius (CSS px), however close the camera gets. */
+const MAX_GLYPH_PX = 18;
 
 /** Candidate (amber) layer: follows the reveal and the filter. Reads the store without re-rendering. */
 function driveCandidates(u: EventUniforms): void {
   const s = useDemo.getState();
   u.uReveal.value = candidateRevealUniform(s.phase, s.revealProgress, u.uPopWidth.value);
-  const [a, b, c] = FILTER_TIER_OPACITY[s.filter];
-  u.uTierOpacity.value.set(a, b, c);
+  const tiers = FILTER_TIER_OPACITY[s.filter];
+  u.uTierOpacity.value.set(tiers[0], tiers[1], tiers[2]);
   u.uLayerOpacity.value = candidateLayerOpacity(s.filter);
 }
 
@@ -53,12 +55,13 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
 
   const candidates = useMemo(() => buildCandidateInstances(events, ve, windowStart), [events, ve, windowStart]);
   const publicEvents = useMemo(() => buildPublicInstances(catalog, ve, windowStart), [catalog, ve, windowStart]);
-  // Frame the structure: Tier A and B candidates plus the public catalog. Scattered Tier C events
-  // stay rendered but don't widen the shot.
+  // Frame the structure: Tier A and B candidates. Scattered Tier C events and the public regional
+  // catalog (which spans the whole run bbox, tens of km) stay rendered but don't widen the shot. With
+  // no candidates at all, the public catalog is framed instead.
   const bounds = useMemo(
     () =>
       computeBounds(
-        [framingPositions(candidates, TIER_INDEX.B), publicEvents.positions],
+        [candidates.count > 0 ? framingPositions(candidates, TIER_INDEX.B) : publicEvents.positions],
         depthKmToSceneY(0, meta.scene),
       ),
     [candidates, publicEvents, meta.scene],
@@ -77,6 +80,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         color={colors.public}
         size={PUBLIC_SIZE_KM}
         minPx={PUBLIC_MIN_PX}
+        maxPx={MAX_GLYPH_PX}
         drive={drivePublic}
         renderOrder={2}
       />
@@ -86,6 +90,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         color={colors.recovered}
         size={CANDIDATE_SIZE_KM}
         minPx={CANDIDATE_MIN_PX}
+        maxPx={MAX_GLYPH_PX}
         drive={driveCandidates}
         renderOrder={1}
       />

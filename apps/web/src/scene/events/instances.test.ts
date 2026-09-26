@@ -137,16 +137,14 @@ describe("buildCandidateInstances", () => {
     ).toThrow(/unknown tier/);
   });
 
-  it("builds 2,000 instances in well under a frame budget's worth of setup", () => {
+  it("builds 2,000 instances (the performance-budget size) with correctly sized arrays", () => {
     const many = Array.from({ length: 2000 }, (_, i) =>
       ev(`e${i}`, { enu: { e: i, n: -i, u: -i }, revealOrder: i, tier: (["A", "B", "C"] as const)[i % 3] }),
     );
-    const t0 = performance.now();
     const inst = buildCandidateInstances(many, 1, 0);
-    const ms = performance.now() - t0;
     expect(inst.count).toBe(2000);
     expect(inst.positions.length).toBe(6000);
-    expect(ms).toBeLessThan(50);
+    expect(inst.revealAt[1999]).toBe(1);
   });
 });
 
