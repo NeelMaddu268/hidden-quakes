@@ -460,3 +460,87 @@ tiering:
   # (its Tier A counts used that run's bars), as stage associate does.
   sweep:
     enabled: false
+
+# Local magnitude (stage "magnitude", hq.magnitude, MAG-01), calibrated on the matched public
+# regional catalog events of ONE magnitude type:
+#   station magnitude  M_ij = a log10(A_ij) + b log10(R_ij) + c + s_j
+#   event magnitude    median of its station magnitudes (type "ML_cal", docs/02)
+# A_ij: peak of the horizontal vector amplitude sqrt(h1^2 + h2^2) of the simulated Wood-Anderson
+# trace (mm) in the S window; rotation-invariant, so borehole 1/2 components of unknown azimuth
+# need no rotation. R_ij: hypocentral distance (km) from the located hypocentre to the sensor
+# (ENU, sensorElevM included). Fixed by design and recorded with every run, not knobs: response
+# removal in the sensor's own input units (evalresp DISP, VEL or ACC, water level there), then
+# integration to displacement and the Wood-Anderson response; the S and P
+# anchors are the observed picks used in the final location, else the predicted times from
+# arrivals.parquet; station terms carry a ridge constraint (fit.stationTermRidge); leave-one-event-
+# out refits without each calibration event and predicts it; sigma is the normalized MAD
+# (1.4826 x MAD) of the event's station magnitudes.
+magnitude:
+  # The catalog carries ml (amplitude based) and md (duration based) on the showcase day; they are
+  # different scales and are never mixed. ml: more matched events, and it measures what this model
+  # measures (a peak amplitude). Every other type is left out of the calibration (counted).
+  calibrationMagType: ml
+  # docs/03 magnitude kill switch (~0.4): above this leave-one-event-out MAE the stage writes
+  # magnitude.json but leaves every events.parquet magnitude null (logged).
+  maxLooMae: 0.4
+  minStations: 3
+  minCalibrationEvents: 10
+  minSnr: 3.0
+  # Each station's windows are read from the cache in groups spanning at most this long, so a
+  # 1000 Hz station-day (about 1 GB in memory) is never loaded at once.
+  readChunkS: 3600.0
+  window:
+    sPreS: 0.5
+    sPostS: 3.0
+    noiseLenS: 3.0
+    noiseGapS: 0.5
+    padS: 2.0
+  response:
+    # One band for every station, so amplitudes compare across 100/200/1000 Hz sensors: flat
+    # from f2 to f3, cosine tapers to 0 at f1 and f4, then the Wood-Anderson response (flat to
+    # displacement above 1/periodS). f4 must lie below the lowest Nyquist of a used station
+    # (checked per station). The high-pass at f2 is above the Wood-Anderson corner on purpose:
+    # below a few Hz the accelerometers' and 1000 Hz sensors' displacement noise hides the S
+    # waves of the smallest events. On the showcase day raising f2 from 1 to 4 Hz left the
+    # leave-one-event-out MAE unchanged and cut the share of below-minSnr windows among the
+    # smallest events (the record's magnitudes.censoring table), i.e. less SNR censoring.
+    # The water level acts on the response in the sensor's own units: on an accelerometer's or a
+    # 1000 Hz sensor's response expressed as displacement it would clip (high-pass) the band
+    # itself, differently at each station. A station whose native response still falls more
+    # than waterLevelDb below its maximum inside [f2, f3] has a narrower band there: logged and
+    # recorded (amplitudes.perStation.*.waterLevelClipHz).
+    preFiltHz: [2.0, 4.0, 35.0, 45.0]
+    waterLevelDb: 60.0
+    # H1's rate probe keeps the served rate; a StationXML epoch describing another rate (UU.FORU:
+    # 200 Hz response, 100 Hz data) cannot deconvolve the data, so the station is excluded.
+    rateRelTol: 1.0e-4
+  # A window whose raw horizontal counts reach maxFraction of fullScaleCounts anywhere in its
+  # processed span is "clipped" (never a magnitude). 2^23: the full scale of a 24-bit digitizer;
+  # the record keeps each station's largest |counts| as a share of it (maxFullScaleFraction),
+  # which shows whether a station's digitizer exceeds it.
+  saturation:
+    fullScaleCounts: 8388608.0
+    maxFraction: 0.95
+  # Uhrhammer & Collins (1990) Wood-Anderson constants (T0 0.8 s, h 0.7, V 2080). The gain only
+  # shifts c; it is recorded so log10(A) values can be reproduced.
+  woodAnderson:
+    periodS: 0.8
+    damping: 0.7
+    gain: 2080.0
+  fit:
+    loss: soft_l1                     # robust on the observations; the ridge stays quadratic
+    fScaleMag: 0.3                    # residual (magnitude units) where soft_l1 turns linear
+    # 1.0: Richter's definition (M changes one unit per decade of amplitude). A fitted a is pulled
+    # below 1 by amplitude scatter within events (regression dilution), which compresses the
+    # magnitudes of events smaller than the calibration set; null fits it anyway.
+    amplitudeSlope: 1.0
+    # Ridge on the station terms (objective + stationTermRidge x sum of squared terms; with the
+    # free intercept c they also sum to zero at the optimum). 1.0 = (residual sd / station-term
+    # sd)^2 with both about fScaleMag, a prior, not a bound: the fitted terms are in the record
+    # (fit.stationTerms). b is NOT identified by the calibration set: its events cluster, so each
+    # station's distance barely changes between them (fit.bIdentification.withinStationLogRSd),
+    # and this ridge decides how much of the between-station distance spread goes to b instead
+    # of to the terms. b follows this knob and fit.loss as much as the data, and the
+    # leave-one-event-out MAE cannot test it; magnitudes far from the calibration events rest on it.
+    stationTermRidge: 1.0
+    minStationObs: 5
