@@ -4,7 +4,7 @@ One section per ticket, so parallel tickets edit separate classes and separate Y
 Every model rejects unknown keys (docs/02 -> Config files).
 """
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _Section(BaseModel):
@@ -30,6 +30,14 @@ class DownloadConfig(_Section):
 
 class KnownEventsConfig(_Section):
     """Windows around the largest public-catalog events, used for Check B and the weight A/B."""
+
+    nEvents: int = Field(ge=1)  # largest public events by magnitude to window
+    preS: float = Field(ge=0.0)  # s of data before the catalog origin time
+    postS: float = Field(gt=0.0)  # s of data after the catalog origin time
+    minGapS: float = Field(gt=0.0)  # missing coverage shorter than this is jitter, not a gap
+    maxGapFraction: float = Field(ge=0.0, le=1.0)  # usable only if the gappiest component <= this
+    minStations: int = Field(ge=1)  # usable three-component stations a window needs to PASS
+    usedInRunOnly: bool  # consider only stations.parquet rows with usedInRun = true
 
 
 # --- SEIS-03: preprocessing profiles ----------------------------------------------------------------

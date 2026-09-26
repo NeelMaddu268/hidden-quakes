@@ -8,7 +8,17 @@ stations: {}
 download: {}
 
 # --- SEIS-02: known-event windows --------------------------------------------------------------------
-known: {}
+# Windows around the largest public-catalog events in the run window and bbox, read from the shared
+# waveform cache (never downloaded by SEIS-02). They feed Check B and the picker weight A/B (SEIS-04).
+known:
+  nEvents: 3            # largest public events by magnitude; ties go to the earlier origin time
+  preS: 120.0           # s before the catalog origin time (noise context ahead of the P arrival)
+  postS: 480.0          # s after it; preS + postS = 600 s, the ticket's 10-minute window
+  minGapS: 0.05         # missing coverage shorter than this (s) is timing jitter, not a gap;
+                        # longer than one sample period at every rate >= 20 Hz
+  maxGapFraction: 0.2   # a station is usable only if its gappiest component misses <= 20 %
+  minStations: 8        # usable three-component stations a window needs to PASS
+  usedInRunOnly: true   # consider only stations.parquet rows with usedInRun = true
 
 # --- SEIS-03: preprocessing profiles -----------------------------------------------------------------
 preprocess: {}
