@@ -3,7 +3,9 @@
 import { useMemo } from "react";
 import type { SceneBounds } from "../camera/bounds";
 import { surfaceExtentM } from "../terrain/grid";
-import { useSurfaceChoice } from "../terrain/surface";
+import { ABSTRACT_SURFACE_LABEL, useSurfaceChoice } from "../terrain/surface";
+import { verticalBadgeText } from "./badge";
+import { CornerNote } from "./CornerNote";
 import type { GeoFeature, SceneMeta, Station } from "../types";
 import { DepthRuler } from "./DepthRuler";
 import { DepthSlices } from "./DepthSlices";
@@ -17,8 +19,7 @@ export interface ReferencesProps {
   bounds: SceneBounds;
   /**
    * Plan view (WEB-07): looking straight down, the vertical ruler collapses to a point and the depth
-   * slices stack into one outline, so both are left out; the plan's depth section panel carries depth
-   * (and the abstract-surface note) instead.
+   * slices stack into one outline, so both are left out; the plan's depth section panel carries depth.
    */
   planView?: boolean;
 }
@@ -32,11 +33,17 @@ export function References({ bundle, bounds, planView = false }: ReferencesProps
   const extent = useMemo(() => surfaceExtentM(terrainMeta, bounds), [terrainMeta, bounds]);
   return (
     <group name="references">
-      {!planView && <DepthRuler scene={scene} bounds={bounds} abstractSurface={choice === "slab"} />}
+      {!planView && <DepthRuler scene={scene} bounds={bounds} />}
       {!planView && choice !== "none" && <DepthSlices scene={scene} extent={extent} />}
       <StationsLayer stations={bundle.stations} scene={scene} />
       <FeaturesLayer features={bundle.features} scene={scene} />
       <VerticalBadge scene={scene} />
+      {choice === "slab" && (
+        // Permanent while the slab stands in for the terrain: before the reveal, in every view, in plan.
+        <CornerNote slot={verticalBadgeText(scene) ? 1 : 0} testId="abstract-surface-note">
+          {ABSTRACT_SURFACE_LABEL}
+        </CornerNote>
+      )}
     </group>
   );
 }

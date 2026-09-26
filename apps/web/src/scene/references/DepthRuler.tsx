@@ -9,9 +9,10 @@ import { Matrix4, Vector3, Vector4, type Group } from "three";
 import type { SceneBounds } from "../camera/bounds";
 import type { SceneMeta } from "../types";
 import { RENDER_ORDER } from "../terrain/renderOrder";
-import { ABSTRACT_SURFACE_LABEL } from "../terrain/surface";
+import { sceneFx } from "../fx";
+import { TIMELINE } from "../reveal/timeline";
 import { LABEL_Z_RANGE, labelStyle, numericLabelStyle } from "./labels";
-import { declutterLabels, rulerAnchor, rulerLayout, stickyTitleT } from "./ruler";
+import { declutterLabels, rulerAnchor, rulerLayout, rulerRevealOpacity, stickyTitleT } from "./ruler";
 
 /** Approximate tick-label box (CSS px): labels whose boxes would overlap are hidden (plan view). */
 const LABEL_BOX_W_PX = 40;
@@ -47,10 +48,13 @@ function makeScratch(n: number): Scratch {
  * sits at the top of the ruler and slides down the spine when the surface is out of frame, so the
  * label stays visible whenever the ruler is. Overlapping tick labels are hidden (plan view).
  */
-export function DepthRuler({ scene, bounds, abstractSurface = false }: { scene: SceneMeta; bounds: SceneBounds; abstractSurface?: boolean }) {
+export function DepthRuler({ scene, bounds }: { scene: SceneMeta; bounds: SceneBounds }) {
   const layout = useMemo(() => rulerLayout(scene, rulerAnchor(bounds)), [scene, bounds]);
   const labelEls = useRef<(HTMLDivElement | null)[]>([]);
   const title = useRef<Group>(null);
+  const titleEl = useRef<HTMLDivElement>(null);
+  const ruler = useRef<Group>(null);
+  const lastOpacity = useRef(-1);
   const scratch = useRef<Scratch | null>(null);
   useLayoutEffect(() => {
     scratch.current = makeScratch(layout.ticks.length);
@@ -60,6 +64,31 @@ export function DepthRuler({ scene, bounds, abstractSurface = false }: { scene: 
   useFrame(({ camera, size }) => {
     const n = layout.ticks.length;
     if (!scratch.current) return;
+
+    // Fade with the reveal (hidden on the pre-reveal frame). DOM and material are touched only when the
+    // quantized opacity changes, so a settled scene writes nothing.
+    const alpha = Math.round(rulerRevealOpacity(sceneFx.terrainOpacity, TIMELINE.terrainFade.to) * 100) / 100;
+    if (alpha !== lastOpacity.current) {
+      lastOpacity.current = alpha;
+      const g = ruler.current;
+      if (g) {
+        g.visible = alpha > 0;
+        g.traverse((o) => {
+          const m = (o as unknown as { material?: { opacity: number; transparent: boolean } }).material;
+          if (m) {
+            m.transparent = true;
+            m.opacity = alpha;
+          }
+        });
+      }
+      const css = alpha > 0 ? String(alpha) : "0";
+      if (titleEl.current) titleEl.current.style.opacity = css;
+      for (let i = 0; i < n; i++) {
+        const el = labelEls.current[i];
+        if (el) el.style.opacity = css;
+      }
+    }
+    if (alpha === 0) return;
     const { v, clipTop, clipBottom, viewProj, xs, ys, mask } = scratch.current;
 
     // Sticky title: find where the spine enters the viewport (exact, in clip space).
@@ -91,6 +120,7 @@ export function DepthRuler({ scene, bounds, abstractSurface = false }: { scene: 
 
   return (
     <group name="depth-ruler">
+      <group ref={ruler}>
       <Line
         points={layout.segments}
         segments
@@ -101,11 +131,15 @@ export function DepthRuler({ scene, bounds, abstractSurface = false }: { scene: 
         depthWrite={false}
         renderOrder={RENDER_ORDER.ruler}
       />
+      </group>
       <group ref={title} position={layout.titleAt}>
         <Html zIndexRange={LABEL_Z_RANGE} pointerEvents="none">
-          <div data-testid="depth-ruler-title" style={{ ...labelStyle, transform: "translate(-4px, calc(-100% - 10px))" }}>
+          <div
+            ref={titleEl}
+            data-testid="depth-ruler-title"
+            style={{ ...labelStyle, opacity: 0, transform: "translate(-4px, calc(-100% - 10px))" }}
+          >
             <div>{layout.title}</div>
-            {abstractSurface && <div data-testid="abstract-surface-note">{ABSTRACT_SURFACE_LABEL}</div>}
           </div>
         </Html>
       </group>
@@ -115,7 +149,7 @@ export function DepthRuler({ scene, bounds, abstractSurface = false }: { scene: 
             ref={(el) => {
               labelEls.current[i] = el;
             }}
-            style={{ ...numericLabelStyle, transform: "translate(calc(-100% - 5px), -50%)" }}
+            style={{ ...numericLabelStyle, opacity: 0, transform: "translate(calc(-100% - 5px), -50%)" }}
           >
             {t.label}
           </div>
