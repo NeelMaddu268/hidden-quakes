@@ -153,3 +153,15 @@ export function sliceSegments(
   }
   return out;
 }
+
+/**
+ * The depth ruler's opacity from the terrain's (sceneFx.terrainOpacity, which the reveal fades 1 → 0.12
+ * and reset() brings back): hidden on the pre-reveal frame (docs/00's 5-second test: only terrain, the
+ * geothermal reference, PUBLIC and REVEAL), fully shown once the ground has faded, in step with it.
+ */
+export function rulerRevealOpacity(terrainOpacity: number, fadedTo: number): number {
+  const span = 1 - fadedTo;
+  if (!(span > 0)) return 1;
+  const k = (1 - terrainOpacity) / span;
+  return k <= 0 ? 0 : k >= 1 ? 1 : k;
+}
