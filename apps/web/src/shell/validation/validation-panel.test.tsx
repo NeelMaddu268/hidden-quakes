@@ -12,7 +12,7 @@ import mockValidation from "../../../public/data/mock/validation.json";
 import { Shell } from "../Shell";
 import { bundleFiles, fakeFetch, type FixtureOptions } from "../test-fixture";
 import { formatNumber } from "./format";
-import { chanceNote, DEPTH_NOTE, STRICT_COMPARE_NOTE } from "./rows";
+import { chanceNote } from "./rows";
 
 const validation = mockValidation as unknown as Validation;
 const summary = mockMeta.summary as unknown as AnalysisSummary;
@@ -58,27 +58,26 @@ describe("validation panel", () => {
       "Catalog recall",
       "Strict events",
       "Median stations",
-      "Median residual",
-      "Depth resolution",
-      "Strict events, PhaseNet vs STA/LTA",
+      "Median timing misfit",
+      "Depth resolution (synthetic, all stations)",
+      "STA/LTA strict events",
       "PhaseNet vs STA/LTA gain",
       "Chance associations",
     ]);
     expect(rowText("recall")).toBe(`${formatNumber(summary.recoveredCatalogCount, 0)} / ${formatNumber(summary.publicCatalogCount, 0)}`);
-    expect(rowText("strict")).toBe(formatNumber(summary.strictQualityCount, 0));
+    expect(rowText("strict")).toBe(
+      `${formatNumber(summary.strictQualityCount, 0)} (${formatNumber(summary.strictAdditionalCount, 0)} not in public catalog)`,
+    );
     expect(rowText("stations")).toBe(formatNumber(summary.medianStations, 1));
     expect(rowText("residual")).toBe(`${formatNumber(summary.medianRmsS, 3)} s`);
     expect(rowText("depth")).toBe(`±${formatNumber(validation.synthetic.medianVErrM, 0)} m`);
-    const full = (method: "phasenet" | "stalta") =>
-      validation.baseline.find((r) => r.method === method && r.associationProfile === "full")!.tiers.A;
-    expect(rowText("strictCompare")).toBe(`${formatNumber(full("phasenet"), 0)} vs ${formatNumber(full("stalta"), 0)}`);
+    const staltaFull = validation.baseline.find((r) => r.method === "stalta" && r.associationProfile === "full")!;
+    expect(rowText("stalta")).toBe(`${formatNumber(staltaFull.tiers.A, 0)} of ${formatNumber(staltaFull.candidates, 0)} candidates`);
     expect(rowText("gain")).toBe(`${formatNumber(summary.baseline!.gain, 2)}×`);
     expect(rowText("chance")).toBe(formatNumber(validation.nullTest!.meanChanceEvents, 1));
-    // The comparison's PhaseNet count is a rerun on one statics table, so its row carries the
-    // note that keeps it from being read against "Strict events" unqualified; no other row does.
-    expect(screen.getByTestId("validation-note-strictCompare").textContent).toBe(STRICT_COMPARE_NOTE);
-    // The depth figure comes from the synthetic test with every station recording; its row says so.
-    expect(screen.getByTestId("validation-note-depth").textContent).toBe(DEPTH_NOTE);
+    // Only the chance row carries a note; the other qualifiers live in the labels.
+    expect(screen.queryByTestId("validation-note-stalta")).toBeNull();
+    expect(screen.queryByTestId("validation-note-depth")).toBeNull();
     expect(screen.queryByTestId("validation-note-strict")).toBeNull();
     // The chance value is a mean over the null test's scrambles; its note says so from the data.
     expect(screen.getByTestId("validation-note-chance").textContent).toBe(chanceNote(validation.nullTest));

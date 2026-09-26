@@ -226,8 +226,10 @@ def test_baseline_fields_need_both_full_rows(story: ModuleType, tmp_path: Path) 
     (bundle / "validation.json").write_text(json.dumps(validation), encoding="utf-8")
     rows, _ = story.render(bundle, tmp_path / "out")
     by_name = {r.name: r for r in rows if r.doc == "pitch-and-qa.md"}
-    for token in ("{staltaMedianRmsS}", "{phasenetMedianRmsS}", "{staltaCandidates}"):
+    for token in ("{staltaMedianRmsS}", "{phasenetMedianRmsS}", "{staltaMedianStations}"):
         assert by_name[token].status == story.STATUS_CONDITION, token
+    # The card's own "A of N candidates" denominator (main's resolver) needs only the STA/LTA row.
+    assert by_name["{staltaCandidates}"].status == story.STATUS_NOT_AVAILABLE
 
 
 def test_missing_validation_renders_not_available(story: ModuleType, tmp_path: Path) -> None:
