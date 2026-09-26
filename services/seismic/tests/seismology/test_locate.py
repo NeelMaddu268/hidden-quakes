@@ -520,3 +520,23 @@ def test_synthetic_stations_drop_used_stations_without_picks() -> None:
     assert list(kept["id"]) == ["XX.A", "XX.C"] and dropped == ["XX.B"]
     with pytest.raises(ValueError, match="no used station"):
         synthetic_stations(used, picks.iloc[0:0])
+
+
+def test_locate_applies_a_fixed_statics_table(world: dict[str, Any], located: LocateDetails) -> None:
+    """REQ-H1-5: validation reruns pass the run's statics.parquet; locate() applies it as given."""
+    sid = str(located.stations["id"].iloc[0])
+    table = pd.DataFrame({"stationId": [sid, sid], "phase": ["P", "S"],
+                          "staticS": [0.05, 0.1], "nEvents": [3, 3]})
+    args = (world["assoc"], world["picks"], world["stations"], world["cfg"], world["run"])
+    got = locate(*args, run_id=RUN_ID, cache_dir=world["cache"], statics=table)
+    ref = locate_detailed(*args, run_id=RUN_ID, cache_dir=world["cache"],
+                          statics={(sid, "P"): 0.05, (sid, "S"): 0.1}).result
+    pd.testing.assert_frame_equal(got.events, ref.events)
+    pd.testing.assert_frame_equal(got.arrivals, ref.arrivals)
+    applied = got.statics.set_index(["stationId", "phase"])["staticS"]
+    assert applied.loc[(sid, "P")] == 0.05 and applied.loc[(sid, "S")] == 0.1
+    with pytest.raises(ValueError, match="lacks columns"):
+        locate(*args, run_id=RUN_ID, cache_dir=world["cache"], statics=table.drop(columns="staticS"))
+    with pytest.raises(ValueError, match="null staticS"):
+        locate(*args, run_id=RUN_ID, cache_dir=world["cache"],
+               statics=table.assign(staticS=[0.05, None]))
