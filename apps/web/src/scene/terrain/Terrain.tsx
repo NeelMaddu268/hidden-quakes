@@ -143,7 +143,7 @@ export function Terrain({ scene, bounds }: TerrainProps) {
     () => (ready && choice === "terrain" ? buildTerrainGrid(ready.elevM, ready.meta, scene) : null),
     [ready, choice, scene],
   );
-  const extent = useMemo(() => surfaceExtentM(ready?.meta ?? null, bounds), [ready, bounds]);
+  const extent = useMemo(() => surfaceExtentM(choice === "terrain" ? ready?.meta ?? null : null, bounds), [ready, choice, bounds]);
 
   if (choice === "terrain" && grid && ready) {
     return (

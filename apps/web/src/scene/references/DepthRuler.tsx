@@ -3,10 +3,12 @@
 import { Html, Line } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { colors } from "@hq/visualization";
-import { useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { Matrix4, Vector3, Vector4, type Group } from "three";
 import type { SceneBounds } from "../camera/bounds";
 import type { SceneMeta } from "../types";
+import { RENDER_ORDER } from "../terrain/renderOrder";
+import { ABSTRACT_SURFACE_LABEL } from "../terrain/surface";
 import { LABEL_Z_RANGE, labelStyle, numericLabelStyle } from "./labels";
 import { declutterLabels, rulerAnchor, rulerLayout, stickyTitleT } from "./ruler";
 
@@ -44,16 +46,19 @@ function makeScratch(n: number): Scratch {
  * sits at the top of the ruler and slides down the spine when the surface is out of frame, so the
  * label stays visible whenever the ruler is. Overlapping tick labels are hidden (plan view).
  */
-export function DepthRuler({ scene, bounds }: { scene: SceneMeta; bounds: SceneBounds }) {
+export function DepthRuler({ scene, bounds, abstractSurface = false }: { scene: SceneMeta; bounds: SceneBounds; abstractSurface?: boolean }) {
   const layout = useMemo(() => rulerLayout(scene, rulerAnchor(bounds)), [scene, bounds]);
   const labelEls = useRef<(HTMLDivElement | null)[]>([]);
   const title = useRef<Group>(null);
   const scratch = useRef<Scratch | null>(null);
+  useLayoutEffect(() => {
+    scratch.current = makeScratch(layout.ticks.length);
+  }, [layout.ticks.length]);
 
   // Priority −1: runs before drei's <Html> frame hooks, so labels follow the camera without a lag.
   useFrame(({ camera, size }) => {
     const n = layout.ticks.length;
-    if (!scratch.current || scratch.current.mask.length !== n) scratch.current = makeScratch(n);
+    if (!scratch.current) return;
     const { v, clipTop, clipBottom, viewProj, xs, ys, mask } = scratch.current;
 
     // Sticky title: find where the spine enters the viewport (exact, in clip space).
@@ -93,12 +98,13 @@ export function DepthRuler({ scene, bounds }: { scene: SceneMeta; bounds: SceneB
         transparent
         depthTest={false}
         depthWrite={false}
-        renderOrder={6}
+        renderOrder={RENDER_ORDER.ruler}
       />
       <group ref={title} position={layout.titleAt}>
         <Html zIndexRange={LABEL_Z_RANGE} pointerEvents="none">
           <div data-testid="depth-ruler-title" style={{ ...labelStyle, transform: "translate(-4px, calc(-100% - 10px))" }}>
-            {layout.title}
+            <div>{layout.title}</div>
+            {abstractSurface && <div data-testid="abstract-surface-note">{ABSTRACT_SURFACE_LABEL}</div>}
           </div>
         </Html>
       </group>
