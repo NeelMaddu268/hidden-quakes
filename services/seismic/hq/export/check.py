@@ -25,6 +25,7 @@ from typing import Any, get_args
 import numpy as np
 from hq_contracts.models import (
     SCHEMA_VERSION,
+    BaselineGain,
     BundleMeta,
     CatalogEvent,
     DataMode,
@@ -38,6 +39,7 @@ from pydantic import BaseModel, ValidationError
 
 from hq.config import load_config
 from hq.config.export import MAX_EVIDENCE_TRACES, EvidenceConfig, ExportConfig, RoundingConfig
+from hq.config.validate import BaselineConfig
 from hq.export.files import (
     CATALOG_JSON,
     EVENTS_JSON,
@@ -48,6 +50,8 @@ from hq.export.files import (
     VALIDATION_JSON,
 )
 from hq.export.summary import STRICT_TIER, analysis_summary, reveal_key
+from hq.validate.baseline import GAIN_PROFILE, PHASENET, STALTA, baseline_gain, index_rows
+from hq.validate.errors import ValidateError
 
 log = logging.getLogger(__name__)
 
@@ -164,7 +168,8 @@ def _check_summary(
     problems: list[str],
 ) -> None:
     got = meta.summary
-    want = analysis_summary(meta.run.id, events, catalog, validation, rounding)
+    # No run config here: the claimed gain is checked against its own numbers below instead.
+    want = analysis_summary(meta.run.id, events, catalog, validation, rounding, None)
     if got.runId != meta.run.id or meta.scene.runId != meta.run.id:
         problems.append("meta.json: runId differs between run, scene and summary")
     exact = (
@@ -191,11 +196,52 @@ def _check_summary(
                 f"summary.{name} = {getattr(got, name)}, recomputed {getattr(want, name)}"
             )
     if got.baseline is not None:
-        b = got.baseline
+        _check_baseline_claim(got.baseline, validation, rounding, problems)
+
+
+def _check_baseline_claim(
+    claim: BaselineGain,
+    validation: Validation | None,
+    rounding: RoundingConfig,
+    problems: list[str],
+) -> None:
+    """A claimed ``summary.baseline`` must come from the bundle's own ``validation.baseline``
+    rows: the two strict counts are the ``full`` rows' Tier A counts, and the shared rule
+    (``hq.validate.baseline.baseline_gain`` with the default ``minGain``, the docs/lanes floor)
+    must claim a gain too, so a claim with no or partial rows, mismatched counts or a
+    ``p_only`` profile without gain is a problem."""
+    rows = validation.baseline if validation is not None else []
+    if not rows:
+        problems.append("summary.baseline claims a gain but validation.json has no baseline rows")
+        return
+    if claim.associationProfile != GAIN_PROFILE:
+        problems.append(
+            f"summary.baseline.associationProfile = {claim.associationProfile!r}, the rule quotes "
+            f"{GAIN_PROFILE!r}"
+        )
+    try:
+        indexed = index_rows(rows)
+    except ValidateError as exc:
+        problems.append(f"validation.baseline: {exc}")
+        return
+    for method, field in ((PHASENET, "strictPhasenet"), (STALTA, "strictStalta")):
+        row = indexed.get((method, GAIN_PROFILE))
+        if row is None:
+            problems.append(f"summary.baseline claims a gain but validation.baseline has no "
+                            f"({method}, {GAIN_PROFILE}) row")  # fmt: skip
+        elif row.tiers.A != getattr(claim, field):
+            problems.append(
+                f"summary.baseline.{field} = {getattr(claim, field)}, but the ({method}, "
+                f"{GAIN_PROFILE}) row has {row.tiers.A} Tier {STRICT_TIER} events"
+            )
+    if baseline_gain(rows, BaselineConfig()) is None:
+        problems.append(
+            "summary.baseline claims a gain that validation.baseline does not support under the "
+            "shared rule (gain must hold in both profiles with STA/LTA Tier A events in each)"
+        )
+    if claim.strictStalta > 0:
         tolerance = 0.5 * 10.0**-rounding.gain + 1e-12
-        if b.strictStalta <= 0 or b.gain <= 1.0:
-            problems.append("summary.baseline claims a gain that is not > 1")
-        elif abs(b.strictPhasenet / b.strictStalta - b.gain) > tolerance:
+        if abs(claim.strictPhasenet / claim.strictStalta - claim.gain) > tolerance:
             problems.append("summary.baseline.gain != strictPhasenet / strictStalta")
 
 

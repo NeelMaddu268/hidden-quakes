@@ -1,16 +1,18 @@
 SHELL := /bin/bash
 RUN ?=
 
-.PHONY: help check check-py check-web contracts check-contracts mock run export api dev build offline publish-run fetch-run runs
+.PHONY: help check check-copy check-py check-web contracts check-contracts mock run export api dev build offline publish-run fetch-run runs
 
 help:
 	@echo "make check                  typecheck + lint + smoke tests (run before every PR)"
+	@echo "make check-copy             flag numbers-as-facts and forbidden phrases in README, docs/demo and the shell"
 	@echo "make contracts              regenerate TS from the Python contracts"
 	@echo "make check-contracts        regenerate and fail if the committed TS/schema differ"
 	@echo "make mock                   regenerate the synthetic mock bundle in apps/web/public/data/mock"
 	@echo "make run [STAGES=a,b]       run the showcase pipeline; HQ_DATA_DIR=<dir> overrides <main checkout>/data"
 	@echo "make export RUN=<id>        export a run to apps/web/public/data/<mode>/ and validate the bundle"
 	@echo "make api                    run the live worker + API (services/api/config.yaml; ARGS='--port 8001')"
+	@echo "make api ARGS=freeze-snapshot  copy the last good live window into apps/web/public/data/snapshot/ (commit it)"
 	@echo "make dev                    run the web app locally (next dev)"
 	@echo "make build                  static export of the web app into apps/web/out (next build)"
 	@echo "make offline                build (NEXT_PUBLIC_ALLOW_MOCK=1) and serve apps/web/out locally; works with Wi-Fi off"
@@ -18,7 +20,7 @@ help:
 	@echo "make fetch-run RUN=<id>     download a teammate's run tables"
 	@echo "make runs                   list shared runs"
 
-check: check-py check-web
+check: check-py check-web check-copy
 
 check-py:
 	@cd services/seismic && uv run ruff check . ../../packages/contracts/python ../../scripts/mock-fixture.py && { uv run pytest -q -m smoke; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 5 ]; }
@@ -27,6 +29,9 @@ check-py:
 check-web:
 	@if [ ! -d node_modules ]; then echo "check-web: run 'pnpm install' at the repo root first"; exit 1; fi; \
 	pnpm -r --if-present typecheck && pnpm -r --if-present lint && pnpm -r --if-present test
+
+check-copy:
+	@bash scripts/check-copy.sh
 
 contracts:
 	bash scripts/gen-contracts.sh
