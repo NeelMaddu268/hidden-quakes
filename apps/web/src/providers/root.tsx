@@ -5,6 +5,9 @@
  *
  * State is keyed by provider and derived, never reset inside effects: a new provider means
  * "loading" until its own load resolves, so mode switches can't show stale data.
+ *
+ * The mode is read once per document (`window.location.search` after hydration). Switch modes
+ * with `navigateToMode()` (a full navigation), not a soft route change.
  */
 import { createContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { DataMode, LiveStatus, Validation } from "@hq/contracts";
@@ -15,6 +18,8 @@ import { StaticBundleProvider } from "./static";
 import type { BundleState, SeismicDataProvider } from "./types";
 
 export interface ProviderContextValue {
+  /** False outside `<ProviderRoot>`; the hooks throw instead of spinning forever. */
+  mounted: boolean;
   mode: DataMode | null;
   provider: SeismicDataProvider | null;
   bundle: BundleState;
@@ -23,6 +28,7 @@ export interface ProviderContextValue {
 }
 
 export const ProviderContext = createContext<ProviderContextValue>({
+  mounted: false,
   mode: null,
   provider: null,
   bundle: { status: "loading" },
@@ -59,7 +65,10 @@ const readServerSearch = () => null;
 export interface ProviderRootProps {
   /** Force a mode (tests, embeds). Otherwise read from `window.location.search` after hydration. */
   mode?: DataMode;
-  /** Inject a provider (tests). Otherwise built from the mode. */
+  /**
+   * Inject a provider (tests). Must be referentially stable across renders (create it once with
+   * `useState(() => new StaticBundleProvider(...))`); a new instance per render reloads forever.
+   */
   provider?: SeismicDataProvider;
   children: ReactNode;
 }
@@ -105,15 +114,25 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
           provider: activeProvider,
           value: { status: "ready", info, meta, stations, catalog, events, features },
         });
-        preloadEvidence(activeProvider, meta.scene.heroEventId, events);
-        return activeProvider.getValidation().then((validation) => {
-          if (!cancelled) setLoadedValidation({ provider: activeProvider, value: validation });
-        });
+        // Static providers memoize, so warming them is free; the live API is polled instead.
+        if (!(activeProvider instanceof LiveProvider)) {
+          preloadEvidence(activeProvider, meta.scene.heroEventId, events);
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
           setLoadedBundle({ provider: activeProvider, value: { status: "error", message: errorMessage(error) } });
         }
+      });
+    // validation.json is optional (P1): its failure never touches the bundle state.
+    activeProvider
+      .getValidation()
+      .then((validation) => {
+        if (!cancelled) setLoadedValidation({ provider: activeProvider, value: validation });
+      })
+      .catch((error: unknown) => {
+        console.warn("validation.json unavailable:", errorMessage(error));
+        if (!cancelled) setLoadedValidation({ provider: activeProvider, value: null });
       });
     return () => {
       cancelled = true;
@@ -127,10 +146,24 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
     const poll = () =>
       Promise.all([live.getStatus(), live.getEvents()])
         .then(([status, events]) => {
-          if (!cancelled) setLoadedLive({ provider: live, value: { ...status, events } });
+          if (cancelled) return;
+          setLoadedLive({ provider: live, value: { ...status, events } });
+          // Keep "updated n min ago" honest on every poll.
+          setLoadedBundle((previous) =>
+            previous && previous.provider === live && previous.value.status === "ready"
+              ? {
+                  provider: live,
+                  value: {
+                    ...previous.value,
+                    info: { ...previous.value.info, label: live.labelFor(status), generatedAt: status.updatedAt },
+                  },
+                }
+              : previous,
+          );
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           // API-05 turns this into snapshot failover; until then the last status stays visible.
+          console.warn("live status poll failed:", errorMessage(error));
         });
     void poll();
     const timer = setInterval(() => void poll(), LIVE_POLL_MS);
@@ -149,7 +182,7 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
     const validation =
       loadedValidation && loadedValidation.provider === activeProvider ? loadedValidation.value : null;
     const liveStatus = loadedLive && loadedLive.provider === activeProvider ? loadedLive.value : null;
-    return { mode: resolvedMode, provider: activeProvider, bundle, validation, liveStatus };
+    return { mounted: true, mode: resolvedMode, provider: activeProvider, bundle, validation, liveStatus };
   }, [resolvedMode, activeProvider, resolved.error, loadedBundle, loadedValidation, loadedLive]);
 
   return <ProviderContext.Provider value={value}>{children}</ProviderContext.Provider>;

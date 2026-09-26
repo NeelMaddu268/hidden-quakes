@@ -2,8 +2,8 @@
  * API-01 acceptance: mock ↔ showcase swap with no component changes; a schemaVersion mismatch
  * renders a visible error. The bundle here is a tiny hand-made one (docs/01 → Handoffs).
  */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SCHEMA_VERSION,
   type BundleMeta,
@@ -13,13 +13,19 @@ import {
   type Station,
 } from "@hq/contracts";
 import type { FetchLike } from "./fetch";
-import { useBundle, useEvidence, useValidation } from "./hooks";
-import { liveLabel } from "./live";
+import { useBundle, useEvidence, useLiveStatus, useValidation } from "./hooks";
+import { LiveProvider, formatWindow, liveLabel } from "./live";
 import { parseMode } from "./mode";
 import { ProviderRoot, preloadEvidence } from "./root";
+import { LIVE_POLL_MS } from "./config";
 import { StaticBundleProvider, modeLabel } from "./static";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
 
 const RUN_ID = "test-run";
 
@@ -167,10 +173,16 @@ function bundleFiles(runId: string, metaOverrides: Partial<BundleMeta> = {}): Fi
 }
 
 /** A fake fetch serving `/data/<mode>/<file>` from in-memory bundles and counting requests. */
-function fakeFetch(bundles: Record<string, Files>): FetchLike & { calls: string[] } {
+function fakeFetch(
+  bundles: Record<string, Files>,
+  extra: Record<string, () => unknown> = {},
+  delayMs = 0,
+): FetchLike & { calls: string[] } {
   const calls: string[] = [];
   const impl = async (url: string) => {
     calls.push(url);
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (url in extra) return { ok: true, status: 200, json: async () => extra[url]() };
     const match = /^\/data\/([^/]+)\/(.+)$/.exec(url);
     const files = match ? bundles[match[1]] : undefined;
     const body = files ? files[match![2]] : undefined;
@@ -278,6 +290,147 @@ describe("StaticBundleProvider through the hooks", () => {
     await waitFor(() =>
       expect(fetchImpl.calls.filter((u) => u.includes("/evidence/ev-2.json"))).toHaveLength(1),
     );
+  });
+});
+
+describe("ProviderRoot without injected provider", () => {
+  it("reads ?mode= from the URL and fetches that bundle", async () => {
+    const fetchImpl = fakeFetch({ mock: bundleFiles("from-url") });
+    vi.stubGlobal("fetch", fetchImpl);
+    window.history.replaceState({}, "", "?mode=mock");
+    render(
+      <ProviderRoot>
+        <Counter />
+      </ProviderRoot>,
+    );
+    await waitFor(() => expect(screen.getByTestId("run").textContent).toBe("from-url"));
+    expect(fetchImpl.calls[0]).toMatch(/^\/data\/mock\//);
+  });
+
+  it("refuses mock mode in a production build with a visible error", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_ALLOW_MOCK", "");
+    render(
+      <ProviderRoot mode="mock">
+        <Counter />
+      </ProviderRoot>,
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("disabled");
+  });
+
+  it("never shows the old provider's data after a switch", async () => {
+    const a = new StaticBundleProvider("mock", { fetchImpl: fakeFetch({ mock: bundleFiles("run-a") }) });
+    const b = new StaticBundleProvider("showcase", {
+      fetchImpl: fakeFetch({ showcase: bundleFiles("run-b") }, {}, 20),
+    });
+    const view = render(
+      <ProviderRoot provider={a}>
+        <Counter />
+      </ProviderRoot>,
+    );
+    await waitFor(() => expect(screen.getByTestId("run").textContent).toBe("run-a"));
+    view.rerender(
+      <ProviderRoot provider={b}>
+        <Counter />
+      </ProviderRoot>,
+    );
+    expect(screen.getByText("loading")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("run").textContent).toBe("run-b"));
+  });
+
+  it("a failing validation.json never demotes a ready bundle", async () => {
+    const files = bundleFiles("v");
+    const fetchImpl = fakeFetch({ showcase: files }, { "/data/showcase/validation.json": () => { throw new Error("boom"); } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(
+      <ProviderRoot provider={new StaticBundleProvider("showcase", { fetchImpl })}>
+        <Counter />
+      </ProviderRoot>,
+    );
+    await waitFor(() => expect(screen.getByTestId("run").textContent).toBe("v"));
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(screen.getByTestId("validation").textContent).toBe("none");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+function LiveView() {
+  const status = useLiveStatus();
+  const bundle = useBundle();
+  return (
+    <div>
+      <p data-testid="online">{status === null ? "null" : String(status.stationsOnline)}</p>
+      <p data-testid="label">{bundle.status === "ready" ? bundle.info.label : bundle.status}</p>
+    </div>
+  );
+}
+
+describe("LiveProvider through the hooks", () => {
+  it("useLiveStatus is null in showcase mode", async () => {
+    const fetchImpl = fakeFetch({ showcase: bundleFiles("s") });
+    render(
+      <ProviderRoot provider={new StaticBundleProvider("showcase", { fetchImpl })}>
+        <LiveView />
+      </ProviderRoot>,
+    );
+    await waitFor(() => expect(screen.getByTestId("label").textContent).toContain("Showcase"));
+    expect(screen.getByTestId("online").textContent).toBe("null");
+  });
+
+  it("polls status, refreshes the label, and single-flights concurrent route calls", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let updatedAt = 1000;
+    let nowS = 1000 + 120;
+    const live = { ...bundleFiles("live-run") };
+    const fetchImpl = fakeFetch(
+      { snapshot: bundleFiles("snap") },
+      {
+        "/api/live/meta": () => live["meta.json"],
+        "/api/live/events": () => live["events.json"],
+        "/api/live/status": () => ({ updatedAt, windowS: 7200, latencyS: 30, stationsOnline: 9 }),
+      },
+    );
+    const provider = new LiveProvider("/api/live", {
+      fetchImpl,
+      fallback: new StaticBundleProvider("snapshot", { fetchImpl }),
+      now: () => nowS,
+    });
+    render(
+      <ProviderRoot provider={provider}>
+        <LiveView />
+      </ProviderRoot>,
+    );
+    await waitFor(() => expect(screen.getByTestId("online").textContent).toBe("9"));
+    expect(screen.getByTestId("label").textContent).toBe("Live · last 2 h · updated 2 min ago");
+    // info() + getMeta() and info() + poll() share requests within a tick.
+    expect(fetchImpl.calls.filter((u) => u === "/api/live/meta")).toHaveLength(1);
+    const statusCalls = fetchImpl.calls.filter((u) => u === "/api/live/status").length;
+    expect(statusCalls).toBe(1);
+
+    updatedAt = 4000;
+    nowS = 4000 + 60 * 5;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS + 10);
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("label").textContent).toBe("Live · last 2 h · updated 5 min ago"),
+    );
+    expect(fetchImpl.calls.filter((u) => u === "/api/live/status").length).toBe(statusCalls + 1);
+  });
+
+  it("formats the window from data", () => {
+    expect(formatWindow(7200)).toBe("2 h");
+    expect(formatWindow(1800)).toBe("30 min");
+    expect(formatWindow(5400)).toBe("1.5 h");
+  });
+});
+
+describe("hooks outside ProviderRoot", () => {
+  it("throw instead of loading forever", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(() => render(<Counter />)).toThrow(/ProviderRoot/);
+    spy.mockRestore();
   });
 });
 

@@ -33,10 +33,16 @@ export interface LiveProviderOptions {
 const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;
 
+/** "2 h", "90 min", "1.5 h": whole hours stay whole, sub-hour windows show minutes. */
+export function formatWindow(windowS: number): string {
+  if (windowS < SECONDS_PER_HOUR) return `${Math.round(windowS / SECONDS_PER_MINUTE)} min`;
+  const hours = windowS / SECONDS_PER_HOUR;
+  return Number.isInteger(hours) ? `${hours} h` : `${hours.toFixed(1)} h`;
+}
+
 export function liveLabel(status: LiveStatusSummary, nowS: number): string {
-  const hours = Math.round(status.windowS / SECONDS_PER_HOUR);
   const minutesAgo = Math.max(0, Math.round((nowS - status.updatedAt) / SECONDS_PER_MINUTE));
-  return `Live · last ${hours} h · updated ${minutesAgo} min ago`;
+  return `Live · last ${formatWindow(status.windowS)} · updated ${minutesAgo} min ago`;
 }
 
 export class LiveProvider implements SeismicDataProvider {
@@ -44,6 +50,8 @@ export class LiveProvider implements SeismicDataProvider {
   private readonly fetchImpl: FetchLike;
   private readonly fallback: SeismicDataProvider;
   private readonly now: () => number;
+  /** Single-flight: concurrent calls for one route share a request; the next call refetches. */
+  private readonly inflight = new Map<string, Promise<unknown>>();
 
   constructor(apiBase: string = LIVE_API_BASE, options: LiveProviderOptions = {}) {
     this.apiBase = apiBase;
@@ -52,17 +60,32 @@ export class LiveProvider implements SeismicDataProvider {
     this.now = options.now ?? (() => Date.now() / 1000);
   }
 
-  private async get<T>(route: string): Promise<T> {
-    const value = await fetchJson<T>(this.fetchImpl, `${this.apiBase}/${route}`);
-    if (value === null) throw new BundleFetchError(`${this.apiBase}/${route}`, 404);
-    return value;
+  private get<T>(route: string): Promise<T> {
+    const hit = this.inflight.get(route);
+    if (hit) return hit as Promise<T>;
+    const url = `${this.apiBase}/${route}`;
+    const promise = fetchJson<T>(this.fetchImpl, url)
+      .then((value) => {
+        if (value === null) throw new BundleFetchError(url, 404);
+        return value;
+      })
+      .finally(() => this.inflight.delete(route));
+    this.inflight.set(route, promise);
+    return promise;
+  }
+
+  /** The shell label for a status, using this provider's clock. */
+  labelFor(status: LiveStatusSummary): string {
+    return liveLabel(status, this.now());
   }
 
   async info(): Promise<ModeInfo> {
-    const [meta, status] = await Promise.all([this.getMeta(), this.getStatus()]);
+    // The fallback's meta runs the schemaVersion guard on the snapshot too, so a stale snapshot
+    // can't be mixed into live data silently.
+    const [meta, status] = await Promise.all([this.getMeta(), this.getStatus(), this.fallback.getMeta()]);
     return {
       mode: "live",
-      label: liveLabel(status, this.now()),
+      label: this.labelFor(status),
       runId: meta.run.id,
       generatedAt: status.updatedAt,
       isSynthetic: meta.run.isSynthetic || meta.scene.isSynthetic,
