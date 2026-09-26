@@ -618,6 +618,10 @@ def test_stage_writes_final_tables_and_record(
     assert params["sweep"] == {"enabled": False, "removedEarlierSweep": True}
     assert params["config"]["quantiles"] == {"A": 0.25, "B": 0.0}
     assert params["input"]["flags"] == "locate_flags.parquet"
+    # The code this stage ran with (run.json's gitSha / softwareVersions date from run creation).
+    prov = params["provenance"]
+    assert prov["gitSha"] and prov["softwareVersions"]["python"] and "pandas" in prov[
+        "softwareVersions"]
     # Stage locate writes locate_flags.parquet with events_located: without it the stage fails
     # (assign_tiers keeps the no-flags fallback for the docs/02 three-argument call only).
     ctx.path("locate_flags.parquet").unlink()

@@ -31,6 +31,7 @@ from hq_contracts.io import read_table, write_table
 from hq.associate.core import finish, prepared, record, run_pyocto
 from hq.associate.result import EVENTS_MODEL, PICKS_MODEL
 from hq.associate.sweep import grid, run_sweep
+from hq.locate.provenance import stage_provenance
 
 if TYPE_CHECKING:
     from hq.runs import RunContext
@@ -99,6 +100,7 @@ def run(ctx: "RunContext") -> None:
                         path, "LOC-06's stage tier" if name == SWEEP_TABLE else "stage match")
 
     params["input"] = {"picksTable": acfg.picksTable, "stationsTable": STATIONS_TABLE}
+    params["provenance"] = stage_provenance()
     params["removedStale"] = removed
     params["sweep"] = {
         "enabled": acfg.sweep.enabled,

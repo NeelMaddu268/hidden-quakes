@@ -52,6 +52,7 @@ from hq_contracts.io import read_table, to_frame, write_table
 from hq_contracts.models import Pick, SeismicEvent, SweepPoint
 
 from hq.config.run import RunSection
+from hq.locate.provenance import stage_provenance
 from hq.tier import Thresholds, TierError, assign_tiers, matched_rows
 from hq.tier.picks import event_picks
 
@@ -353,6 +354,7 @@ def run(ctx: "RunContext") -> None:
         "fills it afterwards), revealOrder -1",
         "removedMagnitudeJson": removed_magnitude,
         "sweep": sweep_record,
+        "provenance": stage_provenance(),
     }
     magnitude_status = {
         "status": f"none: stage tier rewrote {EVENTS_TABLE} with every magnitude null; stage "

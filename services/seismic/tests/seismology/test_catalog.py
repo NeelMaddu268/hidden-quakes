@@ -646,7 +646,9 @@ def test_stage_writes_both_files_and_records(
         "idsWithArrivalsProduct",
         "quakemlSha256",
         "config",
+        "provenance",
     }
+    assert params["provenance"]["gitSha"]  # the code this stage ran with
     assert params["providerUrl"] == FakeClient.base_url
     assert params["quakemlSha256"] == hashlib.sha256(raw).hexdigest()
     assert params["query"]["minlongitude"] == run_section.bbox[0]
