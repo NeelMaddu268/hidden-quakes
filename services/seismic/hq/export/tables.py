@@ -29,7 +29,6 @@ from hq_contracts.io import from_frame, read_models, read_table
 from hq_contracts.models import (
     BaselineRow,
     CatalogEvent,
-    Confidence,
     GRCurve,
     MagCalibration,
     NullTest,
@@ -48,7 +47,6 @@ from hq.validate import sidecars
 from hq.validate.gr import gr_allowed
 from hq.validate.sidecars import (
     BASELINE_JSON,
-    CONFIDENCE_JSON,
     GR_JSON,
     MAGNITUDE_JSON,
     NULL_TEST_JSON,
@@ -98,7 +96,6 @@ class RunTables:
     picks: dict[str, Pick]  # every pick an event or an arrival names, by id
     validation: Validation | None
     validation_source: str  # where ``validation`` came from, for the log
-    confidence: Confidence | None = None  # ML-01 (H2): ``confidence.json`` when the run has one
     # Stations H1's download report lists with no component served at all (REQ-H3-11): the cache
     # holds nothing for them by design, so the evidence build skips them instead of failing.
     stations_without_data: frozenset[str] = frozenset()
@@ -304,38 +301,6 @@ def _load_validation(run_dir: Path, gr_cfg: GRConfig | None) -> tuple[Validation
 DOWNLOAD_REPORT = "download_report.json"
 
 
-def _load_confidence(run_dir: Path, run_id: str, events: list[SeismicEvent]) -> Confidence | None:
-    """ML-01: H2's ``confidence.json`` when the run has one. Its ``runId`` must be this run's
-    and every scored id must be a located event (a stale file from another run is an error,
-    never a silent mismatch); events without a score are allowed and simply unscored."""
-    confidence = sidecars.CONFIDENCE.read(run_dir, ExportError)
-    if confidence is None:
-        log.info(
-            "export: no %s in %s (ML-01, H2); the bundle gets no scores", CONFIDENCE_JSON, run_dir
-        )
-        return None
-    if confidence.runId != run_id:
-        raise ExportError(
-            f"{sidecars.CONFIDENCE.path(run_dir)}: runId {confidence.runId!r} is not this run's "
-            f"{run_id!r}"
-        )
-    event_ids = {e.id for e in events}
-    unknown = sorted(set(confidence.scores) - event_ids)
-    if unknown:
-        raise ExportError(
-            f"{sidecars.CONFIDENCE.path(run_dir)}: {len(unknown)} scored id(s) are not events of "
-            f"this run, e.g. {unknown[:3]}"
-        )
-    log.info(
-        "export: %s scores %d of %d events; held-out ROC AUC %s",
-        CONFIDENCE_JSON,
-        len(confidence.scores),
-        len(events),
-        confidence.heldOutRocAuc,
-    )
-    return confidence
-
-
 def load_stations_without_data(run_dir: Path) -> frozenset[str]:
     """Station ids that H1's ``download_report.json`` lists with ``componentsPresent == 0``
     (the data centre served nothing): the waveform cache holds no file for them, so the
@@ -343,16 +308,14 @@ def load_stations_without_data(run_dir: Path) -> frozenset[str]:
     malformed one is an error, never a silent empty set."""
     path = run_dir / DOWNLOAD_REPORT
     if not path.exists():
-        log.info(
-            "export: no %s in %s; every used station is expected in the cache",
-            DOWNLOAD_REPORT,
-            run_dir,
-        )
+        log.info("export: no %s in %s; every used station is expected in the cache", DOWNLOAD_REPORT, run_dir)
         return frozenset()
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
         rows = doc["stations"]
-        empty = frozenset(str(r["stationId"]) for r in rows if int(r["componentsPresent"]) == 0)
+        empty = frozenset(
+            str(r["stationId"]) for r in rows if int(r["componentsPresent"]) == 0
+        )
     except (ValueError, KeyError, TypeError) as exc:
         raise ExportError(f"{path} is not a download report with a 'stations' list: {exc}") from exc
     if empty:
@@ -408,7 +371,6 @@ def load_run_tables(run_dir: Path, *, gr_cfg: GRConfig | None = None) -> RunTabl
     pick_ids |= {p for p in (str_or_none(v) for v in arrivals["pickId"]) if p is not None}
     picks = select_picks(picks_df, pick_ids, picks_path)
     validation, validation_source = _load_validation(run_dir, gr_cfg)
-    confidence = _load_confidence(run_dir, run.id, events)
     log.info(
         "export: read run %s: %d stations, %d catalog events, %d events, %d matches, "
         "%d arrivals, %d picks, validation from %s",
@@ -431,6 +393,5 @@ def load_run_tables(run_dir: Path, *, gr_cfg: GRConfig | None = None) -> RunTabl
         picks=picks,
         validation=validation,
         validation_source=validation_source,
-        confidence=confidence,
         stations_without_data=load_stations_without_data(run_dir),
     )

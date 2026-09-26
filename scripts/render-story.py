@@ -47,7 +47,10 @@ from typing import Any
 
 from hq_contracts import models as m
 
-from hq.export.files import CONFIDENCE_JSON, EVIDENCE_DIR, META_JSON, VALIDATION_JSON
+from hq.export.files import EVIDENCE_DIR, META_JSON, VALIDATION_JSON
+
+# ML-01 (H2's PR agent/ML-01-ui): optional, next to validation.json in the bundle.
+CONFIDENCE_JSON = "confidence.json"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_DEMO = REPO_ROOT / "docs" / "demo"

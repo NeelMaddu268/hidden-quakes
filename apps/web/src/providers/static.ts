@@ -7,7 +7,6 @@ import {
   SCHEMA_VERSION,
   type BundleMeta,
   type CatalogEvent,
-  type Confidence,
   type DataMode,
   type EventEvidence,
   type GeoFeature,
@@ -133,13 +132,6 @@ export class StaticBundleProvider implements SeismicDataProvider {
   getValidation(): Promise<Validation | null> {
     return this.memo("validation", () =>
       fetchJson<Validation>(this.fetchImpl, this.url("validation.json"), { notFoundAsNull: true }),
-    );
-  }
-
-  /** `confidence.json` (ML-01) is optional too; a missing file is `null`, not an error. */
-  getConfidence(): Promise<Confidence | null> {
-    return this.memo("confidence", () =>
-      fetchJson<Confidence>(this.fetchImpl, this.url("confidence.json"), { notFoundAsNull: true }),
     );
   }
 }
