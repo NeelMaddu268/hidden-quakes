@@ -233,6 +233,7 @@ def test_zero_events_give_typed_zero_row_tables(
     assert len(rows) == 7 and all("Can't conclude" in r for r in rows[2:])
 
 
+@pytest.mark.smoke  # DoD 6 in CI: docs/02 locate() on STA/LTA-labelled picks
 def test_stalta_labelled_picks_locate_unchanged(
     world: dict[str, Any], located: LocateDetails, loc02: Any
 ) -> None:
@@ -279,6 +280,7 @@ def _stage(world: dict[str, Any], make_ctx: Any) -> Any:
     return ctx
 
 
+@pytest.mark.smoke  # DoD 1-2 in CI: the stage's synthetic test, synthetic.json, every row
 def test_stage_writes_tables_report_and_record(
     world: dict[str, Any], located: LocateDetails, make_ctx: Any
 ) -> None:
@@ -540,3 +542,17 @@ def test_locate_applies_a_fixed_statics_table(world: dict[str, Any], located: Lo
     with pytest.raises(ValueError, match="null staticS"):
         locate(*args, run_id=RUN_ID, cache_dir=world["cache"],
                statics=table.assign(staticS=[0.05, None]))
+
+
+@pytest.mark.smoke
+def test_catalog_uncertainties_read_the_preferred_origins(comcat_quakeml: Path) -> None:
+    """The stated errors diagnostics.md compares offsets with (LOC-04 'within catalog
+    uncertainty'): preferred origin's horizontal and depth uncertainty, in metres."""
+    from hq.locate.diagnostics import catalog_uncertainties
+
+    got = catalog_uncertainties(comcat_quakeml).set_index("id")
+    assert got.to_dict("index") == {
+        "uu80155936": {"horizontalErrorM": 240.0, "depthErrorM": 250.0},
+        "uu80155911": {"horizontalErrorM": 290.0, "depthErrorM": 440.0},
+        "uu80155571": {"horizontalErrorM": 290.0, "depthErrorM": 240.0},
+    }
