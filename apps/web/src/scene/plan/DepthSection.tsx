@@ -22,7 +22,7 @@ type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 
 /** Header (title + projection note) and footer (axis captions) heights inside the panel, CSS px. */
 const HEADER_PX = 38;
-const FOOTER_PX = 30;
+const FOOTER_PX = 36;
 /** Click radius in the section, CSS px (the 3D picker's default). */
 const HIT_PX = 10;
 
@@ -163,9 +163,9 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
         role="img"
         aria-label={`Depth section: ${events.length} candidate events and ${catalog.length} public-catalog events projected onto grid east`}
       />
-      <footer style={{ height: FOOTER_PX, padding: "0 10px", boxSizing: "border-box", fontSize: 10.5, display: "flex", justifyContent: "space-between", alignItems: "center", ...numeric }}>
-        <span>↓ {meta.scene.depthLabel}, km</span>
-        <span>grid east of origin, km →</span>
+      <footer style={{ height: FOOTER_PX, padding: "2px 10px 0", boxSizing: "border-box", fontSize: 10, lineHeight: 1.35, ...numeric }}>
+        <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>↓ {meta.scene.depthLabel}, km</div>
+        <div style={{ textAlign: "right" }}>grid east of origin, km →</div>
       </footer>
     </section>
   );
