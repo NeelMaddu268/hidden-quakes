@@ -1399,10 +1399,10 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
     prev = rep.previous_median_rms_s
     lines.append(
         f"Median rmsS over all {len(inputs.details.result.events)} located events with statics: "
-        f"{after_all:.3f} s" + (f"; the run dir's previous events_located.parquet, located "
-                                f"without statics: {prev:.3f} s." if prev is not None else
+        f"{after_all:.3f} s" + (f"; {rep.previous_median_rms_from}: {prev:.3f} s."
+                                if prev is not None else
                                 "; no no-statics events_located.parquet was in the run dir to "
-                                "compare with.")
+                                "compare with, and run.json held no value for this association.")
     )
     lines.append("")
     active = terms[terms["nEvents"] >= rep.min_events]
