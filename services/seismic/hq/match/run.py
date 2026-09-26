@@ -3,8 +3,9 @@
 Reads ``events_located.parquet`` and ``catalog.parquet`` (both required) and checks that their
 ENU columns (and those of ``stations.parquet``, when present) agree with latitude, longitude and
 elevation in the run's frame. Runs ``hq.match.match``, explains every unmatched public event from
-whichever evidence tables exist in the run dir (``stations``, ``gaps``, ``picks``,
-``assoc_picks``; see ``hq.match.reasons``), and writes ``matches.parquet``,
+whichever evidence tables exist in the run dir (``stations``, ``gaps``, the picks table the
+association read (``associator.picksTable``), ``assoc_picks`` and ``statics``; see
+``hq.match.reasons``), and writes ``matches.parquet``,
 ``match_sensitivity.parquet`` and ``catalog.parquet`` with ``matchedEventId`` filled (docs/02 §2:
 null until match).
 
@@ -29,6 +30,7 @@ from hq_contracts.io import read_table, write_table
 from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
 from hq.locate.coords import to_enu
+from hq.locate.provenance import stage_provenance
 from hq.locate.velocity import load_configured_model
 from hq.match import REASONS, STRING_DTYPE, Tolerance, match
 from hq.match import catalog as catalog_stage
@@ -46,15 +48,17 @@ SENSITIVITY_NAME = "match_sensitivity.parquet"
 # Model names in the parquet metadata of the two tables with no docs/02 model of their own.
 MATCHES_MODEL = "Match"
 SENSITIVITY_MODEL = "MatchSensitivity"
+# Evidence tables in the run dir; "picks" is the associator's picksTable (evidence_files).
 EVIDENCE_FILES = {
     "stations": "stations.parquet",
     "gaps": "gaps.parquet",
     "picks": "picks.parquet",
     "assoc_picks": "assoc_picks.parquet",
+    "statics": "statics.parquet",
 }
-# docs/02 models the evidence tables must hold, where the table has one (gaps and assoc_picks
-# have none in docs/02).
-EVIDENCE_MODELS = {"stations": "Station", "picks": "Pick"}
+# Models the evidence tables must hold, where the table has one (gaps and assoc_picks have none;
+# statics is LOC-04's StationStatic table).
+EVIDENCE_MODELS = {"stations": "Station", "picks": "Pick", "statics": "StationStatic"}
 # SeismicEvent fields that events_located.parquet leaves out (docs/02 §2): a table carrying any
 # of them is a final events table, not located events.
 FINAL_EVENT_FIELDS = ("tier", "tierReasons", "catalogMatch", "magnitude")
@@ -67,10 +71,16 @@ def _part(path: Path) -> Path:
     return path.with_name(path.name + _PART_SUFFIX)
 
 
+def evidence_files(cfg: SeismologyConfig) -> dict[str, str]:
+    """``EVIDENCE_FILES`` with the picks table the association read, as stages associate,
+    locate and tier read it."""
+    return {**EVIDENCE_FILES, "picks": cfg.associator.picksTable}
+
+
 def load_evidence(ctx: "RunContext") -> Evidence:
     """The evidence tables present in the run dir; an absent file is ``None``."""
     tables: dict[str, pd.DataFrame | None] = {}
-    for key, name in EVIDENCE_FILES.items():
+    for key, name in evidence_files(ctx.config.seismology).items():
         path = ctx.path(name)
         table = read_table(path) if path.is_file() else None
         expected = EVIDENCE_MODELS.get(key)
@@ -246,6 +256,7 @@ def run(ctx: "RunContext") -> None:
         **{f"unmatched.{code}": n for code, n in by_code.items()},
     }
     params = _params(cfg, explained, arrivals, result.sensitivity, window, chance)
+    params["provenance"] = stage_provenance()
     ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params={"match": params})
 
 
@@ -292,7 +303,7 @@ def _params(
         "arrivalWindows": None
         if arrivals is None
         else arrivals.to_record(cfg.matching.reasons.arrivalPadS),
-        "evidenceFiles": dict(EVIDENCE_FILES),
+        "evidenceFiles": evidence_files(cfg),
         "reasonPrefixes": dict(REASONS),
         "unmatched": {
             str(r.catalogId): str(r.reason)

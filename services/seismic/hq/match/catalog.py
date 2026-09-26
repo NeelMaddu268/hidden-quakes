@@ -28,7 +28,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -41,6 +40,7 @@ from obspy.core.event import Catalog, Event, ResourceIdentifier
 from hq.config.run import RunSection, epoch_s
 from hq.config.seismology import CatalogConfig
 from hq.locate.coords import to_enu
+from hq.locate.provenance import stage_provenance
 
 if TYPE_CHECKING:
     from hq.runs import RunContext
@@ -58,20 +58,20 @@ _M_PER_KM = 1000.0  # unit conversion; QuakeML depths are metres
 # required values are present (and ObsPy's reader rejects non-finite ones).
 _CATALOG_SCHEMA = pa.schema(
     [
-        pa.field("id", pa.string()),
-        pa.field("source", pa.string()),
+        pa.field("id", pa.large_string()),
+        pa.field("source", pa.large_string()),
         pa.field("t", pa.float64()),
         pa.field("latitude", pa.float64()),
         pa.field("longitude", pa.float64()),
         pa.field("depthKm", pa.float64()),
-        pa.field("depthDatum", pa.string()),
+        pa.field("depthDatum", pa.large_string()),
         pa.field("elevM", pa.float64()),
         pa.field("mag", pa.float64()),
-        pa.field("magType", pa.string()),
+        pa.field("magType", pa.large_string()),
         pa.field("enu_e", pa.float64()),
         pa.field("enu_n", pa.float64()),
         pa.field("enu_u", pa.float64()),
-        pa.field("matchedEventId", pa.string()),
+        pa.field("matchedEventId", pa.large_string()),
     ]
 )
 # Columns event_to_row fills; ENU and matchedEventId are added after selection.
@@ -80,12 +80,11 @@ _ROW_COLUMNS = [
 ]
 _MODEL_NAME = "CatalogEvent"
 # In-memory column types, so the frame itself carries the docs/02 types (any writer, zero rows,
-# all-null columns). Strings use pandas' default ``str`` semantics (a missing value is NaN, as in
-# every other run table read back with pandas) with python storage, which converts to Arrow
-# string, not large_string.
-_STRING = pd.StringDtype("python", na_value=np.nan)
+# all-null columns): the docs/02 §2 dtype rule (CONTRACT-02) maps str to pandas ``string``
+# (missing is pd.NA), which parquet stores as Arrow large_string, as in every other H2 table.
+_STRING = "string"
 _FRAME_DTYPES: dict[str, Any] = {
-    f.name: _STRING if pa.types.is_string(f.type) else "float64" for f in _CATALOG_SCHEMA
+    f.name: _STRING if pa.types.is_large_string(f.type) else "float64" for f in _CATALOG_SCHEMA
 }
 
 _PART_SUFFIX = ".part"  # temporary output name while the stage runs; see run()
@@ -351,9 +350,9 @@ def build_catalog(
     whose preferred origin is analyst-reviewed.
 
     Columns carry the docs/02 types (float64, string) even with zero rows or all-null columns. A
-    missing value is NaN in string columns as in float columns (pandas' default ``str`` dtype, and
-    what catalog.parquet reads back as): test it with ``pd.isna``, never ``is None`` or truthiness,
-    or read rows through ``hq_contracts.io.from_frame``, which turns it into None.
+    missing value is pd.NA in string columns (docs/02 §2 ``string``) and NaN in float columns:
+    test it with ``pd.isna``, never ``is None`` or truthiness, or read rows through
+    ``hq_contracts.io.from_frame``, which turns it into None.
     """
     skipped = skipped_by_reader or Counter()
     events, dropped_types = filter_event_types(catalog, cfg)
@@ -366,7 +365,7 @@ def build_catalog(
     rows = rows.sort_values(["t", "id"], kind="stable").reset_index(drop=True)
     e, n, u = to_enu(rows["latitude"], rows["longitude"], rows["elevM"], run.origin)
     rows["enu_e"], rows["enu_n"], rows["enu_u"] = e, n, u
-    rows["matchedEventId"] = pd.Series(np.nan, index=rows.index, dtype=_STRING)
+    rows["matchedEventId"] = pd.Series(pd.NA, index=rows.index, dtype=_STRING)
     counts = {
         "served": len(catalog) + skipped.total(),
         "droppedEventType": dropped_types.total() + skipped.total(),
@@ -483,6 +482,7 @@ def run(ctx: "RunContext") -> None:
                 "idsWithArrivalsProduct": kept_with_product,
                 "quakemlSha256": hashlib.sha256(raw).hexdigest(),
                 "config": cfg.model_dump(mode="json"),  # every catalog knob, recorded once
+                "provenance": stage_provenance(),
             }
         },
     )
