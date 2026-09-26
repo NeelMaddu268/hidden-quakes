@@ -15,10 +15,16 @@ export interface ReferencesProps {
   bundle: { meta: { scene: SceneMeta }; stations: Station[]; features: GeoFeature[] };
   /** The camera's framed bounds (the ruler stands just outside them). */
   bounds: SceneBounds;
+  /**
+   * Plan view (WEB-07): looking straight down, the vertical ruler collapses to a point and the depth
+   * slices stack into one outline, so both are left out; the plan's depth section panel carries depth
+   * (and the abstract-surface note) instead.
+   */
+  planView?: boolean;
 }
 
 /** Everything that gives the events scale and place: ruler, slices, stations, features, VE badge. */
-export function References({ bundle, bounds }: ReferencesProps) {
+export function References({ bundle, bounds, planView = false }: ReferencesProps) {
   const { scene } = bundle.meta;
   const { asset, choice } = useSurfaceChoice(scene);
   const terrainMeta = choice === "terrain" && asset.status === "ready" ? asset.meta : null;
@@ -26,8 +32,8 @@ export function References({ bundle, bounds }: ReferencesProps) {
   const extent = useMemo(() => surfaceExtentM(terrainMeta, bounds), [terrainMeta, bounds]);
   return (
     <group name="references">
-      <DepthRuler scene={scene} bounds={bounds} abstractSurface={choice === "slab"} />
-      {choice !== "none" && <DepthSlices scene={scene} extent={extent} />}
+      {!planView && <DepthRuler scene={scene} bounds={bounds} abstractSurface={choice === "slab"} />}
+      {!planView && choice !== "none" && <DepthSlices scene={scene} extent={extent} />}
       <StationsLayer stations={bundle.stations} scene={scene} />
       <FeaturesLayer features={bundle.features} scene={scene} />
       <VerticalBadge scene={scene} />
