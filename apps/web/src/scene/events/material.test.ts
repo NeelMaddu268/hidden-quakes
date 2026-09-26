@@ -42,3 +42,10 @@ describe("event shaders", () => {
     expect(src).not.toMatch(/\$\{|undefined|NaN/);
   });
 });
+
+describe("createEventUniforms", () => {
+  it("rejects an empty or inverted pixel clamp (GLSL clamp is undefined when lo > hi)", () => {
+    expect(() => createEventUniforms({ color: "#FFFFFF", size: 0.06, minPx: 20, maxPx: 18 })).toThrow(/minPx/);
+    expect(() => createEventUniforms({ color: "#FFFFFF", size: 0.06, minPx: 0, maxPx: 18 })).toThrow(/minPx/);
+  });
+});
