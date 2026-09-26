@@ -45,6 +45,11 @@ azimuthal residual trend, both sets' offsets from the public regional catalog, t
 the flag and the per-station median residuals. Row 2's synthetic picks then come from the 3D
 tables themselves (so does the synthetic test's forward model: no table error in it, unlike the
 1D test), and the table-error section covers the 1D fallback stations.
+
+When the pick harvest ran (LOC-10, ``LocateDetails.harvest``), a Pick harvest section reports
+what it added, skipped and moved, its chance estimates, and the reference events' held-out
+offsets with and without it; the header counts harvested picks apart from associated ones.
+Without it the report is unchanged.
 """
 
 import json
@@ -1771,6 +1776,116 @@ def grid3d_section(inputs: DiagnosticsInputs, ua: pd.DataFrame,
 # --- report ---------------------------------------------------------------------------------------
 
 
+def _mad_s(values: pd.Series) -> float:
+    x = values.to_numpy(dtype=np.float64)
+    return float(np.median(np.abs(x - np.median(x)))) if x.size else math.nan
+
+
+def harvest_section(inputs: DiagnosticsInputs) -> list[str]:
+    """The pick harvest (LOC-10), only when it ran: rules, counts, chance, per station-phase
+    offsets, relocation shifts and the held-out reference offsets with and without it."""
+    d = inputs.details
+    rep = d.harvest
+    if rep is None:
+        return []
+    cfg, c, a = rep.config, rep.counts, rep.added
+    lines = [
+        "## Pick harvest (LOC-10)", "",
+        (f"After the statics-corrected locate, a pick in no association event (prob >= "
+         f"{cfg.minProb:g}, on a used station; {c['freePicks']} such picks) was added to an "
+         f"event when it lay within {cfg.windowS.P:g} s (P) / {cfg.windowS.S:g} s (S) of the "
+         "event's predicted arrival (statics included) at a station-phase the event had no pick "
+         f"for, with the same phase label; the {c['events']} events that gained picks were "
+         f"relocated once (`hq.locate.harvest`): {c['picks']} picks added, {c['picksUsed']} "
+         f"used after the relocation. Skipped: {c['ambiguousPicks']} picks within the window "
+         "of two or more "
+         f"events' predicted arrivals, {c['skippedUntrustedSlots']} slots with a candidate in "
+         "events whose location is not trusted (depthOnEdge, MAP on a volume face, truncated "
+         "PDF) and "
+         f"{c['skippedMultiCandidateSlots']} slots with two or more candidates. The station "
+         "terms never use harvested picks."),
+        "",
+        ("Harvested picks are chosen because they agree with the current location, so the pick "
+         "counts, gap, rmsS and formal errors they change, and the tiers built on them, are not "
+         "independent evidence of a better location. The held-out reference offsets below are."),
+        "",
+        _row(["phase", "added", "used", "dropped by the outlier pass", "median offset (s)",
+              "MAD offset (s)"]),
+        _row(["---"] * 6),
+    ]
+    for ph in ("P", "S"):
+        g = a[a["phase"] == ph]
+        lines.append(_row([ph, str(len(g)), str(int(g["usedInLocation"].sum())),
+                           str(int((~g["usedInLocation"].astype(bool)).sum())),
+                           _f(g["offsetS"].median() if len(g) else math.nan, "+.3f"),
+                           _f(_mad_s(g["offsetS"]), ".3f")]))
+    ch = rep.chance
+    control = ", ".join(f"{k} s: {v}" for k, v in ch["controlPicks"].items())
+    lines += ["", (
+        f"Chance: {_f(ch['analyticPicks'], '.1f')} picks expected analytically (each "
+        "station-phase's free-pick rate over the picks' time span x the window, summed over the "
+        "empty slots of trusted events); control, the same rules with every predicted arrival "
+        f"moved by a fixed shift: {control} (mean {_f(ch['controlMeanPicks'], '.1f')}), "
+        f"against {c['picks']} harvested at the predicted arrivals."), ""]
+    if len(a):
+        lines += [_row(["station", "phase", "added", "used", "median offset (s)",
+                        "MAD offset (s)"]), _row(["---"] * 6)]
+        per = a.groupby(["stationId", "phase"], sort=True)
+        order = sorted(per.groups, key=lambda k: (-len(per.groups[k]), k))
+        for sid, ph in order:
+            g = per.get_group((sid, ph))
+            lines.append(_row([str(sid), str(ph), str(len(g)), str(int(g["usedInLocation"].sum())),
+                               _f(g["offsetS"].median(), "+.3f"), _f(_mad_s(g["offsetS"]), ".3f")]))
+        lines.append("")
+    at = {aid: k for k, aid in enumerate(d.assoc_ids)}
+    shifts = [(math.hypot(d.locations[at[aid]].e_m - b.e_m, d.locations[at[aid]].n_m - b.n_m),
+               abs(d.locations[at[aid]].elev_m - b.elev_m), b.rms_s, d.locations[at[aid]].rms_s)
+              for aid, b in rep.before.items()]
+    if shifts:
+        sh = np.array(shifts, dtype=np.float64)
+        lines += [(
+            f"Relocation of the {len(shifts)} events that gained picks: horizontal shift median "
+            f"{_f(np.median(sh[:, 0]))} m, p90 {_f(_q(sh[:, 0], 0.9))} m; abs(dz) median "
+            f"{_f(np.median(sh[:, 1]))} m, p90 {_f(_q(sh[:, 1], 0.9))} m; median rmsS "
+            f"{_f(np.median(sh[:, 2]), '.3f')} s before, {_f(np.median(sh[:, 3]), '.3f')} s "
+            "after."), ""]
+    st = inputs.statics
+    ref = st.reference if st is not None else None
+    if st is not None and ref is not None and "afterNoHarvestHM" in ref.columns and len(ref):
+        summary = st.offsets_summary()
+        gained = int(ref["assocId"].astype(str).isin(set(rep.before)).sum())
+        lines += [
+            (f"Held-out offsets of the {len(ref)} reference events from the public regional "
+             f"catalog ({gained} of them gained picks), with the same held-out terms before and "
+             "after the harvest:"), "",
+            _row(["locations", "horizontal median (m)", "horizontal p90 (m)",
+                  "abs(dz) median (m)", "abs(dz) p90 (m)", "median rmsS (s)"]),
+            _row(["---"] * 6),
+        ]
+        for when, label in (("afterNoHarvest", "held-out terms, before the harvest"),
+                            ("after", "held-out terms, after the harvest")):
+            o = summary[when]
+            lines.append(_row([label, _f(o["medianHM"]), _f(o["p90HM"]), _f(o["medianAbsDzM"]),
+                               _f(o["p90AbsDzM"]), _f(o["medianRmsS"], ".3f")]))
+        h = ref["afterHM"].to_numpy(dtype=np.float64) - ref["afterNoHarvestHM"].to_numpy(
+            dtype=np.float64)
+        v = (np.abs(ref["afterDzM"].to_numpy(dtype=np.float64))
+             - np.abs(ref["afterNoHarvestDzM"].to_numpy(dtype=np.float64)))
+        lines += ["", (
+            f"Per reference event, the harvest moved the horizontal offset closer for "
+            f"{int((h < 0).sum())} and farther for {int((h > 0).sum())}, and abs(dz) closer for "
+            f"{int((v < 0).sum())} and farther for {int((v > 0).sum())}."), ""]
+    syn = inputs.cfg.synthetic
+    if syn.sKeepProb is None or syn.pickProb is None:
+        b = rep.pick_stats_before
+        lines += [(
+            "synthetic.json's measured sKeepProb / pickProb come from the events after the "
+            f"harvest; before it they were {b['sKeepProb']:.3f} / {b['pickProb']:.3f} (set them "
+            "in seismology.yaml to compare the synthetic test with and without the harvest)."),
+            ""]
+    return lines[:-1] if lines[-1] == "" else lines
+
+
 def build_rows(inputs: DiagnosticsInputs) -> tuple[list[Row], dict[str, list[str]]]:
     ua = used_arrivals(inputs.details, inputs.details.stations)
     pa = picked_arrivals(inputs.details, inputs.details.stations)
@@ -1799,7 +1914,7 @@ def build_rows(inputs: DiagnosticsInputs) -> tuple[list[Row], dict[str, list[str
                   "tableErrors": table_error_section(inputs, ua),
                   "catalog": catalog_section(inputs, comp, trends(at_catalog),
                                              trends(before_statics)),
-                  "statics": statics_section(inputs),
+                  "statics": statics_section(inputs), "harvest": harvest_section(inputs),
                   "grid3d": grid3d_section(inputs, ua, comp)}
 
 
@@ -1813,13 +1928,19 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
                + (" (applied)" if rep.pass_number == 2 else " (none applied)")
                if rep is not None else
                "applied" if d.record["locate"]["statics"]["applied"] else "none")
+    picks_used = (
+        f"{c['picksUsed']} of {c['picksIn']} associated picks used" if d.harvest is None else
+        f"{c['picksUsed'] - c['picksHarvestedUsed']} of {c['picksIn']} associated and "
+        f"{c['picksHarvestedUsed']} of {c['picksHarvested']} harvested picks used; Pick harvest "
+        "section"
+    )
     lines = [
         "# Location diagnostics (LOC-04)",
         "",
         (
             f"Run `{inputs.run_id}`, stage `locate`: {c['events']} of {c['assocEvents']} "
             f"association events located as candidate events on {c['stations']} stations "
-            f"({c['picksUsed']} of {c['picksIn']} associated picks used), method "
+            f"({picks_used}), method "
             f"`{d.locator.method}` on the `{d.velocity_model.get('name', '?')}` "
             f"{'3D model (1D vs 3D section)' if d.locator.method == GRID3D else 'layer model'}, "
             f"statics {applied} (Station statics section). depthOnEdge "
@@ -1845,7 +1966,8 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
         test = test.format(k=inputs.cfg.diagnostics.minSForDepth)
         cells = [str(row.number), suspect, test, row.result, row.conclusion, fix]
         lines.append("| " + " | ".join(_cell(x) for x in cells) + " |")
-    lines += ["", *extra["grid3d"], "", *extra["statics"], "", *extra["sigma"], "",
+    harvest = [*extra["harvest"], ""] if extra["harvest"] else []
+    lines += ["", *extra["grid3d"], "", *extra["statics"], "", *harvest, *extra["sigma"], "",
               *extra["synthetic"], "",
               *extra["tableErrors"], "",
               *extra["catalog"], "",
