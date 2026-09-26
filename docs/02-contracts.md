@@ -308,6 +308,7 @@ Every lane reads and writes run tables only through these helpers, so a column r
 | `magnitude.json` | H2 | `MagCalibration` | JSON (P1) |
 | `validation.json` | H4 | `Validation` | JSON |
 | `run.json` | every stage via `ctx.record` | `ProcessingRun` | JSON |
+| `stages.json` | every stage via `ctx.record` | `{stage: {runtimeS, counts}}` | JSON sidecar; `ProcessingRun` has no counts field |
 
 ## 3. Config files
 
@@ -332,9 +333,16 @@ class RunContext:
     cache_dir: Path               # data/cache
     config: RunConfig
     def path(self, name: str) -> Path: ...        # run_dir / name
+    def read_run(self) -> ProcessingRun: ...      # the current run.json
     def record(self, stage: str, *, runtime_s: float,
-               counts: dict[str, int], params: dict | None = None) -> None: ...
+               counts: dict[str, int], params: dict | None = None,
+               field: str | None = None) -> None: ...
         # merges into run.json: runtimeS[stage], plus params into the matching ProcessingRun field
+        # (pick → picker, associate → associator, locate → locator, tier → tiering,
+        # match and catalog → matching). Other stages pass field= (one of picker, associator,
+        # velocityModel, locator, tiering, matching) or omit params. counts go to stages.json.
+    def update_run(self, **fields) -> None: ...
+        # only stationIds, pickerModel, pickerWeights, softwareVersions; validated through the model
 
 # every stage module exposes exactly this
 def run(ctx: RunContext) -> None: ...

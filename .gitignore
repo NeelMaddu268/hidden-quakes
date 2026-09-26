@@ -1,6 +1,7 @@
 # Pipeline data (shared between laptops with `make publish-run` / `make fetch-run`, never via git)
 data/showcase/
 data/cache/
+data/*/runs/
 
 # Python
 .venv/

@@ -12,8 +12,10 @@ that isn't merged yet fails with a message that says who ships it.
 import importlib
 import importlib.metadata
 import logging
+import os
 import platform
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -45,6 +47,10 @@ VERSIONED_PACKAGES: tuple[str, ...] = (
     "scikit-fmm",
     "numpy",
     "pandas",
+    "scipy",
+    "pyarrow",
+    "pyproj",
+    "pydantic",
 )
 
 # ProcessingRun dict fields that hold stage parameters, straight from the contract model.
@@ -62,11 +68,14 @@ STAGE_PARAM_FIELDS: dict[str, str] = {
     "catalog": "matching",
 }
 
-# Top-level ProcessingRun fields stages may set with ``RunContext.update_run``.
-UPDATABLE_FIELDS: tuple[str, ...] = tuple(
-    name
-    for name in ProcessingRun.model_fields
-    if name not in ("id", "runtimeS") and name not in PARAM_FIELDS
+# The only top-level ProcessingRun fields a stage may set with ``RunContext.update_run``.
+# Everything else (id, mode, createdAt, gitSha, window*, bbox, isSynthetic) is fixed by
+# ``create_run``; runtimes and stage params go through ``record``.
+UPDATABLE_FIELDS: tuple[str, ...] = (
+    "stationIds",
+    "pickerModel",
+    "pickerWeights",
+    "softwareVersions",
 )
 
 
@@ -123,7 +132,7 @@ class UnknownStageError(RunError):
 class StageRecord(BaseModel):
     """One entry of ``stages.json``: what ``RunContext.record`` stored for a stage."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     runtimeS: float
     counts: dict[str, int]
@@ -136,10 +145,26 @@ _STAGE_RECORDS = TypeAdapter(dict[str, StageRecord])
 
 
 def _write_text(path: Path, text: str) -> None:
-    """Write via a sibling temp file and rename, so a crash never leaves a half-written JSON."""
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    tmp.replace(path)
+    """Write through a temp file in the same directory and ``os.replace`` it into place, so a
+    crash never leaves a half-written JSON. One process writes a run at a time; there is no
+    cross-process locking."""
+    tmp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f"{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp_name = tmp.name
+            tmp.write(text)
+        os.replace(tmp_name, path)
+    except BaseException:
+        if tmp_name is not None:
+            Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 def read_run_json(run_dir: Path) -> ProcessingRun:
@@ -147,7 +172,7 @@ def read_run_json(run_dir: Path) -> ProcessingRun:
     if not path.is_file():
         raise RunError(f"{path} not found; is {run_dir} a run directory?")
     try:
-        return ProcessingRun.model_validate_json(path.read_text())
+        return ProcessingRun.model_validate_json(path.read_text(encoding="utf-8"))
     except ValidationError as exc:
         raise RunError(f"{path} is not a valid ProcessingRun:\n{exc}") from exc
 
@@ -161,7 +186,7 @@ def read_stage_records(run_dir: Path) -> dict[str, StageRecord]:
     if not path.is_file():
         return {}
     try:
-        return _STAGE_RECORDS.validate_json(path.read_text())
+        return _STAGE_RECORDS.validate_json(path.read_text(encoding="utf-8"))
     except ValidationError as exc:
         raise RunError(f"{path} is malformed:\n{exc}") from exc
 
@@ -207,6 +232,7 @@ class RunContext:
         with neither is an error. ``ProcessingRun`` has no counts field, so ``counts`` (and the
         runtime) also go into the ``stages.json`` sidecar, and both are logged at INFO.
         """
+        stage_spec(stage)  # an unknown stage name is an error, not a new key in run.json
         if runtime_s < 0:
             raise ValueError(f"runtime_s must be >= 0, got {runtime_s}")
         try:  # validate the sidecar entry first so a bad call touches nothing on disk
@@ -354,12 +380,13 @@ def create_run(
         matching={},
         isSynthetic=False,
     )
-    if run_dir.exists():
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
         raise RunError(
             f"run directory already exists: {run_dir} "
             "(run ids have minute resolution; wait a minute or remove it)"
-        )
-    run_dir.mkdir(parents=True)
+        ) from exc
     cache_dir = data_dir / CACHE_DIRNAME
     cache_dir.mkdir(parents=True, exist_ok=True)
     write_run_json(run_dir, run)
@@ -390,6 +417,14 @@ def load_run(run_id: str, data_dir: Path, config_dir: Path, mode: str | None = N
     if run.id != run_id:
         raise RunError(f"{run_dir / RUN_JSON} has id {run.id!r}, expected {run_id!r}")
     config = load_config(Path(config_dir).resolve())
+    section = config.run
+    expected = (section.window_start_s, section.window_end_s, tuple(section.bbox))
+    actual = (run.windowStart, run.windowEnd, tuple(run.bbox))
+    if expected != actual:
+        raise RunError(
+            f"{config_dir} no longer matches run {run_id}: config (windowStart, windowEnd, bbox) "
+            f"= {expected} but run.json has {actual}; start a new run instead"
+        )
     return RunContext(
         run_id=run_id, run_dir=run_dir, cache_dir=data_dir / CACHE_DIRNAME, config=config
     )
@@ -476,15 +511,10 @@ def run_stages(
     for spec in specs:
         try:
             run_stage(ctx, spec.name, registry)
-        except Exception:
-            log.error(
-                "run %s failed at stage %r after %d/%d stages; rerun it with: hq stage %s --run %s",
-                ctx.run_id,
-                spec.name,
-                len(done),
-                len(specs),
-                spec.name,
-                ctx.run_id,
+        except Exception as exc:  # the CLI logs it once; the note says where and how to rerun
+            exc.add_note(
+                f"run {ctx.run_id} failed at stage {spec.name!r} after {len(done)}/{len(specs)} "
+                f"stages; rerun it with: hq stage {spec.name} --run {ctx.run_id}"
             )
             raise
         done.append(spec.name)

@@ -28,6 +28,8 @@ class EvidenceConfig(BaseModel):
 
     beforeS: float = Field(default=2.0, gt=0.0)  # s of waveform before the predicted P at a station
     afterS: float = Field(default=4.0, gt=0.0)  # s after it; a snippet is beforeS + afterS long
+    minLengthS: float = Field(default=4.0, gt=0.0)  # shortest snippet the drawer should show
+    maxLengthS: float = Field(default=8.0, gt=0.0)  # longest; keeps evidence files small
     bandHz: tuple[float, float] = (2.0, 20.0)  # zero-phase bandpass (low, high) of the display copy
     maxTraces: int = Field(default=MAX_EVIDENCE_TRACES, ge=1, le=MAX_EVIDENCE_TRACES)
     displayRateHz: float = Field(default=100.0, gt=0.0)  # WaveformSnippet.dt = 1 / displayRateHz
@@ -35,6 +37,16 @@ class EvidenceConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "EvidenceConfig":
+        if self.minLengthS > self.maxLengthS:
+            raise ValueError(
+                f"minLengthS {self.minLengthS} must not exceed maxLengthS {self.maxLengthS}"
+            )
+        length = self.beforeS + self.afterS
+        if not self.minLengthS <= length <= self.maxLengthS:
+            raise ValueError(
+                f"beforeS + afterS = {length} s must lie within "
+                f"[minLengthS, maxLengthS] = [{self.minLengthS}, {self.maxLengthS}] s"
+            )
         low, high = self.bandHz
         if not 0.0 < low < high:
             raise ValueError(f"bandHz must be (low, high) with 0 < low < high, got {self.bandHz}")

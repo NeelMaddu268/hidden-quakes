@@ -1,11 +1,17 @@
 """RUN-01 acceptance: the config loader composes per-lane YAML, ``RunContext.record`` writes
 runtime, counts and params into the run, and the stage runner names the owner of anything that
-isn't merged yet. Offline; everything lives under ``tmp_path``."""
+isn't merged yet. Offline; everything lives under ``tmp_path``.
+
+Every test passes whether or not H1's / H2's config modules and YAMLs are merged: ``config_dir``
+removes the lane YAMLs and blocks the lane modules, "present" cases inject fake modules, and
+missing-stage cases use private registries or blocked modules, never the real lane packages."""
 
 import json
 import logging
+import os
 import re
 import shutil
+import subprocess
 import sys
 import types
 from collections.abc import Callable
@@ -14,27 +20,37 @@ from pathlib import Path
 
 import pytest
 from hq_contracts.models import ProcessingRun
-from pydantic import BaseModel, ConfigDict, create_model
+from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
 from hq import cli, runs
-from hq.config import ConfigError, RunConfig, load_config
-from hq.config.export import ExportConfig
+from hq.config import SECTIONS, ConfigError, RunConfig, lax_models, load_config
+from hq.config.export import EvidenceConfig, ExportConfig
 
 pytestmark = pytest.mark.smoke
 
 SHOWCASE_DIR = Path(__file__).resolve().parents[2] / "configs" / "showcase"
 NOW = datetime(2026, 9, 10, 1, 2, tzinfo=UTC)
 RUN_ID_RE = re.compile(r"^\d{8}-\d{4}-(?:[0-9a-f]{7}|nogit00)$")
+LANE_SECTIONS = tuple(spec for spec in SECTIONS if not spec.required)  # signal, seismology
 
 
 @pytest.fixture
-def config_dir(tmp_path: Path) -> Path:
-    """A copy of the real run.yaml + export.yaml and no lane YAMLs."""
+def showcase_config(tmp_path: Path) -> Path:
+    """A copy of every YAML in configs/showcase, exactly as ``hq run configs/showcase`` sees it."""
     target = tmp_path / "config"
     target.mkdir()
-    for name in ("run.yaml", "export.yaml"):
-        shutil.copy(SHOWCASE_DIR / name, target / name)
+    for path in sorted(SHOWCASE_DIR.glob("*.yaml")):
+        shutil.copy(path, target / path.name)
     return target
+
+
+@pytest.fixture
+def config_dir(showcase_config: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """run.yaml + export.yaml only, lane modules blocked: the "nothing merged yet" state."""
+    for spec in LANE_SECTIONS:
+        (showcase_config / spec.filename).unlink(missing_ok=True)
+        monkeypatch.setitem(sys.modules, spec.module, None)  # import -> ModuleNotFoundError
+    return showcase_config
 
 
 @pytest.fixture
@@ -51,9 +67,13 @@ def install_module(monkeypatch: pytest.MonkeyPatch, name: str, **attrs: object) 
     return module
 
 
-def signal_model(*, forbid: bool = True) -> type[BaseModel]:
+def lane_model(name: str, *, forbid: bool = True, **fields: object) -> type[BaseModel]:
     config = ConfigDict(extra="forbid") if forbid else ConfigDict(extra="ignore")
-    return create_model("SignalConfig", __config__=config, profiles=(list[str], ...))
+    return create_model(name, __config__=config, **fields)  # type: ignore[call-overload]
+
+
+def signal_model(*, forbid: bool = True) -> type[BaseModel]:
+    return lane_model("SignalConfig", forbid=forbid, profiles=(list[str], ...))
 
 
 def recording_stage(stage: str, **record_kwargs: object) -> Callable[[runs.RunContext], None]:
@@ -66,7 +86,9 @@ def recording_stage(stage: str, **record_kwargs: object) -> Callable[[runs.RunCo
 # --- 1-3: load_config -----------------------------------------------------------------------------
 
 
-def test_load_config_without_lane_yamls(config_dir: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_load_config_without_lane_sections(
+    config_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     caplog.set_level(logging.WARNING, logger="hq.config")
     cfg = load_config(config_dir)
     assert isinstance(cfg, RunConfig)
@@ -78,8 +100,8 @@ def test_load_config_without_lane_yamls(config_dir: Path, caplog: pytest.LogCapt
     assert cfg.signal is None
     assert cfg.seismology is None
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("signal" in w and "H1" in w for w in warnings)
-    assert any("seismology" in w and "H2" in w for w in warnings)
+    assert any("signal" in w and "H1 Signal" in w for w in warnings)
+    assert any("seismology" in w and "H2 Seismology" in w for w in warnings)
     with pytest.raises(ConfigError, match="H1 Signal"):
         cfg.section("signal")
     with pytest.raises(ConfigError, match="H2 Seismology"):
@@ -87,6 +109,34 @@ def test_load_config_without_lane_yamls(config_dir: Path, caplog: pytest.LogCapt
     assert cfg.section("run") is cfg.run
     with pytest.raises(ConfigError, match="unknown config section"):
         cfg.section("nope")
+
+
+def test_load_config_on_the_real_showcase_dir(showcase_config: Path) -> None:
+    """Whatever lanes have merged, configs/showcase loads; each lane YAML implies its section."""
+    cfg = load_config(showcase_config)
+    assert cfg.run.name == "showcase"
+    assert isinstance(cfg.export, ExportConfig)
+    for spec in LANE_SECTIONS:
+        loaded = getattr(cfg, spec.name) is not None
+        assert loaded == (SHOWCASE_DIR / spec.filename).is_file(), spec.name
+
+
+def test_all_four_sections_load_with_fake_lane_modules(
+    config_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_module(monkeypatch, "hq.config.signal", SignalConfig=signal_model())
+    install_module(
+        monkeypatch,
+        "hq.config.seismology",
+        SeismologyConfig=lane_model("SeismologyConfig", velocityModel=(str, ...)),
+    )
+    (config_dir / "signal.yaml").write_text("profiles: [surface, borehole-A]\n")
+    (config_dir / "seismology.yaml").write_text("velocityModel: utah1d\n")
+    cfg = load_config(config_dir)
+    assert cfg.section("signal").profiles == ["surface", "borehole-A"]
+    assert cfg.section("seismology").velocityModel == "utah1d"
+    assert cfg.section("run") is cfg.run and cfg.section("export") is cfg.export
+    assert all(getattr(cfg, spec.name) is not None for spec in SECTIONS)
 
 
 def test_unknown_key_in_export_yaml_is_an_error(config_dir: Path) -> None:
@@ -98,9 +148,9 @@ def test_unknown_key_in_export_yaml_is_an_error(config_dir: Path) -> None:
 
 def test_unknown_nested_key_in_export_yaml_is_an_error(config_dir: Path) -> None:
     export = config_dir / "export.yaml"
-    export.write_text(
-        export.read_text().replace("  preloadCount: 20", "  preloadCount: 20\n  nope: 1")
-    )
+    text = export.read_text()
+    assert "  preloadCount: 20" in text
+    export.write_text(text.replace("  preloadCount: 20", "  preloadCount: 20\n  nope: 1"))
     with pytest.raises(ConfigError, match="nope"):
         load_config(config_dir)
 
@@ -142,8 +192,37 @@ def test_lane_model_must_forbid_extra_keys(
 ) -> None:
     install_module(monkeypatch, "hq.config.signal", SignalConfig=signal_model(forbid=False))
     (config_dir / "signal.yaml").write_text("profiles: [surface]\n")
-    with pytest.raises(ConfigError, match="extra='forbid'.*H1 Signal"):
+    with pytest.raises(ConfigError, match="SignalConfig must set extra='forbid'.*H1 Signal"):
         load_config(config_dir)
+
+
+def test_nested_lane_model_must_forbid_extra_keys(
+    config_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile = lane_model("Profile", forbid=False, bandHz=(tuple[float, float], ...))
+    signal = lane_model(
+        "SignalConfig",
+        profiles=(dict[str, profile], ...),  # type: ignore[valid-type]
+        fallback=(profile | None, None),  # type: ignore[valid-type]
+    )
+    assert [cls.__name__ for cls in lax_models(signal)] == ["Profile"]
+    install_module(monkeypatch, "hq.config.signal", SignalConfig=signal)
+    (config_dir / "signal.yaml").write_text("profiles: {surface: {bandHz: [2, 20]}}\n")
+    with pytest.raises(ConfigError, match=r"SignalConfig: Profile must set extra='forbid'.*H1"):
+        load_config(config_dir)
+    assert lax_models(ExportConfig) == []
+
+
+def test_export_config_snippet_length_bounds() -> None:
+    assert EvidenceConfig().beforeS + EvidenceConfig().afterS >= EvidenceConfig().minLengthS
+    with pytest.raises(ValidationError, match="minLengthS"):
+        EvidenceConfig(beforeS=1.0, afterS=1.0)
+    with pytest.raises(ValidationError, match="maxLengthS"):
+        EvidenceConfig(beforeS=4.0, afterS=5.0)
+    with pytest.raises(ValidationError, match="must not exceed"):
+        EvidenceConfig(minLengthS=9.0, maxLengthS=8.0)
+    with pytest.raises(ValidationError, match="Nyquist"):
+        EvidenceConfig(bandHz=(2.0, 60.0))
 
 
 # --- 4: a dummy stage records into run.json and stages.json --------------------------------------
@@ -169,6 +248,7 @@ def test_dummy_stage_records_runtime_counts_and_params(
     assert run.picker["weights"] == "x"
     stages = json.loads(ctx.path("stages.json").read_text())
     assert stages == {"pick": {"runtimeS": 1.5, "counts": {"picks": 3}}}
+    assert not list(ctx.run_dir.glob("*.tmp"))  # atomic writes leave nothing behind
 
     # A second record merges instead of replacing.
     ctx.record("pick", runtime_s=2.0, counts={"picks": 4}, params={"model": "seisbench.PhaseNet"})
@@ -190,47 +270,94 @@ def test_record_params_field_mapping(config_dir: Path, data_dir: Path) -> None:
         ctx.record("download", runtime_s=1.0, counts={}, params={"x": 1})
     with pytest.raises(runs.RunError, match="not a ProcessingRun params dict"):
         ctx.record("pick", runtime_s=1.0, counts={}, params={"x": 1}, field="pickerModel")
-    with pytest.raises(runs.RunError, match="counts"):
-        ctx.record("download", runtime_s=1.0, counts={"n": "many"})  # type: ignore[dict-item]
+    with pytest.raises(runs.UnknownStageError, match="bogus"):
+        ctx.record("bogus", runtime_s=1.0, counts={})
+    for bad in ({"n": "many"}, {"n": 3.0}, {"n": True}):
+        with pytest.raises(runs.RunError, match="counts"):
+            ctx.record("download", runtime_s=1.0, counts=bad)  # type: ignore[arg-type]
+    assert set(ctx.read_run().runtimeS) == {"catalog", "locate"}  # bad calls wrote nothing
 
 
-def test_update_run_sets_top_level_fields(config_dir: Path, data_dir: Path) -> None:
+def test_update_run_allowlist(config_dir: Path, data_dir: Path) -> None:
+    assert set(runs.UPDATABLE_FIELDS) <= set(ProcessingRun.model_fields)
     ctx = runs.create_run(config_dir, data_dir, now=NOW)
     ctx.update_run(stationIds=["UU.FOR1"], pickerModel="seisbench.PhaseNet", pickerWeights="w")
+    ctx.update_run(softwareVersions={**ctx.read_run().softwareVersions, "extra": "1.0"})
     run = ctx.read_run()
     assert run.stationIds == ["UU.FOR1"]
     assert (run.pickerModel, run.pickerWeights) == ("seisbench.PhaseNet", "w")
-    with pytest.raises(runs.RunError, match="cannot set"):
-        ctx.update_run(id="other")
-    with pytest.raises(runs.RunError, match="cannot set"):
-        ctx.update_run(picker={"a": 1})
+    assert run.softwareVersions["extra"] == "1.0"
+    for rejected in (
+        {"id": "other"},
+        {"isSynthetic": True},
+        {"gitSha": "deadbeef"},
+        {"mode": "live"},
+        {"createdAt": "2026-01-01T00:00:00Z"},
+        {"windowStart": 0.0},
+        {"picker": {"a": 1}},
+        {"runtimeS": {}},
+    ):
+        with pytest.raises(runs.RunError, match="cannot set"):
+            ctx.update_run(**rejected)
     with pytest.raises(runs.RunError, match="invalid update"):
         ctx.update_run(stationIds="UU.FOR1")
+    assert ctx.read_run() == run  # rejected calls changed nothing
 
 
 # --- 5: missing lane stages name their owner ------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("stage", "owner", "module"),
+    ("stage", "module", "owner", "reason"),
     [
-        ("pick", "H1 Signal", "hq.pick"),  # package exists, no run()
-        ("inventory", "H1 Signal", "hq.ingest.inventory"),  # module missing
-        ("catalog", "H2 Seismology", "hq.match.catalog"),
-        ("associate", "H2 Seismology", "hq.associate"),
-        ("validate", "H4 Platform", "hq.validate"),
+        ("inventory", "hq_test_missing_inventory", "H1 Signal", "module hq_test_missing_inventory not found"),
+        ("catalog", "hq_test_missing_catalog", "H2 Seismology", "module hq_test_missing_catalog not found"),
+        ("validate", "hq_test_norun_validate", "H4 Platform", "hq_test_norun_validate has no run(ctx)"),
     ],
-)
+)  # fmt: skip
 def test_missing_stage_names_owner(
-    config_dir: Path, data_dir: Path, stage: str, owner: str, module: str
+    config_dir: Path,
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    module: str,
+    owner: str,
+    reason: str,
 ) -> None:
+    if "norun" in module:
+        install_module(monkeypatch, module)  # the package exists but exposes no run()
+    registry = (runs.StageSpec(stage, module, owner),)
     ctx = runs.create_run(config_dir, data_dir, now=NOW)
     with pytest.raises(runs.StageMissingError) as info:
-        runs.run_stage(ctx, stage)
+        runs.run_stage(ctx, stage, registry=registry)
     message = str(info.value)
-    assert stage in message and owner in message and module in message
-    assert "not implemented yet" in message
-    assert runs.stage_status(runs.stage_spec(stage)).startswith("missing:")
+    assert f"stage '{stage}' is not implemented yet: {reason} (owner: {owner})" == message
+    assert runs.stage_status(registry[0]) == f"missing: {reason}"
+
+
+def test_missing_stage_in_the_real_registry(
+    config_dir: Path, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "hq.validate", None)  # as if H4 had not merged it
+    ctx = runs.create_run(config_dir, data_dir, now=NOW)
+    with pytest.raises(runs.StageMissingError, match=r"'validate'.*hq\.validate.*H4 Platform"):
+        runs.run_stage(ctx, "validate")
+
+
+def test_broken_import_inside_a_stage_is_a_real_error(
+    config_dir: Path, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = runs.create_run(config_dir, data_dir, now=NOW)
+    real_import = runs.importlib.import_module
+
+    def broken_import(name: str, package: str | None = None) -> types.ModuleType:
+        if name == "hq.pick":  # as if hq/pick/__init__.py itself did `import torch_xyz`
+            raise ModuleNotFoundError("No module named 'torch_xyz'", name="torch_xyz")
+        return real_import(name, package)
+
+    monkeypatch.setattr(runs.importlib, "import_module", broken_import)
+    with pytest.raises(ModuleNotFoundError, match="torch_xyz"):
+        runs.run_stage(ctx, "pick")
 
 
 def test_unknown_stage_lists_registry(config_dir: Path, data_dir: Path) -> None:
@@ -248,24 +375,28 @@ def test_registry_matches_pipeline_table() -> None:
     ]  # fmt: skip
     assert {s.owner for s in runs.STAGES} == {"H1 Signal", "H2 Seismology", "H4 Platform"}
     assert [s.name for s in runs.select_stages(["export", "pick"])] == ["pick", "export"]
+    assert set(runs.STAGE_PARAM_FIELDS) <= {s.name for s in runs.STAGES}
+    assert set(runs.STAGE_PARAM_FIELDS.values()) <= set(runs.PARAM_FIELDS)
 
 
 def test_run_stages_stops_at_first_failure(
     config_dir: Path, data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ran: list[str] = []
-    install_module(monkeypatch, "hq_test_a", run=lambda ctx: ran.append("a"))
-    install_module(monkeypatch, "hq_test_c", run=lambda ctx: ran.append("c"))
+    install_module(monkeypatch, "hq_test_inventory", run=lambda ctx: ran.append("inventory"))
+    install_module(monkeypatch, "hq_test_download", run=lambda ctx: ran.append("download"))
     registry = (
-        runs.StageSpec("a", "hq_test_a", "H4 Platform"),
-        runs.StageSpec("b", "hq_test_missing_b", "H2 Seismology"),
-        runs.StageSpec("c", "hq_test_c", "H4 Platform"),
+        runs.StageSpec("inventory", "hq_test_inventory", "H1 Signal"),
+        runs.StageSpec("catalog", "hq_test_missing_catalog", "H2 Seismology"),
+        runs.StageSpec("download", "hq_test_download", "H1 Signal"),
     )
     ctx = runs.create_run(config_dir, data_dir, now=NOW)
-    with pytest.raises(runs.StageMissingError, match="H2 Seismology"):
+    with pytest.raises(runs.StageMissingError, match="H2 Seismology") as info:
         runs.run_stages(ctx, registry=registry)
-    assert ran == ["a"]
-    assert "a" in ctx.read_run().runtimeS  # a forgot to record: the runner did it for it
+    assert ran == ["inventory"]
+    assert "inventory" in ctx.read_run().runtimeS  # it forgot to record: the runner did it
+    notes = getattr(info.value, "__notes__", [])
+    assert any(f"hq stage catalog --run {ctx.run_id}" in note for note in notes)
 
 
 # --- 6: run ids and the initial run.json ----------------------------------------------------------
@@ -287,7 +418,8 @@ def test_run_id_format_and_initial_run_json(config_dir: Path, data_dir: Path) ->
     assert run.bbox == ctx.config.run.bbox
     assert run.stationIds == [] and run.pickerModel == "" and run.pickerWeights == ""
     assert run.softwareVersions["python"].count(".") == 2
-    assert run.softwareVersions["numpy"]
+    for package in ("numpy", "pandas", "pydantic", "pyproj"):
+        assert run.softwareVersions[package]
     assert run.runtimeS == {} and run.picker == {} and run.matching == {}
     assert run.isSynthetic is False
     with pytest.raises(runs.RunError, match="already exists"):
@@ -314,7 +446,7 @@ def test_window_label(start: str, end: str, label: str) -> None:
     assert runs.window_label(datetime.fromisoformat(start), datetime.fromisoformat(end)) == label
 
 
-def test_load_run_finds_existing_run(config_dir: Path, data_dir: Path) -> None:
+def test_load_run_finds_existing_run_and_checks_config(config_dir: Path, data_dir: Path) -> None:
     created = runs.create_run(config_dir, data_dir, now=NOW)
     loaded = runs.load_run(created.run_id, data_dir, config_dir)
     assert loaded.run_dir == created.run_dir
@@ -322,6 +454,14 @@ def test_load_run_finds_existing_run(config_dir: Path, data_dir: Path) -> None:
     assert loaded.config.run == created.config.run
     with pytest.raises(runs.RunError, match="not found"):
         runs.load_run("20260910-0000-0000000", data_dir, config_dir)
+    run_yaml = config_dir / "run.yaml"
+    text = run_yaml.read_text()
+    assert 'windowEnd: "2026-09-11T00:00:00Z"' in text
+    run_yaml.write_text(
+        text.replace('windowEnd: "2026-09-11T00:00:00Z"', 'windowEnd: "2026-09-10T12:00:00Z"')
+    )
+    with pytest.raises(runs.RunError, match="no longer matches"):
+        runs.load_run(created.run_id, data_dir, config_dir)
 
 
 # --- 7: the CLI -----------------------------------------------------------------------------------
@@ -329,11 +469,13 @@ def test_load_run_finds_existing_run(config_dir: Path, data_dir: Path) -> None:
 
 def test_cli_stages_lists_registry(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["stages"]) == 0
-    out = capsys.readouterr().out
-    for spec in runs.STAGES:
-        assert spec.name in out and spec.module in out and spec.owner in out
-    assert "missing: hq.pick has no run(ctx)" in out
-    assert "missing: module hq.ingest.inventory not found" in out
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split() == ["stage", "owner", "module", "status"]
+    assert len(lines) == 1 + len(runs.STAGES)
+    for spec, line in zip(runs.STAGES, lines[1:], strict=True):
+        assert line.startswith(spec.name)
+        assert spec.owner in line and spec.module in line
+        assert "  implemented" in line or "  missing: " in line
 
 
 def test_cli_run_and_stage_with_a_fake_pick(
@@ -354,50 +496,32 @@ def test_cli_run_and_stage_with_a_fake_pick(
     run_id = capsys.readouterr().out.strip()
     assert RUN_ID_RE.match(run_id) and calls == [run_id]
     run_dir = data / "showcase" / "runs" / run_id
-    assert ProcessingRun.model_validate_json((run_dir / "run.json").read_text()).runtimeS == {
-        "pick": 0.1
-    }
+    run = ProcessingRun.model_validate_json((run_dir / "run.json").read_text())
+    assert run.runtimeS == {"pick": 0.1}
 
-    argv = [
-        "stage",
-        "pick",
-        "--run",
-        run_id,
-        "--config-dir",
-        str(config_dir),
-        "--data-dir",
-        str(data),
-    ]
-    assert cli.main(argv) == 0
+    common = ["--config-dir", str(config_dir), "--data-dir", str(data)]
+    assert cli.main(["stage", "pick", "--run", run_id, *common]) == 0
     assert calls == [run_id, run_id]
-    assert cli.main(["stage", "bogus", "--run", run_id, "--data-dir", str(data)]) == 1
-    assert (
-        cli.main(
-            [
-                "stage",
-                "pick",
-                "--run",
-                "nope",
-                "--config-dir",
-                str(config_dir),
-                "--data-dir",
-                str(data),
-            ]
-        )
-        == 1
-    )
+    assert cli.main(["stage", "bogus", "--run", run_id, *common]) == 1
+    assert cli.main(["stage", "pick", "--run", "nope", *common]) == 1
 
 
-def test_cli_run_fails_on_missing_stage(
-    config_dir: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+def test_cli_run_fails_once_on_a_missing_stage(
+    config_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.ERROR)
+    monkeypatch.setitem(sys.modules, "hq.validate", None)  # as if H4 had not merged it
     data = tmp_path / "data-fail"
     assert cli.main(["run", str(config_dir), "--data-dir", str(data), "--stages", "validate"]) == 1
-    errors = " ".join(r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR)
-    assert "stage 'validate' is not implemented yet" in errors and "H4 Platform" in errors
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1, errors  # logged once, with the rerun hint
+    assert "stage 'validate' is not implemented yet" in errors[0]
+    assert "H4 Platform" in errors[0] and "hq stage validate --run " in errors[0]
     assert cli.main(["run", str(config_dir), "--data-dir", str(data), "--stages", "bogus"]) == 1
-    assert list((data / "showcase" / "runs").iterdir()) != []  # the failed run dir stays for reruns
+    assert list((data / "showcase" / "runs").iterdir()) != []  # the failed run dir stays
 
 
 def test_cli_data_dir_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -407,7 +531,7 @@ def test_cli_data_dir_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.delenv(cli.DATA_DIR_ENV, raising=False)
     with pytest.raises(ConfigError, match="no .git found"):
         cli.resolve_data_dir(None, cfg)
-    (repo / ".git").write_text("gitdir: elsewhere\n")  # worktrees keep .git as a file
+    (repo / ".git").mkdir()
     assert cli.resolve_data_dir(None, cfg) == repo / "data"
     monkeypatch.setenv(cli.DATA_DIR_ENV, str(tmp_path / "env-data"))
     assert cli.resolve_data_dir(None, cfg) == (tmp_path / "env-data").resolve()
@@ -416,3 +540,36 @@ def test_cli_data_dir_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert cli.parse_stages(None) is None
     with pytest.raises(ConfigError):
         cli.parse_stages(" , ")
+
+
+def test_cli_worktrees_share_the_main_checkout_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git not installed")
+    monkeypatch.delenv(cli.DATA_DIR_ENV, raising=False)
+    main = tmp_path / "main"
+    main.mkdir()
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.invalid",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.invalid",
+    }
+    git = ["git", "-c", "commit.gpgsign=false"]
+    subprocess.run([*git, "init", "-q"], cwd=main, env=env, check=True)
+    subprocess.run(
+        [*git, "commit", "-q", "--allow-empty", "-m", "init"], cwd=main, env=env, check=True
+    )
+    worktree = tmp_path / "wt"
+    subprocess.run([*git, "worktree", "add", "-q", str(worktree)], cwd=main, env=env, check=True)
+    cfg = worktree / "services" / "seismic" / "configs" / "showcase"
+    cfg.mkdir(parents=True)
+    assert (worktree / ".git").is_file()
+    assert cli.resolve_data_dir(None, cfg) == main.resolve() / "data"
+    # A .git file that git can't resolve falls back to that directory rather than failing.
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / ".git").write_text("gitdir: elsewhere\n")
+    assert cli.resolve_data_dir(None, broken / "configs") == broken / "data"

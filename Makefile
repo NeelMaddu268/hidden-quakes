@@ -6,7 +6,7 @@ RUN ?=
 help:
 	@echo "make check                  typecheck + lint + smoke tests (run before every PR)"
 	@echo "make contracts              regenerate TS from the Python contracts"
-	@echo "make run [STAGES=a,b]        run the showcase pipeline (hq run configs/showcase)"
+	@echo "make run [STAGES=a,b]       run the showcase pipeline; HQ_DATA_DIR=<dir> overrides <main checkout>/data"
 	@echo "make publish-run RUN=<id>   share a run's tables with the team (GitHub release)"
 	@echo "make fetch-run RUN=<id>     download a teammate's run tables"
 	@echo "make runs                   list shared runs"
