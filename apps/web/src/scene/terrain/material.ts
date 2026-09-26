@@ -9,8 +9,8 @@ import { Color, type IUniform } from "three";
 export const CONTOUR_INTERVAL_M = 100;
 export const CONTOUR_INDEX_EVERY = 5;
 
-/** Above this opacity the terrain is treated as solid: it writes depth and hides what's under it. */
-export const OPAQUE_THRESHOLD = 0.99;
+/** Contour half-width in CSS pixels; the frame loop scales it by the device pixel ratio. */
+export const CONTOUR_HALF_WIDTH_PX = 0.6;
 
 export interface TerrainUniforms {
   [name: string]: IUniform;
@@ -22,7 +22,7 @@ export interface TerrainUniforms {
   uContourOpacity: IUniform<number>;
   uContourIntervalM: IUniform<number>;
   uContourIndexEvery: IUniform<number>;
-  /** Line half-width in device pixels. */
+  /** Line half-width in device pixels (CONTOUR_HALF_WIDTH_PX × DPR, written every frame). */
   uContourWidthPx: IUniform<number>;
   /** Hillshade byte of flat ground / 255, so flat ground renders exactly `colors.terrain`. */
   uFlatShade: IUniform<number>;
@@ -86,6 +86,13 @@ export const TERRAIN_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
+/** Depth pre-pass: colour writes are off, so the fragment only has to exist. */
+export const TERRAIN_DEPTH_FRAGMENT_SHADER = /* glsl */ `
+  void main() {
+    gl_FragColor = vec4(0.0);
+  }
+`;
+
 export interface TerrainMaterialOptions {
   originElevM: number;
   verticalExaggeration: number;
@@ -107,7 +114,7 @@ export function createTerrainUniforms(opts: TerrainMaterialOptions): TerrainUnif
     uContourOpacity: { value: opts.contours ? CONTOUR_OPACITY : 0 },
     uContourIntervalM: { value: CONTOUR_INTERVAL_M },
     uContourIndexEvery: { value: CONTOUR_INDEX_EVERY },
-    uContourWidthPx: { value: 0.75 },
+    uContourWidthPx: { value: CONTOUR_HALF_WIDTH_PX },
     uFlatShade: { value: opts.flatShadeValue / 255 },
     uShadeStrength: { value: SHADE_STRENGTH },
     uOriginElevM: { value: opts.originElevM },
@@ -119,12 +126,4 @@ export function createTerrainUniforms(opts: TerrainMaterialOptions): TerrainUnif
 export function terrainOpacity(raw: number): number {
   if (Number.isNaN(raw)) return 1;
   return raw < 0 ? 0 : raw > 1 ? 1 : raw;
-}
-
-/**
- * Depth writes only while the terrain is (almost) solid. Once it fades, events underneath must still
- * draw, so the translucent surface stops occluding them.
- */
-export function terrainDepthWrite(opacity: number): boolean {
-  return opacity >= OPAQUE_THRESHOLD;
 }

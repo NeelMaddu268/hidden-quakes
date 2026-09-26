@@ -6,7 +6,8 @@ import { colors } from "@hq/visualization";
 import { useEffect, useMemo, useRef } from "react";
 import { Color, type ShaderMaterial } from "three";
 import type { SceneMeta, Station } from "../types";
-import { buildStationGlyphs, stationIssues } from "./stations";
+import { RENDER_ORDER } from "../terrain/renderOrder";
+import { buildStationGlyphs, stationIssues, type GlyphBatch } from "./stations";
 
 /** Glyph size in CSS px (scaled by DPR each frame). */
 const STATION_SIZE_PX = 11;
@@ -61,9 +62,7 @@ const STATION_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-/** Surface stations as inverted triangles; borehole sensors at true depth with a line to the wellhead. */
-export function StationsLayer({ stations, scene }: { stations: Station[]; scene: SceneMeta }) {
-  const glyphs = useMemo(() => buildStationGlyphs(stations, scene), [stations, scene]);
+function GlyphPoints({ name, glyphs, renderOrder }: { name: string; glyphs: GlyphBatch; renderOrder: number }) {
   const material = useRef<ShaderMaterial>(null);
   const uniforms = useMemo(
     () => ({
@@ -73,35 +72,45 @@ export function StationsLayer({ stations, scene }: { stations: Station[]; scene:
     }),
     [],
   );
+  useFrame((state) => {
+    const m = material.current;
+    if (m) m.uniforms.uSizePx.value = STATION_SIZE_PX * state.viewport.dpr;
+  });
+  if (glyphs.count === 0) return null;
+  return (
+    <points key={glyphs.count} name={name} frustumCulled={false} renderOrder={renderOrder}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[glyphs.positions, 3]} />
+        <bufferAttribute attach="attributes-aShape" args={[glyphs.shapes, 1]} />
+        <bufferAttribute attach="attributes-aAlpha" args={[glyphs.alphas, 1]} />
+      </bufferGeometry>
+      <shaderMaterial
+        ref={material}
+        uniforms={uniforms}
+        vertexShader={STATION_VERTEX_SHADER}
+        fragmentShader={STATION_FRAGMENT_SHADER}
+        transparent
+        depthWrite={false}
+      />
+    </points>
+  );
+}
+
+/**
+ * Surface stations as inverted triangles and wellheads as rings, drawn over the terrain; borehole
+ * sensors at true depth with a line up to the wellhead, drawn under it (they fade in with the reveal).
+ */
+export function StationsLayer({ stations, scene }: { stations: Station[]; scene: SceneMeta }) {
+  const glyphs = useMemo(() => buildStationGlyphs(stations, scene), [stations, scene]);
 
   useEffect(() => {
     const issues = stationIssues(stations, scene);
     if (issues.length) console.warn(`[stations] inconsistent sensor elevations: ${issues.join("; ")}`);
   }, [stations, scene]);
 
-  useFrame((state) => {
-    const m = material.current;
-    if (m) m.uniforms.uSizePx.value = STATION_SIZE_PX * state.viewport.dpr;
-  });
-
-  if (glyphs.count === 0) return null;
   return (
     <group name="stations">
-      <points key={glyphs.count} frustumCulled={false} renderOrder={3}>
-        <bufferGeometry>
-          <bufferAttribute attach="attributes-position" args={[glyphs.positions, 3]} />
-          <bufferAttribute attach="attributes-aShape" args={[glyphs.shapes, 1]} />
-          <bufferAttribute attach="attributes-aAlpha" args={[glyphs.alphas, 1]} />
-        </bufferGeometry>
-        <shaderMaterial
-          ref={material}
-          uniforms={uniforms}
-          vertexShader={STATION_VERTEX_SHADER}
-          fragmentShader={STATION_FRAGMENT_SHADER}
-          transparent
-          depthWrite={false}
-        />
-      </points>
+      <GlyphPoints name="borehole-sensors" glyphs={glyphs.underground} renderOrder={RENDER_ORDER.underground} />
       {glyphs.boreholeSegments.length > 0 && (
         <Line
           name="borehole-lines"
@@ -112,9 +121,10 @@ export function StationsLayer({ stations, scene }: { stations: Station[]; scene:
           transparent
           opacity={0.85}
           depthWrite={false}
-          renderOrder={3}
+          renderOrder={RENDER_ORDER.underground}
         />
       )}
+      <GlyphPoints name="surface-stations" glyphs={glyphs.surface} renderOrder={RENDER_ORDER.surface} />
     </group>
   );
 }

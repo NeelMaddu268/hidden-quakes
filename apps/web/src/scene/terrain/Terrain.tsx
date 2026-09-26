@@ -1,32 +1,37 @@
 "use client";
 
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { DoubleSide, type ShaderMaterial } from "three";
+import { useEffect, useMemo, useRef } from "react";
+import { BufferAttribute, BufferGeometry, DoubleSide, type ShaderMaterial } from "three";
 import type { SceneBounds } from "../camera/bounds";
 import { verticalExaggerationOf } from "../coords";
 import { sceneFx } from "../fx";
-import { CornerNote } from "../references/CornerNote";
 import type { SceneMeta } from "../types";
-import { buildSlabGrid, buildTerrainGrid, chooseSurface, surfaceExtentM, type TerrainGrid } from "./grid";
-import { urlForcesSlab, useTerrainAsset } from "./load";
+import { buildSlabGrid, buildTerrainGrid, surfaceExtentM, type TerrainGrid } from "./grid";
 import {
+  CONTOUR_HALF_WIDTH_PX,
   createTerrainUniforms,
+  TERRAIN_DEPTH_FRAGMENT_SHADER,
   TERRAIN_FRAGMENT_SHADER,
   TERRAIN_VERTEX_SHADER,
-  terrainDepthWrite,
   terrainOpacity,
   type TerrainUniforms,
 } from "./material";
-import { terrainMismatch, type EnuBoundsM } from "./meta";
+import type { EnuBoundsM } from "./meta";
+import { RENDER_ORDER } from "./renderOrder";
+import { useSurfaceChoice } from "./surface";
 
-/** Flip to true to ship the abstract slab instead of the DEM (docs/03 kill switch "Terrain"). */
-export const FORCE_ABSTRACT_SLAB = false;
+/** Culling for the terrain passes. DoubleSide: the side view looks at the surface from below. */
+export const TERRAIN_SIDE = DoubleSide;
 
-export const ABSTRACT_SURFACE_LABEL = "Abstract surface (terrain unavailable)";
-
-/** Contour half-width in CSS pixels (scaled by DPR each frame). */
-const CONTOUR_HALF_WIDTH_PX = 0.6;
+function buildGeometry(grid: TerrainGrid, shade: Uint8Array): BufferGeometry {
+  const g = new BufferGeometry();
+  g.setAttribute("position", new BufferAttribute(grid.positions, 3));
+  g.setAttribute("aShade", new BufferAttribute(shade, 1, true));
+  g.setIndex(new BufferAttribute(grid.index, 1));
+  g.computeBoundingSphere();
+  return g;
+}
 
 interface SurfaceMeshProps {
   name: string;
@@ -40,8 +45,10 @@ interface SurfaceMeshProps {
 }
 
 /**
- * The surface mesh, terrain or slab. Geometry is built once per terrain; every frame only writes the
- * opacity (from sceneFx, which the reveal drives), the DPR-scaled line width and the depth-write flag.
+ * The surface, terrain or slab: a depth-only pre-pass, then the colour pass (normal alpha blending,
+ * depth test on, no depth writes), both drawn after every underground layer; renderOrder.ts explains
+ * why. Both passes share one geometry (one GPU upload). Geometry is built once per terrain; every
+ * frame only writes the opacity (from sceneFx, which the reveal drives) and the DPR-scaled line width.
  */
 function SurfaceMesh({ name, grid, shade, flatShadeValue, contours, originElevM, verticalExaggeration }: SurfaceMeshProps) {
   const material = useRef<ShaderMaterial>(null);
@@ -49,56 +56,66 @@ function SurfaceMesh({ name, grid, shade, flatShadeValue, contours, originElevM,
     () => createTerrainUniforms({ flatShadeValue, contours, originElevM, verticalExaggeration }),
     [flatShadeValue, contours, originElevM, verticalExaggeration],
   );
+  const geometry = useMemo(() => buildGeometry(grid, shade), [grid, shade]);
+  // Passed as a prop (not JSX), so R3F doesn't own it: dispose it ourselves.
+  useEffect(() => () => geometry.dispose(), [geometry]);
 
   useFrame((state) => {
     const m = material.current;
     if (!m) return;
     const u = m.uniforms as TerrainUniforms;
-    const opacity = terrainOpacity(sceneFx.terrainOpacity);
-    u.uOpacity.value = opacity;
+    u.uOpacity.value = terrainOpacity(sceneFx.terrainOpacity);
     u.uContourWidthPx.value = CONTOUR_HALF_WIDTH_PX * state.viewport.dpr;
-    m.depthWrite = terrainDepthWrite(opacity);
   });
 
   return (
-    <mesh name={name} renderOrder={0}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[grid.positions, 3]} />
-        <bufferAttribute attach="attributes-aShade" args={[shade, 1, true]} />
-        <bufferAttribute attach="index" args={[grid.index, 1]} />
-      </bufferGeometry>
-      <shaderMaterial
-        ref={material}
-        uniforms={uniforms}
-        vertexShader={TERRAIN_VERTEX_SHADER}
-        fragmentShader={TERRAIN_FRAGMENT_SHADER}
-        transparent
-        side={DoubleSide}
-      />
-    </mesh>
+    <group name={name}>
+      {/* Depth pre-pass: the same vertex shader (identical depths), no colour, pushed back a hair so the
+          colour pass wins its own depth test. Transparent, so it sorts after the underground layers. */}
+      <mesh name={`${name}-depth`} geometry={geometry} renderOrder={RENDER_ORDER.terrainDepth}>
+        <shaderMaterial
+          uniforms={uniforms}
+          vertexShader={TERRAIN_VERTEX_SHADER}
+          fragmentShader={TERRAIN_DEPTH_FRAGMENT_SHADER}
+          transparent
+          colorWrite={false}
+          depthWrite
+          polygonOffset
+          polygonOffsetFactor={1}
+          polygonOffsetUnits={1}
+          side={TERRAIN_SIDE}
+        />
+      </mesh>
+      <mesh name={`${name}-surface`} geometry={geometry} renderOrder={RENDER_ORDER.terrain}>
+        <shaderMaterial
+          ref={material}
+          uniforms={uniforms}
+          vertexShader={TERRAIN_VERTEX_SHADER}
+          fragmentShader={TERRAIN_FRAGMENT_SHADER}
+          transparent
+          depthWrite={false}
+          side={TERRAIN_SIDE}
+        />
+      </mesh>
+    </group>
   );
 }
 
 const SLAB_SHADE = new Uint8Array([255, 255, 255, 255]);
 
+/** The flat abstract slab; its note sits under the depth ruler's title (references/DepthRuler). */
 function AbstractSlab({ extent, scene }: { extent: EnuBoundsM; scene: SceneMeta }) {
   const grid = useMemo(() => buildSlabGrid(extent, scene), [extent, scene]);
   return (
-    <group name="abstract-slab">
-      <SurfaceMesh
-        name="abstract-slab-surface"
-        grid={grid}
-        shade={SLAB_SHADE}
-        flatShadeValue={255}
-        contours={false}
-        originElevM={scene.originElevM}
-        verticalExaggeration={verticalExaggerationOf(scene)}
-      />
-      {/* Pinned to a canvas corner so it's on screen in every view, above the "Vertical ×N" slot. */}
-      <CornerNote slot={1} testId="abstract-surface-note">
-        {ABSTRACT_SURFACE_LABEL}
-      </CornerNote>
-    </group>
+    <SurfaceMesh
+      name="abstract-slab"
+      grid={grid}
+      shade={SLAB_SHADE}
+      flatShadeValue={255}
+      contours={false}
+      originElevM={scene.originElevM}
+      verticalExaggeration={verticalExaggerationOf(scene)}
+    />
   );
 }
 
@@ -106,21 +123,16 @@ export interface TerrainProps {
   scene: SceneMeta;
   /** Framed data bounds; size the abstract slab when there's no terrain to size it. */
   bounds: SceneBounds;
-  /** Draw the labelled abstract slab even when the baked terrain is available. */
-  forceSlab?: boolean;
 }
 
 /**
- * The ground surface: the baked DEM from public/terrain/, or the labelled abstract slab when the
- * terrain is forced off (`forceSlab`, `FORCE_ABSTRACT_SLAB`, `?terrain=slab`), fails to load, or was
- * baked for a different origin.
+ * The ground surface: the baked DEM from public/terrain/, or the abstract slab when the terrain is
+ * forced off (FORCE_ABSTRACT_SLAB in surface.ts, `?terrain=slab`), fails to load, or was baked for a
+ * different origin. The depth ruler shows the matching "Abstract surface" note.
  */
-export function Terrain({ scene, bounds, forceSlab = false }: TerrainProps) {
-  const asset = useTerrainAsset();
-  const [urlForced] = useState(urlForcesSlab);
+export function Terrain({ scene, bounds }: TerrainProps) {
+  const { asset, choice, mismatch } = useSurfaceChoice(scene);
   const ready = asset.status === "ready" ? asset : null;
-  const mismatch = ready ? terrainMismatch(ready.meta, scene) : null;
-  const choice = chooseSurface(asset.status, { forced: forceSlab || FORCE_ABSTRACT_SLAB || urlForced, mismatch });
 
   useEffect(() => {
     if (mismatch) console.error(`[terrain] ${mismatch}; showing the abstract surface instead`);

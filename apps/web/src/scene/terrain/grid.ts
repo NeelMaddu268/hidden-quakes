@@ -3,7 +3,7 @@
 // (row 0 = north), u = elevM − originElevM, then the one ENU → scene mapping in coords.ts.
 
 import type { SceneBounds } from "../camera/bounds";
-import { METERS_PER_UNIT, writeEnuToScene, verticalExaggerationOf } from "../coords";
+import { sceneXToEastM, sceneZToNorthM, verticalExaggerationOf, writeEnuToScene } from "../coords";
 import type { Enu, SceneMeta } from "../types";
 import type { EnuBoundsM, TerrainMeta } from "./meta";
 
@@ -80,10 +80,13 @@ export function surfaceExtentM(meta: Pick<TerrainMeta, "enuBounds"> | null, boun
     const { eMin, eMax, nMin, nMax } = meta.enuBounds;
     return { eMin, eMax, nMin, nMax };
   }
-  // Scene x = e / 1000 and z = −n / 1000, so the framed box's reach from the origin is max |x|, |z|.
-  const reachM =
-    Math.max(Math.abs(bounds.min[0]), Math.abs(bounds.max[0]), Math.abs(bounds.min[2]), Math.abs(bounds.max[2])) *
-    METERS_PER_UNIT;
+  // The framed box's furthest reach from the origin, east–west or north–south, in metres.
+  const reachM = Math.max(
+    Math.abs(sceneXToEastM(bounds.min[0])),
+    Math.abs(sceneXToEastM(bounds.max[0])),
+    Math.abs(sceneZToNorthM(bounds.min[2])),
+    Math.abs(sceneZToNorthM(bounds.max[2])),
+  );
   const half = Math.max(FALLBACK_HALF_WIDTH_M, reachM + FALLBACK_MARGIN_M);
   return { eMin: -half, eMax: half, nMin: -half, nMax: half };
 }

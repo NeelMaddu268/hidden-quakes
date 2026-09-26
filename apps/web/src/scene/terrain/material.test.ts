@@ -3,29 +3,42 @@ import { Color } from "three";
 import { describe, expect, it } from "vitest";
 import { elevMToSceneY } from "../coords";
 import {
+  CONTOUR_HALF_WIDTH_PX,
   CONTOUR_INTERVAL_M,
   createTerrainUniforms,
-  OPAQUE_THRESHOLD,
   TERRAIN_FRAGMENT_SHADER,
   TERRAIN_VERTEX_SHADER,
-  terrainDepthWrite,
   terrainOpacity,
 } from "./material";
+import { RENDER_ORDER } from "./renderOrder";
 
-describe("terrain opacity and depth writes", () => {
-  it("writes depth only while (almost) solid, so events show under a faded terrain", () => {
-    expect(terrainDepthWrite(1)).toBe(true);
-    expect(terrainDepthWrite(OPAQUE_THRESHOLD)).toBe(true);
-    expect(terrainDepthWrite(0.98)).toBe(false);
-    expect(terrainDepthWrite(0.12)).toBe(false);
-    expect(terrainDepthWrite(0)).toBe(false);
-  });
-
+describe("terrain opacity", () => {
   it("clamps the shared fx value; NaN renders solid rather than vanishing", () => {
     expect(terrainOpacity(0.12)).toBe(0.12);
     expect(terrainOpacity(-1)).toBe(0);
     expect(terrainOpacity(3)).toBe(1);
     expect(terrainOpacity(Number.NaN)).toBe(1);
+  });
+});
+
+describe("RENDER_ORDER (the terrain covers the underground, then overlays draw on top)", () => {
+  it("draws every underground layer, including the event layers (0–2), before the terrain", () => {
+    expect(RENDER_ORDER.underground).toBeLessThan(RENDER_ORDER.terrainDepth);
+    expect(RENDER_ORDER.eventsMax).toBeLessThan(RENDER_ORDER.terrainDepth);
+    expect(RENDER_ORDER.terrainDepth).toBeGreaterThan(2);
+  });
+
+  it("depth pre-pass, then colour pass, then surface glyphs, then the overlays", () => {
+    const seq = [
+      RENDER_ORDER.terrainDepth,
+      RENDER_ORDER.terrain,
+      RENDER_ORDER.surface,
+      RENDER_ORDER.featureGlow,
+      RENDER_ORDER.feature,
+      RENDER_ORDER.ruler,
+    ];
+    expect([...seq].sort((a, b) => a - b)).toEqual(seq);
+    expect(new Set(seq).size).toBe(seq.length);
   });
 });
 
@@ -41,6 +54,7 @@ describe("createTerrainUniforms", () => {
     expect(u.uContourOpacity.value).toBeGreaterThan(0);
     expect(u.uOpacity.value).toBe(1);
     expect(u.uFlatShade.value).toBeCloseTo(180 / 255, 9);
+    expect(u.uContourWidthPx.value).toBe(CONTOUR_HALF_WIDTH_PX);
   });
 
   it("turns contours off for the abstract slab", () => {

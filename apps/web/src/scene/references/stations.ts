@@ -1,8 +1,11 @@
 // Station glyph data: surface stations as small inverted triangles at their sensor; borehole sensors
 // as a marker at their true depth (y from sensorElevM, docs/01) plus a thin line up to the wellhead
 // (y from surfaceElevM). Horizontal position is the record's precomputed `enu`; never lat/lon.
+// Glyphs come in two groups because they draw on opposite sides of the terrain (terrain/renderOrder):
+// borehole sensors are underground (covered by the terrain, fading in with the reveal); surface
+// stations and wellheads sit on top of it.
 
-import { elevMToSceneY, METERS_PER_UNIT } from "../coords";
+import { eastMToSceneX, elevMToSceneY, northMToSceneZ } from "../coords";
 import type { SceneMeta, Station } from "../types";
 
 /** Glyph shapes the station shader draws (the `aShape` attribute). */
@@ -21,49 +24,68 @@ export function isBorehole(s: Pick<Station, "kind">): boolean {
 
 /** Scene position of a station's sensor: x/z from `enu`, y from `sensorElevM`. */
 export function sensorPosition(s: Pick<Station, "enu" | "sensorElevM">, scene: SceneScale): Vec3 {
-  return [s.enu.e / METERS_PER_UNIT, elevMToSceneY(s.sensorElevM, scene), -s.enu.n / METERS_PER_UNIT];
+  return [eastMToSceneX(s.enu.e), elevMToSceneY(s.sensorElevM, scene), northMToSceneZ(s.enu.n)];
 }
 
 /** Scene position of a borehole's wellhead: straight above the sensor, y from `surfaceElevM`. */
 export function wellheadPosition(s: Pick<Station, "enu" | "surfaceElevM">, scene: SceneScale): Vec3 {
-  return [s.enu.e / METERS_PER_UNIT, elevMToSceneY(s.surfaceElevM, scene), -s.enu.n / METERS_PER_UNIT];
+  return [eastMToSceneX(s.enu.e), elevMToSceneY(s.surfaceElevM, scene), northMToSceneZ(s.enu.n)];
 }
 
-export interface StationGlyphs {
+/** One batch of point glyphs (one draw call). */
+export interface GlyphBatch {
   count: number;
-  /** xyz per glyph (sensors first, in station order, then one wellhead per borehole). */
+  /** xyz per glyph. */
   positions: Float32Array;
   shapes: Float32Array;
   alphas: Float32Array;
-  /** Wellhead → sensor segments, one pair per borehole. */
+}
+
+export interface StationGlyphs {
+  /** Surface stations (and strong-motion sites) at their sensor, plus one wellhead ring per borehole. */
+  surface: GlyphBatch;
+  /** Borehole sensors at true depth. */
+  underground: GlyphBatch;
+  /** Wellhead → sensor segments, one pair per borehole (underground). */
   boreholeSegments: Vec3[];
 }
 
-export function buildStationGlyphs(stations: readonly Station[], scene: SceneScale): StationGlyphs {
-  const boreholes = stations.filter(isBorehole);
-  const count = stations.length + boreholes.length;
+interface Glyph {
+  at: Vec3;
+  shape: StationShape;
+  alpha: number;
+}
+
+function batch(glyphs: readonly Glyph[]): GlyphBatch {
+  const count = glyphs.length;
   const positions = new Float32Array(count * 3);
   const shapes = new Float32Array(count);
   const alphas = new Float32Array(count);
+  glyphs.forEach((g, i) => {
+    positions.set(g.at, i * 3);
+    shapes[i] = g.shape;
+    alphas[i] = g.alpha;
+  });
+  return { count, positions, shapes, alphas };
+}
+
+export function buildStationGlyphs(stations: readonly Station[], scene: SceneScale): StationGlyphs {
+  const surface: Glyph[] = [];
+  const underground: Glyph[] = [];
   const boreholeSegments: Vec3[] = [];
-  let i = 0;
-  const put = (p: Vec3, shape: StationShape, alpha: number) => {
-    positions.set(p, i * 3);
-    shapes[i] = shape;
-    alphas[i] = alpha;
-    i++;
-  };
   for (const s of stations) {
     const alpha = s.usedInRun ? 1 : UNUSED_STATION_ALPHA;
-    put(sensorPosition(s, scene), isBorehole(s) ? STATION_SHAPE.borehole : STATION_SHAPE.surface, alpha);
+    const sensor = sensorPosition(s, scene);
+    if (isBorehole(s)) {
+      const head = wellheadPosition(s, scene);
+      underground.push({ at: sensor, shape: STATION_SHAPE.borehole, alpha });
+      surface.push({ at: head, shape: STATION_SHAPE.wellhead, alpha });
+      boreholeSegments.push(head, sensor);
+    } else {
+      surface.push({ at: sensor, shape: STATION_SHAPE.surface, alpha });
+    }
   }
-  for (const s of boreholes) {
-    const alpha = s.usedInRun ? 1 : UNUSED_STATION_ALPHA;
-    const head = wellheadPosition(s, scene);
-    put(head, STATION_SHAPE.wellhead, alpha);
-    boreholeSegments.push(head, sensorPosition(s, scene));
-  }
-  return { count, positions, shapes, alphas, boreholeSegments };
+  return { surface: batch(surface), underground: batch(underground), boreholeSegments };
 }
 
 /** Records whose `enu.u` disagrees with `sensorElevM − originElevM` (the sensor-position contract). */
