@@ -1,10 +1,11 @@
 SHELL := /bin/bash
 RUN ?=
 
-.PHONY: help check check-py check-web contracts check-contracts mock run export api dev build offline publish-run fetch-run runs
+.PHONY: help check check-copy check-py check-web contracts check-contracts mock run export api dev build offline publish-run fetch-run runs
 
 help:
 	@echo "make check                  typecheck + lint + smoke tests (run before every PR)"
+	@echo "make check-copy             flag numbers-as-facts and forbidden phrases in README, docs/demo and the shell"
 	@echo "make contracts              regenerate TS from the Python contracts"
 	@echo "make check-contracts        regenerate and fail if the committed TS/schema differ"
 	@echo "make mock                   regenerate the synthetic mock bundle in apps/web/public/data/mock"
@@ -27,6 +28,9 @@ check-py:
 check-web:
 	@if [ ! -d node_modules ]; then echo "check-web: run 'pnpm install' at the repo root first"; exit 1; fi; \
 	pnpm -r --if-present typecheck && pnpm -r --if-present lint && pnpm -r --if-present test
+
+check-copy:
+	@bash scripts/check-copy.sh
 
 contracts:
 	bash scripts/gen-contracts.sh

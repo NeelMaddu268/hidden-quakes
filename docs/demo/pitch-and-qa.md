@@ -88,3 +88,29 @@ Answer in one or two sentences, then show something on screen. If the honest ans
 6. Reproducing the showcase: the final `runId`, its config, and expected counts.
 7. Scientific validity: what we claim, what we don't, and the validation results.
 8. Team, roles, and the HackGT compliance statement.
+
+## Numbers to fill Saturday evening
+
+Every spoken `{value}` above is read off the screen at demo time. This table maps each one to the bundle field it renders from (`apps/web/public/data/showcase/`), so the Devpost and README fill-in is one lookup and the pitch never says a number the screen can't back. A field that is null in the bundle means the kill switch fired (`docs/03`): drop the sentence.
+
+| Spoken | Bundle field | Where it shows on screen |
+| --- | --- | --- |
+| `{publicCatalogCount}` | `meta.json` → `summary.publicCatalogCount` | PUBLIC counter; Validation card (recall row) |
+| `{candidateCount}` | `meta.json` → `summary.candidateCount` | RECOVERED counter after the reveal |
+| `{strictQualityCount}` | `meta.json` → `summary.strictQualityCount` | STRICT counter; Validation card |
+| `{recoveredCatalogCount}` | `meta.json` → `summary.recoveredCatalogCount` | Validation card (recall row) |
+| `{additionalCount}` | `meta.json` → `summary.additionalCount` | Not on screen; read from `meta.json` |
+| `{strictAdditionalCount}` | `meta.json` → `summary.strictAdditionalCount` | Not on screen; read from `meta.json` |
+| `{nStations}` (hero event) | `evidence/<scene.heroEventId>.json` → `traces.length`; `events.json` → hero's `quality.nStations` | Evidence drawer header |
+| `{medianVErrM}` | `validation.json` → `synthetic.medianVErrM` | Validation card (depth resolution row) |
+| `{gain}` | `meta.json` → `summary.baseline.gain` (only when present) | Validation card (gain row, shown only when the baseline ran and the gain holds) |
+| `{meanChanceEvents}` | `validation.json` → `nullTest.meanChanceEvents` (only when present) | Validation card (chance associations row) |
+| `{n}` matched events, `{looMae}` (Q27) | `validation.json` → `magnitude.n`, `magnitude.looMae` (only when present) | Not on screen; read from `validation.json` |
+| `{depthBand}` | No bundle field. Read it off the depth ruler with STRICT on; say what is visible, never a mechanism | Scene, depth ruler and slices |
+| `{n}` minutes ago (Live) | `/api/live/status` → `updatedAt` | Live mode label |
+| `{latency}` (Q19) | `/api/live/status` → `latencyS`, and `/health` → `served.latencyS` | Not on screen; read from the API |
+| The window date spoken in the pitches | `meta.json` → `run.windowLabel` | Showcase mode label |
+| Tier thresholds and their quantiles (Q33) | `meta.json` → `run.tiering` | Run details (D) |
+| Velocity model source (Q22) | `meta.json` → `run.velocityModel` | Run details (D) |
+| Depth shift between velocity models (Q23) | Only if H2 records it in `run.locator` or `run.velocityModel`; otherwise say "in H2's diagnostics", not "in Run details" | Run details (D), if recorded |
+| G-R curve (Q28) | `validation.json` → `gr` (only when present) | No G-R panel exists in the shell yet; say "in the bundle" unless one lands |
