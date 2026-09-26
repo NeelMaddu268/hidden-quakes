@@ -43,11 +43,16 @@ about ``pHorizontalTolS`` after the P is taken for the P's own trigger. Onsets a
 the STA build-up and by the causal prefilter's group delay, which is larger at low frequency, so
 S is biased later than P (numbers in ``signal.yaml``).
 
-Probability. STA/LTA has no calibrated confidence, so every pick gets ``prob = baseline.prob``
-(1.0). The swept trigger thresholds are the baseline's only tuning dimension: with prob 1.0 no
-association probability threshold ever drops a baseline pick. A baseline event's
-``meanPickProb`` is therefore always 1.0 and says nothing about confidence; it is not comparable
-with a PhaseNet event's.
+Probability. STA/LTA has no calibrated confidence, so every pick gets one constant,
+``prob = baseline.prob``. It is not neutral: H2's locator weights a pick by ``prob / sigma``
+and its location PDF is a Laplace likelihood with scale ``sigma / prob``, so the constant sets
+the width of every baseline event's PDF and with it ``hErrM`` and ``vErrM``, two of the Tier A
+bars. ``signal.yaml`` sets it to a typical PhaseNet pick's prob (source there), so neither picker
+gets tighter formal errors from its prob alone; 1.0 would narrow the baseline's. The swept
+trigger thresholds remain the baseline's only tuning dimension: scoring checks that the constant
+is at least ``seismology.associator.minPickProb``, so association never drops a baseline pick.
+A baseline event's ``meanPickProb`` is always the constant and says nothing about confidence; it
+is not comparable with a PhaseNet event's.
 
 Sweep. Grid ``sweep.pOn x sweep.sOn x sweep.offLevels`` (one off level for both phases). For
 every point the stage records ``nP``, ``nS`` and ``nStations`` (stations with any pick). With
@@ -58,16 +63,30 @@ the PhaseNet ``picks.parquet`` of the same stations and window is scored once th
 the reference. Scoring needs the run's ``ProcessingRun.tiering``, which stage ``tier`` writes
 after this stage in pipeline order: it is for a rerun of this stage on a run that went through
 ``tier``, and without those bars the stage fails before it picks anything. While H2's modules
-are not importable the stage logs a WARNING and writes every score as null. docs/02's
-``SweepPoint`` has non-null ints, so the file is written with model name ``BaselineSweep``:
-SweepPoint's columns (``params`` as JSON text, the io flattening rule for dicts), the rest of the
-point's ``BaselineRow`` (``tierB``, ``tierC``, ``medianRmsS``, ``medianStations``; every score
-null where a point was not scored) and ``nP``, ``nS``, ``nStations``. The reference row, the
-best Tier A point, the search path and the rerun notes go to ``baseline_reference.json`` and
-into ``ctx.record`` (``sweepScoring``); an unscored run removes a stale
-``baseline_reference.json``. The stage logs the best Tier A point (ties: ``baseline.chosen``,
-then grid order) and warns while it differs from ``baseline.chosen``. Any H2 error stops the
-stage (``picks_stalta.parquet`` is already written).
+are not importable the stage logs a WARNING and writes every score as null, unless it was asked
+to score only (``write_picks=False``), which then fails. docs/02's ``SweepPoint`` has non-null
+ints, so the file is written with model name ``BaselineSweep``: SweepPoint's columns (``params``
+as JSON text, the io flattening rule for dicts), the rest of the point's ``BaselineRow``
+(``tierB``, ``tierC``, ``medianRmsS``, ``medianStations``; every score null where a point was
+not scored) and ``nP``, ``nS``, ``nStations``. The reference row, the best Tier A point (null
+when the objective is flat), the window and stations scored, the search path, per-point
+diagnostics and the rerun notes go to ``baseline_reference.json``; the same minus the per-point
+list goes into ``ctx.record`` (``sweepScoring``). The stage logs the best Tier A point (ties:
+``baseline.chosen``, then grid order), warns while it differs from ``baseline.chosen``, and
+warns instead when every scored point has the same Tier A count. Any H2 error stops the stage.
+
+Score only. ``write_picks=False`` (CLI ``--score-only``) scores without rewriting
+``picks_stalta.parquet``; the file on disk must hold exactly the picks the chosen thresholds give
+now (ids and prob), or the stage fails before scoring: the sweep would otherwise describe other
+thresholds, another window or other stations than the published picks.
+
+Keeping scores. An unscored run (score mode ``none``) rewrites ``baseline_sweep.parquet`` with
+null scores and removes ``baseline_reference.json`` (it would describe another sweep), with a
+WARNING. To adopt a new ``baseline.chosen`` after a scoring run without scoring again,
+``keep_scores=True`` (CLI ``--keep-scores``) writes ``picks_stalta.parquet`` at the new chosen
+thresholds and keeps both files as they are, after checking that the kept sweep's ``params``,
+``nP``, ``nS`` and ``nStations`` equal the ones just computed and that the kept reference covers
+the same window and stations; any difference fails before anything is written.
 
 Failures. A station with nothing cached (``CacheMissError`` on its first read) has no picks and
 the reason is reported. Any other error for a station (conflicting overlapping pieces, a rate its
@@ -112,6 +131,7 @@ from hq.baseline.score import (
     TieringProvider,
     make_runner,
     prepare_scoring,
+    record_view,
     reference_picks,
     score_sweep,
     scoring_record,
@@ -781,29 +801,58 @@ def score_points(
     return score_sweep(plan.mode, chosen, cfg.sweep.maxPasses, scorer)
 
 
-def report_best(grid: Sequence[GridPoint], scores: SweepScores | None) -> None:
-    if scores is None:
+def report_scoring(
+    scoring: Mapping[str, Any] | None,
+    grid: Sequence[GridPoint],
+    chosen: GridPoint,
+    sweep: pd.DataFrame,
+) -> None:
+    """Log the best Tier A point against ``baseline.chosen`` (its Tier A read from ``sweep``),
+    or that the objective is flat. Works on a fresh scoring record and on a kept one."""
+    if scoring is None:
         return
-    best, chosen = grid[scores.best], grid[scores.chosen]
-    best_row, chosen_row = scores.best_row, scores.rows[scores.chosen]
-    log.info(
-        "baseline sweep (%s): most Tier A events (%d) at %s over %d scored point(s) in %.1f s; "
-        "PhaseNet reference: %d Tier A of %d candidates",
-        scores.mode,
-        best_row.tiers.A,
-        best.params(),
-        scores.scored,
-        scores.runtimeS,
-        scores.reference.row.tiers.A,
-        scores.reference.row.candidates,
-    )
-    if best != chosen:
+    ref = scoring["phasenetReference"]["row"]
+    objective = scoring["objective"]
+    scored, points = scoring["pointsScored"], scoring["gridPoints"]
+    if objective["flat"]:
         log.warning(
-            "baseline sweep: baseline.chosen %s (Tier A %s) is not the best Tier A point %s; copy "
-            "it into signal.yaml if the comparison should use the baseline's best thresholds",
+            "baseline sweep (%s): Tier A is %d at every one of the %d scored point(s) of %d "
+            "(PhaseNet reference: %d Tier A of %d candidates). The objective is flat: the sweep "
+            "ranks no thresholds and baseline.chosen is not validated by it; barsMet in %s shows "
+            "which of the run's bars the candidates miss",
+            scoring["mode"],
+            objective["maxTierA"],
+            scored,
+            points,
+            ref["tiers"]["A"],
+            ref["candidates"],
+            REFERENCE_FILE,
+        )
+        return
+    best = scoring["best"]
+    log.info(
+        "baseline sweep (%s, %s): most Tier A events (%d) at %s, best of %d scored of %d grid "
+        "points; PhaseNet reference: %d Tier A of %d candidates (ratio %s)",
+        scoring["mode"],
+        scoring["search"]["scope"],
+        objective["maxTierA"],
+        best["params"],
+        scored,
+        points,
+        ref["tiers"]["A"],
+        ref["candidates"],
+        scoring["tierARatioToPhasenet"],
+    )
+    if best["params"] != chosen.params():
+        tier_a = sweep.loc[list(grid).index(chosen), "tierA"]
+        log.warning(
+            "baseline sweep: baseline.chosen %s (Tier A %s) is not the best Tier A point of the "
+            "%d scored (%s); copy it into signal.yaml if the comparison should use the baseline's "
+            "best thresholds, then rerun with --keep-scores",
             chosen.params(),
-            "not scored" if chosen_row is None else chosen_row.tiers.A,
-            best.params(),
+            "not scored" if pd.isna(tier_a) else int(tier_a),
+            scored,
+            best["params"],
         )
 
 
@@ -819,8 +868,126 @@ def write_reference(ctx: StageContext, record: Mapping[str, Any] | None) -> None
     if path.is_file():
         path.unlink()
         log.warning(
-            "baseline: removed %s from an earlier scored sweep; this sweep is unscored", path
+            "baseline: this sweep is unscored, so %s and the scores of the earlier %s are gone; "
+            "to adopt a new baseline.chosen without losing a scoring, rerun with --keep-scores",
+            path,
+            SWEEP_FILE,
         )
+
+
+def check_published_picks(ctx: StageContext, picks: pd.DataFrame) -> None:
+    """Score only: ``picks_stalta.parquet`` must hold exactly ``picks`` (ids and prob), the
+    picks the chosen thresholds give now; else the sweep would describe other thresholds, window
+    or stations than the published file."""
+    from hq_contracts.io import read_table
+
+    path = Path(ctx.path(PICKS_FILE))
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"score only leaves {path} as it is, but there is none; run without score only"
+        )
+    published = read_table(path)
+    ids, want = published["id"].astype(str).tolist(), picks["id"].astype(str).tolist()
+    if ids != want:
+        first = next(
+            (f"{a} vs {b}" for a, b in zip(ids, want, strict=False) if a != b), "one is longer"
+        )
+        raise ValueError(
+            f"score only: {path} holds {len(ids)} picks, but baseline.chosen over this window and "
+            f"these stations gives {len(want)} (first difference: {first}). The sweep would "
+            "describe other picks than the published file: rerun without score only (on a copy "
+            "of the run directory for a station subset or a shorter window)"
+        )
+    probs = published["prob"].to_numpy(dtype=np.float64)
+    if not np.array_equal(probs, picks["prob"].to_numpy(dtype=np.float64)):
+        raise ValueError(
+            f"score only: {path} was written with prob {sorted(set(probs.tolist()))[:3]}, not "
+            "baseline.prob; rerun without score only"
+        )
+    log.info("baseline: score only; %s holds the chosen thresholds' picks and is kept", path)
+
+
+# What a kept baseline_reference.json must carry for the checks, the report and the record.
+KEPT_REFERENCE_KEYS = (
+    "mode",
+    "window",
+    "stationIds",
+    "gridPoints",
+    "pointsScored",
+    "objective",
+    "phasenetReference",
+    "best",
+    "search",
+)
+
+
+@dataclass(frozen=True)
+class KeptScores:
+    sweep: pd.DataFrame  # baseline_sweep.parquet as scored earlier
+    reference: dict[str, Any]  # baseline_reference.json as scored earlier
+
+
+def load_kept_scores(
+    ctx: StageContext,
+    sweep: pd.DataFrame,
+    window: tuple[float, float],
+    station_ids: Sequence[str],
+) -> KeptScores:
+    """The earlier scored ``baseline_sweep.parquet`` and ``baseline_reference.json``, checked to
+    describe the pick sets just computed (``sweep``: this run's unscored sweep) over the same
+    window and stations. Any difference raises before anything is written."""
+    from hq_contracts.io import read_table
+
+    sweep_path, ref_path = Path(ctx.path(SWEEP_FILE)), Path(ctx.path(REFERENCE_FILE))
+    for path in (sweep_path, ref_path):
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"keep-scores keeps an earlier scoring, but {path} does not exist; score the "
+                "sweep first (score mode all or coordinate)"
+            )
+    kept = read_table(sweep_path)
+    if kept.attrs.get("model") != SWEEP_MODEL or list(kept.columns) != list(SWEEP_COLUMNS):
+        raise ValueError(f"keep-scores: {sweep_path} is not a {SWEEP_MODEL} table")
+    if kept["params"].tolist() != sweep["params"].tolist():
+        raise ValueError(
+            f"keep-scores: {sweep_path} has another grid than baseline.sweep; score again"
+        )
+    for column in ("nP", "nS", "nStations"):
+        old, new = kept[column].astype("int64").to_numpy(), sweep[column].to_numpy()
+        if not np.array_equal(old, new):
+            k = int(np.flatnonzero(old != new)[0])
+            raise ValueError(
+                f"keep-scores: {sweep_path} counts {column} {old[k]} at {sweep['params'][k]}, the "
+                f"picks computed now give {new[k]}: the scores describe other pick sets (another "
+                "baseline config, window, station set or cache); score again"
+            )
+    reference = json.loads(ref_path.read_text(encoding="utf-8"))
+    missing = [k for k in KEPT_REFERENCE_KEYS if k not in reference]
+    if missing:
+        raise ValueError(
+            f"keep-scores: {ref_path} lacks {missing} (written by an earlier scorer); score again"
+        )
+    scope = {"window": {"t0": window[0], "t1": window[1]}, "stationIds": list(station_ids)}
+    for key, value in scope.items():
+        if reference.get(key) != value:
+            raise ValueError(
+                f"keep-scores: {ref_path} scored {key} {reference.get(key)}, this run covers "
+                f"{value}; score again"
+            )
+    scored = int(kept["tierA"].notna().sum())
+    if reference.get("pointsScored") != scored:
+        raise ValueError(
+            f"keep-scores: {ref_path} records {reference.get('pointsScored')} scored points, "
+            f"{sweep_path} holds {scored}: they come from different scorings; score again"
+        )
+    log.info(
+        "baseline: keep-scores keeps %s (%d scored points) and %s; only %s is rewritten",
+        sweep_path,
+        scored,
+        ref_path,
+        PICKS_FILE,
+    )
+    return KeptScores(sweep=kept, reference=reference)
 
 
 def station_rows(stations_df: pd.DataFrame, station_ids: Sequence[str] | None) -> list[StationRow]:
@@ -930,26 +1097,43 @@ _TOTALLED = (
 
 def record_params(
     signal: SignalConfig,
-    grid: Sequence[GridPoint],
-    scores: SweepScores | None,
     scoring: Mapping[str, Any] | None,
+    picking_s: float,
+    scoring_s: float | None,
 ) -> dict[str, Any]:
     """``ctx.record`` params, nested under the stage key (H4, REQ-H1-2: keys never collide).
 
     ``baseline.*`` from signal.yaml, plus what else decides the picks: the shared gap-edge
-    distance and chunking; once the sweep is scored, the best Tier A point and ``sweepScoring``
-    (the contents of ``baseline_reference.json``: mode, PhaseNet reference row, best and chosen
-    rows, search path, rerun notes).
+    distance and chunking; once the sweep is scored (or its scores kept), the best Tier A point
+    (null when the objective is flat) and ``sweepScoring`` (``baseline_reference.json`` without
+    its per-point list: mode, window and stations, objective, PhaseNet reference row, best and
+    chosen-at-scoring rows, search path, rerun notes). The stage's recorded runtime covers both
+    picking and scoring, so each is also recorded on its own (``scoringRuntimeS`` null when
+    nothing was scored in this run).
     """
+    best = None if scoring is None else scoring["best"]
     return {
         STAGE: {
             **signal.baseline.model_dump(mode="json"),
             "pickerGapEdgeS": gap_edge_s(signal),
             "preprocessChunks": signal.preprocess.chunks.model_dump(mode="json"),
-            "sweepBestTierA": None if scores is None else grid[scores.best].params(),
-            "sweepScoring": None if scoring is None else dict(scoring),
+            "sweepBestTierA": None if best is None else dict(best["params"]),
+            "sweepScoring": None if scoring is None else record_view(scoring),
+            "pickingRuntimeS": picking_s,
+            "scoringRuntimeS": scoring_s,
         }
     }
+
+
+def scoring_counts(scoring: Mapping[str, Any] | None, kept: bool) -> dict[str, int]:
+    """The scoring counts ``ctx.record`` gets (ints only)."""
+    counts = {"sweepScored": 0 if scoring is None else int(scoring["pointsScored"])}
+    counts["sweepScoresKept"] = int(kept)
+    if scoring is not None:
+        counts["sweepBestTierA"] = int(scoring["objective"]["maxTierA"])
+        counts["sweepObjectiveFlat"] = int(bool(scoring["objective"]["flat"]))
+        counts["phasenetReferenceTierA"] = int(scoring["phasenetReference"]["row"]["tiers"]["A"])
+    return counts
 
 
 def run_baseline(
@@ -961,15 +1145,18 @@ def run_baseline(
     read_window: ReadWindow | None = None,
     score_mode: ScoreMode | None = None,
     write_picks: bool = True,
+    keep_scores: bool = False,
     tiering: TieringProvider | None = None,
     runner: Runner | None = None,
 ) -> BaselineResult:
     """Pick every usedInRun station (or ``station_ids``) over the run window (or [t0, t1)).
 
     Writes ``picks_stalta.parquet`` (not with ``write_picks=False``: the CLI's
-    ``--score-only``) and ``baseline_sweep.parquet``, scores the sweep in ``score_mode``
-    (default ``baseline.sweep.scoreMode``) and writes ``baseline_reference.json`` when it does,
-    prints the per-station and sweep tables and calls ``ctx.record("baseline", ...)``.
+    ``--score-only``, which checks the file on disk instead) and ``baseline_sweep.parquet``,
+    scores the sweep in ``score_mode`` (default ``baseline.sweep.scoreMode``) and writes
+    ``baseline_reference.json`` when it does, prints the per-station and sweep tables and calls
+    ``ctx.record("baseline", ...)``. ``keep_scores`` (CLI ``--keep-scores``, score mode none)
+    keeps an earlier scored sweep and reference instead of writing them (module docstring).
     ``tiering`` returns the run's ``ProcessingRun.tiering`` (default ``ctx.read_run().tiering``);
     ``runner`` scores the points (default: ``baseline.sweep.scoreWorkers`` processes).
     """
@@ -984,22 +1171,37 @@ def run_baseline(
         raise ValueError(f"score mode {mode!r} is not one of {SCORE_MODES}")
     if not write_picks and mode == "none":
         raise ValueError("score-only needs a score mode other than none: nothing would be written")
+    if keep_scores and (mode != "none" or not write_picks):
+        raise ValueError(
+            "keep-scores keeps an earlier scoring and writes only the picks: it needs score mode "
+            "none and cannot be combined with score-only"
+        )
     run_section: RunSection = ctx.config.run
     t0 = run_section.window_start_s if t0 is None else t0
     t1 = run_section.window_end_s if t1 is None else t1
     stations_df = read_table(ctx.path("stations.parquet"))
     rows = station_rows(stations_df, station_ids)
+    ids = [r.id for r in rows]
     grid = sweep_grid(b)
-    plan = prepare_scoring(ctx, mode, stations_df, tiering)  # a run that can't be scored fails now
+    plan = prepare_scoring(  # a run that can't be scored fails now, before any picking
+        ctx,
+        mode,
+        stations_df,
+        tiering,
+        pick_prob=b.prob,
+        score_workers=b.sweep.scoreWorkers,
+        h2_required=not write_picks,
+    )
     log.info(
         "baseline: %d stations over [%s, %s), %d sweep points (score mode %s, %d scoring "
-        "worker(s)), %d picking worker(s), gapEdgeS %.2f s",
+        "worker(s)%s), %d picking worker(s), gapEdgeS %.2f s",
         len(rows),
         UTCDateTime(t0),
         UTCDateTime(t1),
         len(grid),
         mode if plan is not None else "none",
         b.sweep.scoreWorkers,
+        "; earlier scores kept" if keep_scores else "",
         b.maxWorkers,
         gap_edge_s(signal),
     )
@@ -1011,26 +1213,34 @@ def run_baseline(
 
     results = _map_stations(rows, work, b.maxWorkers)
     picks = picks_frame(chosen_rows(results), b.prob)
+    unscored = sweep_frame(results, grid, [None] * len(grid))
+    kept = load_kept_scores(ctx, unscored, (t0, t1), ids) if keep_scores else None
+    picking_s = perf_counter() - began
     if write_picks:
         write_table(picks, ctx.path(PICKS_FILE), "Pick")
     else:
-        log.info("baseline: score only; %s is left as it is", ctx.path(PICKS_FILE))
-    scores = (
-        None
-        if plan is None
-        else score_points(plan, results, grid, b, [r.id for r in rows], (t0, t1), runner)
-    )
-    sweep = sweep_frame(results, grid, [None] * len(grid) if scores is None else scores.rows)
-    write_table(sweep, ctx.path(SWEEP_FILE), SWEEP_MODEL)
-    scoring = (
-        None
-        if scores is None or plan is None
-        else scoring_record(
-            scores, [g.params() for g in grid], plan.shared.thresholds, b.sweep.scoreWorkers
+        check_published_picks(ctx, picks)  # before hours of scoring
+    scores = None if plan is None else score_points(plan, results, grid, b, ids, (t0, t1), runner)
+    scoring: dict[str, Any] | None
+    if kept is not None:
+        sweep, scoring = kept.sweep, kept.reference
+    else:
+        sweep = unscored if scores is None else sweep_frame(results, grid, scores.rows)
+        write_table(sweep, ctx.path(SWEEP_FILE), SWEEP_MODEL)
+        scoring = (
+            None
+            if scores is None or plan is None
+            else scoring_record(
+                scores,
+                [g.params() for g in grid],
+                plan.shared.thresholds,
+                b.sweep.scoreWorkers,
+                (t0, t1),
+                ids,
+            )
         )
-    )
-    write_reference(ctx, scoring)
-    report_best(grid, scores)
+        write_reference(ctx, scoring)
+    report_scoring(scoring, grid, chosen_point(b), sweep)
 
     chunk_totals = ChunkStats()
     totals: Counter[str] = Counter()
@@ -1046,17 +1256,14 @@ def run_baseline(
         **{key: int(totals[key]) for key in _TOTALLED},
         **chunk_totals.as_counts(),
         "sweepPoints": len(grid),
-        "sweepScored": 0 if scores is None else scores.scored,
+        **scoring_counts(scoring, kept is not None),
     }
-    if scores is not None:
-        counts["sweepBestTierA"] = scores.best_row.tiers.A
-        counts["phasenetReferenceTierA"] = scores.reference.row.tiers.A
     print(format_station_table(results))
     print(format_sweep_table(sweep))
     runtime_s = perf_counter() - began
     log.info(
         "baseline: %d P and %d S picks on %d of %d stations; %d near-gap-edge drops, %d S lost "
-        "to a P near an edge, %d onsets inside warm-up spans; %d sweep points (%d scored); "
+        "to a P near an edge, %d onsets inside warm-up spans; %d sweep points (%d scored%s); "
         "wrote %s%s%s in %.1f s",
         counts["nP"],
         counts["nS"],
@@ -1067,16 +1274,19 @@ def run_baseline(
         counts["suppressedWarmupP"] + counts["suppressedWarmupS"],
         counts["sweepPoints"],
         counts["sweepScored"],
-        f"{PICKS_FILE} and " if write_picks else "",
-        SWEEP_FILE,
-        f" and {REFERENCE_FILE}" if scoring is not None else "",
+        ", kept from an earlier scoring" if kept is not None else "",
+        PICKS_FILE if kept is not None else f"{PICKS_FILE} and " if write_picks else "",
+        "" if kept is not None else SWEEP_FILE,
+        f" and {REFERENCE_FILE}" if scoring is not None and kept is None else "",
         runtime_s,
     )
     ctx.record(
         STAGE,
         runtime_s=runtime_s,
         counts=counts,
-        params=record_params(signal, grid, scores, scoring),
+        params=record_params(
+            signal, scoring, picking_s, None if scores is None else scores.runtimeS
+        ),
     )
     return BaselineResult(stations=results, picks=picks, sweep=sweep, counts=counts, scores=scores)
 
@@ -1097,7 +1307,8 @@ class _CliConfig:
 
 @dataclass(frozen=True)
 class _CliContext:
-    """Stand-in for ``RunContext`` on the command line; ``record`` only logs."""
+    """Stand-in for ``RunContext`` on the command line when the stage record cannot go into a
+    ``run.json`` (``_cli_context`` says why); ``record`` only logs."""
 
     run_id: str
     run_dir: Path
@@ -1146,6 +1357,41 @@ def _cli_config(config_dir: Path) -> Any:
     )
 
 
+def _cli_context(args: argparse.Namespace, config: Any) -> StageContext:
+    """H4's ``hq.runs.RunContext`` when the run directory has a ``run.json`` and the whole run is
+    picked, so the stage record (counts, runtimes, ``sweepScoring``) lands in ``run.json`` and
+    ``stages.json`` as ``hq stage baseline`` would write it; else a context that only logs it
+    (a station subset or a shorter window must not overwrite the run's record)."""
+    run_json = args.run_dir / "run.json"
+    subset = [flag for flag in ("stations", "start", "end") if getattr(args, flag)]
+    if not run_json.is_file():
+        reason = f"there is no {run_json}"
+    elif subset:
+        reason = f"--{', --'.join(subset)} picks a subset of the run"
+    elif isinstance(config, _CliConfig):
+        reason = "hq.config.load_config (RUN-01) is not merged"
+    else:
+        from hq.runs import RunContext, read_run_json
+
+        run = read_run_json(args.run_dir)
+        section = config.run
+        expected = (section.window_start_s, section.window_end_s, tuple(section.bbox))
+        actual = (run.windowStart, run.windowEnd, tuple(run.bbox))
+        if expected != actual:  # hq.runs.load_run's check
+            raise ValueError(
+                f"{args.config_dir} does not match {run_json}: config (windowStart, windowEnd, "
+                f"bbox) = {expected} but run.json has {actual}"
+            )
+        log.info("baseline CLI: the stage record goes into %s (hq.runs.RunContext)", run_json)
+        return RunContext(
+            run_id=run.id, run_dir=args.run_dir, cache_dir=args.cache_dir, config=config
+        )
+    log.info("baseline CLI: %s, so the stage record is only logged", reason)
+    return _CliContext(
+        run_id=args.run_dir.name, run_dir=args.run_dir, cache_dir=args.cache_dir, config=config
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m hq.baseline.run",
@@ -1170,30 +1416,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--score-only",
         action="store_true",
-        help=f"recompute the triggers and score the sweep, but leave {PICKS_FILE} as it is",
+        help=f"recompute the triggers and score the sweep, but leave {PICKS_FILE} as it is (it "
+        "must hold the chosen thresholds' picks)",
+    )
+    parser.add_argument(
+        "--keep-scores",
+        action="store_true",
+        help=f"write {PICKS_FILE} at baseline.chosen and keep the scored {SWEEP_FILE} and "
+        f"{REFERENCE_FILE} of an earlier scoring (checked to describe the same pick sets): to "
+        "adopt a new baseline.chosen without scoring again",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(threadName)s %(name)s: %(message)s",
     )
-    ctx = _CliContext(
-        run_id=args.run_dir.name,
-        run_dir=args.run_dir,
-        cache_dir=args.cache_dir,
-        config=_cli_config(args.config_dir),
-    )
-    mode = args.score_mode or ctx.config.signal.baseline.sweep.scoreMode
+    config = _cli_config(args.config_dir)
+    mode = args.score_mode or config.signal.baseline.sweep.scoreMode
     if args.score_only and mode == "none":
         parser.error("--score-only needs a score mode other than none (--score-mode)")
+    if args.keep_scores and (args.score_only or mode != "none"):
+        parser.error(
+            "--keep-scores keeps an earlier scoring: it cannot be combined with --score-only or "
+            "a score mode other than none"
+        )
     ids = [s.strip() for s in args.stations.split(",") if s.strip()] if args.stations else None
     run_baseline(
-        ctx,
+        _cli_context(args, config),
         t0=UTCDateTime(args.start).timestamp if args.start else None,
         t1=UTCDateTime(args.end).timestamp if args.end else None,
         station_ids=ids,
         score_mode=mode,
         write_picks=not args.score_only,
+        keep_scores=args.keep_scores,
     )
     return 0
 

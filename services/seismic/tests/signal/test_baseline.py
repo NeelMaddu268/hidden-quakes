@@ -550,7 +550,8 @@ def test_config_is_validated_and_cross_checked(
     raw_signal_yaml: dict[str, Any], signal_cfg: SignalConfig
 ) -> None:
     bl.check_config(signal_cfg)  # the shipped signal.yaml passes
-    assert signal_cfg.baseline.prob == 1.0
+    # Not 1.0: H2's locator weights picks by prob, so 1.0 would narrow the baseline's formal errors.
+    assert 0.0 < signal_cfg.baseline.prob < 1.0
     assert bl.gap_edge_s(signal_cfg) == signal_cfg.picker.gapEdgeS  # one distance, both pickers
 
     def with_baseline(**over: Any) -> SignalConfig:
@@ -772,7 +773,7 @@ def test_stage_writes_picks_and_a_null_sweep_while_h2_is_missing(
     assert list(picks.columns) == PICK_FIELDS
     assert len(picks) == 3 * 4  # 3 used, cached stations x 2 events x (P + S)
     assert set(picks["stationId"]) == {"XX.A", "XX.B", "XX.C"}  # not XX.OFF, XX.GONE has nothing
-    assert (picks["picker"] == "stalta").all() and (picks["prob"] == 1.0).all()
+    assert (picks["picker"] == "stalta").all() and (picks["prob"] == cfg.baseline.prob).all()
     assert picks[["eventId", "residualS", "weight"]].isna().all().all()
     assert picks["t"].dtype == np.float64
     for row in picks.itertuples(index=False):
@@ -816,7 +817,9 @@ def test_stage_writes_picks_and_a_null_sweep_while_h2_is_missing(
     # Nested under the stage key (H4, REQ-H1-2): the pick stage owns ProcessingRun.picker's
     # top level, so baseline keys such as maxWorkers never overwrite another stage's.
     assert list(rec["params"]) == ["baseline"]
-    params = rec["params"]["baseline"]
+    params = dict(rec["params"]["baseline"])
+    assert 0.0 < params.pop("pickingRuntimeS") <= rec["runtime_s"]
+    assert params.pop("scoringRuntimeS") is None  # nothing scored
     assert params == {
         **cfg.baseline.model_dump(mode="json"),
         "pickerGapEdgeS": cfg.picker.gapEdgeS,
@@ -829,7 +832,8 @@ def test_stage_writes_picks_and_a_null_sweep_while_h2_is_missing(
     assert counts["stationsNotCached"] == 1
     assert counts["nP"] == 6 and counts["nS"] == 6
     assert counts["sweepPoints"] == len(grid) and counts["sweepScored"] == 0
-    assert "sweepBestTierA" not in counts
+    assert counts["sweepScoresKept"] == 0
+    assert "sweepBestTierA" not in counts and "sweepObjectiveFlat" not in counts
     assert counts["chunksYielded"] == 3 * 2
     assert counts["chunksPlanned"] == 3 * 2 + 1  # XX.GONE fails on its first read
     for key in ("sLostPNearGapEdge", "suppressedWarmupP", "suppressedWarmupS"):
@@ -874,9 +878,15 @@ def test_stage_output_is_identical_across_worker_counts(
 
 # --- scoring the sweep on VAL-01's scale -----------------------------------------------------------
 
-# The run's ProcessingRun.tiering as H2's tier stage records it (only what the reruns read).
+# The run's ProcessingRun.tiering as H2's tier stage records it (only what the reruns read), with
+# one rmsS bar per tier so barsMet has something to count.
 RUN_TIERING: dict[str, Any] = {
-    "thresholds": {"nMatched": 12, "quantiles": {"A": 0.25, "B": 0.0}, "A": {}, "B": {}},
+    "thresholds": {
+        "nMatched": 12,
+        "quantiles": {"A": 0.25, "B": 0.0},
+        "A": {"rmsS": {"op": "<=", "value": 0.15}},
+        "B": {"rmsS": {"op": "<=", "value": 1.0}},
+    },
     "thresholdSource": "derived",
 }
 TIER_RULES = {
@@ -885,6 +895,11 @@ TIER_RULES = {
         "mapOnVolumeTop": {"applied": False},
     }
 }
+# H2's SeismologyConfig: only the fields the sweep reads itself.
+SEISMOLOGY = types.SimpleNamespace(
+    associator=types.SimpleNamespace(minPickProb=0.3),
+    locator=types.SimpleNamespace(nWorkers=2),
+)
 
 
 @dataclass(frozen=True)
@@ -902,12 +917,14 @@ class _H2Result:
 
 @dataclass
 class FakeSeismologyApi:
-    """A ``SeismologyApi`` whose counts follow the picks: one candidate event per three P picks,
-    the first matched to the first public event, every event Tier A except the last (Tier C)."""
+    """A ``SeismologyApi`` whose counts follow the picks: one candidate event per three P picks
+    (rmsS 0.1, 0.2, ...), the first matched to the first public event, every event Tier A except
+    the last (Tier C); with ``flat`` every event is Tier C."""
 
     associated: list[pd.DataFrame] = field(default_factory=list)
     tier_kwargs: list[dict[str, Any]] = field(default_factory=list)
     located_args: list[int] = field(default_factory=list)
+    flat: bool = False
 
     def associate(self, picks: pd.DataFrame, stations: pd.DataFrame, cfg: Any, run: Any) -> Any:
         self.associated.append(picks)
@@ -936,9 +953,20 @@ class FakeSeismologyApi:
         self, events: pd.DataFrame, matches: pd.DataFrame, cfg: Any, **kwargs: Any
     ) -> Any:
         self.tier_kwargs.append(kwargs)
-        tiers = ["A"] * (len(events) - 1) + ["C"]
-        tiering = {"thresholdSource": "supplied", "rules": TIER_RULES}
-        return _H2Result(events=events.assign(tier=tiers), tiering=tiering)
+        tiers = np.array(["C"] * len(events) if self.flat else ["A"] * (len(events) - 1) + ["C"])
+        matched = events["id"].isin(set(matches["eventId"].dropna())).to_numpy(dtype=bool)
+
+        def count(mask: np.ndarray) -> dict[str, int]:
+            return {t: int(((tiers == t) & mask).sum()) for t in "ABC"}
+
+        counts = {
+            "events": len(tiers),
+            "all": count(np.ones(len(tiers), dtype=bool)),
+            "matched": count(matched),
+            "additional": count(~matched),
+        }
+        tiering = {"thresholdSource": "supplied", "rules": TIER_RULES, "counts": counts}
+        return _H2Result(events=events.assign(tier=tiers.tolist()), tiering=tiering)
 
 
 def reversed_runner(api: Any, batches: list[list[str]]) -> Any:
@@ -972,13 +1000,29 @@ class ReadRunContext:
         return _RunRecord(self.tiering)
 
 
+def with_config(ctx: Any, cfg: SignalConfig, seismology: Any = SEISMOLOGY) -> Any:
+    """The same run directory under another signal config (fresh records)."""
+    inner = ctx.inner if isinstance(ctx, ReadRunContext) else ctx
+    replaced = dataclasses.replace(
+        inner, config=StageConfig(inner.config.run, cfg, seismology), records={}
+    )
+    return ReadRunContext(replaced, RUN_TIERING)
+
+
 PHASENET_OUTSIDE = 3  # reference picks outside the sweep's stations or window
 
 
 def seed_scoring(
-    tio: TableIO, ctx: Any, monkeypatch: pytest.MonkeyPatch, *, phasenet_p: int = 9
+    tio: TableIO,
+    ctx: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    phasenet_p: int = 9,
+    outside: bool = True,
 ) -> None:
-    """``seed_stage`` plus the public catalog and a PhaseNet picks.parquet; H2 counts as merged."""
+    """``seed_stage`` plus the public catalog and a PhaseNet picks.parquet (with
+    ``PHASENET_OUTSIDE`` picks outside the sweep unless ``outside`` is false); H2 counts as
+    merged."""
     from hq_contracts.io import to_frame
     from hq_contracts.models import Pick
 
@@ -998,17 +1042,33 @@ def seed_scoring(
         )
         for i, sid in enumerate(rows)
     ]
-    models += [  # not in the sweep: an unused station, and times outside [T, T + 200)
-        Pick(
-            id="pn:off", stationId="XX.OFF", phase="P", t=T + 5.0, prob=0.9, picker="phasenet:test"
-        ),
-        Pick(
-            id="pn:early", stationId="XX.A", phase="P", t=T - 1.0, prob=0.9, picker="phasenet:test"
-        ),
-        Pick(
-            id="pn:late", stationId="XX.A", phase="P", t=T + 200.0, prob=0.9, picker="phasenet:test"
-        ),
-    ]
+    if outside:
+        models += [  # not in the sweep: an unused station, and times outside [T, T + 200)
+            Pick(
+                id="pn:off",
+                stationId="XX.OFF",
+                phase="P",
+                t=T + 5.0,
+                prob=0.9,
+                picker="phasenet:test",
+            ),
+            Pick(
+                id="pn:early",
+                stationId="XX.A",
+                phase="P",
+                t=T - 1.0,
+                prob=0.9,
+                picker="phasenet:test",
+            ),
+            Pick(
+                id="pn:late",
+                stationId="XX.A",
+                phase="P",
+                t=T + 200.0,
+                prob=0.9,
+                picker="phasenet:test",
+            ),
+        ]
     tio.io.write_table(to_frame(models, Pick), ctx.path(sc.PHASENET_PICKS_FILE), "Pick")
     monkeypatch.setattr(sc, "check_h2_merged", lambda: None)  # H2's modules are not imported
 
@@ -1037,6 +1097,9 @@ def sweep_cfg(
     )
 
 
+USED_STATIONS = ["XX.A", "XX.B", "XX.C", "XX.GONE"]  # usedInRun, sorted: what the sweep scores
+
+
 @pytest.mark.smoke
 @pytest.mark.parametrize("table_io", ["hq_contracts"], indirect=True)
 def test_all_mode_scores_every_point_on_the_runs_bars_in_grid_order(
@@ -1049,17 +1112,17 @@ def test_all_mode_scores_every_point_on_the_runs_bars_in_grid_order(
 ) -> None:
     # pOn 40 picks nothing, so it scores lowest; baseline.chosen sits there.
     cfg = sweep_cfg(raw_signal_yaml, "all", [4.0, 8.0, 40.0], [4.0], [1.5], (40.0, 4.0, 1.5))
-    seismology = object()
     ctx = ReadRunContext(
-        stage_ctx(fake_ctx, run_section, cfg, "score-all", seismology=seismology), RUN_TIERING
+        stage_ctx(fake_ctx, run_section, cfg, "score-all", seismology=SEISMOLOGY), RUN_TIERING
     )
     seed_scoring(table_io, ctx, monkeypatch)
     api, batches = FakeSeismologyApi(), []
     with caplog.at_level(logging.INFO):
         res = bl.run_baseline(ctx, runner=reversed_runner(api, batches))
 
-    # One batch: the reference first, then every grid point; completed in reverse order.
-    assert batches == [["phasenet", "grid point 0", "grid point 1", "grid point 2"]]
+    # The reference alone first (it warms H2's table cache), then every grid point in one batch,
+    # completed in reverse order.
+    assert batches == [["phasenet"], ["grid point 0", "grid point 1", "grid point 2"]]
     sweep = table_io.io.read_table(ctx.path(bl.SWEEP_FILE))
     assert [json.loads(p)["pOn"] for p in sweep["params"]] == [4.0, 8.0, 40.0]  # grid order
     assert sweep["nP"].tolist() == [6, 6, 0]
@@ -1085,36 +1148,70 @@ def test_all_mode_scores_every_point_on_the_runs_bars_in_grid_order(
     assert set(reference[0]["id"]) == {f"pn:XX.{'ABC'[i % 3]}:{i}" for i in range(9)}
     for picks in api.associated:
         assert list(picks.columns) == PICK_FIELDS
+        assert (picks["prob"] == 0.9).all() or (picks["prob"] == cfg.baseline.prob).all()
 
     best = {"pOn": 4.0, "pOff": 1.5, "sOn": 4.0, "sOff": 1.5}  # ties: pOn 4 before 8 in grid order
     doc = json.loads(ctx.path(sc.REFERENCE_FILE).read_text(encoding="utf-8"))
     assert doc["mode"] == "all" and doc["associationProfile"] == "full"
-    assert doc["pointsScored"] == 3 and doc["scoreWorkers"] == 2
-    assert doc["phasenetReference"]["picks"] == 9
-    assert doc["phasenetReference"]["row"]["method"] == "phasenet"
-    assert doc["phasenetReference"]["row"]["tiers"] == {"A": 2, "B": 0, "C": 1}
+    assert doc["profileNote"] == sc.PROFILE_NOTE
+    assert doc["pointsScored"] == 3 and doc["gridPoints"] == 3 and doc["scoreWorkers"] == 2
+    assert doc["window"] == {"t0": T, "t1": T + 200.0} and doc["stationIds"] == USED_STATIONS
+    assert doc["objective"] == {
+        "metric": sc.OBJECTIVE,
+        "maxTierA": 1,
+        "tierAValues": [0, 1],
+        "flat": False,
+        "note": None,
+    }
+    ref = doc["phasenetReference"]
+    assert ref["picks"] == 9 and ref["row"]["method"] == "phasenet"
+    assert ref["row"]["tiers"] == {"A": 2, "B": 0, "C": 1}
+    assert ref["tierCounts"]["matched"] == {"A": 1, "B": 0, "C": 0}
+    assert ref["tierCounts"]["additional"] == {"A": 1, "B": 0, "C": 1}
+    assert ref["barsMet"]["A"] == {"perBar": {"rmsS": 1}, "everyBar": 1}  # rmsS 0.1 only
     assert doc["best"]["params"] == best and doc["best"]["row"]["tiers"]["A"] == 1
     assert doc["best"]["row"]["method"] == "stalta"
-    assert doc["chosen"]["params"]["pOn"] == 40.0 and doc["chosen"]["row"]["candidates"] == 0
+    chosen = doc["chosenAtScoring"]
+    assert chosen["params"]["pOn"] == 40.0 and chosen["row"]["candidates"] == 0
     assert doc["tierARatioToPhasenet"] == 0.5
-    assert doc["search"] == {"converged": True, "path": []}
+    assert doc["search"] == {"scope": sc.SCOPE["all"], "converged": True, "path": []}
+    points = doc["points"]
+    assert [p["index"] for p in points] == [0, 1, 2] and points[0]["params"] == best
+    assert points[0]["picks"] == int(sweep["nP"][0] + sweep["nS"][0])
+    assert points[0]["row"]["tiers"]["A"] == 1
+    assert points[0]["tierCounts"] == {
+        "all": {"A": 1, "B": 0, "C": 1},
+        "matched": {"A": 1, "B": 0, "C": 0},
+        "additional": {"A": 0, "B": 0, "C": 1},
+    }
+    assert points[0]["barsMet"] == {
+        "A": {"perBar": {"rmsS": 1}, "everyBar": 1},
+        "B": {"perBar": {"rmsS": 2}, "everyBar": 2},
+    }
+    assert points[2]["tierCounts"] is None  # associated nothing: never tiered
+    assert points[2]["barsMet"]["A"] == {"perBar": {"rmsS": 0}, "everyBar": 0}
     notes = doc["notes"]
     assert notes["reruns"] == 4 and notes["rerunsTiered"] == 3
     assert notes["thresholds"]["nMatched"] == 12
     assert notes["tieringRules"]["thresholdSource"] == "supplied"
 
     rec = ctx.records["baseline"]
-    assert rec["params"]["baseline"]["sweepBestTierA"] == best
-    assert rec["params"]["baseline"]["sweepScoring"] == doc
-    assert rec["counts"]["sweepScored"] == 3
+    params = rec["params"]["baseline"]
+    assert params["sweepBestTierA"] == best
+    assert params["sweepScoring"] == sc.record_view(doc) and "points" not in params["sweepScoring"]
+    assert params["scoringRuntimeS"] > 0.0 and params["pickingRuntimeS"] > 0.0
+    assert rec["counts"]["sweepScored"] == 3 and rec["counts"]["sweepObjectiveFlat"] == 0
     assert rec["counts"]["sweepBestTierA"] == 1 and rec["counts"]["phasenetReferenceTierA"] == 2
-    assert res.scores is not None and res.scores.best == 0
+    assert res.scores is not None and res.scores.best == 0 and not res.scores.flat
     assert any(
         r.levelno == logging.WARNING and "is not the best Tier A point" in r.getMessage()
         for r in caplog.records
     )
     per_point = [r.getMessage() for r in caplog.records if "median stations" in r.getMessage()]
-    assert len(per_point) == 4 and per_point[0].startswith("baseline sweep point 3/3")
+    assert len(per_point) == 4
+    assert per_point[0].startswith("baseline sweep PhaseNet reference")
+    assert per_point[1].startswith("baseline sweep point 3/3")
+    assert "A bars met: rmsS 1; every A bar 1" in per_point[0]
 
 
 @pytest.mark.smoke
@@ -1131,7 +1228,7 @@ def test_coordinate_mode_follows_the_search_and_leaves_other_points_null(
         raw_signal_yaml, "coordinate", [4.0, 40.0], [4.0, 8.0], [1.5, 2.0], (40.0, 8.0, 2.0)
     )
     ctx = ReadRunContext(
-        stage_ctx(fake_ctx, run_section, cfg, "score-cd", seismology=object()), RUN_TIERING
+        stage_ctx(fake_ctx, run_section, cfg, "score-cd", seismology=SEISMOLOGY), RUN_TIERING
     )
     seed_scoring(table_io, ctx, monkeypatch)
     api, batches = FakeSeismologyApi(), []
@@ -1140,10 +1237,11 @@ def test_coordinate_mode_follows_the_search_and_leaves_other_points_null(
     grid = bl.sweep_grid(cfg.baseline)
     at = {g.coords(): k for k, g in enumerate(grid)}
     key = {c: f"grid point {k}" for c, k in at.items()}
-    # Pass 1: pOn at (sOn 8, off 2) moves to 4; sOn and off tie, so the incumbent stays.
-    # Pass 2 only revisits scored points, moves nowhere, and the search stops.
+    # The reference alone; pass 1: pOn at (sOn 8, off 2) moves to 4; sOn and off tie, so the
+    # incumbent stays. Pass 2 only revisits scored points, moves nowhere, and the search stops.
     assert batches == [
-        ["phasenet", key[(4.0, 8.0, 2.0)], key[(40.0, 8.0, 2.0)]],
+        ["phasenet"],
+        [key[(4.0, 8.0, 2.0)], key[(40.0, 8.0, 2.0)]],
         [key[(4.0, 4.0, 2.0)]],
         [key[(4.0, 8.0, 1.5)]],
     ]
@@ -1153,6 +1251,7 @@ def test_coordinate_mode_follows_the_search_and_leaves_other_points_null(
         assert sweep.loc[k, list(bl.SWEEP_SCORE_COLUMNS)].isna().all() == (k not in scored), k
     doc = json.loads(ctx.path(sc.REFERENCE_FILE).read_text(encoding="utf-8"))
     assert doc["best"]["params"] == {"pOn": 4.0, "pOff": 2.0, "sOn": 8.0, "sOff": 2.0}
+    assert doc["search"]["scope"] == sc.SCOPE["coordinate"]
     path = doc["search"]["path"]
     assert [(s["pass"], s["axis"], s["moved"]) for s in path] == [
         (1, "pOn", True),
@@ -1164,7 +1263,43 @@ def test_coordinate_mode_follows_the_search_and_leaves_other_points_null(
     ]
     assert [p["tierA"] for p in path[0]["points"]] == [1, 0]
     assert doc["search"]["converged"] is True and doc["pointsScored"] == 4
+    assert [p["index"] for p in doc["points"]] == sorted(scored)
     assert len([p for p in api.associated if (p["picker"] != "stalta").any()]) == 1
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("table_io", ["hq_contracts"], indirect=True)
+def test_a_flat_objective_names_no_best_point_and_warns(
+    table_io: TableIO,
+    fake_ctx: Any,
+    run_section: RunSection,
+    raw_signal_yaml: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cfg = sweep_cfg(raw_signal_yaml, "coordinate", [4.0, 8.0], [4.0, 8.0], [1.5], (8.0, 8.0, 1.5))
+    ctx = ReadRunContext(
+        stage_ctx(fake_ctx, run_section, cfg, "flat", seismology=SEISMOLOGY), RUN_TIERING
+    )
+    seed_scoring(table_io, ctx, monkeypatch)
+    with caplog.at_level(logging.INFO):
+        res = bl.run_baseline(ctx, runner=reversed_runner(FakeSeismologyApi(flat=True), []))
+
+    assert res.scores is not None and res.scores.flat and res.scores.tier_a_values == [0]
+    doc = json.loads(ctx.path(sc.REFERENCE_FILE).read_text(encoding="utf-8"))
+    assert doc["objective"]["flat"] is True and doc["objective"]["note"] == sc.FLAT_NOTE
+    assert doc["objective"]["maxTierA"] == 0 and doc["objective"]["tierAValues"] == [0]
+    assert doc["best"] is None  # the tie-break winner is not presented as a best point
+    assert doc["chosenAtScoring"]["params"] == {"pOn": 8.0, "pOff": 1.5, "sOn": 8.0, "sOff": 1.5}
+    assert doc["tierARatioToPhasenet"] is None  # the reference has no Tier A event either
+    # One pass: pOn and sOn lines tie, the off line is the incumbent alone.
+    assert doc["search"]["converged"] is True and doc["pointsScored"] == 3
+    rec = ctx.records["baseline"]
+    assert rec["params"]["baseline"]["sweepBestTierA"] is None
+    assert rec["counts"]["sweepObjectiveFlat"] == 1 and rec["counts"]["sweepBestTierA"] == 0
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("The objective is flat" in m and "3 scored point(s) of 4" in m for m in warnings)
+    assert not any("is not the best Tier A point" in m for m in warnings)
 
 
 @pytest.mark.smoke
@@ -1210,7 +1345,7 @@ def test_scoring_without_the_runs_tier_bars_fails_before_picking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = sweep_cfg(raw_signal_yaml, "coordinate", [4.0, 8.0], [4.0], [1.5], (8.0, 4.0, 1.5))
-    base = stage_ctx(fake_ctx, run_section, cfg, "no-bars", seismology=object())
+    base = stage_ctx(fake_ctx, run_section, cfg, "no-bars", seismology=SEISMOLOGY)
     seed_scoring(table_io, base, monkeypatch)
 
     def must_not_pick(*args: Any, **kwargs: Any) -> Any:
@@ -1224,6 +1359,15 @@ def test_scoring_without_the_runs_tier_bars_fails_before_picking(
         bl.run_baseline(base, tiering=lambda: None)
     with pytest.raises(TypeError, match="no read_run"):  # docs/02 stand-in: say what is missing
         bl.run_baseline(base)
+    # Association must see every STA/LTA pick, and the locate budget must be known.
+    strict = types.SimpleNamespace(
+        associator=types.SimpleNamespace(minPickProb=0.99), locator=SEISMOLOGY.locator
+    )
+    with pytest.raises(ValueError, match="below seismology.associator.minPickProb 0.99"):
+        bl.run_baseline(with_config(base, cfg, strict))
+    no_locator = types.SimpleNamespace(associator=SEISMOLOGY.associator)
+    with pytest.raises(ValueError, match="seismology.locator.nWorkers"):
+        bl.run_baseline(with_config(base, cfg, no_locator))
     ctx = ReadRunContext(base, RUN_TIERING)
     ctx.path(sc.PHASENET_PICKS_FILE).unlink()
     with pytest.raises(FileNotFoundError, match="stage pick"):
@@ -1231,6 +1375,27 @@ def test_scoring_without_the_runs_tier_bars_fails_before_picking(
     assert not ctx.path(bl.PICKS_FILE).exists()
     with pytest.raises(ValueError, match="score-only needs a score mode"):
         bl.run_baseline(ctx, score_mode="none", write_picks=False)
+    with pytest.raises(ValueError, match="keep-scores keeps an earlier scoring"):
+        bl.run_baseline(ctx, keep_scores=True)  # scoreMode coordinate here
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("table_io", ["stand-in"], indirect=True)
+def test_score_only_fails_while_h2_is_missing(
+    table_io: TableIO,
+    fake_ctx: Any,
+    run_section: RunSection,
+    raw_signal_yaml: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_h2(monkeypatch)
+    cfg = sweep_cfg(raw_signal_yaml, "coordinate", [4.0, 8.0], [4.0], [1.5], (8.0, 4.0, 1.5))
+    ctx = stage_ctx(fake_ctx, run_section, cfg, "score-only-h2", seismology=SEISMOLOGY)
+    seed_stage(table_io, ctx, monkeypatch)
+    # An explicit scoring request must not end in a null sweep that replaces a scored one.
+    with pytest.raises(sc.H2PipelineMissingError, match="H2 pipeline not merged"):
+        bl.run_baseline(ctx, write_picks=False)
+    assert not ctx.path(bl.SWEEP_FILE).exists()
 
 
 @pytest.mark.smoke
@@ -1246,7 +1411,8 @@ def test_default_runner_binds_the_runs_cache_and_id_and_score_only_keeps_the_pic
         raw_signal_yaml, "none", [4.0, 8.0], [4.0], [1.5], (8.0, 4.0, 1.5), scoreWorkers=1
     )
     ctx = ReadRunContext(
-        stage_ctx(fake_ctx, run_section, cfg, "default-runner", seismology=object()), RUN_TIERING
+        stage_ctx(fake_ctx, run_section, cfg, "default-runner", seismology=SEISMOLOGY),
+        RUN_TIERING,
     )
     seed_scoring(table_io, ctx, monkeypatch)
     api = FakeSeismologyApi()
@@ -1257,13 +1423,127 @@ def test_default_runner_binds_the_runs_cache_and_id_and_score_only_keeps_the_pic
         return api
 
     monkeypatch.setattr(sc, "real_seismology_api", fake_real_api)
-    ctx.path(bl.PICKS_FILE).write_bytes(b"published earlier")
+    with pytest.raises(FileNotFoundError, match="score only leaves"):
+        bl.run_baseline(ctx, score_mode="all", write_picks=False)  # nothing published yet
+    bl.run_baseline(ctx)  # publishes picks_stalta.parquet; scoreMode none scores nothing
+    published = ctx.path(bl.PICKS_FILE).read_bytes()
     res = bl.run_baseline(ctx, score_mode="all", write_picks=False)  # the CLI's --score-only
     assert bound == [{"cache_dir": ctx.cache_dir, "run_id": ctx.run_id}]  # REQ-H2-8, once
-    assert ctx.path(bl.PICKS_FILE).read_bytes() == b"published earlier"
+    assert ctx.path(bl.PICKS_FILE).read_bytes() == published
     assert res.scores is not None and res.scores.scored == 2
     assert len(api.associated) == 3  # the reference and both points, in this process
     assert ctx.records["baseline"]["params"]["baseline"]["sweepScoring"]["mode"] == "all"
+
+    # Published picks of other thresholds, or of another prob, are not what the sweep scores.
+    moved = sweep_cfg(  # chosen pOn 40 picks nothing
+        raw_signal_yaml, "none", [4.0, 8.0, 40.0], [4.0], [1.5], (40.0, 4.0, 1.5), scoreWorkers=1
+    )
+    with pytest.raises(ValueError, match="other picks than the published file"):
+        bl.run_baseline(with_config(ctx, moved), score_mode="all", write_picks=False)
+    other_prob = cfg.model_copy(update={"baseline": cfg.baseline.model_copy(update={"prob": 0.5})})
+    with pytest.raises(ValueError, match="written with prob"):
+        bl.run_baseline(with_config(ctx, other_prob), score_mode="all", write_picks=False)
+    assert ctx.path(bl.PICKS_FILE).read_bytes() == published
+    assert len(api.associated) == 3  # both failed before scoring
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("table_io", ["hq_contracts"], indirect=True)
+def test_keep_scores_adopts_a_new_chosen_without_losing_the_scoring(
+    table_io: TableIO,
+    fake_ctx: Any,
+    run_section: RunSection,
+    raw_signal_yaml: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cfg = sweep_cfg(raw_signal_yaml, "all", [4.0, 8.0, 40.0], [4.0], [1.5], (40.0, 4.0, 1.5))
+    ctx = ReadRunContext(
+        stage_ctx(fake_ctx, run_section, cfg, "keep", seismology=SEISMOLOGY), RUN_TIERING
+    )
+    seed_scoring(table_io, ctx, monkeypatch)
+    bl.run_baseline(ctx, runner=reversed_runner(FakeSeismologyApi(), []))
+    sweep_bytes = ctx.path(bl.SWEEP_FILE).read_bytes()
+    ref_text = ctx.path(sc.REFERENCE_FILE).read_text(encoding="utf-8")
+    doc = json.loads(ref_text)
+    assert doc["best"]["params"]["pOn"] == 4.0
+
+    # The lead copies the best point into chosen; the grid stays. Only the picks are rewritten.
+    adopted = with_config(
+        ctx, sweep_cfg(raw_signal_yaml, "none", [4.0, 8.0, 40.0], [4.0], [1.5], (4.0, 4.0, 1.5))
+    )
+    caplog.clear()  # the scoring run above warned about the old chosen
+    with caplog.at_level(logging.INFO):
+        res = bl.run_baseline(adopted, keep_scores=True)
+    picks = table_io.io.read_table(adopted.path(bl.PICKS_FILE))
+    assert res.counts["nP"] == 6 and len(picks) == res.counts["nP"] + res.counts["nS"]
+    assert adopted.path(bl.SWEEP_FILE).read_bytes() == sweep_bytes
+    assert adopted.path(sc.REFERENCE_FILE).read_text(encoding="utf-8") == ref_text
+    rec = adopted.records["baseline"]
+    assert rec["counts"]["sweepScoresKept"] == 1 and rec["counts"]["sweepScored"] == 3
+    assert rec["counts"]["sweepBestTierA"] == 1
+    assert rec["params"]["baseline"]["sweepScoring"] == sc.record_view(doc)
+    assert rec["params"]["baseline"]["sweepBestTierA"] == doc["best"]["params"]
+    assert rec["params"]["baseline"]["scoringRuntimeS"] is None
+    assert not any("is not the best Tier A point" in r.getMessage() for r in caplog.records)
+
+    # Scores of other pick sets are never kept, and a refusal writes nothing.
+    published = adopted.path(bl.PICKS_FILE).read_bytes()
+    other_grid = sweep_cfg(raw_signal_yaml, "none", [4.0, 8.0], [4.0], [1.5], (4.0, 4.0, 1.5))
+    with pytest.raises(ValueError, match="another grid"):
+        bl.run_baseline(with_config(ctx, other_grid), keep_scores=True)
+    with pytest.raises(ValueError, match="scored stationIds"):  # XX.GONE has no picks anyway
+        bl.run_baseline(adopted, keep_scores=True, station_ids=["XX.A", "XX.B", "XX.C"])
+    assert adopted.path(bl.PICKS_FILE).read_bytes() == published
+    with pytest.raises(ValueError, match="needs score mode none"):
+        bl.run_baseline(adopted, keep_scores=True, score_mode="all")
+    earlier = {k: v for k, v in doc.items() if k != "objective"}  # an earlier scorer's file
+    adopted.path(sc.REFERENCE_FILE).write_text(json.dumps(earlier), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"lacks \['objective'\]"):
+        bl.run_baseline(adopted, keep_scores=True)
+    adopted.path(sc.REFERENCE_FILE).unlink()
+    with pytest.raises(FileNotFoundError, match="keep-scores keeps an earlier scoring"):
+        bl.run_baseline(adopted, keep_scores=True)
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("table_io", ["hq_contracts"], indirect=True)
+def test_sweep_rows_equal_val01_rows_on_the_same_picks(
+    table_io: TableIO,
+    fake_ctx: Any,
+    run_section: RunSection,
+    raw_signal_yaml: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hq.config.validate import BaselineConfig as ValidateBaselineConfig
+    from hq.validate.baseline import baseline_reruns
+
+    cfg = sweep_cfg(raw_signal_yaml, "all", [4.0, 8.0], [4.0], [1.5], (8.0, 4.0, 1.5))
+    ctx = ReadRunContext(
+        stage_ctx(fake_ctx, run_section, cfg, "val01", seismology=SEISMOLOGY), RUN_TIERING
+    )
+    seed_scoring(table_io, ctx, monkeypatch, outside=False)  # VAL-01 reads all of picks.parquet
+    res = bl.run_baseline(ctx, runner=reversed_runner(FakeSeismologyApi(), []))
+    read = table_io.io.read_table
+    reruns = baseline_reruns(  # H4's VAL-01 on the published tables
+        read(ctx.path(sc.PHASENET_PICKS_FILE)),
+        read(ctx.path(bl.PICKS_FILE)),
+        read(ctx.path("stations.parquet")),
+        read(ctx.path(sc.CATALOG_FILE)),
+        FakeSeismologyApi(),
+        SEISMOLOGY,
+        ctx.config.run,
+        ValidateBaselineConfig(profiles=["full"]),
+        thresholds=RUN_TIERING,
+    )
+    assert res.scores is not None
+    chosen = res.scores.chosen
+    assert [r.row for r in reruns] == [res.scores.reference.row, res.scores.rows[chosen]]
+    assert [r.tiering for r in reruns] == [
+        res.scores.reference.tiering,
+        res.scores.results[chosen].tiering,
+    ]
+    assert reruns[1].row.candidates > 0  # a real comparison, not two empty rows
 
 
 @pytest.mark.smoke
@@ -1304,10 +1584,55 @@ def test_config_score_modes_match_the_scorer(signal_cfg: SignalConfig) -> None:
 
     annotation = BaselineSweep.model_fields["scoreMode"].annotation
     assert get_args(annotation) == get_args(sc.ScoreMode) == bl.SCORE_MODES
-    # The shipped config cannot score on a fresh `hq run` (stage tier runs after this one).
+    # Pinned on purpose: stage tier runs after this one, so a shipped scoreMode other than none
+    # would stop every fresh `hq run` here. Scoring is a CLI rerun (--score-mode, signal.yaml).
     assert signal_cfg.baseline.sweep.scoreMode == "none"
     assert signal_cfg.baseline.sweep.scoreWorkers >= 1
     assert signal_cfg.baseline.sweep.maxPasses >= 1
+
+
+@pytest.mark.smoke
+def test_bars_met_counts_each_bar_and_all_at_once() -> None:
+    events = pd.DataFrame(
+        {"quality_nStations": [20.0, 5.0, 25.0, None], "quality_rmsS": [0.01, 0.02, 0.5, 0.01]}
+    )
+    record = {
+        "A": {"nStations": {"op": ">=", "value": 20.0}, "rmsS": {"op": "<=", "value": 0.03}},
+        "B": {"nStations": {"op": ">=", "value": 5.0}},
+    }
+    assert sc.bars_met(events, record) == {  # a null never meets a bar
+        "A": {"perBar": {"nStations": 2, "rmsS": 3}, "everyBar": 1},
+        "B": {"perBar": {"nStations": 3}, "everyBar": 3},
+    }
+    assert sc.bars_met(events.iloc[:0], record)["A"] == {
+        "perBar": {"nStations": 0, "rmsS": 0},
+        "everyBar": 0,
+    }
+    with pytest.raises(ValueError, match="quality_gapDeg"):
+        sc.bars_met(events, {"A": {"gapDeg": {"op": "<=", "value": 1.0}}, "B": {}})
+    with pytest.raises(ValueError, match="op '<'"):
+        sc.bars_met(events, {"A": {"rmsS": {"op": "<", "value": 1.0}}, "B": {}})
+    with pytest.raises(TypeError, match="no 'B' record"):
+        sc.bars_met(events, {"A": {}})
+    assert sc.tier_counts(None) is None
+    with pytest.raises(ValueError, match="without counts"):
+        sc.tier_counts({"counts": {"all": {"A": 1}}})
+
+
+@pytest.mark.smoke
+def test_process_budget_warns_above_the_cpu_count(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(sc.os, "cpu_count", lambda: 8)
+    with caplog.at_level(logging.INFO):
+        sc.log_process_budget(4, SEISMOLOGY)  # 4 x 2 = 8 locate processes
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+    with caplog.at_level(logging.INFO):
+        sc.log_process_budget(5, SEISMOLOGY)  # 10 > 8
+    assert any(
+        r.levelno == logging.WARNING and "exceed the 8 CPUs" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 @pytest.mark.smoke
@@ -1328,7 +1653,7 @@ def test_an_h2_error_names_the_pick_set(run_section: RunSection, tmp_path: Path)
     )
     picks = pd.DataFrame({c: [] for c in PICK_FIELDS})
     with pytest.raises(ValueError, match="associator failed") as err:
-        list(sc.serial_runner(shared, [sc.ScoreJob("grid point 4", "stalta", picks, index=4)]))
+        list(sc.SerialRunner()(shared, [sc.ScoreJob("grid point 4", "stalta", picks, index=4)]))
     assert "baseline sweep: scoring grid point 4" in err.value.__notes__
 
 
@@ -1351,6 +1676,52 @@ def test_cli_score_flags_are_checked(tmp_path: Path, capsys: pytest.CaptureFixtu
         bl.main([*argv, "--score-mode", "best"])
     assert exc.value.code == 2
     assert "invalid choice: 'best'" in capsys.readouterr().err
+    for extra in (["--score-mode", "coordinate"], ["--score-only", "--score-mode", "all"]):
+        with pytest.raises(SystemExit) as exc:
+            bl.main([*argv, "--keep-scores", *extra])
+        assert exc.value.code == 2
+        assert "--keep-scores keeps an earlier scoring" in capsys.readouterr().err
+
+
+@pytest.mark.smoke
+def test_cli_records_into_run_json_only_for_the_whole_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run_section: RunSection,
+    signal_cfg: SignalConfig,
+) -> None:
+    import argparse
+
+    from hq import runs
+
+    config = types.SimpleNamespace(run=run_section, signal=signal_cfg)  # H4's RunConfig shape
+
+    def args(**over: Any) -> argparse.Namespace:
+        base = {"run_dir": tmp_path, "config_dir": tmp_path, "cache_dir": tmp_path / "cache"}
+        return argparse.Namespace(**{**base, "stations": None, "start": None, "end": None, **over})
+
+    assert isinstance(bl._cli_context(args(), config), bl._CliContext)  # no run.json
+    (tmp_path / "run.json").write_text("{}", encoding="utf-8")
+    run = types.SimpleNamespace(
+        id="run-1",
+        windowStart=run_section.window_start_s,
+        windowEnd=run_section.window_end_s,
+        bbox=list(run_section.bbox),
+    )
+    monkeypatch.setattr(runs, "read_run_json", lambda run_dir: run)
+    ctx = bl._cli_context(args(), config)
+    assert isinstance(ctx, runs.RunContext)
+    assert ctx.run_id == "run-1" and ctx.cache_dir == tmp_path / "cache"
+    # A subset must not overwrite the run's record, nor can a run + signal config record.
+    for over in ({"stations": "XX.A"}, {"start": "2026-09-10T18:00:00"}, {"end": "2026-09-11"}):
+        assert isinstance(bl._cli_context(args(**over), config), bl._CliContext)
+    assert isinstance(
+        bl._cli_context(args(), bl._CliConfig(run=run_section, signal=signal_cfg)), bl._CliContext
+    )
+    moved = types.SimpleNamespace(**{**vars(run), "windowEnd": run.windowEnd + 1.0})
+    monkeypatch.setattr(runs, "read_run_json", lambda run_dir: moved)
+    with pytest.raises(ValueError, match="does not match"):
+        bl._cli_context(args(), config)
 
 
 @pytest.mark.smoke
@@ -1446,6 +1817,7 @@ def test_process_runner_scores_in_spawned_workers(
     assert sorted(r.index for r in results) == [0, 1, 2]
     by_index = {r.index: r for r in results}
     assert [by_index[k].row.tiers.A for k in range(3)] == [0, 1, 2]
+    assert [by_index[k].barsMet["A"]["everyBar"] for k in range(3)] == [0, 1, 2]  # rmsS 0.1
     pids = {r.tiering["pid"] for r in results if r.tiering is not None}
     assert pids and os.getpid() not in pids
 
