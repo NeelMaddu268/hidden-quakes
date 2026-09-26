@@ -415,6 +415,8 @@ sonify:
     rateRelTol: 1.0e-9
   oggStreamSerial: 1213284673  # libsndfile draws a random Ogg serial per file; this fixed one makes
                                # re-encodes byte-identical (page CRCs are recomputed)
+  truePeakOversample: 4        # decoded files are oversampled this much (resample_poly) for
+                               # their true peak, checked against maxTruePeakDbtp
   # Main clip. The busiest bin of candidate events in the bundle's events.json (ties: earliest), then
   # the station of stationKind with the most picks.parquet picks (any phase) inside it (ties: id order).
   busiestHour:
@@ -435,9 +437,12 @@ sonify:
                                # Checked on this clip: P-pick peaks sit well above the noise floor with
                                # 3 (ratio 1 leaves the small ones near the noise); 4 flattens more
         kneeDb: 12.0
-        envelopeHoldMs: 5.0    # audio ms (1 s real): about one small event at this speed
-        envelopeSmoothMs: 10.0 # audio ms: the gain moves slower than a pop, so pops keep their shape
+        lookaheadMs: 0.5       # audio ms (0.1 s real): the gain starts to fall at most this long
+                               # before the sample that drives it; one cycle of the 2 kHz low corner
+        releaseMs: 10.0        # audio ms (2 s real): the gain recovers slower than a pop decays, so
+                               # pops keep their shape; the noise envelope stays below the knee
       peakDbfs: -1.0
+      maxTruePeakDbtp: -0.5    # decoded OGG / MP3, oversampled: headroom for codec overshoot
       oggQuality: 0.6          # Vorbis quality (oggenc -q 6)
       mp3BitrateKbps: 192      # constant bitrate
       maxBytes: 2000000
@@ -446,7 +451,8 @@ sonify:
   # covers at least minCoverageFraction of the window.
   hero:
     preS: 30.0
-    postS: 30.0                # 60 s real -> 0.6 s of audio at 100x
+    postS: 30.0                # 60 s real -> 0.6 s of audio at 100x. For a longer clip lower
+                               # render.speed and keep bandHz[1] below audioRateHz / speed / 2
     minCoverageFraction: 0.5
     render:
       fileStem: hidden-quakes-hero
@@ -459,9 +465,10 @@ sonify:
         thresholdDb: 18.0
         ratio: 3.0
         kneeDb: 12.0
-        envelopeHoldMs: 5.0
-        envelopeSmoothMs: 10.0
+        lookaheadMs: 0.5       # audio ms (0.05 s real): an emergent arrival's start keeps its level
+        releaseMs: 10.0        # audio ms (1 s real)
       peakDbfs: -1.0
+      maxTruePeakDbtp: -0.5
       oggQuality: 0.6
       mp3BitrateKbps: 192
       maxBytes: 2000000
