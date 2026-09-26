@@ -44,10 +44,9 @@ export function featureGeometry(f: Pick<GeoFeature, "kind" | "path">, verticalEx
     writeEnuToScene(p, verticalExaggeration, out, 0);
     return out;
   });
-  if (pts.length === 0) return null;
+  if (pts.length === 0 || (f.kind === "boundary" && pts.length < 3)) return null;
   if (f.kind === "facility" || pts.length === 1) return { type: "point", at: pts[0] };
   if (f.kind === "boundary") {
-    if (pts.length < 3) return null;
     return { type: "line", points: [...pts, pts[0]], closed: true };
   }
   return { type: "line", points: pts, closed: false };

@@ -71,6 +71,9 @@ function FeatureLine({ points, style }: { points: [number, number, number][]; st
           points={points}
           color={colors.geo}
           lineWidth={GLOW_WIDTH_PX}
+          dashed={style.dashed}
+          dashSize={DASH_KM}
+          gapSize={GAP_KM}
           transparent
           opacity={GLOW_OPACITY}
           blending={AdditiveBlending}
