@@ -242,8 +242,49 @@ class SyntheticConfig(BaseModel):
     nEvents: int = Field(ge=1)
     seed: int = Field(ge=0)
     zone: SyntheticZoneConfig
-    sKeepProb: float = Field(ge=0, le=1)  # each station's S pick is kept with this probability
-    pickProb: float = Field(gt=0, le=1)  # picker probability given to every synthetic pick
+    # Each station's S pick is kept with this probability; every synthetic pick gets pickProb.
+    # None: stage locate measures both from the run's located events (hq.locate.synthetic
+    # .measured_pick_stats); a direct run_synthetic call then needs a config with numbers.
+    sKeepProb: Annotated[float, Field(ge=0, le=1)] | None
+    pickProb: Annotated[float, Field(gt=0, le=1)] | None
+
+
+class DatumCheckConfig(BaseModel):
+    """Diagnostics row 2: noise-free synthetic events at known elevM through the real stations."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    eM: float  # ENU east of the run origin (m)
+    nM: float  # ENU north of the run origin (m)
+    elevM: list[float] = Field(min_length=1)  # m ASL; one synthetic event per value
+    passTolM: float = Field(gt=0)  # largest |elevM| and horizontal error that still passes (m)
+
+
+class DiagnosticsConfig(BaseModel):
+    """Depth diagnostics written to ``diagnostics.md`` by stage ``locate`` (LOC-04)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    datumCheck: DatumCheckConfig
+    minSForDepth: int = Field(ge=1)  # row 4 splits events at nS >= this vs nS < this
+    # Fewest events (row 4) or picks (rows 5-7) a group needs before a row concludes from it.
+    minGroupSize: int = Field(ge=1)
+    # Rows 4 and 5: a group's spread counts as worse than another's above this ratio.
+    degradationRatio: float = Field(gt=1)
+    # Row 6: a station-phase median residual above this (s) is flagged (lane doc: every static
+    # above 0.15 s needs a written explanation).
+    stationResidualFlagS: float = Field(gt=0)
+    # Row 5: profiles whose Station.preprocessProfile starts with this are the borehole profiles
+    # the row's suspect is about (signal.yaml names them borehole-A, borehole-B).
+    boreholeProfilePrefix: str = Field(min_length=1)
+    # Row 7: an azimuthal residual amplitude (s) above this counts as a trend (1D misses structure).
+    trendFlagS: float = Field(gt=0)
+    # Row 7: at the catalog hypocentres, an S/P ratio of the trend amplitudes above the model's
+    # Vp/Vs at the source depths times this factor counts as S-heavy (see diagnostics.py).
+    trendSPRatioExcess: float = Field(gt=1)
+    # Table-vs-exact travel-time error (s) at a located hypocentre above this counts as exposure to
+    # the cell-mean interface bias of the tables (LOC-02 accuracy record).
+    tableErrorFlagS: float = Field(gt=0)
 
 
 class CatalogDatum(BaseModel):
@@ -444,10 +485,24 @@ class SeismologyConfig(BaseModel):
     catalog: CatalogConfig
     associator: AssociatorConfig
     matching: MatchingConfig
+    diagnostics: DiagnosticsConfig
 
     @model_validator(mode="after")
     def _consistent(self) -> "SeismologyConfig":
         vol = self.locator.volume
+        # Every associated event has at least minStations stations, so at least that many picks;
+        # the locator needs minPicks. Checked here so no associated event is left unlocatable.
+        fewest = min(self.associator.minStations, *self.associator.sweep.minStations)
+        if fewest < self.locator.minPicks:
+            raise ValueError(
+                f"associator minStations (smallest, sweep included) {fewest} is below "
+                f"locator.minPicks {self.locator.minPicks}: such events could not be located"
+            )
+        datum = self.diagnostics.datumCheck
+        if max(abs(datum.eM), abs(datum.nM)) > vol.halfWidthM or min(datum.elevM) < vol.bottomElevM:
+            raise ValueError("diagnostics.datumCheck points must lie inside the search volume")
+        if vol.topElevM is not None and max(datum.elevM) > vol.topElevM:
+            raise ValueError("diagnostics.datumCheck elevM must lie below the search volume top")
         if self.grids.bottomElevM > vol.bottomElevM - self.grids.dzM:
             raise ValueError(
                 f"grids.bottomElevM {self.grids.bottomElevM} must lie at least one dzM below "

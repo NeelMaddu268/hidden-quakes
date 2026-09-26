@@ -69,9 +69,11 @@ class StubRunContext:
         runtime_s: float,
         counts: dict[str, int],
         params: dict[str, Any] | None = None,
+        field: str | None = None,
     ) -> None:
         self.records.append(
-            {"stage": stage, "runtime_s": runtime_s, "counts": counts, "params": params}
+            {"stage": stage, "runtime_s": runtime_s, "counts": counts, "params": params,
+             "field": field}
         )
 
 
