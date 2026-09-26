@@ -378,14 +378,10 @@ def _check_one_to_one(pub: pd.DataFrame, loc: pd.DataFrame, cfg: SeismologyConfi
     return matches
 
 
-@pytest.mark.parametrize("scaled", [False, True])
-def test_one_to_one_property_over_random_scenarios(
-    seismology_config: SeismologyConfig, scaled: bool
-) -> None:
+def _one_to_one_property(cfg: SeismologyConfig, scenarios: int, seed: int) -> None:
     """Never a located or public event twice; the count is the maximum possible (Hopcroft-Karp)."""
-    cfg = _scaled(seismology_config) if scaled else seismology_config
-    rng = np.random.default_rng(20260926)
-    for _ in range(150):
+    rng = np.random.default_rng(seed)
+    for _ in range(scenarios):
         pub, loc = _scenario(rng, int(rng.integers(0, 25)), int(rng.integers(0, 30)))
         matches = _check_one_to_one(pub, loc, cfg)
         pub_sorted = pub.sort_values(["t", "id"]).reset_index(drop=True)
@@ -394,6 +390,20 @@ def test_one_to_one_property_over_random_scenarios(
         ok, _ = _reference(off.dt, off.dist, cfg.matching)
         most = int((maximum_bipartite_matching(csr_matrix(ok.astype(np.int8))) >= 0).sum())
         assert int(matches["eventId"].notna().sum()) == most
+
+
+@pytest.mark.parametrize("scaled", [False, True])
+def test_one_to_one_property_over_random_scenarios(
+    seismology_config: SeismologyConfig, scaled: bool
+) -> None:
+    _one_to_one_property(_scaled(seismology_config) if scaled else seismology_config, 150,
+                         20260926)
+
+
+@pytest.mark.smoke
+def test_one_to_one_property_smoke(seismology_config: SeismologyConfig) -> None:
+    """MATCH-02 'one-to-one guaranteed by test' in CI: a few scenarios of the full test above."""
+    _one_to_one_property(seismology_config, 12, 20260927)
 
 
 @pytest.mark.parametrize("scaled", [False, True])

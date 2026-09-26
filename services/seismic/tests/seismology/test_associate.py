@@ -445,20 +445,27 @@ def test_thread_count_does_not_change_results(world: dict[str, Any]) -> None:
     pd.testing.assert_frame_equal(one.picks, many.picks)
 
 
-def test_stalta_labelled_picks_associate_unchanged(world: dict[str, Any]) -> None:
-    picks = world["picks"]
+def _check_stalta_unchanged(world: dict[str, Any], picks: pd.DataFrame) -> None:
+    """The same picks labelled as STA/LTA picks associate into the same events."""
     stalta = picks.assign(
         picker="stalta", id="stalta:" + picks["id"].str.split(":", n=2).str[2]
     )
     rename = dict(zip(picks["id"], stalta["id"], strict=True))
-    base, _, _ = _associate_toy(world)
+    base, _, _ = _associate_toy(world, picks=picks)
     other, _, _ = _associate_toy(world, picks=stalta)
+    assert len(base.events) > 0
     pd.testing.assert_frame_equal(other.events, base.events)
     mapped = base.picks.assign(pickId=base.picks["pickId"].map(rename).astype("string"))
     pd.testing.assert_frame_equal(
         other.picks.sort_values(["assocId", "pickId"]).reset_index(drop=True),
         mapped.sort_values(["assocId", "pickId"]).reset_index(drop=True),
     )
+
+
+def test_stalta_labelled_picks_associate_unchanged(world: dict[str, Any]) -> None:
+    """Not smoke: every PyOcto call reloads its station tables (about 0.8 s), even on a few
+    picks, so an association test can't fit the smoke budget."""
+    _check_stalta_unchanged(world, world["picks"])
 
 
 def test_zero_picks_give_typed_zero_row_tables(world: dict[str, Any], tmp_path: Path) -> None:
