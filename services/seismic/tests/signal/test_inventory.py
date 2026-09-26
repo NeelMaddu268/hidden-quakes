@@ -160,6 +160,22 @@ def metadata_rate_probe(
     return out or None
 
 
+def assert_depths_match_stationxml(rows: list[dict[str, Any]], t: float) -> None:
+    """Lane DoD: each row's sensorDepthM is the StationXML depth of every one of its channels."""
+    assert rows
+    for row in rows:
+        for code in row["channels"]:
+            sel = _FIXTURE_INV.select(
+                network=row["network"],
+                station=row["station"],
+                location=row["location"],
+                channel=code,
+                time=UTCDateTime(t),
+            )
+            depths = {float(ch.depth) for net in sel for sta in net for ch in sta}
+            assert depths == {row["sensorDepthM"]}, (row["id"], code, depths)
+
+
 def no_probe(net: str, sta: str, loc: str, channels: Any, t0: float, t1: float) -> None:
     raise AssertionError(f"rate probe called on a cache hit: {net}.{sta}.{loc}")
 
@@ -326,6 +342,13 @@ def test_kinds_profiles_and_channel_order(result: InventoryResult) -> None:
         assert row["channels"][0].endswith("Z")
         if row["kind"] == "borehole":
             assert row["sensorDepthM"] > 0
+
+
+@pytest.mark.smoke
+def test_every_row_depth_matches_its_stationxml_channels(
+    result: InventoryResult, run_section: RunSection
+) -> None:
+    assert_depths_match_stationxml(result.rows, run_section.window_start_s)
 
 
 @pytest.mark.smoke
@@ -861,6 +884,7 @@ def test_stage_writes_stations_parquet(
     assert {"enu_e", "enu_n", "enu_u", "sensorDepthM", "sensorElevM"} <= set(df.columns)
     fork = df[df["id"] == "UU.FORK"].iloc[0]
     assert (fork["sensorDepthM"], fork["sensorElevM"]) == (281.0, pytest.approx(1408.0))
+    assert_depths_match_stationxml(df.to_dict("records"), fake_ctx.config.run.window_start_s)
     assert list(df["usedInRun"]) == [r["usedInRun"] for r in seeded.rows]
     report = json.loads(fake_ctx.path(inv.REPORT_FILE).read_text(encoding="utf-8"))
     assert report["counts"]["selected"] == len(EXPECTED_IDS)
