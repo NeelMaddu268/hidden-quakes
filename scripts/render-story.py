@@ -376,6 +376,25 @@ def baseline_strict(method: str) -> Resolver:
     return resolve
 
 
+def baseline_candidates(method: str) -> Resolver:
+    """``validation.baseline`` row with this method and ``associationProfile: "full"`` →
+    ``candidates`` (the card's "A of N candidates" denominator)."""
+    source = f"{VALIDATION_JSON} → baseline[method={method}, associationProfile=full].candidates"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        if bundle.validation is None:
+            return _not_available(bundle, VALIDATION_JSON, source)
+        for row in bundle.validation.get("baseline") or []:
+            if row.get("method") == method and row.get("associationProfile") == "full":
+                value = row.get("candidates")
+                if value is None:
+                    return _not_available(bundle, VALIDATION_JSON, source)
+                return Resolved(fmt(value), source, STATUS_VALUE)
+        return _not_available(bundle, VALIDATION_JSON, source)
+
+    return resolve
+
+
 def hero_station_count() -> Resolver:
     source = f"{EVIDENCE_DIR}/<scene.heroEventId>.json → traces.length"
 
@@ -472,6 +491,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
     ),
     Spec("{strictPhasenet}", baseline_strict("phasenet")),
     Spec("{strictStalta}", baseline_strict("stalta")),
+    Spec("{staltaCandidates}", baseline_candidates("stalta")),
     Spec(
         "{meanChanceEvents}",
         gated(
