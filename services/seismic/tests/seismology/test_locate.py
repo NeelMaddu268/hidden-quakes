@@ -318,6 +318,8 @@ def test_stage_writes_tables_report_and_record(
     assert stats["pickProb"] == pytest.approx(float(probs.median()))
     assert record["stationGeometry"]["stationIds"] == list(located.stations["id"])
     assert record["stationGeometry"]["label"] == ctx.run_id
+    assert record["stationsWithoutPicks"] == []
+    assert locator["counts"]["syntheticStationsWithoutPicks"] == 0
 
     report = ctx.path("diagnostics.md").read_text(encoding="utf-8")
     rows = {}
@@ -335,7 +337,8 @@ def test_stage_writes_tables_report_and_record(
     assert "P surface: " in rows[5][3] and "dropped by the outlier pass" in rows[5][3]
     assert "catalog.parquet is not in the run dir" in report
     assert "## Pick sigma vs observed residual spread" in report
-    assert f"{SYNTHETIC_EVENTS} synthetic events on the {len(located.stations)} used" in report
+    n_used = len(located.stations)
+    assert f"{SYNTHETIC_EVENTS} synthetic events on {n_used} of the {n_used} used stations," in report
 
 
 @pytest.mark.smoke
@@ -517,3 +520,15 @@ def test_fresh_interpreter_submodule_first(first: str) -> None:
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          cwd=Path(__file__).resolve().parents[2], check=False)
     assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr[-2000:]
+
+
+@pytest.mark.smoke
+def test_synthetic_stations_drop_used_stations_without_picks() -> None:
+    from hq.locate.run import synthetic_stations
+
+    used = pd.DataFrame({"id": ["XX.A", "XX.B", "XX.C"], "kind": ["surface"] * 3})
+    picks = pd.DataFrame({"stationId": ["XX.A", "XX.C", "XX.C"]})
+    kept, dropped = synthetic_stations(used, picks)
+    assert list(kept["id"]) == ["XX.A", "XX.C"] and dropped == ["XX.B"]
+    with pytest.raises(ValueError, match="no used station"):
+        synthetic_stations(used, picks.iloc[0:0])
