@@ -105,6 +105,7 @@
 - **Goal:** the tiny validation panel (table below) and a Run details panel that prints `ProcessingRun` verbatim plus the sweep plot.
 - **Files:** `apps/web/src/shell/validation/`, `shell/run-details/`
 - **Accept:** every row hides itself when its source field is null.
+- **Keys:** D opens and closes Run details; Esc closes it (an addition beside the `docs/02` §6 map, which is unchanged).
 
 ### API-04 · P1 · after Gate E — Live worker
 
