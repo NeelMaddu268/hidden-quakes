@@ -394,6 +394,18 @@ class StaticsConfig(BaseModel):
     sigmaFlagRatio: float = Field(gt=1)
 
 
+class HarvestConfig(BaseModel):
+    """Pick harvest (LOC-10, ``hq.locate.harvest``): after a statics-corrected locate, picks in no
+    association event within ``windowS`` of an event's predicted arrival at a station-phase it
+    has no pick for are added to it, and the events that gained picks are relocated once."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool  # false: locate never harvests (every output as without this section)
+    windowS: PhaseSigma  # half-width per phase (s) around tPred; at most locator.outlier.floorS
+    minProb: float = Field(gt=0, le=1)  # at least associator.minPickProb (checked)
+
+
 class CatalogDatum(BaseModel):
     """Depth datum of one catalog contributor (keyed by its QuakeML ``catalog:datasource``)."""
 
@@ -723,6 +735,7 @@ class SeismologyConfig(BaseModel):
     matching: MatchingConfig
     diagnostics: DiagnosticsConfig
     statics: StaticsConfig
+    harvest: HarvestConfig
     tiering: TieringConfig
     magnitude: MagnitudeConfig
 
@@ -767,6 +780,18 @@ class SeismologyConfig(BaseModel):
                 f"matching.reasons.minStations {reasons.minStations} must not exceed "
                 f"associator.minStations {assoc.minStations}: a public event picked on enough "
                 "stations for the associator would read 'too few picks'"
+            )
+        harvest, floor = self.harvest, self.locator.outlier.floorS
+        if max(harvest.windowS.P, harvest.windowS.S) > floor:
+            raise ValueError(
+                f"harvest.windowS {harvest.windowS.P} / {harvest.windowS.S} must not exceed "
+                f"locator.outlier.floorS {floor}: a harvested pick must sit inside the outlier "
+                "floor at the location it was harvested for"
+            )
+        if harvest.minProb < assoc.minPickProb:
+            raise ValueError(
+                f"harvest.minProb {harvest.minProb} must not be below associator.minPickProb "
+                f"{assoc.minPickProb}: harvest never takes picks the associator would not read"
             )
         zone = self.synthetic.zone
         reach = math.hypot(zone.centerEM, zone.centerNM) + zone.radiusM
