@@ -4,8 +4,12 @@
 records what a stage passes to ``record()`` instead of writing run.json, and rejects a stage name
 H4's registry (``hq.runs.STAGES``) would reject.
 
-Every test here is offline (CLAUDE.md rule 10): the autouse ``_no_network`` guard refuses any
-connection or DNS lookup that leaves the machine.
+Every test here is offline (CLAUDE.md rule 10). The autouse ``_no_network`` guard refuses any
+connection or DNS lookup that leaves the machine from the test's own process. It is a
+monkeypatch, so it does not reach spawned worker processes (the process-pool tests): those tests
+inject fakes and must keep doing so. The refusal raises pytest's ``Failed``, a ``BaseException``,
+so a broad ``except Exception`` retry loop in the code under test cannot swallow it
+(``test_offline_guard.py``).
 """
 
 import socket
@@ -32,7 +36,9 @@ def _host(address: Any) -> Any:
 
 def _refuse_remote(what: str, host: Any) -> None:
     if host not in _LOOPBACK:
-        raise AssertionError(f"network access in an offline test: {what} {host!r}")
+        # pytest.fail raises a BaseException: an ``except Exception`` in the code under test
+        # (the downloader retries on those) cannot turn a network attempt into a retry.
+        pytest.fail(f"network access in an offline test: {what} {host!r}")
 
 
 @pytest.fixture(autouse=True)
