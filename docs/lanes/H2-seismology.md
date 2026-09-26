@@ -176,6 +176,14 @@ If someone already knows NonLinLoc well, it's an acceptable swap for steps 1–4
 - Tier A depths show no systematic offset from the depth band in published FORGE catalogs. Compare the band only; those catalogs cover other dates.
 - No unexplained station static above 0.15 s.
 
+**Depth call, Saturday 10 AM: PASS (amended).** Decided by H2 on run `20260926-0210-a04c611` (evidence: that run's `diagnostics.md` and the lead's depth-gate report). Criteria 1 and 2 pass as written. Two amendments are on record:
+- Criterion 3 is judged against the same-day public regional catalog's depths for the same events. The published FORGE catalogs sit at a different place and date, so the band comparison can't test bias.
+- Criterion 4 is closed by a sensitivity test: relocating Tier A without the unexplained far-station statics barely moves them.
+
+Consequences:
+- The 3D scene with depths stays the hero.
+- No "structure" or "fracture" claims. Those would need relative relocation (LOC-08).
+
 **Fallback ladder if it fails:** (1) Tier A additionally requires a station within about 1–2× the focal depth; (2) 3D grids; (3) relative relocation (LOC-08); (4) still diffuse → tell H3 and H4 that the plan-view hero is permanent.
 
 ### Association (PyOcto)
