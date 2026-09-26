@@ -2,6 +2,8 @@
 # One block per ticket. Every pipeline knob of the signal lane lives here and is recorded in run.json.
 
 # --- SEIS-01: station inventory and channel selection ------------------------------------------------
+# Cache layout (fixed, shared with hq.ingest.cache): data/cache/stationxml/ holds the raw channel XML,
+# <Station.id>.xml response files for read_inventory, and the DEM and availability caches.
 stations:
   query:
     fdsnClient: EARTHSCOPE      # ObsPy >= 1.5 key for https://service.earthscope.org
@@ -12,13 +14,15 @@ stations:
     channel: "*"                # everything; the rules below decide what is usable
     excludeNetworks: [SY]       # SY = synthetic seismograms, not recorded data
     skipRestricted: true
-    cacheSubdir: stationxml     # data/cache/stationxml/: raw XML, <Station.id>.xml, DEM cache
+    retries: 3                  # station service: transport errors and timeouts only
+    backoffS: 5.0
   channels:
     verticalComponents: [Z]
     horizontalPairs: [[N, E], ["1", "2"]]   # N/E preferred, else 1/2
     # Velocity sensors, best first (band+instrument). Borehole geophones beat surface short period.
+    # Codes not listed (e.g. BH at 40 Hz, FH above 1000 Hz) have no preprocess profile anyway.
     velocityCodes: [GH, GP, DH, DP, CH, CP, HH, HP, EH, EP, SH, SP]
-    # Accelerometers: only when the site (net.sta) has no velocity triplet at all.
+    # Accelerometers: only when the site (net.sta) has no usable velocity triplet.
     accelerometerCodes: [GN, DN, CN, HN, EN]
     componentDepthTolM: 1.0
     locationDepthTolM: 5.0
@@ -26,14 +30,18 @@ stations:
   kind:
     boreholeMinDepthM: 10.0
     strongMotionInstrumentCodes: [N]
-    boreholeLookingCodes: [DP, GP, GH]
-  profiles:                     # first match on sampleRateHz (inclusive); names from preprocess
-    - {minRateHz: 90, maxRateHz: 110, profile: surface-100}
-    - {minRateHz: 190, maxRateHz: 260, profile: surface-hi}
-    - {minRateHz: 400, maxRateHz: 1100, profile: borehole-A}
+    boreholeLookingCodes: [GH, GP, DH, DP]
+  # First match on sampleRateHz (inclusive). The ranges equal each profile's minRateHz/maxRateHz in
+  # the preprocess block (SEIS-03), so every station inventory accepts is one for_picking accepts.
+  # Triplets with no matching rule are dropped before ranking.
+  profiles:
+    - {minRateHz: 100, maxRateHz: 100, profile: surface-100}
+    - {minRateHz: 200, maxRateHz: 250, profile: surface-hi}
+    - {minRateHz: 500, maxRateHz: 1000, profile: borehole-A}
   elevation:
     # StationXML is inconsistent about whether station elevation is the surface or the sensor.
     # Each chosen sensor's station elevation is checked against this DEM (USGS 3DEP via EPQS).
+    # The DEM cache file name carries a hash of demUrl, so another DEM never reuses these values.
     demUrl: https://epqs.nationalmap.gov/v1/json
     demTimeoutS: 30
     demRetries: 3
@@ -41,15 +49,21 @@ stations:
     demNoDataValue: -1000000
     demCacheFile: surface_elev_dem.json
     demKeyDecimals: 5
-    toleranceM: 15.0
-    onAmbiguous: error
+    toleranceM: 15.0            # a reading matches when within this of the DEM
+    onAmbiguous: error          # deeper than toleranceM and neither reading matches
+    maxShallowMismatchM: 50.0   # shallow sensor off the DEM: flagged up to this, then:
+    onShallowMismatch: dem      # use the DEM as the ground surface (coordinates are trusted)
   availability:
     # The FDSN availability service is retired at EarthScope (404 / 410); MUSTANG daily
-    # percent_availability is the working source. Coverage = overlap-weighted daily value.
+    # percent_availability is the working source. Coverage is the overlap-weighted daily value,
+    # an estimate below one day; SEIS-05's measured gaps are the real answer.
     url: https://service.earthscope.org/mustang/measurements/1/query
     metric: percent_availability
     timeoutS: 60
-    onMissing: unused           # never measured by MUSTANG: coverage null, usedInRun false
+    retries: 3
+    backoffS: 2.0
+    cacheFile: availability_mustang.json   # raw replies; delete it to re-query
+    onMissing: used             # no measurement (MUSTANG lag): coverage null, usedInRun true
 
 # --- SEIS-05: full-window download and cache ---------------------------------------------------------
 download: {}

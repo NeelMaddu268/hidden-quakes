@@ -3,17 +3,23 @@
 Stage ``inventory`` (docs/02 -> Stage API). For the run window and bbox it
 
 1. queries FDSN station metadata at channel level (raw XML cached under ``data/cache/stationxml/``),
-2. forms three-component channel triplets and ranks them (velocity first, strong-motion only when a
-   site has nothing else),
+2. forms three-component channel triplets that have a preprocessing profile and ranks them
+   (velocity first, strong-motion only when a site has no usable velocity triplet),
 3. resolves each chosen sensor's elevation. StationXML is inconsistent here: for some stations the
    station elevation is the wellhead surface, for others it is already the sensor. Each one is
-   checked against a DEM at the sensor position; ``sensorDepthM`` is always the channel ``depth``
-   and ``sensorElevM = surfaceElevM - sensorDepthM`` always holds,
+   checked against a DEM at the sensor position. ``sensorDepthM`` is always the channel ``depth``,
+   ``surfaceElevM`` is the ground surface at the sensor's site as resolved here (it can differ
+   from the raw StationXML station elevation; every case is in ``inventory_report.json``), and
+   ``sensorElevM = surfaceElevM - sensorDepthM`` always holds,
 4. assigns ``kind``, ``preprocessProfile`` and ENU (UTM 12N minus the origin, docs/01),
-5. measures per-station data coverage of the window (MUSTANG daily availability),
+5. estimates per-station data coverage of the window (MUSTANG daily availability, cached),
 6. caches instrument responses per station for ``read_inventory`` (SEIS-05),
 
 and writes ``stations.parquet`` plus ``inventory_report.json`` (every decision with its numbers).
+
+``Station.id`` is ``NET.STA``; when two locations of one site are kept it is ``NET.STA.LOC``
+with the raw location code, so an empty code gives ``NET.STA.`` (the same spelling SEIS-05 uses
+for its cache lookups).
 
 Acceptance driver::
 
@@ -35,20 +41,32 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
+from urllib.parse import urlencode
 
 import requests
 import yaml
 from obspy import Inventory, UTCDateTime, read_inventory
+from obspy.clients.fdsn.header import FDSNException, FDSNNoDataException
 from pyproj import Geod, Transformer
 
 from hq.config.run import Origin, RunSection
-from hq.config.signal import SignalConfig, StationSelection
+from hq.config.signal import (
+    AvailabilityCheck,
+    ElevationCheck,
+    SignalConfig,
+    StationQuery,
+    StationSelection,
+)
 
 logger = logging.getLogger(__name__)
 
 STAGE = "inventory"
 REPORT_FILE = "inventory_report.json"
 STATIONS_FILE = "stations.parquet"
+
+# Cache layout, not a knob: CLAUDE.md fixes data/cache/stationxml/, and SEIS-05's
+# hq.ingest.cache.read_inventory reads <cache_dir>/stationxml/<Station.id>.xml from it.
+STATIONXML_DIR = "stationxml"
 
 # docs/01 -> Conventions: horizontal ENU is UTM zone 12N metres minus the origin. A contract shared
 # with every lane (SceneMeta.projection), not a tunable knob.
@@ -57,8 +75,10 @@ ENU_CRS = "EPSG:32612"
 
 Kind = Literal["surface", "borehole", "strong_motion"]
 Family = Literal["velocity", "accelerometer"]
-Convention = Literal["surface", "sensor"]
-Basis = Literal["dem", "both-match", "shallow", "assumed"]
+# What StationXML's station elevation turned out to be: the surface, the sensor, or neither (the DEM
+# at the sensor position is used as the surface).
+Convention = Literal["surface", "sensor", "dem"]
+Basis = Literal["dem", "both-match", "shallow", "mismatch", "assumed"]
 
 
 # --- errors -------------------------------------------------------------------------------------
@@ -69,7 +89,7 @@ class InventoryError(RuntimeError):
 
 
 class AmbiguousElevationError(InventoryError):
-    """Neither elevation convention matches the DEM for a deep sensor."""
+    """The station elevation cannot be reconciled with the DEM and config says to stop."""
 
 
 class DemError(InventoryError):
@@ -105,6 +125,41 @@ def requests_get(url: str, params: Mapping[str, str], timeout_s: float) -> HttpR
     return HttpResult(status=resp.status_code, text=resp.text)
 
 
+def http_with_retries(
+    http_get: HttpGet,
+    url: str,
+    params: Mapping[str, str],
+    *,
+    timeout_s: float,
+    retries: int,
+    backoff_s: float,
+    ok: frozenset[int],
+    what: str,
+    error: type[InventoryError],
+) -> HttpResult:
+    """GET that retries transport errors, HTTP 429 and 5xx with linear backoff.
+
+    Returns the first reply whose status is in ``ok``. Any other reply, or running out of
+    attempts, raises ``error``.
+    """
+    last = ""
+    for attempt in range(retries + 1):
+        if attempt:
+            time.sleep(backoff_s * attempt)
+        try:
+            res = http_get(url, params, timeout_s)
+        except requests.RequestException as exc:
+            last = f"{type(exc).__name__}: {exc}"
+        else:
+            if res.status in ok:
+                return res
+            last = f"HTTP {res.status}: {res.text[:200]}"
+            if res.status < 500 and res.status != 429:
+                raise error(f"{what}: {last}")
+        logger.warning("%s failed (attempt %d of %d): %s", what, attempt + 1, retries + 1, last)
+    raise error(f"{what}: failed after {retries + 1} attempts: {last}")
+
+
 def epqs_dem(cfg: StationSelection, http_get: HttpGet) -> DemLookup:
     """USGS 3DEP point elevation (EPQS). Retries transient failures, then raises ``DemError``."""
     ecfg = cfg.elevation
@@ -117,61 +172,80 @@ def epqs_dem(cfg: StationSelection, http_get: HttpGet) -> DemLookup:
             "wkid": "4326",
             "includeDate": "false",
         }
-        last = ""
-        for attempt in range(ecfg.demRetries + 1):
-            if attempt:
-                time.sleep(ecfg.demBackoffS * attempt)
-            try:
-                res = http_get(ecfg.demUrl, params, ecfg.demTimeoutS)
-            except requests.RequestException as exc:
-                last = f"{type(exc).__name__}: {exc}"
-                logger.warning("DEM query failed (attempt %d): %s", attempt + 1, last)
-                continue
-            if res.status == 200:
-                try:
-                    value = float(json.loads(res.text)["value"])
-                except (ValueError, KeyError, TypeError) as exc:
-                    raise DemError(
-                        f"unparseable DEM response at {lat},{lon}: {res.text[:200]}"
-                    ) from exc
-                if value == ecfg.demNoDataValue:
-                    raise DemError(f"DEM has no data at lat={lat} lon={lon}")
-                return value
-            last = f"HTTP {res.status}: {res.text[:200]}"
-            logger.warning("DEM query failed (attempt %d): %s", attempt + 1, last)
-            if res.status < 500:
-                break
-        raise DemError(f"DEM lookup failed at lat={lat} lon={lon}: {last}")
+        res = http_with_retries(
+            http_get,
+            ecfg.demUrl,
+            params,
+            timeout_s=ecfg.demTimeoutS,
+            retries=ecfg.demRetries,
+            backoff_s=ecfg.demBackoffS,
+            ok=frozenset({200}),
+            what=f"DEM lookup at lat={lat} lon={lon}",
+            error=DemError,
+        )
+        try:
+            value = float(json.loads(res.text)["value"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise DemError(f"unparseable DEM response at {lat},{lon}: {res.text[:200]}") from exc
+        if value == ecfg.demNoDataValue:
+            raise DemError(f"DEM has no data at lat={lat} lon={lon}")
+        return value
 
     return lookup
+
+
+class JsonCache:
+    """A small key -> value JSON file. Reruns read it instead of the network."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.hits = 0
+        self.misses = 0
+        self.values: dict[str, Any] = {}
+        if path.exists():
+            with path.open(encoding="utf-8") as fh:
+                self.values = dict(json.load(fh))
+
+    def get(self, key: str) -> Any | None:
+        if key in self.values:
+            self.hits += 1
+            return self.values[key]
+        self.misses += 1
+        return None
+
+    def put(self, key: str, value: Any) -> None:
+        self.values[key] = value
+        _write_json_atomic(self.path, dict(sorted(self.values.items())))
+
+
+def _source_tagged(name: str, source: str) -> str:
+    """``name`` with a short hash of ``source`` before the suffix, so sources never share a file."""
+    p = Path(name)
+    return f"{p.stem}_{hashlib.sha256(source.encode()).hexdigest()[:8]}{p.suffix}"
+
+
+def dem_cache_path(xml_dir: Path, cfg: StationSelection) -> Path:
+    return xml_dir / _source_tagged(cfg.elevation.demCacheFile, cfg.elevation.demUrl)
 
 
 class DemCache:
     """DEM values cached as JSON keyed by rounded lat/lon, so reruns never touch the network."""
 
     def __init__(self, path: Path, lookup: DemLookup, decimals: int) -> None:
-        self.path = path
+        self.store = JsonCache(path)
         self.lookup = lookup
         self.decimals = decimals
-        self.hits = 0
-        self.misses = 0
-        self.values: dict[str, float] = {}
-        if path.exists():
-            with path.open(encoding="utf-8") as fh:
-                self.values = {str(k): float(v) for k, v in json.load(fh).items()}
 
     def key(self, lat: float, lon: float) -> str:
         return f"{lat:.{self.decimals}f},{lon:.{self.decimals}f}"
 
     def elevation(self, lat: float, lon: float) -> float:
         k = self.key(lat, lon)
-        if k in self.values:
-            self.hits += 1
-            return self.values[k]
-        self.misses += 1
+        cached = self.store.get(k)
+        if cached is not None:
+            return float(cached)
         value = float(self.lookup(lat, lon))
-        self.values[k] = value
-        _write_json_atomic(self.path, dict(sorted(self.values.items())))
+        self.store.put(k, value)
         return value
 
 
@@ -216,6 +290,7 @@ class Triplet:
     station_elev_m: float
     station_latitude: float
     station_longitude: float
+    epoch_notes: tuple[str, ...] = ()  # channel metadata that changes inside the window
 
     @property
     def site(self) -> str:
@@ -247,26 +322,31 @@ def _overlap_s(start: UTCDateTime | None, end: UTCDateTime | None, t0: float, t1
     return max(0.0, min(e, t1) - max(s, t0))
 
 
-def _pick_epoch(epochs: list[ChannelRecord]) -> ChannelRecord:
-    """The epoch covering most of the window; logs when overlapping epochs disagree."""
+def _pick_epoch(epochs: list[ChannelRecord]) -> tuple[ChannelRecord, str | None]:
+    """The epoch covering most of the window, plus a note when the overlapping epochs disagree."""
     ordered = sorted(epochs, key=lambda r: -r.overlap_s)
     best = ordered[0]
-    if len(ordered) > 1:
-        differ = {(r.depth_m, r.sample_rate_hz) for r in ordered}
-        level = logging.WARNING if len(differ) > 1 else logging.INFO
-        logger.log(
-            level,
-            "%s.%s.%s.%s has %d epochs in the window (depth/rate %s); using the one covering "
-            "%.0f s",
-            best.network,
-            best.station,
-            best.location,
-            best.code,
-            len(ordered),
-            sorted(differ),
-            best.overlap_s,
+    if len(ordered) == 1:
+        return best, None
+    desc = (
+        f"{best.network}.{best.station}.{best.location}.{best.code} has {len(ordered)} epochs in "
+        "the window"
+    )
+    differ = sorted(
+        {(r.depth_m, r.sample_rate_hz, r.latitude, r.longitude, r.elevation_m) for r in ordered}
+    )
+    if len(differ) == 1:
+        logger.info(
+            "%s with identical metadata; using the one covering %.0f s", desc, best.overlap_s
         )
-    return best
+        return best, None
+    note = (
+        f"{desc} with different (depth, rate, lat, lon, elev) {differ}; the one covering "
+        f"{best.overlap_s:.0f} s of {sum(r.overlap_s for r in ordered):.0f} s is used for the "
+        "whole window"
+    )
+    logger.warning("%s", note)
+    return best, note
 
 
 def collect_candidates(
@@ -280,22 +360,41 @@ def collect_candidates(
     excluded: dict[str, list[str]] = {}
     epochs: dict[str, dict[tuple[str, str], list[ChannelRecord]]] = {}
     sites: dict[str, SiteCandidates] = {}
-    n_outside = 0
+    n_outside = n_ignored = 0
     for net in inv.networks:
         if net.code in cfg.query.excludeNetworks:
             excluded.setdefault(net.code, []).extend(s.code for s in net.stations)
             continue
         for sta in net.stations:
             site = f"{net.code}.{sta.code}"
-            sites.setdefault(site, SiteCandidates())
+            cand = sites.setdefault(site, SiteCandidates())
             per_chan = epochs.setdefault(site, {})
             for ch in sta.channels:
                 overlap = _overlap_s(ch.start_date, ch.end_date, t0, t1)
                 if overlap <= 0:
                     n_outside += 1
                     continue
+                band_inst = ch.code[:2]
+                if band_inst not in vel and band_inst not in acc:
+                    # SOH, strain, pressure ...: never parsed further (SampleRate is optional)
+                    cand.ignored_codes.add(band_inst)
+                    n_ignored += 1
+                    continue
                 if cfg.query.skipRestricted and ch.restricted_status == "closed":
-                    sites[site].problems.append(f"{ch.location_code}.{ch.code}: restricted")
+                    cand.problems.append(f"{ch.location_code}.{ch.code}: restricted")
+                    continue
+                values = {
+                    "sample rate": ch.sample_rate,
+                    "depth": ch.depth,
+                    "latitude": ch.latitude,
+                    "longitude": ch.longitude,
+                    "elevation": ch.elevation,
+                }
+                missing = [k for k, v in values.items() if v is None]
+                if missing:
+                    cand.problems.append(
+                        f"{ch.location_code}.{ch.code}: StationXML lacks {', '.join(missing)}"
+                    )
                     continue
                 rec = ChannelRecord(
                     network=net.code,
@@ -313,18 +412,17 @@ def collect_candidates(
                     station_elevation_m=float(sta.elevation),
                 )
                 per_chan.setdefault((rec.location, rec.code), []).append(rec)
-    if n_outside:
-        logger.info("%d channel epochs do not overlap the window and were ignored", n_outside)
+    logger.info(
+        "%d channel epochs outside the window, %d with non-seismic codes: ignored",
+        n_outside,
+        n_ignored,
+    )
 
     for site, per_chan in epochs.items():
         cand = sites[site]
-        groups: dict[tuple[str, str], dict[str, ChannelRecord]] = {}
+        groups: dict[tuple[str, str], dict[str, tuple[ChannelRecord, str | None]]] = {}
         for (loc, code), recs in sorted(per_chan.items()):
-            band_inst, comp = code[:2], code[2:]
-            if band_inst not in vel and band_inst not in acc:
-                cand.ignored_codes.add(band_inst)
-                continue
-            groups.setdefault((loc, band_inst), {})[comp] = _pick_epoch(recs)
+            groups.setdefault((loc, code[:2]), {})[code[2:]] = _pick_epoch(recs)
         for (loc, band_inst), comps in sorted(groups.items()):
             where = f"{loc}.{band_inst}"
             vert = next((c for c in rules.verticalComponents if c in comps), None)
@@ -332,7 +430,8 @@ def collect_candidates(
             if vert is None or pair is None:
                 cand.problems.append(f"{where}: incomplete triplet (components {sorted(comps)})")
                 continue
-            recs3 = (comps[vert], comps[pair[0]], comps[pair[1]])
+            picked = (comps[vert], comps[pair[0]], comps[pair[1]])
+            recs3 = tuple(r for r, _ in picked)
             rates = sorted({r.sample_rate_hz for r in recs3})
             if len(rates) > 1:
                 cand.problems.append(f"{where}: component sample rates differ {rates}")
@@ -360,6 +459,7 @@ def collect_candidates(
                     station_elev_m=z.station_elevation_m,
                     station_latitude=z.station_latitude,
                     station_longitude=z.station_longitude,
+                    epoch_notes=tuple(n for _, n in picked if n is not None),
                 )
             )
     return sites, excluded
@@ -374,17 +474,30 @@ def classify_kind(depth_m: float, code: str, cfg: StationSelection) -> Kind:
     return "surface"
 
 
+def match_profile(rate_hz: float, cfg: StationSelection) -> str | None:
+    """First profile rule whose inclusive rate range contains ``rate_hz``."""
+    for rule in cfg.profiles:
+        if rule.minRateHz <= rate_hz <= rule.maxRateHz:
+            return rule.profile
+    return None
+
+
 @dataclass(frozen=True)
 class Chosen:
     id: str
     triplet: Triplet
     kind: Kind
+    profile: str
 
 
 def choose_triplets(
     sites: Mapping[str, SiteCandidates], cfg: StationSelection
 ) -> tuple[list[Chosen], list[dict[str, str]], list[dict[str, str]]]:
-    """Pick the triplets that become Station rows. Returns (chosen, skipped sites, dropped)."""
+    """Pick the triplets that become Station rows. Returns (chosen, skipped sites, dropped).
+
+    Triplets whose sample rate has no preprocessing profile are dropped first, so an unusable
+    velocity triplet never hides a usable accelerometer at the same site.
+    """
     chosen: list[Chosen] = []
     skipped: list[dict[str, str]] = []
     dropped: list[dict[str, str]] = []
@@ -393,10 +506,20 @@ def choose_triplets(
         cand = sites[site]
         for problem in cand.problems:
             logger.info("%s: %s", site, problem)
-        velocity = [t for t in cand.triplets if t.family == "velocity"]
-        pool = velocity or [t for t in cand.triplets if t.family == "accelerometer"]
+        viable: list[tuple[Triplet, str]] = []
+        unprofiled: list[str] = []
+        for t in cand.triplets:
+            profile = match_profile(t.sample_rate_hz, cfg)
+            if profile is None:
+                reason = f"no preprocess profile for {t.sample_rate_hz:g} Hz"
+                dropped.append({"triplet": t.label, "reason": reason})
+                unprofiled.append(f"{t.location}.{t.code}: {reason}")
+                continue
+            viable.append((t, profile))
+        velocity = [v for v in viable if v[0].family == "velocity"]
+        pool = velocity or [v for v in viable if v[0].family == "accelerometer"]
         if not pool:
-            parts = list(cand.problems)
+            parts = [*cand.problems, *unprofiled]
             if cand.ignored_codes:
                 parts.append(
                     "no velocity or accelerometer codes (ignored: "
@@ -408,25 +531,25 @@ def choose_triplets(
             logger.info("skip %s: %s", site, reason)
             continue
         if velocity:
-            for t in cand.triplets:
+            for t, _ in viable:
                 if t.family == "accelerometer":
                     dropped.append(
                         {"triplet": t.label, "reason": "accelerometer; site has a velocity triplet"}
                     )
-        best_per_loc: dict[str, Triplet] = {}
-        for t in sorted(pool, key=Triplet.sort_key):
+        best_per_loc: dict[str, tuple[Triplet, str]] = {}
+        for t, profile in sorted(pool, key=lambda v: v[0].sort_key()):
             if t.location in best_per_loc:
-                better = best_per_loc[t.location]
+                better = best_per_loc[t.location][0]
                 dropped.append(
                     {"triplet": t.label, "reason": f"lower priority than {better.label}"}
                 )
                 continue
-            best_per_loc[t.location] = t
-        kept: list[tuple[Triplet, Kind]] = []
-        for t in sorted(best_per_loc.values(), key=Triplet.sort_key):
+            best_per_loc[t.location] = (t, profile)
+        kept: list[tuple[Triplet, Kind, str]] = []
+        for t, profile in sorted(best_per_loc.values(), key=lambda v: v[0].sort_key()):
             kind = classify_kind(t.depth_m, t.code, cfg)
             twin = next(
-                (k for k, kk in kept if kk == kind and abs(k.depth_m - t.depth_m) <= tol), None
+                (k for k, kk, _ in kept if kk == kind and abs(k.depth_m - t.depth_m) <= tol), None
             )
             if twin is not None:
                 dropped.append(
@@ -436,21 +559,23 @@ def choose_triplets(
                     }
                 )
                 continue
-            kept.append((t, kind))
-        for t, kind in kept:
-            sid = site if len(kept) == 1 else f"{site}.{t.location or '--'}"
-            chosen.append(Chosen(id=sid, triplet=t, kind=kind))
+            kept.append((t, kind, profile))
+        for t, kind, profile in kept:
+            # docs/02: "append .loc only if two locations coexist". The raw code is appended, so
+            # an empty location gives "NET.STA." (SEIS-05 builds the same exact id).
+            sid = site if len(kept) == 1 else f"{site}.{t.location}"
+            chosen.append(Chosen(id=sid, triplet=t, kind=kind, profile=profile))
     for d in dropped:
         logger.info("not used %s: %s", d["triplet"], d["reason"])
     return chosen, skipped, dropped
 
 
-# --- elevation, profile, ENU --------------------------------------------------------------------
+# --- elevation and ENU --------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ElevationDecision:
-    convention: Convention  # what StationXML's station elevation turned out to be
+    convention: Convention
     basis: Basis
     surface_elev_m: float
     sensor_elev_m: float
@@ -458,6 +583,7 @@ class ElevationDecision:
     channel_elev_m: float
     depth_m: float
     dem_m: float
+    flag: str | None = None  # set when a human should look at this station
 
     @property
     def label(self) -> str:
@@ -469,59 +595,95 @@ def resolve_elevation(
     channel_elev_m: float,
     depth_m: float,
     dem_m: float,
-    tol_m: float,
-    on_ambiguous: Literal["error", "surface", "skip"],
+    cfg: ElevationCheck,
     *,
     what: str,
 ) -> ElevationDecision | None:
-    """Decide whether the station elevation is the site surface or already the sensor.
+    """Decide whether the station elevation is the site surface, the sensor, or neither.
 
-    ``surface``: surfaceElevM = stationElev, sensorElevM = stationElev - depth.
-    ``sensor``:  surfaceElevM = stationElev + depth, sensorElevM = stationElev.
-    Both conventions matching the DEM (only possible when depth <= 2 tol), or a shallow sensor
-    (depth < 2 tol) matching neither, are indistinguishable and harmless: "surface" is used.
-    A deep sensor matching neither is ambiguous and handled by ``on_ambiguous``.
-    Returns None only when ``on_ambiguous == "skip"`` and the case is ambiguous.
+    Two readings of StationXML's station elevation, each checked against the DEM at the sensor:
+    ``surface`` (surfaceElevM = stationElev, sensorElevM = stationElev - depth) and ``sensor``
+    (surfaceElevM = stationElev + depth, sensorElevM = stationElev). They differ by ``depth``.
+
+    - One reading within ``toleranceM`` of the DEM: that one.
+    - Both within tolerance (possible only for depth <= 2 tol): for depth <= tol the choice moves
+      the sensor by at most tol, so ``surface`` is used; deeper, the closer one wins and the
+      station is flagged, because the other reading would be off by the full depth.
+    - Neither, and depth <= tol: the StationXML value is kept and flagged when it misses the DEM
+      by at most ``maxShallowMismatchM``; beyond that ``onShallowMismatch`` decides.
+    - Neither, and deeper: ambiguous, handled by ``onAmbiguous``.
+
+    Returns None only when the config says to skip the station.
     """
-    surface_ok = abs(station_elev_m - dem_m) <= tol_m
-    sensor_ok = abs(station_elev_m + depth_m - dem_m) <= tol_m
+    tol = cfg.toleranceM
+    r_surface = station_elev_m - dem_m
+    r_sensor = station_elev_m + depth_m - dem_m
+    surface_ok = abs(r_surface) <= tol
+    sensor_ok = abs(r_sensor) <= tol
+    numbers = (
+        f"stationElev {station_elev_m:.1f}, channelElev {channel_elev_m:.1f}, depth "
+        f"{depth_m:.1f}, DEM {dem_m:.1f}"
+    )
     convention: Convention
     basis: Basis
+    flag: str | None = None
     if surface_ok and sensor_ok:
-        convention, basis = "surface", "both-match"
+        basis = "both-match"
+        if depth_m <= tol:
+            convention = "surface"
+        else:
+            convention = "sensor" if abs(r_sensor) < abs(r_surface) else "surface"
+            flag = (
+                f"{what}: both readings of the station elevation are within {tol:g} m of the DEM "
+                f"({numbers}); used the closer one ({convention}); the other would move the "
+                f"sensor {depth_m:.1f} m"
+            )
     elif surface_ok:
         convention, basis = "surface", "dem"
     elif sensor_ok:
         convention, basis = "sensor", "dem"
-    elif depth_m < 2 * tol_m:
-        convention, basis = "surface", "shallow"
-        logger.warning(
-            "%s: station elevation %.1f m disagrees with DEM %.1f m by %.1f m (> %.1f); sensor is "
-            "shallow (%.1f m), keeping StationXML station elevation as the surface",
-            what,
-            station_elev_m,
-            dem_m,
-            station_elev_m - dem_m,
-            tol_m,
-            depth_m,
+    elif depth_m <= tol:
+        miss = (
+            f"{what}: station elevation {station_elev_m:.1f} m differs from DEM {dem_m:.1f} m by "
+            f"{r_surface:+.1f} m ({numbers})"
         )
+        if abs(r_surface) <= cfg.maxShallowMismatchM:
+            convention, basis = "surface", "shallow"
+            flag = (
+                f"{miss}; within maxShallowMismatchM {cfg.maxShallowMismatchM:g}, kept StationXML"
+            )
+        else:
+            action = cfg.onShallowMismatch
+            miss = f"{miss}; more than maxShallowMismatchM {cfg.maxShallowMismatchM:g}"
+            if action == "error":
+                raise AmbiguousElevationError(f"{miss} (onShallowMismatch=error)")
+            if action == "skip":
+                logger.warning("%s; skipping (onShallowMismatch=skip)", miss)
+                return None
+            if action == "keep":
+                convention, basis = "surface", "shallow"
+                flag = f"{miss}; kept StationXML (onShallowMismatch=keep)"
+            else:
+                convention, basis = "dem", "mismatch"
+                flag = f"{miss}; used the DEM as the surface (onShallowMismatch=dem)"
     else:
         msg = (
-            f"{what}: ambiguous elevation: stationElev {station_elev_m:.1f}, channelElev "
-            f"{channel_elev_m:.1f}, depth {depth_m:.1f}, DEM {dem_m:.1f}; neither stationElev "
-            f"(surface) nor stationElev + depth (sensor) is within {tol_m:.1f} m of the DEM"
+            f"{what}: ambiguous elevation ({numbers}): neither stationElev (surface) nor "
+            f"stationElev + depth (sensor) is within {tol:.1f} m of the DEM"
         )
-        if on_ambiguous == "error":
+        action_a = cfg.onAmbiguous
+        if action_a == "error":
             raise AmbiguousElevationError(msg)
-        if on_ambiguous == "skip":
-            logger.warning("%s; skipping", msg)
+        if action_a == "skip":
+            logger.warning("%s; skipping (onAmbiguous=skip)", msg)
             return None
-        logger.warning("%s; assuming surface convention (onAmbiguous=surface)", msg)
-        convention, basis = "surface", "assumed"
-    if convention == "surface":
-        surface = station_elev_m
-    else:
-        surface = station_elev_m + depth_m
+        convention, basis = ("surface" if action_a == "surface" else "dem"), "assumed"
+        flag = f"{msg}; used the {convention} reading (onAmbiguous={action_a})"
+    surface = {
+        "surface": station_elev_m,
+        "sensor": station_elev_m + depth_m,
+        "dem": dem_m,
+    }[convention]
     decision = ElevationDecision(
         convention=convention,
         basis=basis,
@@ -531,28 +693,19 @@ def resolve_elevation(
         channel_elev_m=channel_elev_m,
         depth_m=depth_m,
         dem_m=dem_m,
+        flag=flag,
     )
     logger.info(
-        "%s: elevation %s: stationElev %.1f, channelElev %.1f, depth %.1f, DEM %.1f -> "
-        "surfaceElevM %.1f, sensorElevM %.1f",
+        "%s: elevation %s: %s -> surfaceElevM %.1f, sensorElevM %.1f",
         what,
         decision.label,
-        station_elev_m,
-        channel_elev_m,
-        depth_m,
-        dem_m,
+        numbers,
         decision.surface_elev_m,
         decision.sensor_elev_m,
     )
+    if flag is not None:
+        logger.warning("FLAG %s", flag)
     return decision
-
-
-def match_profile(rate_hz: float, cfg: StationSelection) -> str | None:
-    """First profile rule whose inclusive rate range contains ``rate_hz``."""
-    for rule in cfg.profiles:
-        if rule.minRateHz <= rate_hz <= rule.maxRateHz:
-            return rule.profile
-    return None
 
 
 class EnuProjector:
@@ -590,15 +743,32 @@ def _window_days(t0: float, t1: float) -> list[tuple[datetime, float]]:
     return out
 
 
+def _availability_rows(res: HttpResult, metric: str, what: str) -> list[dict[str, Any]]:
+    if res.status == 204:
+        return []
+    try:
+        rows = json.loads(res.text)["measurements"].get(metric, [])
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise AvailabilityError(f"{what}: unparseable reply: {res.text[:200]}") from exc
+    if not isinstance(rows, list):
+        raise AvailabilityError(f"{what}: unexpected reply: {res.text[:200]}")
+    return rows
+
+
 def fetch_coverage(
-    chosen: Sequence[Chosen], run: RunSection, cfg: StationSelection, http_get: HttpGet
+    chosen: Sequence[Chosen],
+    run: RunSection,
+    acfg: AvailabilityCheck,
+    http_get: HttpGet,
+    cache: JsonCache,
 ) -> dict[str, dict[str, float | None]]:
     """Per station id, per channel: fraction of the window with data (None = no measurement).
 
-    MUSTANG publishes one availability value per channel-day, so a partial-day window uses the
-    overlap-weighted daily values. SEIS-05 measures real gaps after download.
+    MUSTANG publishes one availability value per channel-day, so a partial-day window gets the
+    overlap-weighted daily values: an estimate that assumes data is spread evenly through each
+    day. SEIS-05 measures real gaps after download. Replies (including 204 "no measurement") are
+    cached under the query, so a rerun gives the same answer without the network.
     """
-    acfg = cfg.availability
     days = _window_days(run.window_start_s, run.window_end_s)
     tw = f"{days[0][0]:%Y-%m-%dT%H:%M:%S},{days[-1][0] + timedelta(days=1):%Y-%m-%dT%H:%M:%S}"
     out: dict[str, dict[str, float | None]] = {}
@@ -613,27 +783,33 @@ def fetch_coverage(
             "timewindow": tw,
             "format": "json",
         }
-        res = http_get(acfg.url, params, acfg.timeoutS)
-        if res.status == 204:
-            rows: list[dict[str, Any]] = []
-        elif res.status == 200:
-            try:
-                rows = json.loads(res.text)["measurements"].get(acfg.metric, [])
-            except (ValueError, KeyError, TypeError, AttributeError) as exc:
-                raise AvailabilityError(
-                    f"{c.id}: unparseable availability response: {res.text[:200]}"
-                ) from exc
+        what = f"{c.id}: availability query"
+        key = f"{acfg.url}?{urlencode(sorted(params.items()))}"
+        cached = cache.get(key)
+        if cached is not None:
+            res = HttpResult(status=int(cached["status"]), text=str(cached["text"]))
+            rows = _availability_rows(res, acfg.metric, what)
         else:
-            raise AvailabilityError(
-                f"{c.id}: availability service HTTP {res.status}: {res.text[:200]}"
+            res = http_with_retries(
+                http_get,
+                acfg.url,
+                params,
+                timeout_s=acfg.timeoutS,
+                retries=acfg.retries,
+                backoff_s=acfg.backoffS,
+                ok=frozenset({200, 204}),
+                what=what,
+                error=AvailabilityError,
             )
+            rows = _availability_rows(res, acfg.metric, what)  # parse before caching
+            cache.put(key, {"status": res.status, "text": res.text})
         daily: dict[tuple[str, str], float] = {}
         for row in rows:
             if row.get("loc", "") != t.location or row.get("cha") not in t.channels:
                 continue
-            key = (str(row["cha"]), str(row["start"])[:10])
+            day_key = (str(row["cha"]), str(row["start"])[:10])
             # one row per quality code; the best one says whether data exists at all
-            daily[key] = max(daily.get(key, 0.0), float(row["value"]) / 100.0)
+            daily[day_key] = max(daily.get(day_key, 0.0), float(row["value"]) / 100.0)
         per_chan: dict[str, float | None] = {}
         for cha in t.channels:
             total = 0.0
@@ -648,11 +824,12 @@ def fetch_coverage(
                 msg = f"{c.id}: no {acfg.metric} measurement for {cha} in {tw}"
                 if acfg.onMissing == "error":
                     raise AvailabilityError(msg)
-                logger.warning("%s; marking unused (onMissing=unused)", msg)
+                logger.warning("%s; coverage unknown (onMissing=%s)", msg, acfg.onMissing)
                 per_chan[cha] = None
             else:
                 per_chan[cha] = min(1.0, total)
         out[c.id] = per_chan
+    logger.info("availability: %d cache hits, %d queried", cache.hits, cache.misses)
     return out
 
 
@@ -676,13 +853,45 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     os.replace(tmp, path)
 
 
-def _fetch_to_file(client: StationClient, path: Path, **query: Any) -> None:
+class _LazyClient:
+    """Builds the FDSN client on first use, so a pure cache hit makes no network call."""
+
+    def __init__(self, cfg: StationSelection, client: StationClient | None) -> None:
+        self._cfg = cfg
+        self._client = client
+
+    def get(self) -> StationClient:
+        if self._client is None:
+            from obspy.clients.fdsn import Client
+
+            self._client = Client(self._cfg.query.fdsnClient, timeout=self._cfg.query.timeoutS)
+        return self._client
+
+
+def _fetch_to_file(client: _LazyClient, qcfg: StationQuery, path: Path, **query: Any) -> None:
+    """One station-service query saved to ``path``; retries transport errors and timeouts."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".part")
-    client.get_stations(filename=str(tmp), **query)
-    if not tmp.exists() or tmp.stat().st_size == 0:
-        raise InventoryError(f"station service returned nothing for {query}")
-    os.replace(tmp, path)
+    what = f"station query ({query.get('level')}) for {path.name}"
+    last = ""
+    for attempt in range(qcfg.retries + 1):
+        if attempt:
+            time.sleep(qcfg.backoffS * attempt)
+        try:
+            client.get().get_stations(filename=str(tmp), **query)
+        except FDSNNoDataException as exc:
+            raise InventoryError(f"{what}: the station service has no data ({exc})") from exc
+        except (FDSNException, OSError) as exc:
+            last = f"{type(exc).__name__}: {exc}"
+            logger.warning(
+                "%s failed (attempt %d of %d): %s", what, attempt + 1, qcfg.retries + 1, last
+            )
+            continue
+        if not tmp.exists() or tmp.stat().st_size == 0:
+            raise InventoryError(f"{what}: the station service returned nothing")
+        os.replace(tmp, path)
+        return
+    raise InventoryError(f"{what}: failed after {qcfg.retries + 1} attempts: {last}")
 
 
 def channel_query(run: RunSection, cfg: StationSelection) -> dict[str, Any]:
@@ -711,21 +920,6 @@ def channel_xml_path(run: RunSection, cfg: StationSelection, xml_dir: Path) -> P
     return xml_dir / f"channels_{digest}.xml"
 
 
-class _LazyClient:
-    """Builds the FDSN client on first use, so a pure cache hit makes no network call."""
-
-    def __init__(self, cfg: StationSelection, client: StationClient | None) -> None:
-        self._cfg = cfg
-        self._client = client
-
-    def get(self) -> StationClient:
-        if self._client is None:
-            from obspy.clients.fdsn import Client
-
-            self._client = Client(self._cfg.query.fdsnClient, timeout=self._cfg.query.timeoutS)
-        return self._client
-
-
 def load_channel_inventory(
     run: RunSection, cfg: StationSelection, xml_dir: Path, client: _LazyClient
 ) -> tuple[Inventory, Path]:
@@ -737,10 +931,29 @@ def load_channel_inventory(
         logger.info(
             "querying %s station metadata (channel level) -> %s", cfg.query.fdsnClient, path
         )
-        _fetch_to_file(client.get(), path, **query)
+        _fetch_to_file(client, cfg.query, path, **query)
         sidecar = {k: str(v) for k, v in query.items()} | {"client": cfg.query.fdsnClient}
         _write_json_atomic(path.with_suffix(".json"), sidecar)
     return read_inventory(str(path), format="STATIONXML"), path
+
+
+def _uncovered_channels(path: Path, t: Triplet, t0: float, t1: float) -> list[str]:
+    """Channels of ``t`` the cached XML lacks a full response for, over an epoch in [t0, t1)."""
+    cached = read_inventory(str(path), format="STATIONXML")
+    ok = {
+        ch.code
+        for net in cached.networks
+        if net.code == t.network
+        for sta in net.stations
+        if sta.code == t.station
+        for ch in sta.channels
+        if ch.location_code == t.location
+        and ch.code in t.channels
+        and ch.response is not None
+        and len(ch.response.response_stages) > 0
+        and _overlap_s(ch.start_date, ch.end_date, t0, t1) > 0
+    }
+    return [c for c in t.channels if c not in ok]
 
 
 def ensure_responses(
@@ -750,36 +963,36 @@ def ensure_responses(
     xml_dir: Path,
     client: _LazyClient,
 ) -> tuple[int, int]:
-    """``<xml_dir>/<Station.id>.xml`` at response level for each chosen triplet. (hits, fetched)"""
+    """``<xml_dir>/<Station.id>.xml`` at response level for each chosen triplet. (hits, fetched)
+
+    A cached file counts only if every chosen channel has response stages on an epoch that
+    overlaps the window; otherwise it is fetched again for this window.
+    """
     hits = fetched = 0
-    t0, t1 = UTCDateTime(run.window_start_s), UTCDateTime(run.window_end_s)
+    t0, t1 = run.window_start_s, run.window_end_s
     for c in chosen:
         t = c.triplet
         path = xml_dir / f"{c.id}.xml"
         if path.exists():
-            cached = read_inventory(str(path), format="STATIONXML")
-            have = {
-                ch.code
-                for net in cached.networks
-                for sta in net.stations
-                for ch in sta.channels
-                if ch.location_code == t.location
-            }
-            if set(t.channels) <= have:
+            missing = _uncovered_channels(path, t, t0, t1)
+            if not missing:
                 hits += 1
                 continue
             logger.info(
-                "%s: cached response XML lacks %s; refetching", c.id, set(t.channels) - have
+                "%s: cached response XML lacks a response covering the window for %s; refetching",
+                c.id,
+                missing,
             )
         _fetch_to_file(
-            client.get(),
+            client,
+            cfg.query,
             path,
             network=t.network,
             station=t.station,
             location=t.location or "--",
             channel=",".join(t.channels),
-            starttime=t0,
-            endtime=t1,
+            starttime=UTCDateTime(t0),
+            endtime=UTCDateTime(t1),
             level="response",
         )
         fetched += 1
@@ -807,10 +1020,10 @@ def build_inventory(
     http_get: HttpGet | None = None,
 ) -> InventoryResult:
     """Everything except writing run outputs. Network access only through the injected callables
-    (or their defaults), and only on cache misses for StationXML and DEM."""
+    (or their defaults), and only on cache misses (StationXML, DEM, availability, responses)."""
     get = http_get or requests_get
     lazy = _LazyClient(cfg, client)
-    xml_dir = cache_dir / cfg.query.cacheSubdir
+    xml_dir = cache_dir / STATIONXML_DIR
     inv, xml_path = load_channel_inventory(run, cfg, xml_dir, lazy)
 
     sites, excluded = collect_candidates(inv, run, cfg)
@@ -819,22 +1032,14 @@ def build_inventory(
     chosen, skipped, dropped = choose_triplets(sites, cfg)
 
     dem_cache = DemCache(
-        xml_dir / cfg.elevation.demCacheFile,
-        dem or epqs_dem(cfg, get),
-        cfg.elevation.demKeyDecimals,
+        dem_cache_path(xml_dir, cfg), dem or epqs_dem(cfg, get), cfg.elevation.demKeyDecimals
     )
     project = EnuProjector(run.origin)
     geod = Geod(ellps="WGS84")
     flags: list[dict[str, str]] = []
-    resolved: list[tuple[Chosen, str, ElevationDecision]] = []
+    resolved: list[tuple[Chosen, ElevationDecision]] = []
     for c in chosen:
         t = c.triplet
-        profile = match_profile(t.sample_rate_hz, cfg)
-        if profile is None:
-            reason = f"{t.label}: no preprocess profile for {t.sample_rate_hz:g} Hz"
-            skipped.append({"site": c.id, "reason": reason})
-            logger.warning("skip %s", reason)
-            continue
         if t.code in cfg.kind.boreholeLookingCodes and t.depth_m < cfg.kind.boreholeMinDepthM:
             msg = (
                 f"{t.label} looks like a borehole geophone but sensorDepthM is {t.depth_m:g} "
@@ -847,43 +1052,42 @@ def build_inventory(
             msg = f"{t.label} channel position is {dist_m:.0f} m from the station position"
             logger.warning("FLAG %s", msg)
             flags.append({"station": c.id, "flag": msg})
+        flags.extend({"station": c.id, "flag": note} for note in t.epoch_notes)
         dem_m = dem_cache.elevation(t.latitude, t.longitude)
         decision = resolve_elevation(
-            t.station_elev_m,
-            t.channel_elev_m,
-            t.depth_m,
-            dem_m,
-            cfg.elevation.toleranceM,
-            cfg.elevation.onAmbiguous,
-            what=t.label,
+            t.station_elev_m, t.channel_elev_m, t.depth_m, dem_m, cfg.elevation, what=t.label
         )
         if decision is None:
-            skipped.append({"site": c.id, "reason": f"{t.label}: ambiguous elevation"})
+            skipped.append({"site": c.id, "reason": f"{t.label}: elevation skipped by config"})
             continue
-        if decision.basis in ("shallow", "assumed"):
-            flags.append(
-                {
-                    "station": c.id,
-                    "flag": (
-                        f"{t.label} station elevation {decision.station_elev_m:.1f} m differs from "
-                        f"DEM {decision.dem_m:.1f} m by "
-                        f"{decision.station_elev_m - decision.dem_m:+.1f} m; kept StationXML value "
-                        f"({decision.label})"
-                    ),
-                }
-            )
-        resolved.append((c, profile, decision))
-    logger.info("DEM: %d cache hits, %d lookups", dem_cache.hits, dem_cache.misses)
+        if decision.flag is not None:
+            flags.append({"station": c.id, "flag": decision.flag})
+        resolved.append((c, decision))
+    logger.info("DEM: %d cache hits, %d lookups", dem_cache.store.hits, dem_cache.store.misses)
 
-    kept = [c for c, _, _ in resolved]
-    coverage = fetch_coverage(kept, run, cfg, get)
+    kept = [c for c, _ in resolved]
+    avail_cache = JsonCache(xml_dir / cfg.availability.cacheFile)
+    coverage = fetch_coverage(kept, run, cfg.availability, get, avail_cache)
     ensure_responses(kept, run, cfg, xml_dir, lazy)
 
     rows: list[dict[str, Any]] = []
     details: list[dict[str, Any]] = []
-    for c, profile, d in resolved:
+    for c, d in resolved:
         t = c.triplet
         cov = station_coverage(coverage[c.id])
+        if cov is None:
+            used = cfg.availability.onMissing == "used"
+            flags.append(
+                {
+                    "station": c.id,
+                    "flag": (
+                        f"no {cfg.availability.metric} measurement for the window; coverage "
+                        f"unknown, usedInRun {used} (onMissing={cfg.availability.onMissing})"
+                    ),
+                }
+            )
+        else:
+            used = cov > 0
         rows.append(
             {
                 "id": c.id,
@@ -899,8 +1103,8 @@ def build_inventory(
                 "channels": list(t.channels),
                 "sampleRateHz": t.sample_rate_hz,
                 "enu": project(t.latitude, t.longitude, d.sensor_elev_m),
-                "preprocessProfile": profile,
-                "usedInRun": cov is not None and cov > 0,
+                "preprocessProfile": c.profile,
+                "usedInRun": used,
                 "staticsS": {},
             }
         )
@@ -912,7 +1116,7 @@ def build_inventory(
                 "kind": c.kind,
                 "sampleRateHz": t.sample_rate_hz,
                 "channels": list(t.channels),
-                "profile": profile,
+                "profile": c.profile,
                 "elevation": {
                     "convention": d.convention,
                     "basis": d.basis,
@@ -926,30 +1130,42 @@ def build_inventory(
                 },
                 "coverage": cov,
                 "coverageByChannel": coverage[c.id],
+                "usedInRun": used,
             }
         )
     rows.sort(key=lambda r: r["id"])
     details.sort(key=lambda r: r["id"])
     skipped.sort(key=lambda s: s["site"])
+    flags.sort(key=lambda f: f["station"])
 
     counts = {
         "selected": len(rows),
-        "withData": sum(1 for r in rows if r["usedInRun"]),
+        "usedInRun": sum(1 for r in rows if r["usedInRun"]),
+        "withData": sum(1 for d in details if d["coverage"] is not None and d["coverage"] > 0),
+        "noAvailabilityMeasurement": sum(1 for d in details if d["coverage"] is None),
         "borehole": sum(1 for r in rows if r["kind"] == "borehole"),
         "surface": sum(1 for r in rows if r["kind"] == "surface"),
         "strongMotion": sum(1 for r in rows if r["kind"] == "strong_motion"),
         "sensorLevelStationElev": sum(
             1 for d in details if d["elevation"]["convention"] == "sensor"
         ),
+        "demSurface": sum(1 for d in details if d["elevation"]["convention"] == "dem"),
         "skippedSites": len(skipped),
         "droppedTriplets": len(dropped),
         "excludedStations": sum(len(v) for v in excluded.values()),
-        "noAvailabilityMeasurement": sum(1 for d in details if d["coverage"] is None),
         "flags": len(flags),
     }
     bad = [r["id"] for r in rows if r["kind"] == "borehole" and r["sensorDepthM"] <= 0]
     if bad:  # impossible by construction (kind is depth-based); guards against a future edit
         raise InventoryError(f"borehole stations without sensor depth: {bad}")
+    if not rows:
+        raise InventoryError(f"no station selected in bbox {run.bbox} for the window")
+    if counts["usedInRun"] == 0:
+        raise InventoryError(
+            f"none of the {len(rows)} selected stations has data in the window "
+            f"({counts['withData']} measured with data, {counts['noAvailabilityMeasurement']} "
+            f"unmeasured, onMissing={cfg.availability.onMissing})"
+        )
     report = {
         "stage": STAGE,
         "window": {"start": run.windowStart.isoformat(), "end": run.windowEnd.isoformat()},
@@ -965,8 +1181,10 @@ def build_inventory(
         "counts": counts,
     }
     logger.info(
-        "inventory: %d stations selected (%d with data in window, %d borehole), %d sites skipped",
+        "inventory: %d stations selected (%d usedInRun, %d with measured data, %d borehole), "
+        "%d sites skipped",
         counts["selected"],
+        counts["usedInRun"],
         counts["withData"],
         counts["borehole"],
         counts["skippedSites"],
@@ -1006,14 +1224,16 @@ def write_stations_parquet(rows: Sequence[Mapping[str, Any]], path: Path) -> Non
         ) from exc
 
     models = [Station.model_validate(dict(r)) for r in rows]
-    write_table(to_frame(models), path, "Station")
+    tmp = path.with_name(path.name + ".part")
+    write_table(to_frame(models), tmp, "Station")
+    os.replace(tmp, path)
 
 
 def finish(ctx: StageContext, result: InventoryResult, runtime_s: float) -> None:
-    """Write run outputs and record the stage."""
+    """Write run outputs (the table first, so a failure leaves no report) and record the stage."""
     ctx.run_dir.mkdir(parents=True, exist_ok=True)
-    _write_json_atomic(ctx.path(REPORT_FILE), result.report)
     write_stations_parquet(result.rows, ctx.path(STATIONS_FILE))
+    _write_json_atomic(ctx.path(REPORT_FILE), result.report)
     cfg: SignalConfig = ctx.config.signal
     ctx.record(
         STAGE,
@@ -1077,7 +1297,7 @@ def format_table(result: InventoryResult) -> str:
     details = {d["id"]: d for d in result.report["stations"]}
     head = (
         f"{'id':<14} {'kind':<13} {'rate':>6} {'channels':<12} {'depthM':>7} {'surfElevM':>9} "
-        f"{'sensElevM':>9} {'convention':<19} {'coverage':>8} profile"
+        f"{'sensElevM':>9} {'convention':<19} {'coverage':>8} {'used':<5} profile"
     )
     lines = [head, "-" * len(head)]
     for r in result.rows:
@@ -1087,18 +1307,21 @@ def format_table(result: InventoryResult) -> str:
             f"{r['id']:<14} {r['kind']:<13} {r['sampleRateHz']:>6g} {','.join(r['channels']):<12} "
             f"{r['sensorDepthM']:>7.1f} {r['surfaceElevM']:>9.1f} {r['sensorElevM']:>9.1f} "
             f"{d['elevation']['convention'] + '(' + d['elevation']['basis'] + ')':<19} "
-            f"{'n/a' if cov is None else f'{cov:.3f}':>8} {r['preprocessProfile']}"
+            f"{'n/a' if cov is None else f'{cov:.3f}':>8} {'yes' if r['usedInRun'] else 'no':<5} "
+            f"{r['preprocessProfile']}"
         )
     c = result.counts
     lines += [
         "",
         f"selected stations:                 {c['selected']}",
-        f"with any data in window:           {c['withData']}",
+        f"with any data in window (MUSTANG): {c['withData']}",
+        f"no availability measurement:       {c['noAvailabilityMeasurement']}",
+        f"usedInRun:                         {c['usedInRun']}",
         f"borehole (all sensorDepthM > 0):   {c['borehole']}",
         f"surface / strong_motion:           {c['surface']} / {c['strongMotion']}",
         f"station elev was sensor level:     {c['sensorLevelStationElev']}",
-        f"no availability measurement:       {c['noAvailabilityMeasurement']}",
-        f"flagged in log:                    {c['flags']}",
+        f"surface taken from the DEM:        {c['demSurface']}",
+        f"flagged:                           {c['flags']}",
     ]
     lines += [f"  ! {f['station']}: {f['flag']}" for f in result.report["flags"]]
     lines += [f"skipped sites:                     {c['skippedSites']}"]

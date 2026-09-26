@@ -27,7 +27,8 @@ class StationQuery(_Section):
     channel: str = Field(min_length=1)
     excludeNetworks: tuple[str, ...]  # e.g. SY: synthetic seismograms, never real data
     skipRestricted: bool  # drop channels whose restrictedStatus is "closed"
-    cacheSubdir: str = Field(min_length=1)  # under cache_dir: raw XML, responses, DEM cache
+    retries: int = Field(ge=0)  # extra attempts after a transport error or timeout
+    backoffS: float = Field(ge=0)  # sleep backoffS * attempt before each retry
 
 
 class ChannelRules(_Section):
@@ -89,8 +90,23 @@ class ElevationCheck(_Section):
     demNoDataValue: float  # EPQS sentinel for "no DEM here"
     demCacheFile: str = Field(min_length=1)  # JSON under the stationxml cache dir
     demKeyDecimals: int = Field(ge=0, le=8)  # lat/lon rounding for the cache key
+    # A reading of the station elevation matches when it is within toleranceM of the DEM. For a
+    # sensor no deeper than toleranceM the two readings are indistinguishable: "surface" is used.
     toleranceM: float = Field(gt=0)
-    onAmbiguous: Literal["error", "surface", "skip"]
+    # Sensor deeper than toleranceM and neither reading matches. "dem" uses the DEM as the surface.
+    onAmbiguous: Literal["error", "surface", "dem", "skip"]
+    # Shallow sensor whose station elevation misses the DEM by more than toleranceM: kept and
+    # flagged up to maxShallowMismatchM; beyond it, onShallowMismatch decides.
+    maxShallowMismatchM: float = Field(gt=0)
+    onShallowMismatch: Literal["error", "dem", "keep", "skip"]
+
+    @model_validator(mode="after")
+    def _check(self) -> "ElevationCheck":
+        if self.maxShallowMismatchM < self.toleranceM:
+            raise ValueError(
+                f"maxShallowMismatchM {self.maxShallowMismatchM} < toleranceM {self.toleranceM}"
+            )
+        return self
 
 
 class AvailabilityCheck(_Section):
@@ -99,7 +115,13 @@ class AvailabilityCheck(_Section):
     url: str = Field(min_length=1)
     metric: str = Field(min_length=1)
     timeoutS: float = Field(gt=0)
-    onMissing: Literal["error", "unused"]  # a chosen channel-day with no measurement
+    retries: int = Field(ge=0)  # extra attempts after a transport error, HTTP 429 or 5xx
+    backoffS: float = Field(ge=0)  # sleep backoffS * attempt before each retry
+    cacheFile: str = Field(min_length=1)  # raw replies, JSON under the stationxml cache dir
+    # A chosen channel-day with no measurement. MUSTANG lags about two days and never measures
+    # some channels. "used": usedInRun stays true with coverage null, and SEIS-05's measured gaps
+    # decide. "unused": the station leaves the run. "error": the stage stops.
+    onMissing: Literal["error", "unused", "used"]
 
 
 class StationSelection(_Section):
