@@ -19,9 +19,10 @@ Per event
     travel-time tables ``locator.method`` names: the per-station 1D tables of the configured layer
     model (``grid1d``, ``hq.locate.tt_grid``) or the per-station 3D tables of the 3D model
     (``grid3d``, ``hq.locate.tt_grid3d``; 1D tables for stations outside it). Tables are cached
-    under ``<cache_dir>/ttgrids/``; without ``cache_dir`` (the docs/02 call) they go to a
+    under ``<cache_dir>/ttgrids/``; without ``cache_dir`` (the docs/02 call) grid1d tables go to a
     temporary directory kept for the life of the process, so repeated validation reruns in one
-    process build them once. grid3d reads the 3D model from ``<cache_dir>/velocity/``.
+    process build them once. grid3d reads the 3D model from ``<cache_dir>/velocity/``; without
+    ``cache_dir`` it uses the data dir's cache (``default_cache_dir``), where the model lives.
 
 Outputs (``hq.locate.result`` has the dtypes)
     ``events`` (``events_located.parquet``): ``SeismicEvent`` fields except ``tier``,
@@ -87,6 +88,7 @@ from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
 from hq.locate.coords import from_enu, to_enu
 from hq.locate.locator import (
+    GRID3D,
     PICK_COLUMNS,
     EventLocation,
     Locator,
@@ -133,6 +135,29 @@ PLACEHOLDER_TIER = "C"  # only to validate rows as SeismicEvent; tier columns ar
 Statics = Mapping[tuple[str, str], float]
 
 _process_cache: list[Path] = []  # the process-lifetime table cache when no cache_dir is given
+_data_cache_logged: list[Path] = []  # grid3d data caches already logged (default_cache_dir)
+
+
+def default_cache_dir(cfg: SeismologyConfig) -> Path:
+    """The table cache when the caller passes no ``cache_dir`` (the docs/02 call).
+
+    grid1d: a temporary directory kept for the life of the process. grid3d: the data dir's cache
+    as ``hq run`` resolves it (``hq.cli.resolve_data_dir``: ``$HQ_DATA_DIR``, else
+    ``<checkout root>/data``), because the 3D model file lives in its ``velocity/`` and the 3D
+    tables (minutes to build at 100 m) are shared through its ``ttgrids/3d/``. Raises when no
+    data dir resolves; a missing model file fails when the model is opened.
+    """
+    if cfg.locator.method != GRID3D:
+        return _process_cache_dir()
+    from hq.cli import resolve_data_dir  # H4's data-dir rule; imported here to avoid a cycle
+    from hq.runs import CACHE_DIRNAME
+
+    cache = resolve_data_dir(None, Path(__file__).resolve().parent) / CACHE_DIRNAME
+    if cache not in _data_cache_logged:
+        _data_cache_logged.append(cache)
+        log.warning("locate: no cache_dir given and locator.method is grid3d: the 3D model and "
+                    "the tables come from %s", cache)
+    return cache
 
 
 def _process_cache_dir() -> Path:
@@ -393,7 +418,7 @@ def locate_detailed(
         model=load_configured_model(cfg.velocity) if model is None else model,
         config=cfg,
         run=run,
-        cache_dir=Path(cache_dir) if cache_dir is not None else _process_cache_dir(),
+        cache_dir=Path(cache_dir) if cache_dir is not None else default_cache_dir(cfg),
         model3d=model3d,
     )
     locator = build_locator(setup)

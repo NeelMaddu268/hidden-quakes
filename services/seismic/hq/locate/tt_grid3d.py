@@ -48,6 +48,12 @@ The model
     extrapolated to the model limits (clipped at the topography); p. 3 also notes a vertical
     discontinuity where the Mineral Mountains range front meets the basin fill.
 
+    Receivers in constant columns (``grid3d.constantColumns``): such a column holds no ground
+    surface and no basin data, so the file can't tell outcrop from missing data there (LOC-01:
+    such a station may sit outside the real 3D model even inside the grid). ``fallback1d`` gives
+    the receiver no 3D table (its 1D tables, named in the record); ``asFile`` builds one from the
+    column's values, which puts basement rock from the model's bottom up to the sensor.
+
 Frame and grid
     Tables live on a node lattice in the run's ENU frame (EPSG:32612 metres minus the run origin,
     ``hq.locate.coords``; elevM): nodes at multiples of ``spacingM`` in e and n, and at
@@ -55,8 +61,10 @@ Frame and grid
     every receiver inside the model plus ``horizontalMarginM``, clipped to the model's node
     extent; its top covers the highest in-model receiver or the volume top plus ``topMarginM``
     (``make_grid3d``). A receiver outside the model (outside the model's node extent, off the
-    lattice, or in a column with no finite value) gets no 3D table: the locator uses its 1D tables
-    (``hq.locate.tt_grid``) and the record names it with the reason.
+    lattice, or in a column with no finite value), or in a constant column under ``fallback1d``,
+    gets no 3D table: the locator uses its 1D tables (``hq.locate.tt_grid``) and the record names
+    it with the reason. The lattice covers constant-column receivers either way, so the knob
+    never changes another receiver's table.
 
 Resampling
     Each lattice node carries the mean slowness of its cell ``[x - h/2, x + h/2]`` on all three
@@ -142,6 +150,9 @@ VARIABLES: dict[Phase, str] = {"P": "Vp", "S": "Vs"}
 UNITS_TO_M_PER_S = {"km/s": 1000.0, "m/s": 1.0}
 TOP_SURFACE_VELOCITY = "topSurfaceVelocity"
 AS_FILE = "asFile"
+FALLBACK_1D = "fallback1d"  # grid3d.constantColumns
+CONSTANT_COLUMN_REASON = ("its model column holds one value at every elevation (no ground surface "
+                          "or basin data in the file; grid3d.constantColumns fallback1d)")
 SHA_CHUNK = 1 << 24
 
 FloatArray = NDArray[np.float64]
@@ -252,14 +263,24 @@ class Model3dSource:
 
     def column(self, i_n: int, j_e: int) -> tuple[FloatArray, FloatArray]:
         """(Vp, Vs) of one column in m/s, bottom to top."""
+        vp, vs = self.columns([i_n], [j_e])
+        return vp[0], vs[0]
+
+    def columns(self, i_n: ArrayLike, j_e: ArrayLike) -> tuple[FloatArray, FloatArray]:
+        """(Vp, Vs) in m/s of the columns at (northing, easting) indices, shape (len, elevation),
+        bottom to top."""
+        i = np.atleast_1d(np.asarray(i_n, dtype=np.intp))
+        j = np.atleast_1d(np.asarray(j_e, dtype=np.intp))
         if self.arrays is not None:
-            vp, vs = (np.array(a[i_n, j_e, :], dtype=np.float64) for a in self.arrays)
+            vp, vs = (np.array(a[i, j, :], dtype=np.float64) for a in self.arrays)
         else:
             import xarray as xr
 
+            at = {"northing": xr.DataArray(i, dims="point"),
+                  "easting": xr.DataArray(j, dims="point")}
             with xr.open_dataset(Path(str(self.path))) as ds:
-                vp, vs = (ds[VARIABLES[ph]].transpose(*DIMS).isel(northing=i_n, easting=j_e)
-                          .to_numpy().astype(np.float64) for ph in PHASES)
+                vp, vs = (ds[VARIABLES[ph]].isel(at).transpose("point", "elevation").to_numpy()
+                          .astype(np.float64) for ph in PHASES)
         return vp * self.factor, vs * self.factor
 
     def to_record(self) -> dict[str, Any]:
@@ -424,6 +445,19 @@ def handle_air(
     return fill_air(vp, mask), fill_air(vs, mask), counts
 
 
+def ground_elev_m(vp_columns: FloatArray, source: "Model3dSource") -> FloatArray:
+    """Per column (rows of ``vp_columns``, m/s, bottom to top): the model's ground, midway between
+    its topmost ground node and its lowest air node; NaN where the column holds no air (no ground
+    surface in the file)."""
+    cols = np.atleast_2d(np.asarray(vp_columns, dtype=np.float64))
+    if source.air_m_per_s is None:
+        return np.full(cols.shape[0], np.nan)
+    n_air = air_mask(cols[None, :, :], source.air_m_per_s[0])[0].sum(axis=1)
+    elev = np.asarray(source.elev_m)
+    lowest_air = elev[np.clip(elev.size - n_air, 0, elev.size - 1)]
+    return np.where(n_air > 0, lowest_air - source.spacing_m[2] / 2.0, np.nan)
+
+
 # --- lattice --------------------------------------------------------------------------------------
 
 
@@ -509,6 +543,22 @@ def model_extent_enu(source: Model3dSource, origin_utm: tuple[float, float]) -> 
     return {"eMin": float(source.easting_m[0] - x0), "eMax": float(source.easting_m[-1] - x0),
             "nMin": float(source.northing_m[0] - y0), "nMax": float(source.northing_m[-1] - y0),
             "zMin": float(source.elev_m[0]), "zMax": float(source.elev_m[-1])}
+
+
+def nearest_columns(source: Model3dSource, e_m: ArrayLike, n_m: ArrayLike,
+                    origin_utm: tuple[float, float]) -> tuple[IntArray, IntArray]:
+    """(northing, easting) indices of the model column nearest each ENU point; raises for a
+    point outside the model's horizontal node extent."""
+    x0, y0 = origin_utm
+    dn, de, _ = source.spacing_m
+    i = np.rint((np.atleast_1d(np.asarray(n_m, dtype=np.float64)) + y0 - source.northing_m[0])
+                / dn).astype(np.intp)
+    j = np.rint((np.atleast_1d(np.asarray(e_m, dtype=np.float64)) + x0 - source.easting_m[0])
+                / de).astype(np.intp)
+    bad = (i < 0) | (i >= source.northing_m.size) | (j < 0) | (j >= source.easting_m.size)
+    if np.any(bad):
+        raise ValueError(f"{int(bad.sum())} point(s) lie outside the 3D model's horizontal extent")
+    return i, j
 
 
 def make_grid3d(
@@ -938,6 +988,7 @@ class StationTables3d:
     tables: Mapping[tuple[str, Phase], Table3d]
     columns: Mapping[str, StationColumn]  # every station passed in
     air_handling: str
+    constant_columns: str  # grid3d.constantColumns
     seed_radius_m: float
     fmm_order: int
     resampling: Mapping[str, Any]  # air counts etc. from the build that wrote the tables
@@ -963,6 +1014,18 @@ class StationTables3d:
         except KeyError as err:
             raise KeyError(f"no 3D travel-time table for station {station_id!r} {phase}") from err
 
+    def column_model_of(self, station_id: str) -> LayerModel:
+        """The model column a 3D table's receiver sits in, air handled as for its table (the
+        layers its near-receiver seed used)."""
+        if not self.has(station_id):
+            raise KeyError(f"station {station_id!r} has no 3D table")
+        index = self.columns[station_id].column_index
+        if index is None:
+            raise ValueError(f"station {station_id!r} has no model column")
+        vp, vs = self.source.columns([index[0]], [index[1]])
+        vp, vs, _ = handle_air(vp[None], vs[None], self.air_handling, self.source.air_m_per_s)
+        return column_model(self.source, vp[0, 0], vs[0, 0], f"{station_id} {index}")
+
     def to_record(self) -> dict[str, Any]:
         return {
             "algorithm": ALGORITHM,
@@ -970,6 +1033,7 @@ class StationTables3d:
             "scikitFmm": skfmm.__version__,
             "grid": self.grid.to_record(),
             "airHandling": self.air_handling,
+            "constantColumns": self.constant_columns,
             "seedRadiusM": self.seed_radius_m,
             "fmmOrder": self.fmm_order,
             "resampling": dict(self.resampling),
@@ -1014,9 +1078,11 @@ def build_station_tables3d(
     """P and S 3D tables for every station inside the model (columns id, enu_e, enu_n,
     sensorElevM), built or loaded from ``<cache_dir>/ttgrids/3d/``.
 
-    Stations outside the model get none (``StationTables3d.fallback`` says why). The model's
-    values are read only when a table has to be built; they must lie inside the configured unit
-    guards (``velocity.plausibleVpMPerS`` / ``plausibleVsMPerS``, in m/s after conversion).
+    Stations outside the model, and under ``constantColumns: fallback1d`` those in a constant
+    column, get none (``StationTables3d.fallback`` says why). The lattice covers every station
+    inside the model's extent, whatever the knob says. The model's values are read only when a
+    table has to be built; they must lie inside the configured unit guards
+    (``velocity.plausibleVpMPerS`` / ``plausibleVsMPerS``, in m/s after conversion).
     ``column_grid`` (the 1D ``grids`` knobs) sets each receiver column's own 2D table
     (``solve_table3d``).
     """
@@ -1027,13 +1093,16 @@ def build_station_tables3d(
     columns = station_columns(source, stations, origin_utm)
     in_model = stations[np.array([columns[str(s)].in_model for s in stations["id"]], dtype=bool)]
     grid = make_grid3d(source, cfg, origin_utm, volume, in_model)
-    off = [str(sid) for sid, e, n, z in
-           in_model[["id", "enu_e", "enu_n", "sensorElevM"]].itertuples(index=False)
-           if not bool(grid.covers(e, n, z))]
-    for sid in off:
-        c = columns[sid]
-        columns[sid] = StationColumn(sid, False, "outside the 3D lattice (model edge)", c.kind,
-                                     c.ground_low_elev_m, c.ground_high_elev_m, c.column_index)
+    for sid, e, n, z in in_model[["id", "enu_e", "enu_n", "sensorElevM"]].itertuples(index=False):
+        c = columns[str(sid)]
+        if not bool(grid.covers(e, n, z)):
+            reason = "outside the 3D lattice (model edge)"
+        elif c.kind == "constant" and cfg.constantColumns == FALLBACK_1D:
+            reason = CONSTANT_COLUMN_REASON
+        else:
+            continue
+        columns[str(sid)] = StationColumn(str(sid), False, reason, c.kind, c.ground_low_elev_m,
+                                          c.ground_high_elev_m, c.column_index)
     receivers = {
         str(sid): (float(e), float(n), float(z))
         for sid, e, n, z in stations[["id", "enu_e", "enu_n", "sensorElevM"]].itertuples(index=False)
@@ -1070,7 +1139,8 @@ def build_station_tables3d(
     )
     return StationTables3d(
         source=source, grid=grid, tables=tables, columns=columns, air_handling=cfg.airHandling,
-        seed_radius_m=cfg.seedRadiusM, fmm_order=cfg.fmmOrder, resampling=resampling,
+        constant_columns=cfg.constantColumns, seed_radius_m=cfg.seedRadiusM,
+        fmm_order=cfg.fmmOrder, resampling=resampling,
         n_built=len(built), n_loaded=len(tables) - len(built), build_s=elapsed,
     )
 
