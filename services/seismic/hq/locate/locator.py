@@ -5,8 +5,9 @@ Search volume (ENU metres around the run origin, elevM): ``e`` and ``n`` in
 (null: ``run.refSurfaceElevM``, the ground at the origin, because a 1D search has no DEM). Every
 grid is anchored at the volume's lower corner; the top is snapped down onto the fine lattice, so
 no hypocentre lies above the configured top. Where the ground in the volume lies below that top,
-hypocentres can still land above the local ground: this locator does not check them against a DEM
-(that check is LOC-04's and does not exist yet).
+hypocentres can still land above the local ground: this locator does not check them. ``locate``
+(LOC-04) flags them against the nearest used station's surfaceElevM (``locate_flags.parquet``,
+``aboveNearestStationSurface``); there is no DEM.
 
 Misfit at a node, over the picks in use:
     d_i = t_obs_i - T_i(node) - static_i
@@ -407,6 +408,23 @@ class Locator:
         override = self.cfg.profilePickSigmaS.get(self._profile[station_index])
         sig = override if override is not None else self.cfg.pickSigmaS
         return float(sig.P if phase == "P" else sig.S)
+
+    @property
+    def station_ids(self) -> list[str]:
+        """The stations in use, in the order they were given."""
+        return list(self._index)
+
+    def travel_times(self, e_m: float, n_m: float, elev_m: float) -> pd.DataFrame:
+        """Table travel times (s) from a hypocentre at (e, n, elevM) to every station, P and S.
+
+        Columns stationId, phase, travelTimeS; stations in ``station_ids`` order, P before S.
+        """
+        rows = []
+        for sid, i in self._index.items():
+            r = math.hypot(e_m - float(self._e[i]), n_m - float(self._n[i]))
+            for ph in PHASES:
+                rows.append((sid, ph, float(self.tables.table(sid, ph).lookup(r, elev_m))))
+        return pd.DataFrame(rows, columns=["stationId", "phase", "travelTimeS"])
 
     def pick_sigma(self, station_id: str, phase: Phase) -> float:
         """Pick sigma (s) the locator uses for ``station_id`` and ``phase``."""
@@ -882,14 +900,17 @@ def locate_many(
     events: Sequence[pd.DataFrame],
     *,
     statics: Statics | None = None,
+    event_statics: Sequence[Statics | None] | None = None,
     locator: Locator | None = None,
 ) -> list[EventLocation]:
     """Locate every event (one picks frame each), in order.
 
-    With ``locator.nWorkers > 1`` the events are split over spawned processes that load the
-    same cached tables; each event is located independently, so results do not depend on the
-    worker count. ``locator`` (built from ``setup``) is reused for the serial path; one built
-    from another config or station set raises, since the workers rebuild from ``setup``.
+    ``statics`` applies to every event; ``event_statics`` (one entry per event, not with
+    ``statics``) gives each event its own. With ``locator.nWorkers > 1`` the events are split
+    over spawned processes that load the same cached tables; each event is located
+    independently, so results do not depend on the worker count. ``locator`` (built from
+    ``setup``) is reused for the serial path; one built from another config or station set
+    raises, since the workers rebuild from ``setup``.
     """
     started = time.perf_counter()
     if locator is not None and (
@@ -897,10 +918,13 @@ def locate_many(
         or list(locator._index) != setup.stations["id"].astype(str).tolist()
     ):
         raise ValueError("locator was not built from setup (config or stations differ)")
+    if event_statics is not None and (statics is not None or len(event_statics) != len(events)):
+        raise ValueError("event_statics needs one entry per event and no shared statics")
+    per_event = list(event_statics) if event_statics is not None else [statics] * len(events)
     n_workers = min(setup.config.locator.nWorkers, len(events))
     if n_workers <= 1:
         loc = locator if locator is not None else build_locator(setup)
-        out = [loc.locate(ev, statics=statics) for ev in events]
+        out = [loc.locate(ev, statics=st) for ev, st in zip(events, per_event, strict=True)]
     else:
         if locator is None:
             build_locator(setup)  # build and cache the tables once, before the workers load them
@@ -908,7 +932,7 @@ def locate_many(
         chunk = max(1, math.ceil(len(events) / (4 * n_workers)))
         with ProcessPoolExecutor(n_workers, mp_context=ctx, initializer=_init_worker,
                                  initargs=(setup,)) as pool:
-            out = list(pool.map(_locate_in_worker, [(ev, statics) for ev in events],
+            out = list(pool.map(_locate_in_worker, list(zip(events, per_event, strict=True)),
                                 chunksize=chunk))
     elapsed = time.perf_counter() - started
     log.info(
