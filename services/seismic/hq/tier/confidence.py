@@ -601,7 +601,51 @@ def run(data_dir: Path, out_dir: Path) -> dict[str, Any]:
         "permutationImportance": perm.round(4).to_dict("records"),
     }
     (out_dir / "report.json").write_text(json.dumps(report, indent=1, default=float))
+    doc = confidence_doc(report, sc[real])
+    (out_dir / "confidence.json").write_text(json.dumps(doc, sort_keys=True, separators=(",", ":")))
     return report
+
+
+LABEL = "Decoy test"
+DESCRIPTION = (
+    "How much this event's pick timing looks like a real association rather than a"
+    " scrambled-clock decoy, from a model trained on this run (not a probability that it is"
+    " an earthquake)"
+)
+
+
+def confidence_doc(report: dict[str, Any], real: pd.DataFrame) -> dict[str, Any]:
+    """The ``hq.confidence/1`` document the exporter reads from a run directory: out-of-fold
+    scores of the real candidate events, rounded to 3 decimals."""
+    chosen = report["chosen"]
+    folds = report["foldSummary(mean,std,min,max)"][chosen]
+    data = report["data"]
+    return {
+        "schema": "hq.confidence/1",
+        "runId": report["runId"],
+        "model": {
+            "type": f"{chosen} (class-weighted), out-of-fold scores",
+            "features": data["features"],
+            "trainedOn": {
+                "positives": data["real"],
+                "decoys": data["decoys"],
+                "shuffles": data["shuffles"],
+                "shiftS": data["shiftS"],
+            },
+            "heldOut": {
+                "rocAuc": folds["rocAuc"][0],
+                "rocAucStd": folds["rocAuc"][1],
+                "averagePrecision": folds["averagePrecision"][0],
+                "rocAucEqualStationCount": folds["matchedAucNSta"][0],
+                "folds": report["folds"]["n"],
+            },
+            "createdAt": report["createdAt"],
+            "gitSha": report["gitSha"],
+        },
+        "label": LABEL,
+        "description": DESCRIPTION,
+        "events": {str(e): round(float(v), 3) for e, v in zip(real["eventId"], real["score"])},
+    }
 
 
 def main(argv: list[str] | None = None) -> None:

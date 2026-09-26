@@ -180,3 +180,30 @@ def test_choose_prefers_logistic_unless_mlp_clearly_better() -> None:
 
     assert cf.choose({"logistic": s(0.95, 0.90), "mlp": s(0.955, 0.95)}) == "logistic"
     assert cf.choose({"logistic": s(0.95, 0.90), "mlp": s(0.97, 0.92)}) == "mlp"
+
+
+def test_confidence_doc_format_and_wording() -> None:
+    report = {
+        "chosen": "logistic",
+        "runId": "r1",
+        "createdAt": "2026-09-26T00:00:00Z",
+        "gitSha": "abc",
+        "data": {"features": ["quality_nP"], "real": 2, "decoys": 3, "shuffles": 1, "shiftS": 30.0},
+        "folds": {"n": 5},
+        "foldSummary(mean,std,min,max)": {
+            "logistic": {
+                "rocAuc": [0.99, 0.01, 0.98, 1.0],
+                "averagePrecision": [0.98, 0.01, 0.97, 0.99],
+                "matchedAucNSta": [0.95, 0.03, 0.9, 0.98],
+            }
+        },
+    }
+    real = pd.DataFrame({"eventId": ["e1", "e2"], "score": [0.12345, 1.0]})
+    doc = cf.confidence_doc(report, real)
+    assert doc["schema"] == "hq.confidence/1" and doc["runId"] == "r1"
+    assert doc["events"] == {"e1": 0.123, "e2": 1.0}
+    assert doc["model"]["heldOut"]["rocAuc"] == 0.99
+    # docs/00 language rules (the exporter rejects these phrases in label/description)
+    for text in (doc["label"], doc["description"]):
+        for phrase in ("confirmed earthquake", "caused by", "predict", "official"):
+            assert phrase not in text.lower()
