@@ -237,3 +237,31 @@ describe("rows()", () => {
     });
   });
 });
+
+describe("the ML-01 decoy-test row (confidence.json)", () => {
+  const CONFIDENCE = { label: "Decoy test", rocAuc: 0.8 };
+  const row = (confidence: Parameters<typeof rows>[2]) => rows(SUMMARY, VALIDATION, confidence).find((r) => r.id === "confidence");
+
+  it("comes last, labelled from the file, with the held-out AUC to two fixed decimals and a words-only note", () => {
+    const list = rows(SUMMARY, VALIDATION, CONFIDENCE);
+    expect(list.map((r) => r.id)).toEqual([...ALL, "confidence"]);
+    const r = list.at(-1)!;
+    expect(r.label).toBe("Decoy test (held-out ROC AUC)");
+    expect(r.value).toBe("0.80");
+    expect(r.note).toBeTruthy();
+    expect(r.note).not.toMatch(/\d/);
+    expect(r.note).not.toMatch(/probab|predict|confirmed/i);
+  });
+
+  it("uses a words-only fallback label when the file has none", () => {
+    expect(row({ label: null, rocAuc: 0.875 })).toMatchObject({ label: "Decoy test (held-out ROC AUC)", value: "0.88" });
+    expect(row({ label: null, rocAuc: 0.875 })!.label).not.toMatch(/\d/);
+  });
+
+  it("is absent without the file or without a finite AUC, leaving every other row as it was", () => {
+    for (const confidence of [undefined, null, { label: "x", rocAuc: null }, { label: "x", rocAuc: Number.NaN }]) {
+      expect(row(confidence)).toBeUndefined();
+      expect(rows(SUMMARY, VALIDATION, confidence).map((r) => r.id)).toEqual(ALL);
+    }
+  });
+});
