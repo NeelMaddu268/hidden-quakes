@@ -76,3 +76,17 @@ def test_a_section_validator_returning_none_is_caught() -> None:
         inner: Inner
 
     assert _model_fields_hold_models(Outer.model_validate({"inner": {"a": 1}}), "outer") != []
+
+
+def test_unmatched_reason_thresholds_follow_the_associator() -> None:
+    raw = yaml.safe_load((SEISMIC_ROOT / "configs/showcase/seismology.yaml").read_text())
+    cfg = SeismologyConfig.model_validate(raw)
+    assert cfg.matching.reasons.minPickProb == cfg.associator.minPickProb
+    assert cfg.matching.reasons.minStations <= cfg.associator.minStations
+    for key, value, message in (("minPickProb", 0.2, "must equal associator.minPickProb"),
+                                ("minStations", cfg.associator.minStations + 1,
+                                 "must not exceed associator.minStations")):
+        bad = {**raw, "matching": {**raw["matching"],
+                                   "reasons": {**raw["matching"]["reasons"], key: value}}}
+        with pytest.raises(ValueError, match=message):
+            SeismologyConfig.model_validate(bad)

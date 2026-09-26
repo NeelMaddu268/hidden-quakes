@@ -263,7 +263,7 @@ def test_residual_sigma_flags_a_spread_well_above_the_configured_sigma(
     assert sig.loc["P", "robustSigmaS"] == pytest.approx(0.05, rel=0.15)
     assert bool(sig.loc["P", "wellAbove"]) is (0.05 / sigma_p > 1.5)
     assert not bool(sig.loc["S", "wellAbove"])
-    assert sig.loc["P", "recommendedS"] == round(sig.loc["P", "robustSigmaS"], 3)
+    assert sig.loc["P", "robustSigmaRoundedS"] == round(sig.loc["P", "robustSigmaS"], 3)
 
 
 @pytest.mark.smoke
@@ -457,8 +457,21 @@ def test_stage_runs_pass_1_then_pass_2_after_a_match(
     with pytest.raises(TierError, match="stale"):
         tier_stage.check_matches_current(second, matches, world["catalog"],
                                          world["cfg"].tiering.consistencyTolM)
-    tier_stage.check_matches_current(second, match(second, world["catalog"], world["cfg"]).matches,
-                                     world["catalog"], world["cfg"].tiering.consistencyTolM)
+    rematched = match(second, world["catalog"], world["cfg"]).matches
+    tier_stage.check_matches_current(second, rematched, world["catalog"],
+                                     world["cfg"].tiering.consistencyTolM)
+
+    # After match reruns, a pass 2 rerun finds events already located with statics: the
+    # no-statics median rmsS is carried from run.json, not lost (the rerun is idempotent).
+    write_table(rematched, ctx.path("matches.parquet"), "Match")
+    stage.run(ctx)
+    third = read_table(ctx.path("events_located.parquet"))
+    pd.testing.assert_frame_equal(third, second)
+    again = ctx.records[-1]["params"]["statics"]
+    assert again["previousMedianRmsS"] == record["previousMedianRmsS"]
+    assert again["previousMedianRmsSFrom"].startswith("carried from run.json")
+    assert record["previousMedianRmsSFrom"].startswith("the run dir's previous events_located")
+    assert "carried from run.json" in ctx.path("diagnostics.md").read_text()
 
 
 def test_catalog_hypocentres_off_the_grid_are_left_out(world: dict[str, Any]) -> None:

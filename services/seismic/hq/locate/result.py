@@ -36,8 +36,10 @@ ARRIVAL_DTYPES: dict[str, str] = {
 STATIC_DTYPES: dict[str, str] = {
     "stationId": "string",
     "phase": "string",
-    "staticS": "float64",  # additive static applied by the locator (0.0 until LOC-05)
-    "nEvents": "int64",  # located events that used a pick of this station-phase
+    "staticS": "float64",  # additive term the locator applies: tPred = t0 + T + staticS
+    # the events the term was estimated from (hq.locate.statics: the reference events with a
+    # pick there under referenceEvents, the well-constrained events under selfConsistent)
+    "nEvents": "int64",
 }
 FLAG_DTYPES: dict[str, str] = {
     "eventId": "string",
