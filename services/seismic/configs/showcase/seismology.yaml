@@ -145,10 +145,13 @@ associator:
     fmmOrder: 2
     maxSeedErrorS: 0.05
   # Sweep (docs/lanes/H2 -> Association): every combination of these values, all other knobs as
-  # above. Candidate counts are logged and recorded per point; sweep.parquet (SweepPoint rows with
-  # recoveredPublic and tierA) is written only when a locate/match/tier evaluator is wired (LOC-06).
+  # above. sweep.parquet (SweepPoint: located candidates, recoveredPublic, tierA) is written by
+  # LOC-06's tier stage, which runs the sweep with its locate/match/tier evaluator. enabled: true
+  # also runs it in stage associate, only to log and record associated counts per point: one
+  # PyOcto run per (minPickProb, nSPicks) pair beyond the configured one, several minutes on a
+  # full day at the permissive points, so it is off by default.
   sweep:
-    enabled: true
+    enabled: false
     minStations: [4, 5, 6, 8]
     nSPicks: [0, 1, 2]
     minPickProb: [0.1, 0.2, 0.3]

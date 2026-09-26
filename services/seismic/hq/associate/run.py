@@ -1,11 +1,17 @@
 """Stage ``associate``: picks + stations -> ``assoc_events.parquet``, ``assoc_picks.parquet`` (LOC-03).
 
 Reads ``associator.picksTable`` (``known/picks.parquet`` or ``picks.parquet``) and
-``stations.parquet`` from the run dir, associates at the configured point, then runs the sweep
-(``associator.sweep.enabled``). ``sweep.parquet`` is written only when an ``evaluate`` callback is
-passed (locate + match + tier, LOC-06); without one the per-point candidate counts go to the log
-and the record, and a ``sweep.parquet`` left by an earlier run is removed, since it would describe
-another association. Outputs are written under ``.part`` names and moved into place together.
+``stations.parquet`` from the run dir and associates at the configured point. With
+``associator.sweep.enabled`` it also associates at every sweep point and logs and records the
+candidate count of each (the configured point's PyOcto run is reused). ``sweep.parquet`` needs
+public recall and Tier A from locate, match and tier, so LOC-06's tier stage writes it with
+``hq.associate.sweep.run_sweep`` and ``sweep_points``; this stage only removes a ``sweep.parquet``
+left by an earlier run, since it would describe another association. Outputs are written under
+``.part`` names and moved into place together.
+
+The package attribute ``hq.associate.run`` is this module's ``run`` function (the stage registry
+resolves it there), so ``import hq.associate.run as m`` binds the function, not this module; reach
+the module with ``importlib.import_module("hq.associate.run")``.
 """
 
 import logging
@@ -14,12 +20,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hq_contracts.io import read_table, write_models, write_table
-from hq_contracts.models import SweepPoint
+import pandas as pd
+from hq_contracts.io import read_table, write_table
 
-from hq.associate.core import associate_setup, prepared, record
+from hq.associate.core import finish, prepared, record, run_pyocto
 from hq.associate.result import EVENTS_MODEL, PICKS_MODEL
-from hq.associate.sweep import Evaluate, grid, run_sweep, sweep_points
+from hq.associate.sweep import grid, run_sweep
 
 if TYPE_CHECKING:
     from hq.runs import RunContext
@@ -32,60 +38,64 @@ EVENTS_TABLE = "assoc_events.parquet"
 PICKS_TABLE = "assoc_picks.parquet"
 SWEEP_TABLE = "sweep.parquet"
 PART_SUFFIX = ".part"
+INPUT_MODELS = {"picks": "Pick", "stations": "Station"}  # docs/02 §2 model names
 
 
 def _part(path: Path) -> Path:
     return path.with_name(path.name + PART_SUFFIX)
 
 
-def run(ctx: "RunContext", *, evaluate: Evaluate | None = None) -> None:
-    """Stage ``associate`` (docs/02 §4). ``evaluate`` wires the full sweep (LOC-06)."""
+def _read_input(path: Path, what: str) -> pd.DataFrame:
+    frame = read_table(path)
+    model = frame.attrs.get("model")
+    if model != INPUT_MODELS[what]:
+        raise ValueError(f"{path} holds {model!r} rows; the {what} input must hold "
+                         f"{INPUT_MODELS[what]!r} rows (docs/02 §2)")
+    return frame
+
+
+def run(ctx: "RunContext") -> None:
+    """Stage ``associate`` (docs/02 §4)."""
     started = time.perf_counter()
     seis = ctx.config.seismology
     acfg = seis.associator
     picks_path = ctx.path(acfg.picksTable)
-    picks = read_table(picks_path)
-    stations = read_table(ctx.path(STATIONS_TABLE))
+    picks = _read_input(picks_path, "picks")
+    stations = _read_input(ctx.path(STATIONS_TABLE), "stations")
     log.info("associate: %d picks from %s, %d stations", len(picks), picks_path, len(stations))
 
     with prepared(stations, seis, ctx.config.run, cache_dir=ctx.cache_dir) as setup:
-        result, counts = associate_setup(picks, setup, acfg)
+        raw = run_pyocto(picks, setup, acfg)
+        result, counts = finish(raw, acfg, setup)
         params: dict[str, Any] = record(acfg, setup, picks)
-        rows = run_sweep(picks, setup, acfg, evaluate) if acfg.sweep.enabled else []
+        rows = run_sweep(picks, setup, acfg, reuse=raw) if acfg.sweep.enabled else []
 
     outputs = {
         ctx.path(EVENTS_TABLE): (result.events, EVENTS_MODEL),
         ctx.path(PICKS_TABLE): (result.picks, PICKS_MODEL),
     }
-    sweep_path = ctx.path(SWEEP_TABLE)
-    parts = [_part(path) for path in [*outputs, sweep_path]]
     try:
         for path, (frame, model_name) in outputs.items():
             write_table(frame, _part(path), model_name)
-        if evaluate is not None and rows:
-            write_models(sweep_points(rows), _part(sweep_path), SweepPoint)
         for path in outputs:
             os.replace(_part(path), path)
-        if evaluate is not None and rows:
-            os.replace(_part(sweep_path), sweep_path)
-        elif sweep_path.exists():
-            sweep_path.unlink()
-            log.warning(
-                "associate: removed %s from an earlier run (sweep not scored in this run)",
-                sweep_path,
-            )
     finally:
-        for part in parts:
-            part.unlink(missing_ok=True)
+        for path in outputs:
+            _part(path).unlink(missing_ok=True)
+    sweep_path = ctx.path(SWEEP_TABLE)
+    if sweep_path.exists():
+        sweep_path.unlink()
+        log.warning("associate: removed %s from an earlier association (LOC-06 rewrites it)",
+                    sweep_path)
 
     params["input"] = {"picksTable": acfg.picksTable, "stationsTable": STATIONS_TABLE}
     params["sweep"] = {
         "enabled": acfg.sweep.enabled,
         "grid": grid(acfg) if acfg.sweep.enabled else [],
-        "points": [{"params": r.params, "candidates": r.candidates} for r in rows],
-        "sweepTableWritten": evaluate is not None and bool(rows),
-        "note": "recoveredPublic and tierA need locate, match and tier; the full sweep "
-        "(sweep.parquet) is completed in LOC-06",
+        "points": [{"params": r.params, "associated": r.candidates} for r in rows],
+        "note": "associated = events after this stage's post-processing at that point, before "
+        "location; sweep.parquet (SweepPoint with located candidates, recoveredPublic and tierA) "
+        "is written by LOC-06",
     }
     runtime_s = time.perf_counter() - started
     counts = {**counts, "sweepPoints": len(rows)}
