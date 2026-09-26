@@ -52,6 +52,7 @@ from hq.locate.tt_grid import PHASES, layered_first_arrival
 
 if TYPE_CHECKING:
     from hq.locate import LocateDetails
+    from hq.locate.statics import StaticsReport
     from hq.locate.synthetic import SyntheticResult
 
 log = logging.getLogger(__name__)
@@ -95,6 +96,7 @@ class DiagnosticsInputs:
     catalog_errors: pd.DataFrame | None = None  # catalog_uncertainties() when catalog.quakeml is
     known_ids: tuple[str, ...] | None = None  # known/windows.json ids when present
     synthetic: "SyntheticResult | None" = None  # the stage's synthetic recovery test
+    statics: "StaticsReport | None" = None  # the statics pass (LOC-05)
 
 
 def _cell(text: str) -> str:
@@ -544,7 +546,14 @@ def row_stations(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> tuple[Row, list
         f"{_f(ok.loc[ok.phase == 'S', 'medianS'].min(), '+.3f')} to "
         f"{_f(ok.loc[ok.phase == 'S', 'medianS'].max(), '+.3f')} s. All station-phases: appendix B."
     )
-    if len(flagged):
+    rep = inputs.statics
+    if rep is not None and rep.pass_number == 2:
+        conclusion = (
+            f"Residuals after statics: {len(flagged)} station-phase median(s) still exceed "
+            f"{dcfg.stationResidualFlagS:g} s. The statics themselves, and a written "
+            "explanation of each above that, are in the Station statics section."
+        )
+    elif len(flagged):
         conclusion = (
             f"Station terms matter: {len(flagged)} station-phase median(s) exceed "
             f"{dcfg.stationResidualFlagS:g} s. LOC-05 statics absorb them, and each static above "
@@ -1096,6 +1105,195 @@ def catalog_section(
     return lines
 
 
+# --- station statics (LOC-05) ----------------------------------------------------------------------
+
+
+def _row(cells: list[str]) -> str:
+    return "| " + " | ".join(_cell(c) for c in cells) + " |"
+
+
+def _offsets_lines(rep: "StaticsReport") -> list[str]:
+    summary = rep.offsets_summary()
+    ref = rep.reference
+    if not summary or ref is None:
+        return []
+    lines = [
+        (f"Cross-validated offsets from the public regional catalog over the {len(ref)} "
+         "reference events (ours minus the catalog's; vertical = elevM, the catalog's from its "
+         "stated datum). This is the honest accuracy number for events located with these "
+         "terms:"),
+        "",
+        _row(["locations", "horizontal median (m)", "horizontal p90 (m)", "abs(dz) median (m)",
+              "abs(dz) p90 (m)", "median rmsS (s)"]),
+        _row(["---"] * 6),
+    ]
+    for when, label in (("before", "no statics"), ("after", f"held-out terms ({rep.extra.get('foldScheme', '')})")):
+        o = summary[when]
+        lines.append(_row([label, _f(o["medianHM"]), _f(o["p90HM"]), _f(o["medianAbsDzM"]),
+                           _f(o["p90AbsDzM"]), _f(o["medianRmsS"], ".3f")]))
+    lines += ["", (
+        f"Median signed offsets with held-out terms: de {ref['afterDeM'].median():+.0f} m, dn "
+        f"{ref['afterDnM'].median():+.0f} m, dz {ref['afterDzM'].median():+.0f} m (no statics: de "
+        f"{ref['beforeDeM'].median():+.0f} m, dn {ref['beforeDnM'].median():+.0f} m, dz "
+        f"{ref['beforeDzM'].median():+.0f} m)."
+    ), ""]
+    return lines
+
+
+def statics_section(inputs: DiagnosticsInputs) -> list[str]:
+    """The statics pass: method, terms, a written explanation per term above the flag, spread."""
+    lines = ["## Station statics (LOC-05)", ""]
+    rep = inputs.statics
+    if rep is None:
+        lines.append("No statics pass ran with this report.")
+        return lines
+    scfg = inputs.cfg.statics
+    flag = inputs.cfg.diagnostics.stationResidualFlagS
+    terms = rep.terms
+    lines.append(f"Mode `{rep.mode}`, pass {rep.pass_number}: {rep.note}.")
+    lines.append("")
+    if rep.mode == "referenceEvents":
+        lines += [
+            ("Pipeline order in this mode: locate (pass 1, no statics) -> match -> locate (pass "
+             "2, reference terms read through matches.parquet) -> match -> tier. Stage locate "
+             "runs pass 2 when matches.parquet is in the run dir, pass 1 otherwise; `locate()` "
+             "(docs/02) has no matches and runs pass 1."), ""]
+    if rep.pass_number == 1:
+        lines.append("No statics applied in this pass.")
+        lines += ["", *_sigma_lines(rep, scfg.sigmaFlagRatio)]
+        return lines
+    if rep.mode == "referenceEvents":
+        lines += [
+            "Method: each reference event is a public regional catalog event matched to a "
+            "candidate event (matches.parquet). Its hypocentre is fixed at the catalog's "
+            "(latitude/longitude to ENU through hq.locate.coords; elevM from the catalog's stated "
+            "depth datum), and our associated picks are compared with the travel times from "
+            "there. Median polish over the reference events: per event the origin time is the "
+            "locator's weighted median, per station-phase the term is the median residual "
+            f"({scfg.polishIterations} alternations), capped at +/- referenceCapS "
+            f"{scfg.referenceCapS:g} s, and 0 with fewer than minReferenceEvents "
+            f"{scfg.minReferenceEvents} reference events. Every reference event was relocated "
+            "with terms computed without it; unmatched candidate events use the terms from all "
+            "reference events (statics.parquet)."
+            + (f" Left out, hypocentre outside the travel-time grid: {', '.join(rep.skipped)}."
+               if rep.skipped else ""),
+            "",
+            ("Absolute positions are therefore tied to the public regional catalog's (UUSS) "
+             "frame: the terms carry the catalog's own velocity model and locations into ours, "
+             "so agreement with the catalog is no longer independent evidence of accuracy. Only "
+             "the held-out (cross-validated) offsets below are. The terms are calibrated for "
+             "sources near the reference events; they are less valid for candidate events far "
+             "from them."),
+            "",
+            *_offsets_lines(rep),
+        ]
+    else:
+        hist = rep.history
+        lines += [
+            (f"Method: pass 1 without statics, then {scfg.iterations} iteration(s): each "
+             "station-phase static = current static + the median used-pick residual over the "
+             f"well-constrained events (nStations >= {scfg.wellConstrained.minStations}, nS >= "
+             f"{scfg.wellConstrained.minS}, gapDeg <= {scfg.wellConstrained.maxGapDeg:g}, no "
+             f"depthOnEdge, formal errors present), capped at +/- capS {scfg.capS:g} s, 0 with "
+             f"fewer than minEvents {scfg.minEvents} events; every event relocated with the new "
+             "statics."), "",
+            _row(["iteration", "median rmsS (s)", "well-constrained events", "non-zero statics",
+                  "max abs static (s)"]), _row(["---"] * 5),
+            *[_row([str(int(h.iteration)), _f(h.medianRmsS, ".3f"), str(int(h.nCalibration)),
+                    str(int(h.nNonZero)), _f(h.maxAbsS, ".3f")]) for h in hist.itertuples()],
+            "",
+        ]
+    after_all = float(inputs.details.result.events["quality_rmsS"].median())
+    prev = rep.previous_median_rms_s
+    lines.append(
+        f"Median rmsS over all {len(inputs.details.result.events)} located events with statics: "
+        f"{after_all:.3f} s" + (f"; the run dir's previous events_located.parquet, located "
+                                f"without statics: {prev:.3f} s." if prev is not None else
+                                "; no no-statics events_located.parquet was in the run dir to "
+                                "compare with.")
+    )
+    lines.append("")
+    active = terms[terms["nEvents"] >= rep.min_events]
+    below = terms[terms["nEvents"] < rep.min_events]
+    clipped = active[active["rawS"].abs() > rep.cap_s]
+    if len(active):
+        big = active.loc[active["rawS"].abs().idxmax()]
+        lines.append(
+            f"Cap: +/- {rep.cap_s:g} s clips {len(clipped)} of {len(active)} estimated terms. "
+            f"Largest uncapped term {big['rawS']:+.3f} s ({big['stationId']} {big['phase']}, "
+            f"{int(big['nEvents'])} events, MAD over those events {big['madS']:.3f} s); the "
+            f"largest MAD over events of any estimated term is {active['madS'].max():.3f} s, so "
+            "each term is a consistent delay across events, not the scatter of a few picks."
+            + (" The cap is a guard against a phase mix-up becoming a term; one that clips no "
+               "term this consistent leaves the lateral structure in place." if clipped.empty
+               else " Clipped terms leave part of the station's delay in the residuals.")
+        )
+    if len(below):
+        lines.append("")
+        lines.append(
+            f"Below the minimum of {rep.min_events} events, set to 0 (flagged; nEvents in "
+            "statics.parquet shows the count): " + ", ".join(
+                f"{r.stationId} {r.phase} (n {int(r.nEvents)})"
+                for r in below.itertuples(index=False)) + "."
+        )
+    lines += ["", _row(["stationId", "phase", "staticS (s)", "uncapped (s)", "nEvents",
+                        "MAD over events (s)", "note"]), _row(["---"] * 7)]
+    for r in terms.itertuples(index=False):
+        note = (f"< {rep.min_events} events: 0" if r.nEvents < rep.min_events else
+                f"capped at {rep.cap_s:g}" if abs(r.rawS) > rep.cap_s else
+                f"> {flag:g} s: explained below" if abs(r.staticS) > flag else "")
+        lines.append(_row([str(r.stationId), str(r.phase), f"{r.staticS:+.3f}",
+                           f"{r.rawS:+.3f}", str(int(r.nEvents)), _f(r.madS, ".3f"), note]))
+    ex = rep.explanations
+    n_un = int((ex["verdict"] == "unexplained").sum())
+    counts = ex["verdict"].value_counts()
+    lines += ["", f"### Written explanation of every static above {flag:g} s", "",
+              f"{len(ex)} static(s) above {flag:g} s: " + (", ".join(
+                  f"{k} {int(v)}" for k, v in counts.items()) if len(ex) else "none") + ". "
+              + (f"{n_un} unexplained (the depth gate asks for none)." if n_un else
+                 "None unexplained.")
+              + " Evidence rules: seismology.yaml `statics.explain`; the verdict is the first of "
+              "lateral / path / timing that holds.", ""]
+    if len(ex):
+        lines += [_row(["stationId", "phase", "staticS (s)", "verdict", "explanation"]),
+                  _row(["---"] * 5)]
+        lines += [_row([str(r.stationId), str(r.phase), f"{r.staticS:+.3f}", str(r.verdict),
+                        str(r.explanation)]) for r in ex.itertuples(index=False)]
+        lines.append("")
+    lines += _sigma_lines(rep, scfg.sigmaFlagRatio)
+    return lines
+
+
+def _sigma_lines(rep: "StaticsReport", ratio_flag: float) -> list[str]:
+    sig = rep.sigma
+    when = "after" if rep.pass_number == 2 else "without"
+    title = f"### Residual spread vs pick sigma ({when} statics; used picks of the {rep.sigma_events})"
+    lines = [title, "",
+             _row(["phase", "picks", "pickSigmaS (s)", "robust sigma 1.4826 x MAD (s)",
+                   "ratio"]), _row(["---"] * 5)]
+    lines += [_row([str(r.phase), str(int(r.nPicks)), f"{r.configuredS:g}",
+                    _f(r.robustSigmaS, ".3f"), _f(r.ratio, ".2f")])
+              for r in sig.itertuples(index=False)]
+    above = sig[sig["wellAbove"]]
+    lines.append("")
+    if len(above):
+        lines.append(
+            "Well above the configured sigma (ratio > statics.sigmaFlagRatio "
+            f"{ratio_flag:g}): " + ", ".join(
+                f"{r.phase} {r.robustSigmaS:.3f} s vs {r.configuredS:g} s"
+                for r in above.itertuples(index=False))
+            + ". Recommended locator.pickSigmaS: " + ", ".join(
+                f"{r.phase} {r.recommendedS:.3f} s" for r in sig.itertuples(index=False))
+            + " (the robust sigma above). Not applied: the lead decides whether to change config. "
+            "Until then hErrM / vErrM stay formal errors at the configured sigma, smaller than "
+            "this spread supports."
+        )
+    else:
+        lines.append(f"No phase's robust sigma exceeds {ratio_flag:g}x its pickSigmaS; the "
+                     "configured sigmas stand.")
+    return lines
+
+
 # --- report ---------------------------------------------------------------------------------------
 
 
@@ -1118,7 +1316,8 @@ def build_rows(inputs: DiagnosticsInputs) -> tuple[list[Row], dict[str, list[str
     return rows, {"stations": stations_table, "medians": medians_table,
                   "sigma": sigma_section(inputs, pa), "synthetic": synthetic_section(inputs),
                   "tableErrors": table_error_section(inputs, ua),
-                  "catalog": catalog_section(inputs, comp, lateral)}
+                  "catalog": catalog_section(inputs, comp, lateral),
+                  "statics": statics_section(inputs)}
 
 
 def build_diagnostics(inputs: DiagnosticsInputs) -> str:
@@ -1126,7 +1325,11 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
     rows, extra = build_rows(inputs)
     d = inputs.details
     c = d.counts
-    applied = d.record["locate"]["statics"]
+    rep = inputs.statics
+    applied = (f"mode `{rep.mode}` pass {rep.pass_number}"
+               + (" (applied)" if rep.pass_number == 2 else " (none applied)")
+               if rep is not None else
+               "applied" if d.record["locate"]["statics"]["applied"] else "none")
     lines = [
         "# Location diagnostics (LOC-04)",
         "",
@@ -1134,8 +1337,8 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
             f"Run `{inputs.run_id}`, stage `locate`: {c['events']} of {c['assocEvents']} "
             f"association events located as candidate events on {c['stations']} stations "
             f"({c['picksUsed']} of {c['picksIn']} associated picks used), method `grid1d` on the "
-            f"`{d.velocity_model.get('name', '?')}` layer model, statics "
-            f"{'applied' if applied['applied'] else 'none (LOC-05)'}. depthOnEdge "
+            f"`{d.velocity_model.get('name', '?')}` layer model, statics {applied} (Station "
+            f"statics section). depthOnEdge "
             f"{c['eventsDepthOnEdge']}, MAP on the volume top {c['eventsMapOnVolumeTop']}, PDF "
             f"truncated {c['eventsPdfTruncated']}."
         ),
@@ -1158,7 +1361,8 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
         test = test.format(k=inputs.cfg.diagnostics.minSForDepth)
         cells = [str(row.number), suspect, test, row.result, row.conclusion, fix]
         lines.append("| " + " | ".join(_cell(x) for x in cells) + " |")
-    lines += ["", *extra["sigma"], "", *extra["synthetic"], "", *extra["tableErrors"], "",
+    lines += ["", *extra["statics"], "", *extra["sigma"], "", *extra["synthetic"], "",
+              *extra["tableErrors"], "",
               *extra["catalog"], "",
               "## Appendix A: stations (row 1)", "", *extra["stations"], "",
               "## Appendix B: residuals per station and phase (row 6, input for LOC-05)", "",

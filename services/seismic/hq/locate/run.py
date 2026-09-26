@@ -1,8 +1,9 @@
-"""Stage ``locate`` (LOC-04): association -> located candidate events, arrivals, statics, report.
+"""Stage ``locate`` (LOC-04, LOC-05): association -> located candidate events, arrivals, statics.
 
 Reads ``assoc_events.parquet``, ``assoc_picks.parquet``, the picks table the association read
-(``associator.picksTable``) and ``stations.parquet`` (its ``usedInRun`` stations), runs
-``hq.locate.locate_detailed`` with the run's cache dir, then the synthetic recovery test
+(``associator.picksTable``) and ``stations.parquet`` (its ``usedInRun`` stations), locates with
+the configured statics (``hq.locate.statics.locate_with_statics``) and the run's cache dir, then
+the synthetic recovery test
 (``hq.locate.synthetic``) on the same used stations and tables, and writes
 ``events_located.parquet``, ``arrivals.parquet``, ``statics.parquet``, ``synthetic.json``
 (docs/02 §2), ``locate_flags.parquet`` (H2-internal, see ``hq.locate``) and ``diagnostics.md``
@@ -11,6 +12,14 @@ run's located events first (``measured_pick_stats``). The report also reads, whe
 ``catalog.parquet`` and ``catalog.quakeml`` (public regional catalog comparison) and H1's
 ``known/windows.json`` (which public events are the known ones). Every output is written under a
 ``.part`` name first and moved into place only after all of them were written.
+
+Statics (``statics.mode``). referenceEvents, the default, runs in two passes of this stage:
+locate (pass 1, no statics) -> match -> locate (pass 2) -> match -> tier. When
+``matches.parquet`` is in the run dir, this stage runs pass 2: the matched public events are the
+reference events (mapped to their association events through the ``events_located.parquet`` and
+``locate_flags.parquet`` the match read; a matches table written for other located events fails
+the stage), and ``catalog.parquet`` gives their hypocentres. Without ``matches.parquet`` it runs
+pass 1 and logs that the statics pass needs a match first. selfConsistent needs nothing more.
 
 ``ctx.record`` gets the counts, the runtime, the locator record (``ProcessingRun.locator``, with
 the stage's conventions under ``locate``, the synthetic test's params under ``synthetic`` and the
@@ -33,10 +42,11 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 from hq_contracts.io import read_table, write_table
 
-from hq.locate import LocateDetails, locate_detailed
+from hq.locate import LocateDetails
 from hq.locate.diagnostics import DiagnosticsInputs, build_diagnostics, catalog_uncertainties
 from hq.locate.locator import LocatorSetup
 from hq.locate.result import ARRIVALS_MODEL, EVENTS_MODEL, FLAGS_MODEL, STATICS_MODEL
+from hq.locate.statics import REFERENCE_EVENTS, locate_with_statics, reference_pairs
 from hq.locate.synthetic import (
     SyntheticResult,
     measured_pick_stats,
@@ -65,11 +75,14 @@ SYNTHETIC_JSON = "synthetic.json"  # docs/02 SyntheticTest
 SYNTHETIC_PARAMS_SKIPPED = ("locator", "velocityModel")
 CATALOG_TABLE = "catalog.parquet"
 CATALOG_QUAKEML = "catalog.quakeml"
+MATCHES_TABLE = "matches.parquet"  # a prior match pass: the reference events (LOC-05)
 KNOWN_WINDOWS = "known/windows.json"
 PART_SUFFIX = ".part"
-# Model name each input's parquet metadata must carry (docs/02 §2; the assoc tables are LOC-03's).
+# Model name each input's parquet metadata must carry (docs/02 §2; the assoc tables are LOC-03's,
+# matches MATCH-02's, events_located and locate_flags this stage's own).
 INPUT_MODELS = {"picks": "Pick", "stations": "Station", "assoc_events": "AssocEvent",
-                "assoc_picks": "AssocPick", "catalog": "CatalogEvent"}
+                "assoc_picks": "AssocPick", "catalog": "CatalogEvent", "matches": "Match",
+                "events_located": EVENTS_MODEL, "locate_flags": FLAGS_MODEL}
 
 
 def _part(path: Path) -> Path:
@@ -112,6 +125,29 @@ def known_ids(path: Path) -> tuple[str, ...] | None:
     return tuple(ids) if ids else None
 
 
+def reference_input(ctx: "RunContext") -> pd.DataFrame | None:
+    """Reference events for statics mode referenceEvents: ``reference_pairs`` from the run dir's
+    matches, or None (logged) when ``matches.parquet`` is absent or the mode is another."""
+    if ctx.config.seismology.statics.mode != REFERENCE_EVENTS:
+        return None
+    path = ctx.path(MATCHES_TABLE)
+    if not path.is_file():
+        log.info("locate: statics mode referenceEvents: no %s yet; this is pass 1 (no statics). "
+                 "The statics pass needs a match first: rerun stage locate after stage match",
+                 MATCHES_TABLE)
+        return None
+    needed = [ctx.path(n) for n in (EVENTS_TABLE, FLAGS_TABLE, CATALOG_TABLE)]
+    absent = [p.name for p in needed if not p.is_file()]
+    if absent:
+        raise ValueError(f"{path} is present but {absent} are not: the reference statics pass "
+                         "maps matched events through the tables the match read")
+    return reference_pairs(
+        _read(path, "matches"), _read(ctx.path(EVENTS_TABLE), "events_located"),
+        _read(ctx.path(FLAGS_TABLE), "locate_flags"), _read(ctx.path(CATALOG_TABLE), "catalog"),
+        ctx.config.run,
+    )
+
+
 def synthetic_test(
     ctx: "RunContext", details: LocateDetails, picks: pd.DataFrame, stations: pd.DataFrame
 ) -> SyntheticResult:
@@ -146,8 +182,13 @@ def run(ctx: "RunContext") -> None:
     log.info("locate: %d association events, %d picks from %s, %d stations",
              len(assoc.events), len(picks), picks_path, len(stations))
 
-    details = locate_detailed(assoc, picks, stations, cfg, run_cfg, run_id=ctx.run_id,
-                              cache_dir=ctx.cache_dir)
+    reference = reference_input(ctx)
+    previous = (_read(ctx.path(EVENTS_TABLE), "events_located")
+                if ctx.path(EVENTS_TABLE).is_file() else None)
+    outcome = locate_with_statics(assoc, picks, stations, cfg, run_cfg, run_id=ctx.run_id,
+                                  cache_dir=ctx.cache_dir, reference=reference,
+                                  previous_events=previous)
+    details = outcome.details
     synthetic = synthetic_test(ctx, details, picks, stations)
     catalog_path = ctx.path(CATALOG_TABLE)
     quakeml_path = ctx.path(CATALOG_QUAKEML)
@@ -165,6 +206,7 @@ def run(ctx: "RunContext") -> None:
             if catalog is not None and quakeml_path.is_file() else None,
             known_ids=known_ids(ctx.path(KNOWN_WINDOWS)),
             synthetic=synthetic,
+            statics=outcome.report,
         )
     )
 
@@ -189,7 +231,15 @@ def run(ctx: "RunContext") -> None:
             _part(path).unlink(missing_ok=True)
 
     runtime_s = time.perf_counter() - started
-    counts = {**details.counts, "syntheticEvents": synthetic.report.nEvents}
+    rep = outcome.report
+    counts = {
+        **details.counts, "syntheticEvents": synthetic.report.nEvents,
+        "staticsPass": rep.pass_number,
+        "staticsReferenceEvents": 0 if rep.reference is None else len(rep.reference),
+        "staticsNonZero": int((rep.terms["staticS"] != 0.0).sum()),
+        "staticsExplained": int((rep.explanations["verdict"] != "unexplained").sum()),
+        "staticsUnexplained": int((rep.explanations["verdict"] == "unexplained").sum()),
+    }
     params: dict[str, Any] = {
         **details.record,
         "synthetic": {
@@ -200,9 +250,11 @@ def run(ctx: "RunContext") -> None:
             "picksTable": cfg.associator.picksTable,
             "stationsTable": STATIONS_TABLE,
             "assocTables": [ASSOC_EVENTS_TABLE, ASSOC_PICKS_TABLE],
+            "referenceMatches": MATCHES_TABLE if reference is not None else None,
         },
         "outputs": [p.name for p in targets],
         "diagnostics": cfg.diagnostics.model_dump(mode="json"),
+        "statics": {"config": cfg.statics.model_dump(mode="json"), **rep.to_record()},
         "locateRuntimeS": details.runtime_s,
     }
     log.info("locate: wrote %s in %.1f s", ", ".join(p.name for p in targets), runtime_s)
