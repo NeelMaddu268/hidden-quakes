@@ -2,16 +2,20 @@
 
 Reads ``assoc_events.parquet``, ``assoc_picks.parquet``, the picks table the association read
 (``associator.picksTable``) and ``stations.parquet`` (its ``usedInRun`` stations), runs
-``hq.locate.locate_detailed`` with the run's cache dir, and writes ``events_located.parquet``,
-``arrivals.parquet``, ``statics.parquet`` (docs/02 §2), ``locate_flags.parquet`` (H2-internal, see
-``hq.locate``) and ``diagnostics.md`` (``hq.locate.diagnostics``). The report also reads, when
-present, ``catalog.parquet`` and ``catalog.quakeml`` (public regional catalog comparison) and
-H1's ``known/windows.json`` (which public events are the known ones). Every output is written
-under a ``.part`` name first and moved into place only after all of them were written.
+``hq.locate.locate_detailed`` with the run's cache dir, then the synthetic recovery test
+(``hq.locate.synthetic``) on the same used stations and tables, and writes
+``events_located.parquet``, ``arrivals.parquet``, ``statics.parquet``, ``synthetic.json``
+(docs/02 §2), ``locate_flags.parquet`` (H2-internal, see ``hq.locate``) and ``diagnostics.md``
+(``hq.locate.diagnostics``). Null ``synthetic.sKeepProb`` / ``pickProb`` are measured from this
+run's located events first (``measured_pick_stats``). The report also reads, when present,
+``catalog.parquet`` and ``catalog.quakeml`` (public regional catalog comparison) and H1's
+``known/windows.json`` (which public events are the known ones). Every output is written under a
+``.part`` name first and moved into place only after all of them were written.
 
 ``ctx.record`` gets the counts, the runtime, the locator record (``ProcessingRun.locator``, with
-the stage's conventions under ``locate`` and the diagnostics knobs) and the top-extended velocity
-model the tables were solved on (``ProcessingRun.velocityModel``).
+the stage's conventions under ``locate``, the synthetic test's params under ``synthetic`` and the
+diagnostics knobs) and the top-extended velocity model the tables were solved on
+(``ProcessingRun.velocityModel``).
 
 The package attribute ``hq.locate.run`` is this module's ``run`` function (the stage registry
 resolves it there), so ``import hq.locate.run as m`` binds the function, not this module; reach
@@ -29,9 +33,18 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 from hq_contracts.io import read_table, write_table
 
-from hq.locate import locate_detailed
+from hq.locate import LocateDetails, locate_detailed
 from hq.locate.diagnostics import DiagnosticsInputs, build_diagnostics, catalog_uncertainties
+from hq.locate.locator import LocatorSetup
 from hq.locate.result import ARRIVALS_MODEL, EVENTS_MODEL, FLAGS_MODEL, STATICS_MODEL
+from hq.locate.synthetic import (
+    SyntheticResult,
+    measured_pick_stats,
+    run_synthetic,
+    with_pick_stats,
+    write_synthetic_json,
+)
+from hq.locate.velocity import load_configured_model
 
 if TYPE_CHECKING:
     from hq.runs import RunContext
@@ -47,6 +60,9 @@ ARRIVALS_TABLE = "arrivals.parquet"
 STATICS_TABLE = "statics.parquet"
 FLAGS_TABLE = "locate_flags.parquet"
 DIAGNOSTICS = "diagnostics.md"
+SYNTHETIC_JSON = "synthetic.json"  # docs/02 SyntheticTest
+# Synthetic params left out of the run record: ProcessingRun.locator and .velocityModel hold them.
+SYNTHETIC_PARAMS_SKIPPED = ("locator", "velocityModel")
 CATALOG_TABLE = "catalog.parquet"
 CATALOG_QUAKEML = "catalog.quakeml"
 KNOWN_WINDOWS = "known/windows.json"
@@ -96,6 +112,28 @@ def known_ids(path: Path) -> tuple[str, ...] | None:
     return tuple(ids) if ids else None
 
 
+def synthetic_test(
+    ctx: "RunContext", details: LocateDetails, picks: pd.DataFrame, stations: pd.DataFrame
+) -> SyntheticResult:
+    """The synthetic recovery test on the run's used stations, with measured pick stats."""
+    cfg = ctx.config.seismology
+    syn = cfg.synthetic
+    stats = (
+        measured_pick_stats(details.result.events, picks)
+        if syn.sKeepProb is None or syn.pickProb is None else None
+    )
+    kind = stations.assign(id=stations["id"].astype(str)).set_index("id")["kind"].astype(str)
+    used = details.stations.assign(kind=kind.reindex(details.stations["id"]).to_numpy())
+    setup = LocatorSetup(
+        stations=used,
+        model=load_configured_model(cfg.velocity),
+        config=cfg if stats is None else with_pick_stats(cfg, stats),
+        run=ctx.config.run,
+        cache_dir=ctx.cache_dir,
+    )
+    return run_synthetic(setup, geometry_label=ctx.run_id, pick_stats=stats)
+
+
 def run(ctx: "RunContext") -> None:
     """Stage ``locate`` (docs/02 §4); see the module docstring."""
     started = time.perf_counter()
@@ -110,6 +148,7 @@ def run(ctx: "RunContext") -> None:
 
     details = locate_detailed(assoc, picks, stations, cfg, run_cfg, run_id=ctx.run_id,
                               cache_dir=ctx.cache_dir)
+    synthetic = synthetic_test(ctx, details, picks, stations)
     catalog_path = ctx.path(CATALOG_TABLE)
     quakeml_path = ctx.path(CATALOG_QUAKEML)
     catalog = _read(catalog_path, "catalog") if catalog_path.is_file() else None
@@ -125,6 +164,7 @@ def run(ctx: "RunContext") -> None:
             catalog_errors=catalog_uncertainties(quakeml_path)
             if catalog is not None and quakeml_path.is_file() else None,
             known_ids=known_ids(ctx.path(KNOWN_WINDOWS)),
+            synthetic=synthetic,
         )
     )
 
@@ -135,10 +175,12 @@ def run(ctx: "RunContext") -> None:
         ctx.path(FLAGS_TABLE): (details.flags, FLAGS_MODEL),
     }
     report_path = ctx.path(DIAGNOSTICS)
-    targets = [*tables, report_path]
+    synthetic_path = ctx.path(SYNTHETIC_JSON)
+    targets = [*tables, synthetic_path, report_path]
     try:
         for path, (frame, model_name) in tables.items():
             write_table(frame, _part(path), model_name)
+        write_synthetic_json(_part(synthetic_path), synthetic.report)
         _part(report_path).write_text(report, encoding="utf-8")
         for path in targets:
             os.replace(_part(path), path)
@@ -147,9 +189,13 @@ def run(ctx: "RunContext") -> None:
             _part(path).unlink(missing_ok=True)
 
     runtime_s = time.perf_counter() - started
-    counts = details.counts
+    counts = {**details.counts, "syntheticEvents": synthetic.report.nEvents}
     params: dict[str, Any] = {
         **details.record,
+        "synthetic": {
+            "report": synthetic.report.model_dump(mode="json"),
+            **{k: v for k, v in synthetic.params.items() if k not in SYNTHETIC_PARAMS_SKIPPED},
+        },
         "input": {
             "picksTable": cfg.associator.picksTable,
             "stationsTable": STATIONS_TABLE,

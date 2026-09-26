@@ -137,12 +137,14 @@ synthetic:
     radiusM: 2000.0
     topElevM: -1000.0
     bottomElevM: -4500.0
-  # PLACEHOLDERS until LOC-04 has association output: each station's S pick is kept with this
-  # probability (the real nS distribution replaces it), and every synthetic pick gets pickProb (the
-  # real pick-probability distribution replaces it). Every station gets a P pick. Both make the
-  # synthetic picks optimistic for weak events; the params record says so.
-  sKeepProb: 0.6
-  pickProb: 1.0
+  # Stage "locate" runs this test on the run's usedInRun stations and writes synthetic.json.
+  # Each station's S pick is kept with probability sKeepProb, and every synthetic pick gets
+  # pickProb. null = measured from the run's located events by stage locate: sKeepProb = median
+  # over events of nS / nStations, pickProb = median prob of the picks used in the final locations
+  # (both recorded in ProcessingRun.locator.synthetic). A number fixes the value instead. Every
+  # station still gets a P pick, which keeps the synthetic picks optimistic for weak events.
+  sKeepProb: null
+  pickProb: null
 
 # Depth diagnostics (LOC-04, hq.locate.diagnostics): stage "locate" writes diagnostics.md with the
 # lane doc's table (rows 1-7), each with a result computed from the run and a conclusion.
@@ -166,9 +168,18 @@ diagnostics:
   # Row 6: station-phase median residuals above this (s) are flagged; the lane doc asks for a
   # written explanation of every static above 0.15 s (LOC-05).
   stationResidualFlagS: 0.15
+  # Row 5: profiles whose Station.preprocessProfile starts with this are the borehole profiles the
+  # row's suspect (borehole picks degraded by resampling) is about; signal.yaml names them so.
+  boreholeProfilePrefix: borehole
   # Row 7: the amplitude (s) of a residual ~ a + b cos(az) + c sin(az) fit above this counts as
   # an azimuthal trend (1D misses lateral structure; LOC-07).
   trendFlagS: 0.05
+  # Row 7, at the public catalog hypocentres: a mislocated catalog epicentre alone gives P and S
+  # trends whose amplitude ratio (S/P) is about the model's Vp/Vs at the source depth, since both
+  # scale with the horizontal slowness at the source. A ratio above that Vp/Vs times this factor
+  # counts as S-heavy, which a slow/fast lateral contrast gives and a catalog mislocation does not.
+  # The margin covers the scatter of amplitudes fitted to a few events.
+  trendSPRatioExcess: 1.3
   # Travel-time table error vs the exact layered time (s) at a located hypocentre above this
   # counts as exposure to the tables' cell-mean interface bias (LOC-02: up to ~14 ms for S just
   # below shallow interfaces).

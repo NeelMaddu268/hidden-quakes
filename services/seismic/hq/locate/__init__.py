@@ -45,7 +45,12 @@ H2-internal table ``locate_flags.parquet`` (not in docs/02; LOC-06 and the depth
     (``mapOnVolumeTop``/``mapOnVolumeBottom``, the depth gate's "z = 0 collapse" even when a broad
     PDF leaves ``depthOnEdge`` false), which face ``depthOnEdge`` fired on and the face masses,
     PDF truncation (``pdfTruncated``: hErrM/vErrM null), the node budget, grid-limited formal
-    errors, and the outlier pass. It is never written into ``events_located.parquet``.
+    errors, the outlier pass, and the local-ground check: with no DEM, the ground above an event
+    is proxied by the ``surfaceElevM`` of the epicentrally nearest used station
+    (``nearestStationSurfaceElevM``), and ``aboveNearestStationSurface`` flags a hypocentre above
+    it. The search volume's top is ``run.refSurfaceElevM``, which lies above the ground at the
+    lower stations, so this flag catches what ``mapOnVolumeTop`` can't. It is never written into
+    ``events_located.parquet``.
 
 Statics hook (LOC-05)
     ``locate_detailed(..., statics={(stationId, phase): s})`` passes additive statics to the
@@ -101,6 +106,7 @@ STATION_COLUMNS = (
     "id",
     "latitude",
     "longitude",
+    "surfaceElevM",
     "sensorElevM",
     "usedInRun",
     "enu_e",
@@ -108,7 +114,9 @@ STATION_COLUMNS = (
     "enu_u",
     "preprocessProfile",
 )
-LOCATOR_STATION_COLUMNS = ("id", "enu_e", "enu_n", "enu_u", "sensorElevM", "preprocessProfile")
+LOCATOR_STATION_COLUMNS = (
+    "id", "enu_e", "enu_n", "enu_u", "sensorElevM", "surfaceElevM", "preprocessProfile"
+)
 SOURCE = "hq-pipeline"  # SeismicEvent.source
 REVEAL_ORDER_UNSET = -1  # docs/02: H2 writes -1, the exporter assigns the real order
 EVENT_ID_DIGITS = 6
@@ -167,7 +175,7 @@ def used_stations(stations: pd.DataFrame, run: RunSection, tol_m: float) -> pd.D
     out = used[list(LOCATOR_STATION_COLUMNS)].copy()
     out["id"] = ids.to_numpy(dtype=object)
     out["preprocessProfile"] = used["preprocessProfile"].astype(str).to_numpy(dtype=object)
-    for col in ("enu_e", "enu_n", "enu_u", "sensorElevM"):
+    for col in ("enu_e", "enu_n", "enu_u", "sensorElevM", "surfaceElevM"):
         out[col] = out[col].to_numpy(dtype=np.float64)
     return out
 
@@ -269,7 +277,16 @@ def _event_row(
     )
 
 
-def _flag_row(event_id: str, assoc_id: str, loc: EventLocation, edge_fraction: float) -> dict:
+def nearest_station_surface(stations: pd.DataFrame, e_m: float, n_m: float) -> float:
+    """``surfaceElevM`` of the station epicentrally nearest to (e, n): the local-ground proxy."""
+    d = np.hypot(stations["enu_e"].to_numpy(dtype=np.float64) - e_m,
+                 stations["enu_n"].to_numpy(dtype=np.float64) - n_m)
+    return float(stations["surfaceElevM"].to_numpy(dtype=np.float64)[int(np.argmin(d))])
+
+
+def _flag_row(
+    event_id: str, assoc_id: str, loc: EventLocation, edge_fraction: float, surface_m: float
+) -> dict:
     pdf = loc.pdf
     return {
         "eventId": event_id,
@@ -286,6 +303,8 @@ def _flag_row(event_id: str, assoc_id: str, loc: EventLocation, edge_fraction: f
         "vErrGridLimited": pdf.v_err_floored,
         "nDroppedPicks": len(loc.dropped_pick_ids),
         "outlierPassSkipped": loc.outlier_note is not None,
+        "nearestStationSurfaceElevM": surface_m,
+        "aboveNearestStationSurface": loc.elev_m > surface_m,
     }
 
 
@@ -377,7 +396,8 @@ def locate_detailed(
         event = _event_row(k, loc, float(lat[k]), float(lon[k]), probs[k], run, rid)
         models.append(event)
         arrivals += _arrival_rows(event.id, loc, locator, applied)
-        flags.append(_flag_row(event.id, ordered_assoc[k], loc, edge))
+        surface = nearest_station_surface(used, loc.e_m, loc.n_m)
+        flags.append(_flag_row(event.id, ordered_assoc[k], loc, edge, surface))
         use = loc.arrivals[loc.arrivals["usedInLocation"].to_numpy(dtype=bool)]
         n_events.update(zip(use["stationId"].astype(str), use["phase"].astype(str), strict=True))
     static_rows = (
@@ -417,6 +437,7 @@ def locate_detailed(
         "eventsMapOnVolumeBottom": int(flag_frame["mapOnVolumeBottom"].sum()),
         "eventsPdfTruncated": int(flag_frame["pdfTruncated"].sum()),
         "eventsNodeBudgetHit": int(flag_frame["nodeBudgetHit"].sum()),
+        "eventsAboveNearestStationSurface": int(flag_frame["aboveNearestStationSurface"].sum()),
         "eventsStaticsApplied": int(result.events["quality_statics"].sum()),
         "arrivals": len(result.arrivals),
         "arrivalsWithPick": int(result.arrivals["pickId"].notna().sum()),

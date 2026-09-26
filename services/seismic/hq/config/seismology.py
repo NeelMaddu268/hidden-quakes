@@ -242,8 +242,11 @@ class SyntheticConfig(BaseModel):
     nEvents: int = Field(ge=1)
     seed: int = Field(ge=0)
     zone: SyntheticZoneConfig
-    sKeepProb: float = Field(ge=0, le=1)  # each station's S pick is kept with this probability
-    pickProb: float = Field(gt=0, le=1)  # picker probability given to every synthetic pick
+    # Each station's S pick is kept with this probability; every synthetic pick gets pickProb.
+    # None: stage locate measures both from the run's located events (hq.locate.synthetic
+    # .measured_pick_stats); a direct run_synthetic call then needs a config with numbers.
+    sKeepProb: Annotated[float, Field(ge=0, le=1)] | None
+    pickProb: Annotated[float, Field(gt=0, le=1)] | None
 
 
 class DatumCheckConfig(BaseModel):
@@ -271,8 +274,14 @@ class DiagnosticsConfig(BaseModel):
     # Row 6: a station-phase median residual above this (s) is flagged (lane doc: every static
     # above 0.15 s needs a written explanation).
     stationResidualFlagS: float = Field(gt=0)
+    # Row 5: profiles whose Station.preprocessProfile starts with this are the borehole profiles
+    # the row's suspect is about (signal.yaml names them borehole-A, borehole-B).
+    boreholeProfilePrefix: str = Field(min_length=1)
     # Row 7: an azimuthal residual amplitude (s) above this counts as a trend (1D misses structure).
     trendFlagS: float = Field(gt=0)
+    # Row 7: at the catalog hypocentres, an S/P ratio of the trend amplitudes above the model's
+    # Vp/Vs at the source depths times this factor counts as S-heavy (see diagnostics.py).
+    trendSPRatioExcess: float = Field(gt=1)
     # Table-vs-exact travel-time error (s) at a located hypocentre above this counts as exposure to
     # the cell-mean interface bias of the tables (LOC-02 accuracy record).
     tableErrorFlagS: float = Field(gt=0)
