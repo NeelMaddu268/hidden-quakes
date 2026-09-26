@@ -380,6 +380,16 @@ def run(ctx: RunContext) -> None:
     _write(ctx, events_path, events_out, calibration)
 
     written = int(events_out["magnitude_value"].notna().sum())
+    cal_range = (float(obs["mag"].min()), float(obs["mag"].max()))
+    values = mags["value"].to_numpy(dtype=np.float64)
+    below_range = int((values < cal_range[0]).sum())  # NaN compares False
+    above_range = int((values > cal_range[1]).sum())
+    log.info(
+        "magnitude: %d of %d event magnitudes lie below the calibrated %r range [%.2f, %.2f] and "
+        "%d above it: extrapolated (a %s)",
+        below_range, with_mag, cfg.calibrationMagType, *cal_range, above_range,
+        f"fixed at {cfg.fit.amplitudeSlope}" if final.aFixed else "fitted",
+    )  # fmt: skip
     insample = event_magnitudes(final, obs, cfg.minStations)
     loo_table = loo.merge(cal_events[["eventId", "catalogId"]], on="eventId", how="left").merge(
         insample[["eventId", "value", "sigma"]].rename(
@@ -460,6 +470,10 @@ def run(ctx: RunContext) -> None:
             "withEnoughStations": with_mag,
             "belowMinStations": without_mag,
             "minStations": cfg.minStations,
+            # catalog magnitudes of the calibration events; values outside are extrapolated
+            "calibratedRange": list(cal_range),
+            "belowCalibratedRange": below_range,
+            "aboveCalibratedRange": above_range,
         },
         "preprocessing": _preprocessing_record(ctx),
         "stations": screens_record,
