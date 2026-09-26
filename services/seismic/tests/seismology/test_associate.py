@@ -776,7 +776,8 @@ def test_stage_writes_tables_record_and_counts_sweep(
     seis = _cfg(world["cfg"], sweep=sweep)  # the configured point (0.3, nS 1) is a sweep point
     ctx = make_ctx(world["run"], seis)
     _write_inputs(ctx, world)
-    ctx.path("sweep.parquet").write_bytes(b"stale")
+    for name in ("sweep.parquet", "matches.parquet", "match_sensitivity.parquet"):
+        ctx.path(name).write_bytes(b"stale")
     runs: list[float] = []
     real_run_pyocto = core.run_pyocto
 
@@ -790,7 +791,9 @@ def test_stage_writes_tables_record_and_counts_sweep(
     picks = read_table(ctx.path("assoc_picks.parquet"))
     assert events.attrs["model"] == "AssocEvent" and len(events) == N_EVENTS
     assert list(picks.columns) == list(PICK_DTYPES) and not picks["pickId"].duplicated().any()
-    assert not ctx.path("sweep.parquet").exists()  # the stale sweep of another association
+    # The stale sweep and match of another association: locate must run pass 1 next.
+    for name in ("sweep.parquet", "matches.parquet", "match_sensitivity.parquet"):
+        assert not ctx.path(name).exists()
     assert not list(ctx.run_dir.glob("*.part"))
     assert len(runs) == 1  # the sweep reran PyOcto only for nS 2, not the configured point
     (rec,) = ctx.records
@@ -800,6 +803,8 @@ def test_stage_writes_tables_record_and_counts_sweep(
     assert params["sweep"]["grid"] == grid(seis.associator)
     assert [p["associated"] for p in params["sweep"]["points"]][1] == N_EVENTS  # (0.3, 1, 8)
     assert "LOC-06" in params["sweep"]["note"]
+    assert params["removedStale"] == ["sweep.parquet", "matches.parquet",
+                                      "match_sensitivity.parquet"]
     assert (ctx.cache_dir / params["tables"]["directory"]).is_dir()
     assert str(ctx.cache_dir) not in json.dumps(params)  # no machine-specific path in run.json
 
