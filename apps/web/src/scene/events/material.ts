@@ -36,6 +36,7 @@ export interface EventUniforms {
   uGlow: IUniform<number>;
 }
 
+// Glyph-shape constants live here (not scene/look.ts) because they're baked into the shader source.
 /** Absolute smallest glyph radius in device pixels after tier scaling, so Tier C never shimmers out. */
 export const GLYPH_FLOOR_PX = 1.25;
 /** A popping instance starts at this multiple of its size and settles to 1. */
@@ -69,7 +70,8 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
     vec4 worldCenter = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
     vec4 mvCenter = viewMatrix * worldCenter;
 
-    float age = uRevealElapsed - aAppearAt;
+    // aAppearAt < 0 marks always-visible instances (public catalog): settled, whatever the clock says.
+    float age = aAppearAt < 0.0 ? 1.0e4 : uRevealElapsed - aAppearAt;
     float shown = step(0.0, age);
     float pop = clamp(age / max(uPopS, 1e-6), 0.0, 1.0);
     float settle = 1.0 - pow(1.0 - pop, 3.0);

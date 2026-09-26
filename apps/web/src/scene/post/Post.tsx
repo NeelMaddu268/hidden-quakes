@@ -5,7 +5,7 @@ import { Bloom, EffectComposer, Vignette, type BloomProps } from "@react-three/p
 import { useRef } from "react";
 import { HalfFloatType } from "three";
 import { sceneFx } from "../fx";
-import { LOOK } from "../look";
+import { LOOK, msaaSamplesFor } from "../look";
 
 type BloomEffectInstance = NonNullable<Extract<NonNullable<BloomProps["ref"]>, { current: unknown }>["current"]>;
 
@@ -17,7 +17,9 @@ type BloomEffectInstance = NonNullable<Extract<NonNullable<BloomProps["ref"]>, {
 export function Post() {
   const bloom = useRef<BloomEffectInstance>(null);
   const dpr = useThree((s) => s.viewport.dpr);
-  const samples = dpr > LOOK.msaa.highDprFrom ? LOOK.msaa.highDpr : LOOK.msaa.lowDpr;
+  const width = useThree((s) => s.size.width);
+  const height = useThree((s) => s.size.height);
+  const samples = msaaSamplesFor(width * height * dpr * dpr);
 
   useFrame(() => {
     const b = bloom.current;
