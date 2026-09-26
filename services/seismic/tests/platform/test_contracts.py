@@ -205,6 +205,16 @@ def scene_meta() -> m.SceneMeta:
     )
 
 
+def confidence() -> m.Confidence:
+    return m.Confidence(
+        schema="hq.confidence/1",
+        runId="r",
+        model={"name": "gbm", "features": ["nStations", "rmsS"]},
+        heldOutRocAuc=0.91,
+        scores={event(0).id: 0.8, event(1).id: 0.2},
+    )
+
+
 def validation() -> m.Validation:
     return m.Validation(
         baseline=[
@@ -266,6 +276,7 @@ def one_of_each() -> list[BaseModel]:
         events=[event(0), event(1, matched=True, mag=True)],
         features=[feature],
         validation=validation(),
+        confidence=confidence(),
         evidence=evidence,
         live=live,
     )
@@ -299,6 +310,7 @@ def one_of_each() -> list[BaseModel]:
         validation().magnitude,
         validation().synthetic,
         validation(),
+        confidence(),
         live,
         meta,
         bundle,

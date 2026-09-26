@@ -47,7 +47,7 @@ from typing import Any
 
 from hq_contracts import models as m
 
-from hq.export.files import EVIDENCE_DIR, META_JSON, VALIDATION_JSON
+from hq.export.files import CONFIDENCE_JSON, EVIDENCE_DIR, META_JSON, VALIDATION_JSON
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_DEMO = REPO_ROOT / "docs" / "demo"
@@ -395,6 +395,31 @@ def baseline_candidates(method: str) -> Resolver:
     return resolve
 
 
+def confidence_auc() -> Resolver:
+    """``confidence.json`` (ML-01) → ``heldOutRocAuc`` at two decimals; the sentence is omitted
+    when the file is absent or the AUC is null."""
+    source = f"{CONFIDENCE_JSON} → heldOutRocAuc"
+    gate = f"{CONFIDENCE_JSON} present with a held-out AUC"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        path = bundle.path / CONFIDENCE_JSON
+        if not path.is_file():
+            r = _condition_not_met(source, gate)
+            return Resolved(
+                r.text, f"{source} (only with {gate}: the classifier sentence)", r.status
+            )
+        data = _load_json(path)
+        auc = data.get("heldOutRocAuc") if isinstance(data, dict) else None
+        if auc is None:
+            r = _condition_not_met(source, gate)
+            return Resolved(
+                r.text, f"{source} (only with {gate}: the classifier sentence)", r.status
+            )
+        return Resolved(fmt(float(auc), 2), source, STATUS_VALUE)
+
+    return resolve
+
+
 def hero_station_count() -> Resolver:
     source = f"{EVIDENCE_DIR}/<scene.heroEventId>.json → traces.length"
 
@@ -492,6 +517,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
     Spec("{strictPhasenet}", baseline_strict("phasenet")),
     Spec("{strictStalta}", baseline_strict("stalta")),
     Spec("{staltaCandidates}", baseline_candidates("stalta")),
+    Spec("{heldOutRocAuc}", confidence_auc()),
     Spec(
         "{meanChanceEvents}",
         gated(
@@ -626,6 +652,7 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
         ),
     ),
     Spec("<from validation.json: nullTest.nShuffles>", none_strict_scrambles()),
+    Spec("<from confidence.json: heldOutRocAuc>", confidence_auc()),
     Spec(
         "<from validation.json: magnitude.n>",
         gated(*MAG_GATE, validation_field("magnitude.n"), sentence=MAG_SENTENCE),

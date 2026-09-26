@@ -3,7 +3,7 @@
  * The only way components get data (docs/02 §6). Mount `<ProviderRoot>` once in `page.tsx`.
  */
 import { useContext, useEffect, useState } from "react";
-import type { DataMode, LiveStatus, Validation } from "@hq/contracts";
+import type { Confidence, DataMode, LiveStatus, Validation } from "@hq/contracts";
 import { ProviderContext, errorMessage } from "./root";
 import type { BundleState, EvidenceState, SeismicDataProvider } from "./types";
 
@@ -60,6 +60,11 @@ export function useEvidence(eventId: string | null): EvidenceState {
 /** `null` until loaded, and `null` for bundles without `validation.json`. */
 export function useValidation(): Validation | null {
   return useProviderContext("useValidation").validation;
+}
+
+/** `null` until loaded, and `null` for bundles without `confidence.json` (ML-01). */
+export function useConfidence(): Confidence | null {
+  return useProviderContext("useConfidence").confidence;
 }
 
 /** `null` outside live mode, and `null` while live mode is failed over to the snapshot. */

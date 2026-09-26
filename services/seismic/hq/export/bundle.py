@@ -8,6 +8,7 @@ Files, all key-sorted JSON so the same run gives byte-identical output::
     events.json              SeismicEvent[]   revealOrder assigned, sorted by (t, id)
     features.json            GeoFeature[]     from hq.export.features (FEAT-01)
     validation.json          Validation       omitted when the run has none yet (VAL-01)
+    confidence.json          Confidence       omitted when the run has none (ML-01, H2)
     evidence/{eventId}.json  EventEvidence    hero first, then reveal order, capped by maxEvents
 
 The bundle is built in a temporary sibling directory, checked there with ``check_bundle`` and
@@ -37,6 +38,7 @@ from hq.export.errors import ExportError
 from hq.export.evidence import build_evidence
 from hq.export.files import (
     CATALOG_JSON,
+    CONFIDENCE_JSON,
     EVENTS_JSON,
     EVIDENCE_DIR,
     FEATURES_JSON,
@@ -247,6 +249,12 @@ def _build(
         sizes[VALIDATION_JSON] = dump_json(
             tmp / VALIDATION_JSON, tables.validation.model_dump(mode="json"), pretty=True
         )
+    if tables.confidence is not None:
+        sizes[CONFIDENCE_JSON] = dump_json(
+            tmp / CONFIDENCE_JSON,
+            tables.confidence.model_dump(mode="json", by_alias=True),
+            pretty=True,
+        )
     evidence_dir = tmp / EVIDENCE_DIR
     evidence_dir.mkdir()
     evidence_sizes, counts = _write_evidence(
@@ -261,6 +269,7 @@ def _build(
         "strict": summary.strictQualityCount,
         "features": len(features),
         "hasValidation": int(tables.validation is not None),
+        "hasConfidence": int(tables.confidence is not None),
         "hasHero": int(hero_id is not None),
         **counts,
         "bytes": sum(sizes.values()),

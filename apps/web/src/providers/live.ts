@@ -13,6 +13,7 @@ import {
   SCHEMA_VERSION,
   type BundleMeta,
   type CatalogEvent,
+  type Confidence,
   type EventEvidence,
   type GeoFeature,
   type LiveStatus,
@@ -156,6 +157,11 @@ export class LiveProvider implements SeismicDataProvider {
 
   /** Validation belongs to the frozen showcase run, not to a rolling window. */
   getValidation(): Promise<Validation | null> {
+    return Promise.resolve(null);
+  }
+
+  /** So do the classifier scores (ML-01): none for a rolling window. */
+  getConfidence(): Promise<Confidence | null> {
     return Promise.resolve(null);
   }
 }
