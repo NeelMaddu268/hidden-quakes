@@ -1018,11 +1018,23 @@ def _bad_evidence(case: str) -> tuple[pd.DataFrame, pd.DataFrame, Evidence, bool
     picks = picks_frame(arrival_picks(sta, T0, HYPO, n=6))
     pub = public([("a", T0, 0, 0)])
     loc = located([])
+    gaps = None
     with_arrivals = True
     if case == "duplicate station ids":
         sta = pd.concat([sta, sta.iloc[[0]]], ignore_index=True)
+    elif case == "null usedInRun":
+        sta["usedInRun"] = sta["usedInRun"].astype(object)
+        sta.loc[0, "usedInRun"] = None
+    elif case == "used station without channels":
+        sta["channels"] = [[] if k == 0 else c for k, c in enumerate(sta["channels"])]
+    elif case == "gap end before start":
+        gaps = gaps_frame([("XX.S00", "HHZ", T0 + 1.0, T0)])
     elif case == "non-finite t":
         picks.loc[0, "t"] = np.nan
+    elif case == "non-finite prob":
+        picks.loc[0, "prob"] = np.inf
+    elif case == "unknown phase":
+        picks.loc[0, "phase"] = "Pn"
     elif case == "null pickIds":
         loc = located([("x", T0 + 900.0, 0.0, 0.0)])
         loc["pickIds"] = pd.Series([None], dtype=object)
@@ -1041,14 +1053,19 @@ def _bad_evidence(case: str) -> tuple[pd.DataFrame, pd.DataFrame, Evidence, bool
         )
     elif case == "without an arrival model":
         with_arrivals = False
-    return pub, loc, Evidence(stations=sta, picks=picks), with_arrivals
+    return pub, loc, Evidence(stations=sta, gaps=gaps, picks=picks), with_arrivals
 
 
 @pytest.mark.parametrize(
     ("case", "message"),
     [
         ("duplicate station ids", "stations: duplicate ids \\['XX.S00'\\]"),
+        ("null usedInRun", "stations: null id or usedInRun"),
+        ("used station without channels", "used stations without channels: \\['XX.S00'\\]"),
+        ("gap end before start", "gaps: every gap needs finite gapStart <= gapEnd"),
         ("non-finite t", "picks: non-finite t for"),
+        ("non-finite prob", "picks: non-finite prob for"),
+        ("unknown phase", "picks: unknown phases \\['Pn'\\]"),
         ("null pickIds", "events_located: null pickIds for \\['x'\\]"),
         ("non-finite enu_u", "catalog: non-finite enu_u for \\['a'\\]"),
         ("null assocId", "assoc_picks: null assocId or pickId"),
@@ -1070,6 +1087,21 @@ def test_bad_evidence_fails_loudly(
             RUN,
             arrivals if with_arrivals else None,
         )
+
+
+def test_tables_out_of_sync_fail_loudly(
+    seismology_config: SeismologyConfig, arrivals: ArrivalModel
+) -> None:
+    """matches built for one catalog, then used with another; a catalog with a null latitude."""
+    result = match(located([]), public([("a", T0, 0, 0)]), seismology_config)
+    other = public([("b", T0, 0, 0)])
+    with pytest.raises(ValueError, match="matches and catalog do not hold the same public events"):
+        explain_unmatched(result, located([]), other, Evidence(), seismology_config, RUN, arrivals)
+    with pytest.raises(ValueError, match="matches do not hold exactly one row per catalog event"):
+        stage.with_matched_ids(other, result.matches)
+    other.loc[0, "latitude"] = np.nan
+    with pytest.raises(ValueError, match="catalog: non-finite latitude for \\['b'\\]"):
+        stage.check_enu_frame(other, "catalog", RUN, seismology_config.matching.enuConsistencyM)
 
 
 # ---------------------------------------------------------------- stage

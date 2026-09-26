@@ -90,6 +90,10 @@ def check_enu_frame(df: pd.DataFrame, name: str, run: RunSection, tol_m: float) 
     if df.empty:
         return
     values = {c: df[c].to_numpy(dtype=np.float64) for c in columns}
+    for c in ("latitude", "longitude", elev):
+        if not np.isfinite(values[c]).all():
+            bad = sorted(df.loc[~np.isfinite(values[c]), "id"].astype(str))
+            raise ValueError(f"{name}: non-finite {c} for {bad}")
     e, n, u = to_enu(values["latitude"], values["longitude"], values[elev], run.origin)
     diff = np.max(
         np.abs(np.stack([e - values["enu_e"], n - values["enu_n"], u - values["enu_u"]])), axis=0
