@@ -1,4 +1,4 @@
-import { Matrix4, PerspectiveCamera } from "three";
+import { Matrix4, OrthographicCamera, PerspectiveCamera } from "three";
 import { describe, expect, it } from "vitest";
 import { betterHit, isClick, pickNearest, PICK_THRESHOLD_PX, type PickQuery } from "./pick";
 
@@ -117,3 +117,24 @@ describe("isClick", () => {
    expect(pickNearest([0,0,0], { viewProj, width:100, height:100, x:80, y:50,
      thresholdPx:12, focalPx:50, radius:()=>100, maxRadiusPx:18 })).toBeNull();
  });
+
+
+describe("orthographic plan picking", () => {
+  const cam = new OrthographicCamera(-4, 4, 3, -3, .1, 100);
+  cam.position.set(0, 10, 0); cam.up.set(0, 0, -1); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+  const vp = new Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse).elements;
+
+  it("picks the nearer event when vertically stacked points share constant clip w", () => {
+    const stacked = new Float32Array([0, -5, 0, 0, 0, 0]); // farther event deliberately listed first
+    expect(pickNearest(stacked, query(W / 2, H / 2, { viewProj: vp }))?.index).toBe(1);
+  });
+  it("keeps north up, east right and ignores clipped events", () => {
+    const positions = new Float32Array([1, 0, -1, 1, 20, -1, 1, -200, -1]);
+    expect(pickNearest(positions, query(500, 200, { viewProj: vp }))?.index).toBe(0);
+  });
+  it("makes a horizontal radius independent of event depth", () => {
+    const q = query(W / 2 + 20, H / 2, { viewProj: vp, focalPx: 100, radius: () => .25 });
+    expect(pickNearest([0, 0, 0], q)?.index).toBe(0);
+    expect(pickNearest([0, -50, 0], q)?.index).toBe(0);
+  });
+});
