@@ -1,0 +1,10 @@
+# Only for `vercel` CLI uploads (the Git integration clones the repo and ignores this file).
+# Keep pipeline data and the Python service out of the upload: the web app reads only
+# apps/web/public/data/ at build time.
+data/
+services/
+.venv/
+**/.venv/
+**/__pycache__/
+.github/
+docs/

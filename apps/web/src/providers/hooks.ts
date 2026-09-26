@@ -3,7 +3,7 @@
  * The only way components get data (docs/02 §6). Mount `<ProviderRoot>` once in `page.tsx`.
  */
 import { useContext, useEffect, useState } from "react";
-import type { LiveStatus, Validation } from "@hq/contracts";
+import type { DataMode, LiveStatus, Validation } from "@hq/contracts";
 import { ProviderContext, errorMessage } from "./root";
 import type { BundleState, EvidenceState, SeismicDataProvider } from "./types";
 
@@ -17,6 +17,11 @@ function useProviderContext(hook: string) {
 
 export function useBundle(): BundleState {
   return useProviderContext("useBundle").bundle;
+}
+
+/** The mode chosen from `?mode=`; known before the bundle is, null until the root has parsed it. */
+export function useMode(): DataMode | null {
+  return useProviderContext("useMode").mode;
 }
 
 interface EvidenceLoad {

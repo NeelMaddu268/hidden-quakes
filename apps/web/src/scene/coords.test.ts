@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   depthKmToSceneY,
+  eastMToSceneX,
   elevMToSceneY,
   enuToScene,
+  northMToSceneZ,
   sceneToEnu,
+  sceneXToEastM,
+  sceneZToNorthM,
+  upMToSceneY,
   sceneYToDepthKm,
   verticalExaggerationOf,
   writeEnuToScene,
@@ -85,5 +90,20 @@ describe("verticalExaggerationOf", () => {
     expect(() => verticalExaggerationOf({ verticalExaggeration: -1 })).toThrow();
     expect(() => verticalExaggerationOf({ verticalExaggeration: Number.NaN })).toThrow();
     expect(() => verticalExaggerationOf({ verticalExaggeration: Infinity })).toThrow();
+  });
+});
+
+describe("per-axis helpers (the single home of the ENU → scene mapping)", () => {
+  it("agree with enuToScene axis by axis", () => {
+    const enu = { e: -2750, n: 4120, u: -3310 };
+    expect([eastMToSceneX(enu.e), upMToSceneY(enu.u, 1.5), northMToSceneZ(enu.n)]).toEqual(enuToScene(enu, 1.5));
+  });
+
+  it("invert cleanly", () => {
+    for (const m of [-8000, -1, 0, 31.25, 12345]) {
+      expect(sceneXToEastM(eastMToSceneX(m))).toBeCloseTo(m, 9);
+      expect(sceneZToNorthM(northMToSceneZ(m))).toBeCloseTo(m, 9);
+    }
+    expect(northMToSceneZ(1000)).toBe(-1); // north is −z
   });
 });

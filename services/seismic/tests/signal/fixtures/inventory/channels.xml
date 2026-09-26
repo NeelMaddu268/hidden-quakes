@@ -1,0 +1,1274 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<FDSNStationXML xmlns="http://www.fdsn.org/xml/station/1" schemaVersion="1.2">
+  <Source>EarthScope</Source>
+  <Sender>EarthScope</Sender>
+  <Module>EarthScope WEB SERVICE: fdsnws-station | version: 1.1.57</Module>
+  <ModuleURI>https://service.earthscope.org/fdsnws/station/1/query?starttime=2026-09-10T00%3A00%3A00.000000&amp;endtime=2026-09-11T00%3A00%3A00.000000&amp;minlatitude=38.28&amp;maxlatitude=38.74&amp;minlongitude=-113.2&amp;maxlongitude=-112.6&amp;level=channel</ModuleURI>
+  <Created>2026-09-26T00:58:45.737200Z</Created>
+  <Network code="2J" startDate="2016-01-01T00:00:00.000000Z" endDate="2026-12-31T23:59:59.999900Z" restrictedStatus="open">
+    <Description>Clemson University Subsurface Deformation Monitoring Network ()</Description>
+    <Identifier type="DOI">10.7914/SN/2J_2016
+   </Identifier>
+    <TotalNumberStations>23</TotalNumberStations>
+    <SelectedNumberStations>6</SelectedNumberStations>
+    <Station code="FS01" startDate="2020-02-22T00:00:00.000000Z" endDate="2026-12-31T23:59:59.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.50122</Latitude>
+      <Longitude unit="DEGREES">-112.886387</Longitude>
+      <Elevation>1687.3</Elevation>
+      <Site>
+        <Name>Borehole FS01, FORGE, Blundell, UT, USA</Name>
+      </Site>
+      <CreationDate>2022-02-22T00:00:00.000000Z</CreationDate>
+      <TotalNumberChannels>23</TotalNumberChannels>
+      <SelectedNumberChannels>23</SelectedNumberChannels>
+      <Channel code="MSE" startDate="2022-02-22T00:00:00.000000Z" endDate="2026-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="00">
+        <Latitude unit="DEGREES">38.50122</Latitude>
+        <Longitude unit="DEGREES">-112.886387</Longitude>
+        <Elevation>1687.3</Elevation>
+        <Depth>60.4</Depth>
+        <Azimuth unit="DEGREES">90.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">2.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>count</Name>
+          <Description>DIGITAL COUNTS</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Elliptical Ring Tensor Optical Fiber Areal Strainmeter v6.1</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="MSN" startDate="2022-02-22T00:00:00.000000Z" endDate="2026-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="00">
+        <Latitude unit="DEGREES">38.50122</Latitude>
+        <Longitude unit="DEGREES">-112.886387</Longitude>
+        <Elevation>1687.3</Elevation>
+        <Depth>60.4</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">2.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>count</Name>
+          <Description>DIGITAL COUNTS</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Elliptical Ring Tensor Optical Fiber Areal Strainmeter v6.1</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="MSS" startDate="2022-02-22T00:00:00.000000Z" endDate="2026-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="00">
+        <Latitude unit="DEGREES">38.50122</Latitude>
+        <Longitude unit="DEGREES">-112.886387</Longitude>
+        <Elevation>1687.3</Elevation>
+        <Depth>60.4</Depth>
+        <Azimuth unit="DEGREES">45.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">2.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>count</Name>
+          <Description>DIGITAL COUNTS</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Elliptical Ring Tensor Optical Fiber Areal Strainmeter v6.1</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="MSZ" startDate="2022-02-22T00:00:00.000000Z" endDate="2026-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="00">
+        <Latitude unit="DEGREES">38.50122</Latitude>
+        <Longitude unit="DEGREES">-112.886387</Longitude>
+        <Elevation>1687.3</Elevation>
+        <Depth>60.4</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">2.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>count</Name>
+          <Description>DIGITAL COUNTS</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Elliptical Ring Tensor Optical Fiber Areal Strainmeter v6.1</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="MDO" startDate="2022-02-22T00:00:00.000000Z" endDate="2026-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="M1">
+        <Latitude unit="DEGREES">38.50122</Latitude>
+        <Longitude unit="DEGREES">-112.886387</Longitude>
+        <Elevation>1687.3</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>WEATHER</Type>
+        <SampleRate unit="SAMPLES/S">2.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>count</Name>
+          <Description>DIGITAL COUNTS</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Honeywell SSCMRNN015PA3A3</Description>
+        </Sensor>
+        </Channel>
+    </Station>
+    </Network>
+  <Network code="6K" startDate="2023-01-01T00:00:00.000000Z" endDate="2027-12-31T23:59:59.999900Z" restrictedStatus="open">
+    <Description>Cape Modern seismic monitoring network ()</Description>
+    <Identifier type="DOI">10.7914/m9sf-hx70
+   </Identifier>
+    <TotalNumberStations>6</TotalNumberStations>
+    <SelectedNumberStations>6</SelectedNumberStations>
+    <Station code="CS01" startDate="2023-11-29T00:00:00.000000Z" endDate="2027-12-31T23:59:59.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.490958</Latitude>
+      <Longitude unit="DEGREES">-112.907708</Longitude>
+      <Elevation>1626.617676</Elevation>
+      <Site>
+        <Name>CS01</Name>
+      </Site>
+      <TotalNumberChannels>3</TotalNumberChannels>
+      <SelectedNumberChannels>3</SelectedNumberChannels>
+      <Channel code="GN1" startDate="2023-11-29T00:00:00.000000Z" endDate="2027-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="">
+        <Latitude unit="DEGREES">38.490958</Latitude>
+        <Longitude unit="DEGREES">-112.907708</Longitude>
+        <Elevation>1626.6</Elevation>
+        <Depth>40.0</Depth>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <Sensor>
+          <Type>Accelerometer</Type>
+          <Description>Silicon Audio low-noise optical accelerometer</Description>
+          <Vendor>Silicon Audio</Vendor>
+          <Model>203-60</Model>
+        </Sensor>
+        </Channel>
+      <Channel code="GN2" startDate="2023-11-29T00:00:00.000000Z" endDate="2027-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="">
+        <Latitude unit="DEGREES">38.490958</Latitude>
+        <Longitude unit="DEGREES">-112.907708</Longitude>
+        <Elevation>1626.6</Elevation>
+        <Depth>40.0</Depth>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <Sensor>
+          <Type>Accelerometer</Type>
+          <Description>Silicon Audio low-noise optical accelerometer</Description>
+          <Vendor>Silicon Audio</Vendor>
+          <Model>203-60</Model>
+        </Sensor>
+        </Channel>
+      <Channel code="GNZ" startDate="2023-11-29T00:00:00.000000Z" endDate="2027-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="">
+        <Latitude unit="DEGREES">38.490958</Latitude>
+        <Longitude unit="DEGREES">-112.907708</Longitude>
+        <Elevation>1626.6</Elevation>
+        <Depth>40.0</Depth>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <Sensor>
+          <Type>Accelerometer</Type>
+          <Description>Silicon Audio low-noise optical accelerometer</Description>
+          <Vendor>Silicon Audio</Vendor>
+          <Model>203-60</Model>
+        </Sensor>
+        </Channel>
+    </Station>
+    <Station code="CS03" startDate="2023-11-28T00:00:00.000000Z" endDate="2027-12-31T23:59:59.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.53611</Latitude>
+      <Longitude unit="DEGREES">-112.841951</Longitude>
+      <Elevation>1831.39209</Elevation>
+      <Site>
+        <Name>CS03</Name>
+      </Site>
+      <TotalNumberChannels>3</TotalNumberChannels>
+      <SelectedNumberChannels>3</SelectedNumberChannels>
+      <Channel code="GN1" startDate="2023-11-28T00:00:00.000000Z" endDate="2027-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="">
+        <Latitude unit="DEGREES">38.53611</Latitude>
+        <Longitude unit="DEGREES">-112.841951</Longitude>
+        <Elevation>1831.4</Elevation>
+        <Depth>1.0</Depth>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <Sensor>
+          <Type>Accelerometer</Type>
+          <Description>Silicon Audio low-noise optical accelerometer</Description>
+          <Vendor>Silicon Audio</Vendor>
+          <Model>203-60</Model>
+        </Sensor>
+        </Channel>
+      <Channel code="GN2" startDate="2023-11-28T00:00:00.000000Z" endDate="2027-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="">
+        <Latitude unit="DEGREES">38.53611</Latitude>
+        <Longitude unit="DEGREES">-112.841951</Longitude>
+        <Elevation>1831.4</Elevation>
+        <Depth>1.0</Depth>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <Sensor>
+          <Type>Accelerometer</Type>
+          <Description>Silicon Audio low-noise optical accelerometer</Description>
+          <Vendor>Silicon Audio</Vendor>
+          <Model>203-60</Model>
+        </Sensor>
+        </Channel>
+      <Channel code="GNZ" startDate="2023-11-28T00:00:00.000000Z" endDate="2027-12-31T23:59:59.000000Z" restrictedStatus="open" locationCode="">
+        <Latitude unit="DEGREES">38.53611</Latitude>
+        <Longitude unit="DEGREES">-112.841951</Longitude>
+        <Elevation>1831.4</Elevation>
+        <Depth>1.0</Depth>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <Sensor>
+          <Type>Accelerometer</Type>
+          <Description>Silicon Audio low-noise optical accelerometer</Description>
+          <Vendor>Silicon Audio</Vendor>
+          <Model>203-60</Model>
+        </Sensor>
+        </Channel>
+    </Station>
+    </Network>
+  <Network code="NP" startDate="1931-01-01T00:00:00.000000Z" restrictedStatus="open">
+    <Description>United States National Strong-Motion Network (NSMP)</Description>
+    <Identifier type="DOI">10.7914/SN/NP
+   </Identifier>
+    <TotalNumberStations>1219</TotalNumberStations>
+    <SelectedNumberStations>1</SelectedNumberStations>
+    <Station code="7225" startDate="2005-07-27T18:00:00.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.28346</Latitude>
+      <Longitude unit="DEGREES">-112.63873</Longitude>
+      <Elevation>1808.0</Elevation>
+      <Site>
+        <Name>City Maintenance Yard</Name>
+      </Site>
+      <CreationDate>2005-07-27T18:00:00.000000Z</CreationDate>
+      <TotalNumberChannels>18</TotalNumberChannels>
+      <SelectedNumberChannels>12</SelectedNumberChannels>
+      <Channel code="HNE" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="10">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">90.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">100.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>EPISENSOR ES-DECK,Accelerometer,KINEMETRICS</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HNN" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="10">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">100.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>EPISENSOR ES-DECK,Accelerometer,KINEMETRICS</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HNZ" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="10">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">100.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>EPISENSOR ES-DECK,Accelerometer,KINEMETRICS</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="DEG" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="2C">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>HEALTH</Type>
+        <SampleRate unit="SAMPLES/S">1.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>System Temperature</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HNE" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="2C">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">90.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>GEOPHYSICAL</Type>
+        <Type>TRIGGERED</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>EPISENSOR ES-DECK,Accelerometer,KINEMETRICS</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HNN" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="2C">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>GEOPHYSICAL</Type>
+        <Type>TRIGGERED</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>EPISENSOR ES-DECK,Accelerometer,KINEMETRICS</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HNZ" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="2C">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>GEOPHYSICAL</Type>
+        <Type>TRIGGERED</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>EPISENSOR ES-DECK,Accelerometer,KINEMETRICS</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="LCE" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="2C">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>HEALTH</Type>
+        <SampleRate unit="SAMPLES/S">1.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Clock Phase</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="LCQ" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="2C">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>HEALTH</Type>
+        <SampleRate unit="SAMPLES/S">1.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Clock Quality</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="LNZ" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="2C">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">1.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>EPISENSOR ES-DECK,Accelerometer,KINEMETRICS</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="VEC" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="2C">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>HEALTH</Type>
+        <SampleRate unit="SAMPLES/S">1.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>System Current</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="VEP" startDate="2026-05-13T21:00:00.000000Z" restrictedStatus="open" locationCode="2C">
+        <Latitude unit="DEGREES">38.28346</Latitude>
+        <Longitude unit="DEGREES">-112.63873</Longitude>
+        <Elevation>1808.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>HEALTH</Type>
+        <SampleRate unit="SAMPLES/S">1.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <CalibrationUnits>
+          <Name>A</Name>
+          <Description>Amperes</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>System Voltage</Description>
+        </Sensor>
+        </Channel>
+    </Station>
+  </Network>
+  <Network code="SY" startDate="1900-01-01T00:00:00.000000Z" restrictedStatus="open">
+    <Description>Synthetic Seismograms ()</Description>
+    <TotalNumberStations>6323</TotalNumberStations>
+    <SelectedNumberStations>1</SelectedNumberStations>
+    <Station code="R14A" startDate="1900-01-01T00:00:00.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.298698</Latitude>
+      <Longitude unit="DEGREES">-113.021301</Longitude>
+      <Elevation>1542.0</Elevation>
+      <Site>
+        <Name>R14A synthetic</Name>
+      </Site>
+      <CreationDate>1900-01-01T00:00:00.000000Z</CreationDate>
+      <TotalNumberChannels>6</TotalNumberChannels>
+      <SelectedNumberChannels>6</SelectedNumberChannels>
+      <Channel code="LXE" startDate="1900-01-01T00:00:00.000000Z" restrictedStatus="open" locationCode="S1">
+        <Comment>
+          <Value>ShakeMovie modes synthetic</Value>
+        </Comment>
+        <Comment>
+          <Value>http://www.fdsn.org/x-instrument/ShakeMovieSynthetics.html</Value>
+          <EndEffectiveTime>2599-12-31T23:59:59.000000Z</EndEffectiveTime>
+        </Comment>
+        <Latitude unit="DEGREES">38.298698</Latitude>
+        <Longitude unit="DEGREES">-113.021301</Longitude>
+        <Elevation>1542.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">90.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>SYNTHESIZED</Type>
+        <SampleRate unit="SAMPLES/S">0.5</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>M</Name>
+          <Description>Meters displacement</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Synthetic seismogram</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="LXN" startDate="1900-01-01T00:00:00.000000Z" restrictedStatus="open" locationCode="S1">
+        <Comment>
+          <Value>ShakeMovie modes synthetic</Value>
+        </Comment>
+        <Comment>
+          <Value>http://www.fdsn.org/x-instrument/ShakeMovieSynthetics.html</Value>
+          <EndEffectiveTime>2599-12-31T23:59:59.000000Z</EndEffectiveTime>
+        </Comment>
+        <Latitude unit="DEGREES">38.298698</Latitude>
+        <Longitude unit="DEGREES">-113.021301</Longitude>
+        <Elevation>1542.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>SYNTHESIZED</Type>
+        <SampleRate unit="SAMPLES/S">0.5</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>M</Name>
+          <Description>Meters displacement</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Synthetic seismogram</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="LXZ" startDate="1900-01-01T00:00:00.000000Z" restrictedStatus="open" locationCode="S1">
+        <Comment>
+          <Value>ShakeMovie modes synthetic</Value>
+        </Comment>
+        <Comment>
+          <Value>http://www.fdsn.org/x-instrument/ShakeMovieSynthetics.html</Value>
+          <EndEffectiveTime>2599-12-31T23:59:59.000000Z</EndEffectiveTime>
+        </Comment>
+        <Latitude unit="DEGREES">38.298698</Latitude>
+        <Longitude unit="DEGREES">-113.021301</Longitude>
+        <Elevation>1542.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>SYNTHESIZED</Type>
+        <SampleRate unit="SAMPLES/S">0.5</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>M</Name>
+          <Description>Meters displacement</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Synthetic seismogram</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="MXE" startDate="1900-01-01T00:00:00.000000Z" restrictedStatus="open" locationCode="S3">
+        <Comment>
+          <Value>ShakeMovie SEM synthetic</Value>
+        </Comment>
+        <Comment>
+          <Value>http://www.fdsn.org/x-instrument/ShakeMovieSynthetics.html</Value>
+          <EndEffectiveTime>2599-12-31T23:59:59.000000Z</EndEffectiveTime>
+        </Comment>
+        <Latitude unit="DEGREES">38.298698</Latitude>
+        <Longitude unit="DEGREES">-113.021301</Longitude>
+        <Elevation>1542.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">90.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>SYNTHESIZED</Type>
+        <SampleRate unit="SAMPLES/S">6.192</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>M</Name>
+          <Description>Meters displacement</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Synthetic seismogram</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="MXN" startDate="1900-01-01T00:00:00.000000Z" restrictedStatus="open" locationCode="S3">
+        <Comment>
+          <Value>ShakeMovie SEM synthetic</Value>
+        </Comment>
+        <Comment>
+          <Value>http://www.fdsn.org/x-instrument/ShakeMovieSynthetics.html</Value>
+          <EndEffectiveTime>2599-12-31T23:59:59.000000Z</EndEffectiveTime>
+        </Comment>
+        <Latitude unit="DEGREES">38.298698</Latitude>
+        <Longitude unit="DEGREES">-113.021301</Longitude>
+        <Elevation>1542.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>SYNTHESIZED</Type>
+        <SampleRate unit="SAMPLES/S">6.192</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>M</Name>
+          <Description>Meters displacement</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Synthetic seismogram</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="MXZ" startDate="1900-01-01T00:00:00.000000Z" restrictedStatus="open" locationCode="S3">
+        <Comment>
+          <Value>ShakeMovie SEM synthetic</Value>
+        </Comment>
+        <Comment>
+          <Value>http://www.fdsn.org/x-instrument/ShakeMovieSynthetics.html</Value>
+          <EndEffectiveTime>2599-12-31T23:59:59.000000Z</EndEffectiveTime>
+        </Comment>
+        <Latitude unit="DEGREES">38.298698</Latitude>
+        <Longitude unit="DEGREES">-113.021301</Longitude>
+        <Elevation>1542.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>SYNTHESIZED</Type>
+        <SampleRate unit="SAMPLES/S">6.192</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>M</Name>
+          <Description>Meters displacement</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Synthetic seismogram</Description>
+        </Sensor>
+        </Channel>
+    </Station>
+  </Network>
+  <Network code="UU" startDate="1962-01-01T00:00:00.000000Z" restrictedStatus="open">
+    <Description>University of Utah Regional Seismic Network (Utah Network)</Description>
+    <Identifier type="DOI">10.7914/SN/UU
+   </Identifier>
+    <TotalNumberStations>375</TotalNumberStations>
+    <SelectedNumberStations>20</SelectedNumberStations>
+    <Station code="FOR2" startDate="2016-11-10T00:00:00.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.495</Latitude>
+      <Longitude unit="DEGREES">-112.8723</Longitude>
+      <Elevation>1760.0</Elevation>
+      <Site>
+        <Name>Blundell East, UT, USA</Name>
+      </Site>
+      <CreationDate>2016-11-10T00:00:00.000000Z</CreationDate>
+      <TotalNumberChannels>6</TotalNumberChannels>
+      <SelectedNumberChannels>3</SelectedNumberChannels>
+      <Channel code="HHE" startDate="2021-06-17T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.495</Latitude>
+        <Longitude unit="DEGREES">-112.8723</Longitude>
+        <Elevation>1760.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">90.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium 120P, 120 s, 1201 V/m/s-Centaur, 40 vpp (</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HHN" startDate="2021-06-17T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.495</Latitude>
+        <Longitude unit="DEGREES">-112.8723</Longitude>
+        <Elevation>1760.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium 120P, 120 s, 1201 V/m/s-Centaur, 40 vpp (</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HHZ" startDate="2021-06-17T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.495</Latitude>
+        <Longitude unit="DEGREES">-112.8723</Longitude>
+        <Elevation>1760.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium 120P, 120 s, 1201 V/m/s-Centaur, 40 vpp (</Description>
+        </Sensor>
+        </Channel>
+    </Station>
+    <Station code="FOR6" startDate="2021-10-19T00:00:00.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.489818</Latitude>
+      <Longitude unit="DEGREES">-112.787486</Longitude>
+      <Elevation>2421.0</Elevation>
+      <Site>
+        <Name>FORGE</Name>
+      </Site>
+      <TotalNumberChannels>3</TotalNumberChannels>
+      <SelectedNumberChannels>3</SelectedNumberChannels>
+      <Channel code="HHE" startDate="2021-10-19T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.489818</Latitude>
+        <Longitude unit="DEGREES">-112.787486</Longitude>
+        <Elevation>2421.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">90.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium 120 Posthole, generation 3, 120 s, 1203 V</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HHN" startDate="2021-10-19T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.489818</Latitude>
+        <Longitude unit="DEGREES">-112.787486</Longitude>
+        <Elevation>2421.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium 120 Posthole, generation 3, 120 s, 1203 V</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HHZ" startDate="2021-10-19T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.489818</Latitude>
+        <Longitude unit="DEGREES">-112.787486</Longitude>
+        <Elevation>2421.0</Elevation>
+        <Depth>0.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium 120 Posthole, generation 3, 120 s, 1203 V</Description>
+        </Sensor>
+        </Channel>
+    </Station>
+    <Station code="FORK" startDate="2019-04-10T00:00:00.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.501227</Latitude>
+      <Longitude unit="DEGREES">-112.886489</Longitude>
+      <Elevation>1408.0</Elevation>
+      <Site>
+        <Name>Blundell, UT, USA</Name>
+      </Site>
+      <CreationDate>2019-04-10T00:00:00.000000Z</CreationDate>
+      <TotalNumberChannels>24</TotalNumberChannels>
+      <SelectedNumberChannels>12</SelectedNumberChannels>
+      <Channel code="EH1" startDate="2020-09-30T16:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501227</Latitude>
+        <Longitude unit="DEGREES">-112.886489</Longitude>
+        <Elevation>1409.0</Elevation>
+        <Depth>281.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>OMNI-2400, 15 Hz,  43.2 V/m/s</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="EH2" startDate="2020-09-30T16:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501227</Latitude>
+        <Longitude unit="DEGREES">-112.886489</Longitude>
+        <Elevation>1409.0</Elevation>
+        <Depth>281.0</Depth>
+        <Azimuth unit="DEGREES">90.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>OMNI-2400, 15 Hz,  43.2 V/m/s</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="EHZ" startDate="2020-09-30T16:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501227</Latitude>
+        <Longitude unit="DEGREES">-112.886489</Longitude>
+        <Elevation>1409.0</Elevation>
+        <Depth>281.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>OMNI-2400, 15 Hz,  43.2 V/m/s</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="EN1" startDate="2020-09-30T16:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501579</Latitude>
+        <Longitude unit="DEGREES">-112.886641</Longitude>
+        <Elevation>1685.7</Elevation>
+        <Depth>282.0</Depth>
+        <Azimuth unit="DEGREES">105.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <Sensor>
+          <Description>Ultra Low Noise, 0.005-1000 Hz, 0.1275 V/M/S**2-Ro</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="EN2" startDate="2020-09-30T16:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501579</Latitude>
+        <Longitude unit="DEGREES">-112.886641</Longitude>
+        <Elevation>1685.7</Elevation>
+        <Depth>282.0</Depth>
+        <Azimuth unit="DEGREES">195.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <Sensor>
+          <Description>Ultra Low Noise, 0.005-1000 Hz, 0.1275 V/M/S**2-Ro</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="ENZ" startDate="2020-09-30T16:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501579</Latitude>
+        <Longitude unit="DEGREES">-112.886641</Longitude>
+        <Elevation>1685.7</Elevation>
+        <Depth>282.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <Sensor>
+          <Description>Ultra Low Noise, 0.005-1000 Hz, 0.1275 V/M/S**2-Ro</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="GH1" startDate="2019-04-15T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501227</Latitude>
+        <Longitude unit="DEGREES">-112.886489</Longitude>
+        <Elevation>1409.0</Elevation>
+        <Depth>281.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>OMNI-2400, 15 Hz,  43.2 V/m/s</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="GH2" startDate="2019-04-15T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501227</Latitude>
+        <Longitude unit="DEGREES">-112.886489</Longitude>
+        <Elevation>1409.0</Elevation>
+        <Depth>281.0</Depth>
+        <Azimuth unit="DEGREES">90.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>OMNI-2400, 15 Hz,  43.2 V/m/s</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="GHZ" startDate="2019-04-15T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501227</Latitude>
+        <Longitude unit="DEGREES">-112.886489</Longitude>
+        <Elevation>1409.0</Elevation>
+        <Depth>281.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>OMNI-2400, 15 Hz,  43.2 V/m/s</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="GN1" startDate="2019-04-10T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501579</Latitude>
+        <Longitude unit="DEGREES">-112.886641</Longitude>
+        <Elevation>1685.7</Elevation>
+        <Depth>282.0</Depth>
+        <Azimuth unit="DEGREES">105.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <Sensor>
+          <Description>Ultra Low Noise, 0.005-1000 Hz, 0.1275 V/M/S**2-Ro</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="GN2" startDate="2019-04-10T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501579</Latitude>
+        <Longitude unit="DEGREES">-112.886641</Longitude>
+        <Elevation>1685.7</Elevation>
+        <Depth>282.0</Depth>
+        <Azimuth unit="DEGREES">195.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <Sensor>
+          <Description>Ultra Low Noise, 0.005-1000 Hz, 0.1275 V/M/S**2-Ro</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="GNZ" startDate="2019-04-10T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.501579</Latitude>
+        <Longitude unit="DEGREES">-112.886641</Longitude>
+        <Elevation>1685.7</Elevation>
+        <Depth>282.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">1000.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0</ClockDrift>
+        <Sensor>
+          <Description>Ultra Low Noise, 0.005-1000 Hz, 0.1275 V/M/S**2-Ro</Description>
+        </Sensor>
+        </Channel>
+    </Station>
+    <Station code="FSB1" startDate="2020-10-13T00:00:00.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.484942</Latitude>
+      <Longitude unit="DEGREES">-112.89136</Longitude>
+      <Elevation>1697.0</Elevation>
+      <Site>
+        <Name>FORGE surface borehole 1, UT, USA</Name>
+      </Site>
+      <CreationDate>2020-10-13T00:00:00.000000Z</CreationDate>
+      <TotalNumberChannels>18</TotalNumberChannels>
+      <SelectedNumberChannels>9</SelectedNumberChannels>
+      <Channel code="DN1" startDate="2021-02-24T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.484942</Latitude>
+        <Longitude unit="DEGREES">-112.89136</Longitude>
+        <Elevation>1697.0</Elevation>
+        <Depth>29.0</Depth>
+        <Azimuth unit="DEGREES">257.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">500.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Titan, DC to 430 Hz, 20V differential full scale v</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="DN2" startDate="2021-02-24T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.484942</Latitude>
+        <Longitude unit="DEGREES">-112.89136</Longitude>
+        <Elevation>1697.0</Elevation>
+        <Depth>29.0</Depth>
+        <Azimuth unit="DEGREES">347.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">500.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Titan, DC to 430 Hz, 20V differential full scale v</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="DNZ" startDate="2021-02-24T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.484942</Latitude>
+        <Longitude unit="DEGREES">-112.89136</Longitude>
+        <Elevation>1697.0</Elevation>
+        <Depth>29.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">500.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Titan, DC to 430 Hz, 20V differential full scale v</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="EN1" startDate="2021-02-24T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.484942</Latitude>
+        <Longitude unit="DEGREES">-112.89136</Longitude>
+        <Elevation>1697.0</Elevation>
+        <Depth>29.0</Depth>
+        <Azimuth unit="DEGREES">257.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Titan, DC to 430 Hz, 20V differential full scale v</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="EN2" startDate="2021-02-24T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.484942</Latitude>
+        <Longitude unit="DEGREES">-112.89136</Longitude>
+        <Elevation>1697.0</Elevation>
+        <Depth>29.0</Depth>
+        <Azimuth unit="DEGREES">347.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Titan, DC to 430 Hz, 20V differential full scale v</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="ENZ" startDate="2021-02-24T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.484942</Latitude>
+        <Longitude unit="DEGREES">-112.89136</Longitude>
+        <Elevation>1697.0</Elevation>
+        <Depth>29.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Titan, DC to 430 Hz, 20V differential full scale v</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HH1" startDate="2020-10-13T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.484942</Latitude>
+        <Longitude unit="DEGREES">-112.89136</Longitude>
+        <Elevation>1697.0</Elevation>
+        <Depth>29.0</Depth>
+        <Azimuth unit="DEGREES">257.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium Cascadia seismometer, 120 s, 754 V/m/s-Ce</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HH2" startDate="2020-10-13T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.484942</Latitude>
+        <Longitude unit="DEGREES">-112.89136</Longitude>
+        <Elevation>1697.0</Elevation>
+        <Depth>29.0</Depth>
+        <Azimuth unit="DEGREES">347.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium Cascadia seismometer, 120 s, 754 V/m/s-Ce</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HHZ" startDate="2020-10-13T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.484942</Latitude>
+        <Longitude unit="DEGREES">-112.89136</Longitude>
+        <Elevation>1697.0</Elevation>
+        <Depth>29.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium Cascadia seismometer, 120 s, 754 V/m/s-Ce</Description>
+        </Sensor>
+        </Channel>
+    </Station>
+    <Station code="FSB4" startDate="2022-04-26T00:00:00.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.425726</Latitude>
+      <Longitude unit="DEGREES">-112.933649</Longitude>
+      <Elevation>1578.0</Elevation>
+      <Site>
+        <Name>FORGE surface borehole 4, UT, USA</Name>
+      </Site>
+      <CreationDate>2022-04-26T00:00:00.000000Z</CreationDate>
+      <TotalNumberChannels>3</TotalNumberChannels>
+      <SelectedNumberChannels>3</SelectedNumberChannels>
+      <Channel code="HH1" startDate="2022-04-26T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.425726</Latitude>
+        <Longitude unit="DEGREES">-112.933649</Longitude>
+        <Elevation>1619.0</Elevation>
+        <Depth>41.0</Depth>
+        <Azimuth unit="DEGREES">219.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium Compact, 120 s, 754 V/m/s-Centaur, 40 vpp</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HH2" startDate="2022-04-26T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.425726</Latitude>
+        <Longitude unit="DEGREES">-112.933649</Longitude>
+        <Elevation>1619.0</Elevation>
+        <Depth>41.0</Depth>
+        <Azimuth unit="DEGREES">309.0</Azimuth>
+        <Dip unit="DEGREES">0.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium Compact, 120 s, 754 V/m/s-Centaur, 40 vpp</Description>
+        </Sensor>
+        </Channel>
+      <Channel code="HHZ" startDate="2022-04-26T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.425726</Latitude>
+        <Longitude unit="DEGREES">-112.933649</Longitude>
+        <Elevation>1619.0</Elevation>
+        <Depth>41.0</Depth>
+        <Azimuth unit="DEGREES">0.0</Azimuth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">200.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>counts</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Trillium Compact, 120 s, 754 V/m/s-Centaur, 40 vpp</Description>
+        </Sensor>
+        </Channel>
+    </Station>
+    <Station code="IMU" startDate="1988-10-03T00:00:00.000000Z" restrictedStatus="open">
+      <Latitude unit="DEGREES">38.63317</Latitude>
+      <Longitude unit="DEGREES">-113.15833</Longitude>
+      <Elevation>1833.0</Elevation>
+      <Site>
+        <Name>Iron Mountain, UT, USA</Name>
+      </Site>
+      <CreationDate>1988-10-03T00:00:00.000000Z</CreationDate>
+      <TotalNumberChannels>8</TotalNumberChannels>
+      <SelectedNumberChannels>1</SelectedNumberChannels>
+      <Channel code="EHZ" startDate="2013-04-01T00:00:00.000000Z" restrictedStatus="open" locationCode="01">
+        <Latitude unit="DEGREES">38.63317</Latitude>
+        <Longitude unit="DEGREES">-113.15833</Longitude>
+        <Elevation>1833.0</Elevation>
+        <Depth>0.0</Depth>
+        <Dip unit="DEGREES">-90.0</Dip>
+        <Type>CONTINUOUS</Type>
+        <Type>GEOPHYSICAL</Type>
+        <SampleRate unit="SAMPLES/S">100.0</SampleRate>
+        <ClockDrift unit="SECONDS/SAMPLE">0.0001</ClockDrift>
+        <CalibrationUnits>
+          <Name>COUNTS</Name>
+          <Description>Digital Counts</Description>
+        </CalibrationUnits>
+        <Sensor>
+          <Description>Mark Products L-4c seismometer</Description>
+        </Sensor>
+        </Channel>
+    </Station>
+    </Network>
+</FDSNStationXML>

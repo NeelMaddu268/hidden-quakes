@@ -1,0 +1,30 @@
+# Validate section (VAL-02 / VAL-01, H4). Parsed by hq.config.validate.ValidateConfig; unknown
+# keys are an error. Every knob of the validation reruns (hq.validate) lives here. The reruns
+# call H2's associate / locate / match / assign_tiers with the same seismology.yaml as the run of
+# record; this file only says how their inputs are perturbed or filtered.
+
+# Null test (VAL-02): chance associations on time-scrambled picks -> Validation.nullTest.
+nullTest:
+  # Reruns of associate -> locate -> match -> assign_tiers. The reported std is the sample
+  # standard deviation across reruns (n - 1), so at least 2 are required.
+  nShuffles: 20
+  # Per rerun, every station's picks move together by one draw from uniform(-shiftS, +shiftS)
+  # seconds; within-station P/S structure survives, inter-station coherence does not.
+  # Recorded as NullTest.shiftRangeS.
+  shiftS: 30.0
+  # Root seed; rerun i draws from numpy.random.default_rng([seed, i]). Same seed, same numbers.
+  seed: 0
+  # Which picks go in: "full" = every pick, "p_only" = P picks only (see hq.config.validate).
+  profile: full
+
+# Baseline comparison (VAL-01): two pickers x two association profiles.
+baseline:
+  # Association profiles every picker runs through; BaselineGain needs gain > 1 in both.
+  profiles: [full, p_only]
+
+# Gutenberg-Richter (VAL-01): Aki-Utsu b with Shi-Bolt sigma, Mc by maximum curvature + offset.
+gr:
+  # Width of GRCurve.magBins, magnitude units.
+  magBinWidth: 0.1
+  # Added to the maximum-curvature magnitude of completeness.
+  mcOffsetMag: 0.2
