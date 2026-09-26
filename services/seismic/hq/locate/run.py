@@ -51,6 +51,7 @@ from hq_contracts.io import read_table, write_table
 
 from hq.locate import LocateDetails
 from hq.locate.diagnostics import (
+    KNOWN_WINDOWS_FILE,
     Comparison1d,
     DiagnosticsInputs,
     build_diagnostics,
@@ -93,7 +94,7 @@ SYNTHETIC_PARAMS_SKIPPED = ("locator", "velocityModel")
 CATALOG_TABLE = "catalog.parquet"
 CATALOG_QUAKEML = "catalog.quakeml"
 MATCHES_TABLE = "matches.parquet"  # a prior match pass: the reference events (LOC-05)
-KNOWN_WINDOWS = "known/windows.json"
+KNOWN_WINDOWS = KNOWN_WINDOWS_FILE
 PART_SUFFIX = ".part"
 # Model name each input's parquet metadata must carry (docs/02 §2; the assoc tables are LOC-03's,
 # matches MATCH-02's, events_located and locate_flags this stage's own).
