@@ -2,24 +2,32 @@
 
 Fixtures under ``fixtures/inventory/`` are small recordings of public services for the showcase
 window and bbox: ``channels.xml`` (EarthScope fdsnws-station, channel level, a subset of stations,
-responses stripped), ``dem.json`` (USGS 3DEP EPQS values at the chosen sensors) and
-``mustang_percent_availability.json`` (EarthScope MUSTANG responses per chosen triplet).
+responses stripped), ``dem.json`` (USGS 3DEP EPQS values at the chosen sensors),
+``mustang_percent_availability.json`` (EarthScope MUSTANG replies per chosen triplet) and
+``run.yaml`` (the run section they were recorded for, pinned). Instrument responses served by the
+fake client and the few edited inventories below are built inside the tests.
 """
 
+import copy
 import json
 import logging
 import shutil
+import socket
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from obspy import Inventory, read_inventory
+import requests
+import yaml
+from obspy import Inventory, UTCDateTime, read_inventory
+from obspy.clients.fdsn.header import FDSNException, FDSNNoDataException
+from obspy.core.inventory.response import Response
 from pydantic import ValidationError
 
 from hq.config.run import RunSection
-from hq.config.signal import ChannelRules, SignalConfig, StationSelection
+from hq.config.signal import ChannelRules, ElevationCheck, SignalConfig, StationSelection
 from hq.ingest import inventory as inv
 from hq.ingest.inventory import (
     AmbiguousElevationError,
@@ -28,7 +36,10 @@ from hq.ingest.inventory import (
     DemError,
     EnuProjector,
     HttpResult,
+    InventoryError,
     InventoryResult,
+    JsonCache,
+    SiteCandidates,
     Triplet,
     build_inventory,
 )
@@ -37,6 +48,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "inventory"
 CHANNELS_XML = FIXTURES / "channels.xml"
 DEM = json.loads((FIXTURES / "dem.json").read_text(encoding="utf-8"))
 MUSTANG = json.loads((FIXTURES / "mustang_percent_availability.json").read_text(encoding="utf-8"))
+FOR6_DEM = DEM["38.48982,-112.78749"]
 
 EXPECTED_IDS = [
     "6K.CS01",
@@ -68,6 +80,30 @@ STATION_FIELDS = {  # docs/02 -> Station
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Any socket connection in these tests is a bug: every service is injected."""
+
+    def refuse(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError(f"network access in an offline test: {args}")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+
+
+@pytest.fixture(scope="module")
+def run_section() -> RunSection:
+    """Overrides the conftest fixture for this module: the recorded fixtures' own window."""
+    with (FIXTURES / "run.yaml").open(encoding="utf-8") as fh:
+        return RunSection.model_validate(yaml.safe_load(fh))
+
+
+def fake_response() -> Response:
+    return Response.from_paz(
+        zeros=[], poles=[], stage_gain=1.0, input_units="M/S", output_units="COUNTS"
+    )
+
+
 class FixtureClient:
     """Stands in for obspy's FDSN client: serves the recorded channel XML and response subsets."""
 
@@ -87,6 +123,10 @@ class FixtureClient:
             sub += self.inv.select(
                 network=kw["network"], station=kw["station"], location=loc, channel=cha
             )
+        for net in sub:
+            for sta in net:
+                for ch in sta:
+                    ch.response = fake_response()
         sub.write(filename, format="STATIONXML")
 
 
@@ -108,6 +148,10 @@ def mustang_http(url: str, params: Any, timeout_s: float) -> HttpResult:
     return HttpResult(status=rec["status"], text=rec["text"])
 
 
+def no_http(url: str, params: Any, timeout_s: float) -> HttpResult:
+    raise AssertionError(f"HTTP called on a cache hit: {url} {params}")
+
+
 def build(run: RunSection, cfg: StationSelection, cache: Path, **kw: Any) -> InventoryResult:
     kw.setdefault("client", FixtureClient())
     kw.setdefault("dem", fixture_dem)
@@ -115,9 +159,29 @@ def build(run: RunSection, cfg: StationSelection, cache: Path, **kw: Any) -> Inv
     return build_inventory(run, cfg, cache, **kw)
 
 
+def with_elevation(cfg: StationSelection, **update: Any) -> StationSelection:
+    return cfg.model_copy(update={"elevation": cfg.elevation.model_copy(update=update)})
+
+
+def with_availability(cfg: StationSelection, **update: Any) -> StationSelection:
+    return cfg.model_copy(update={"availability": cfg.availability.model_copy(update=update)})
+
+
 @pytest.fixture()
 def cfg(signal_cfg: SignalConfig) -> StationSelection:
     return signal_cfg.stations
+
+
+@pytest.fixture()
+def fast(cfg: StationSelection) -> StationSelection:
+    """The showcase config with every retry backoff set to zero."""
+    return cfg.model_copy(
+        update={
+            "query": cfg.query.model_copy(update={"backoffS": 0.0}),
+            "elevation": cfg.elevation.model_copy(update={"demBackoffS": 0.0}),
+            "availability": cfg.availability.model_copy(update={"backoffS": 0.0}),
+        }
+    )
 
 
 @pytest.fixture()
@@ -131,6 +195,39 @@ def by_id(res: InventoryResult) -> dict[str, dict[str, Any]]:
 
 def detail(res: InventoryResult, sid: str) -> dict[str, Any]:
     return next(d for d in res.report["stations"] if d["id"] == sid)
+
+
+def flags_of(res: InventoryResult, sid: str) -> list[str]:
+    return [f["flag"] for f in res.report["flags"] if f["station"] == sid]
+
+
+def triplet(
+    station: str,
+    location: str,
+    code: str,
+    *,
+    family: str = "velocity",
+    rank: int = 0,
+    rate: float = 100.0,
+    depth: float = 0.0,
+) -> Triplet:
+    return Triplet(
+        network="XX",
+        station=station,
+        location=location,
+        code=code,
+        family=family,  # type: ignore[arg-type]
+        rank=rank,
+        channels=(f"{code}Z", f"{code}N", f"{code}E"),
+        sample_rate_hz=rate,
+        depth_m=depth,
+        latitude=38.5,
+        longitude=-112.9,
+        channel_elev_m=1600.0,
+        station_elev_m=1600.0,
+        station_latitude=38.5,
+        station_longitude=-112.9,
+    )
 
 
 # --- selection ------------------------------------------------------------------------------------
@@ -176,6 +273,7 @@ def test_fork_borehole_geophone_with_sensor_level_station_elevation(
     assert fork["preprocessProfile"] == "borehole-A"
     elev = detail(result, "UU.FORK")["elevation"]
     assert (elev["convention"], elev["basis"]) == ("sensor", "dem")
+    assert flags_of(result, "UU.FORK") == []
 
 
 @pytest.mark.smoke
@@ -218,20 +316,253 @@ def test_kinds_profiles_and_channel_order(result: InventoryResult) -> None:
 
 
 @pytest.mark.smoke
+def test_two_locations_at_one_site_get_raw_location_suffix(cfg: StationSelection) -> None:
+    sites = {
+        # a surface HH at the empty location and a borehole GH at 01: both kept
+        "XX.A": SiteCandidates(
+            triplets=[
+                triplet("A", "", "HH", rank=6, rate=100.0, depth=0.0),
+                triplet("A", "01", "GH", rank=0, rate=1000.0, depth=200.0),
+            ]
+        ),
+        # two locations with the same kind and depth: only the higher priority one, plain id
+        "XX.B": SiteCandidates(
+            triplets=[
+                triplet("B", "00", "HH", rank=6, rate=100.0),
+                triplet("B", "10", "EH", rank=8, rate=100.0),
+            ]
+        ),
+    }
+    chosen, skipped, dropped = inv.choose_triplets(sites, cfg)
+    assert skipped == []
+    assert sorted(c.id for c in chosen) == ["XX.A.", "XX.A.01", "XX.B"]
+    ids = {c.id: c for c in chosen}
+    assert (ids["XX.A."].kind, ids["XX.A.01"].kind) == ("surface", "borehole")
+    assert ids["XX.A.01"].profile == "borehole-A"
+    reason = "same kind (surface) and depth as XX.B.00.HH?"
+    assert dropped == [{"triplet": "XX.B.10.EH?", "reason": reason}]
+
+
+@pytest.mark.smoke
+def test_accelerometer_used_when_velocity_triplet_has_no_profile(cfg: StationSelection) -> None:
+    sites = {
+        "XX.C": SiteCandidates(
+            triplets=[
+                triplet("C", "00", "SH", rank=10, rate=50.0),
+                triplet("C", "00", "HN", family="accelerometer", rank=3, rate=100.0),
+            ]
+        ),
+        "XX.D": SiteCandidates(triplets=[triplet("D", "00", "SH", rank=10, rate=50.0)]),
+    }
+    chosen, skipped, dropped = inv.choose_triplets(sites, cfg)
+    assert [(c.id, c.triplet.code, c.kind, c.profile) for c in chosen] == [
+        ("XX.C", "HN", "strong_motion", "surface-100")
+    ]
+    assert {"triplet": "XX.C.00.SH?", "reason": "no preprocess profile for 50 Hz"} in dropped
+    assert skipped == [{"site": "XX.D", "reason": "00.SH: no preprocess profile for 50 Hz"}]
+
+
+@pytest.mark.smoke
+def test_non_seismic_channel_without_sample_rate_is_ignored(
+    run_section: RunSection, cfg: StationSelection
+) -> None:
+    edited = read_inventory(str(CHANNELS_XML))
+    for ch in edited.select(network="2J")[0][0]:
+        ch.sample_rate = None  # SampleRate is optional in StationXML
+    for ch in edited.select(station="FOR2", channel="HHN")[0][0]:
+        ch.sample_rate = None
+    sites, _ = inv.collect_candidates(edited, run_section, cfg)
+    assert sites["2J.FS01"].triplets == [] and sites["2J.FS01"].ignored_codes
+    assert "01.HHN: StationXML lacks sample rate" in sites["UU.FOR2"].problems
+    assert sites["UU.FOR2"].triplets == []
+
+
+@pytest.mark.smoke
+def test_epoch_change_inside_window_is_flagged(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    edited = read_inventory(str(CHANNELS_XML))
+    uu = next(n for n in edited.networks if n.code == "UU")
+    sta = next(s for s in uu.stations if s.code == "FSB1")  # select() would copy the list
+    hhz = next(ch for ch in sta.channels if ch.code == "HHZ")
+    later = copy.deepcopy(hhz)
+    change = UTCDateTime(run_section.window_start_s + 14 * 3600)
+    hhz.end_date = change
+    later.start_date, later.depth = change, 35.0
+    sta.channels.append(later)
+    xml = tmp_path / "edited.xml"
+    edited.write(str(xml), format="STATIONXML")
+    res = build(run_section, cfg, tmp_path / "cache", client=FixtureClient(xml))
+    fsb1 = by_id(res)["UU.FSB1"]
+    assert fsb1["sensorDepthM"] == 29.0  # the epoch covering most of the window
+    assert any("2 epochs in the window" in f for f in flags_of(res, "UU.FSB1"))
+
+
+# --- coverage -------------------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
 def test_coverage_marks_stations_without_data_unused(result: InventoryResult) -> None:
     rows = by_id(result)
     assert rows["NP.7225"]["usedInRun"] is False
     assert detail(result, "NP.7225")["coverage"] == 0.0
     assert all(rows[i]["usedInRun"] for i in EXPECTED_IDS if i != "NP.7225")
     assert result.counts["withData"] == len(EXPECTED_IDS) - 1
+    assert result.counts["usedInRun"] == len(EXPECTED_IDS) - 1
 
 
 @pytest.mark.smoke
-def test_shallow_station_disagreeing_with_dem_is_flagged(result: InventoryResult) -> None:
+def test_no_measurement_keeps_station_used_and_flagged(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    def cs01_unmeasured(url: str, params: Any, timeout_s: float) -> HttpResult:
+        if params["sta"] == "CS01":
+            return HttpResult(204, "")
+        return mustang_http(url, params, timeout_s)
+
+    res = build(run_section, cfg, tmp_path / "cache", http_get=cs01_unmeasured)
+    assert cfg.availability.onMissing == "used"
+    assert detail(res, "6K.CS01")["coverage"] is None
+    assert by_id(res)["6K.CS01"]["usedInRun"] is True
+    assert any("coverage unknown" in f for f in flags_of(res, "6K.CS01"))
+    assert res.counts["noAvailabilityMeasurement"] == 1
+
+    unused = with_availability(cfg, onMissing="unused")
+    res = build(run_section, unused, tmp_path / "cache2", http_get=cs01_unmeasured)
+    assert by_id(res)["6K.CS01"]["usedInRun"] is False
+
+
+@pytest.mark.smoke
+def test_no_station_with_data_fails_loudly(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    def nothing(url: str, params: Any, timeout_s: float) -> HttpResult:
+        return HttpResult(204, "")
+
+    unused = with_availability(cfg, onMissing="unused")
+    with pytest.raises(InventoryError, match="none of the 8 selected stations has data"):
+        build(run_section, unused, tmp_path / "cache", http_get=nothing)
+
+
+@pytest.mark.smoke
+def test_partial_day_coverage_is_overlap_weighted(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    run = run_section.model_copy(
+        update={
+            "windowStart": datetime(2026, 9, 10, 12, tzinfo=UTC),
+            "windowEnd": datetime(2026, 9, 11, 6, tzinfo=UTC),
+        }
+    )
+    rows = [_row(c, "2026-09-10", 100.0) for c in ("HHZ", "HHN", "HHE")]
+    rows += [_row(c, "2026-09-11", 50.0) for c in ("HHZ", "HHN", "HHE")]
+    rows.append(_row("HHZ", "2026-09-11", 0.0, qual="D"))  # other quality code: best one wins
+    seen: dict[str, Any] = {}
+
+    def http(url: str, params: Any, timeout_s: float) -> HttpResult:
+        seen.update(params)
+        body = {"measurements": {cfg.availability.metric: rows}}
+        return HttpResult(200, json.dumps(body))
+
+    chosen = [_chosen()]
+    cache = JsonCache(tmp_path / "avail.json")
+    cov = inv.fetch_coverage(chosen, run, cfg.availability, http, cache)
+    assert seen["timewindow"] == "2026-09-10T00:00:00,2026-09-12T00:00:00"
+    assert seen["cha"] == "HHZ,HHN,HHE"
+    assert cov["XX.TST"]["HHZ"] == pytest.approx(12 / 18 + 0.5 * 6 / 18)
+    assert inv.station_coverage(cov["XX.TST"]) == pytest.approx(12 / 18 + 0.5 * 6 / 18)
+    again = inv.fetch_coverage(chosen, run, cfg.availability, no_http, JsonCache(cache.path))
+    assert again == cov
+
+
+def _chosen() -> Chosen:
+    return Chosen(
+        id="XX.TST", triplet=triplet("TST", "00", "HH"), kind="surface", profile="surface-100"
+    )
+
+
+def _row(cha: str, day: str, value: float, qual: str = "M") -> dict[str, Any]:
+    return {"value": value, "loc": "00", "cha": cha, "qual": qual, "start": f"{day}T00:00:00"}
+
+
+@pytest.mark.smoke
+def test_missing_measurement_and_service_failure(
+    run_section: RunSection, fast: StationSelection, tmp_path: Path
+) -> None:
+    chosen = [_chosen()]
+
+    def no_content(url: str, params: Any, timeout_s: float) -> HttpResult:
+        return HttpResult(204, "")
+
+    def fetch(acfg: Any, http: Any) -> dict[str, dict[str, float | None]]:
+        return inv.fetch_coverage(chosen, run_section, acfg, http, JsonCache(tmp_path / "x.json"))
+
+    acfg = fast.availability
+    with pytest.raises(AvailabilityError, match="no percent_availability measurement"):
+        fetch(acfg.model_copy(update={"onMissing": "error"}), no_content)
+    (tmp_path / "x.json").unlink()
+    for policy in ("unused", "used"):
+        cov = fetch(acfg.model_copy(update={"onMissing": policy}), no_content)
+        assert inv.station_coverage(cov["XX.TST"]) is None
+        (tmp_path / "x.json").unlink()
+
+    calls: list[int] = []
+
+    def down(url: str, params: Any, timeout_s: float) -> HttpResult:
+        calls.append(1)
+        return HttpResult(503, "Service Unavailable")
+
+    with pytest.raises(AvailabilityError, match="HTTP 503"):
+        fetch(acfg, down)
+    assert len(calls) == acfg.retries + 1
+    assert not (tmp_path / "x.json").exists()  # failures are never cached
+
+    def bad_request(url: str, params: Any, timeout_s: float) -> HttpResult:
+        calls.append(1)
+        return HttpResult(400, "bad")
+
+    calls.clear()
+    with pytest.raises(AvailabilityError, match="HTTP 400"):
+        fetch(acfg, bad_request)
+    assert len(calls) == 1  # a client error is not retried
+
+    replies: list[Any] = [requests.ConnectionError("reset"), HttpResult(204, "")]
+
+    def flaky(url: str, params: Any, timeout_s: float) -> HttpResult:
+        reply = replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    assert inv.station_coverage(fetch(acfg, flaky)["XX.TST"]) is None
+    assert replies == []
+
+
+# --- elevation rules ----------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+def test_shallow_station_far_from_dem_uses_dem_surface(
+    run_section: RunSection, cfg: StationSelection, result: InventoryResult, tmp_path: Path
+) -> None:
+    assert cfg.elevation.onShallowMismatch == "dem"
+    for6 = by_id(result)["UU.FOR6"]
     elev = detail(result, "UU.FOR6")["elevation"]
-    assert (elev["convention"], elev["basis"]) == ("surface", "shallow")
-    assert by_id(result)["UU.FOR6"]["surfaceElevM"] == 2421.0  # StationXML value kept
-    assert any(f["station"] == "UU.FOR6" for f in result.report["flags"])
+    assert (elev["convention"], elev["basis"]) == ("dem", "mismatch")
+    assert elev["stationElevM"] == 2421.0  # the StationXML value stays in the report
+    assert for6["surfaceElevM"] == pytest.approx(FOR6_DEM)
+    assert for6["sensorElevM"] == pytest.approx(FOR6_DEM)
+    assert for6["enu"]["u"] == pytest.approx(FOR6_DEM - run_section.origin.elevM)
+    assert any("maxShallowMismatchM" in f for f in flags_of(result, "UU.FOR6"))
+    assert result.counts["demSurface"] == 1
+
+    keep = build(run_section, with_elevation(cfg, onShallowMismatch="keep"), tmp_path / "c1")
+    assert by_id(keep)["UU.FOR6"]["surfaceElevM"] == 2421.0
+    assert flags_of(keep, "UU.FOR6")
+    skip = build(run_section, with_elevation(cfg, onShallowMismatch="skip"), tmp_path / "c2")
+    assert "UU.FOR6" not in by_id(skip)
+    with pytest.raises(AmbiguousElevationError, match="UU.FOR6"):
+        build(run_section, with_elevation(cfg, onShallowMismatch="error"), tmp_path / "c3")
 
 
 @pytest.mark.smoke
@@ -240,25 +571,52 @@ def test_enu_of_sensor(result: InventoryResult, run_section: RunSection) -> None
     assert fork["enu"]["u"] == pytest.approx(1408.0 - run_section.origin.elevM)
 
 
-# --- elevation rules ----------------------------------------------------------------------------
+def _ecfg(cfg: StationSelection, **update: Any) -> ElevationCheck:
+    return cfg.elevation.model_copy(update=update)
 
 
 @pytest.mark.smoke
-def test_resolve_elevation_rules() -> None:
-    kw: dict[str, Any] = {"tol_m": 15.0, "on_ambiguous": "error", "what": "t"}
-    d = inv.resolve_elevation(1634.7, 1634.7, 290.0, 1634.7, **kw)
+def test_resolve_elevation_rules(cfg: StationSelection) -> None:
+    e = _ecfg(cfg, toleranceM=15.0, maxShallowMismatchM=50.0, onAmbiguous="error")
+    r = inv.resolve_elevation
+    d = r(1634.7, 1634.7, 290.0, 1634.7, e, what="t")
     assert d is not None and (d.convention, d.sensor_elev_m) == ("surface", pytest.approx(1344.7))
-    d = inv.resolve_elevation(1474.0, 1515.0, 41.0, 1512.6, **kw)
+    assert d.flag is None
+    d = r(1474.0, 1515.0, 41.0, 1512.6, e, what="t")
     assert d is not None and (d.convention, d.surface_elev_m) == ("sensor", 1515.0)
-    d = inv.resolve_elevation(1840.1, 1840.1, 1.0, 1840.2, **kw)
-    assert d is not None and (d.convention, d.basis) == ("surface", "both-match")
+    # both readings match and the depth is within tolerance: harmless, surface, no flag
+    d = r(1840.1, 1840.1, 1.0, 1840.2, e, what="t")
+    assert d is not None and (d.convention, d.basis, d.flag) == ("surface", "both-match", None)
+    # both match but they differ by 29 m: the closer one wins, flagged
+    d = r(1668.0, 1668.0, 29.0, 1683.0, e, what="t")
+    assert d is not None and (d.convention, d.basis) == ("sensor", "both-match")
+    assert d.sensor_elev_m == 1668.0 and d.flag is not None
+    # shallow, off the DEM by less than maxShallowMismatchM: kept, flagged
+    d = r(1853.0, 1853.0, 0.0, 1876.7, e, what="t")
+    assert d is not None and (d.convention, d.basis, d.surface_elev_m) == (
+        "surface",
+        "shallow",
+        1853.0,
+    )
+    assert d.flag is not None
+    # deeper than tolerance and neither reading matches: ambiguous, even below 2 * tolerance
     with pytest.raises(AmbiguousElevationError):
-        inv.resolve_elevation(1408.0, 1409.0, 281.0, 1500.0, **kw)
-    kw["on_ambiguous"] = "skip"
-    assert inv.resolve_elevation(1408.0, 1409.0, 281.0, 1500.0, **kw) is None
-    kw["on_ambiguous"] = "surface"
-    d = inv.resolve_elevation(1408.0, 1409.0, 281.0, 1500.0, **kw)
+        r(1700.0, 1700.0, 20.0, 1660.0, e, what="t")
+    with pytest.raises(AmbiguousElevationError):
+        r(1408.0, 1409.0, 281.0, 1500.0, e, what="t")
+    assert r(1408.0, 1409.0, 281.0, 1500.0, _ecfg(cfg, onAmbiguous="skip"), what="t") is None
+    d = r(1408.0, 1409.0, 281.0, 1500.0, _ecfg(cfg, onAmbiguous="surface"), what="t")
     assert d is not None and (d.basis, d.sensor_elev_m) == ("assumed", 1127.0)
+    d = r(1408.0, 1409.0, 281.0, 1500.0, _ecfg(cfg, onAmbiguous="dem"), what="t")
+    assert d is not None and (d.convention, d.surface_elev_m, d.sensor_elev_m) == (
+        "dem",
+        1500.0,
+        1219.0,
+    )
+    for policy in ("dem", "keep"):
+        d = r(2421.0, 2421.0, 0.0, 2261.7, _ecfg(cfg, onShallowMismatch=policy), what="t")
+        assert d is not None and d.flag is not None
+        assert d.sensor_elev_m == d.surface_elev_m - d.depth_m
 
 
 @pytest.mark.smoke
@@ -292,14 +650,14 @@ def test_borehole_looking_code_at_depth_zero_is_flagged(
     fork = by_id(res)["UU.FORK"]
     assert (fork["channels"][0], fork["sensorDepthM"], fork["kind"]) == ("GHZ", 0.0, "surface")
     assert "looks like a borehole geophone" in caplog.text
-    assert any("looks like a borehole geophone" in f["flag"] for f in res.report["flags"])
+    assert any("looks like a borehole geophone" in f for f in flags_of(res, "UU.FORK"))
 
 
 # --- caches and determinism ---------------------------------------------------------------------
 
 
 @pytest.mark.smoke
-def test_rerun_uses_caches_without_network(
+def test_rerun_is_a_pure_cache_hit(
     run_section: RunSection, cfg: StationSelection, tmp_path: Path
 ) -> None:
     cache = tmp_path / "cache"
@@ -307,29 +665,75 @@ def test_rerun_uses_caches_without_network(
     first = build(run_section, cfg, cache, client=client)
     assert client.levels.count("channel") == 1
     assert client.levels.count("response") == len(EXPECTED_IDS)
-    xml_dir = cache / cfg.query.cacheSubdir
-    assert (xml_dir / cfg.elevation.demCacheFile).exists()
+    xml_dir = cache / inv.STATIONXML_DIR
+    assert inv.dem_cache_path(xml_dir, cfg).exists()
+    assert (xml_dir / cfg.availability.cacheFile).exists()
     for sid in EXPECTED_IDS:
         assert (xml_dir / f"{sid}.xml").exists()
-    second = build(run_section, cfg, cache, client=NoNetworkClient(), dem=no_dem)
+    second = build(run_section, cfg, cache, client=NoNetworkClient(), dem=no_dem, http_get=no_http)
     assert second.rows == first.rows
     assert second.report == first.report
 
 
 @pytest.mark.smoke
-def test_response_cache_with_other_channels_is_refetched(
+def test_dem_cache_file_is_keyed_by_source(cfg: StationSelection, tmp_path: Path) -> None:
+    other = with_elevation(cfg, demUrl="https://example.invalid/dem")
+    a, b = inv.dem_cache_path(tmp_path, cfg), inv.dem_cache_path(tmp_path, other)
+    assert a != b and a.suffix == b.suffix == ".json"
+    assert a.name.startswith(Path(cfg.elevation.demCacheFile).stem)
+
+
+@pytest.mark.smoke
+def test_stale_response_cache_is_refetched(
     run_section: RunSection, cfg: StationSelection, tmp_path: Path
 ) -> None:
     cache = tmp_path / "cache"
     build(run_section, cfg, cache)
-    stale = read_inventory(str(CHANNELS_XML)).select(station="FORK", channel="EH?")
-    stale.write(str(cache / cfg.query.cacheSubdir / "UU.FORK.xml"), format="STATIONXML")
+    xml_dir = cache / inv.STATIONXML_DIR
+    channel_level = read_inventory(str(CHANNELS_XML))
+    # other channels
+    channel_level.select(station="FORK", channel="EH?").write(
+        str(xml_dir / "UU.FORK.xml"), format="STATIONXML"
+    )
+    # the right channels, but channel level (sensitivity only, no response stages)
+    channel_level.select(station="FOR2", channel="HH?").write(
+        str(xml_dir / "UU.FOR2.xml"), format="STATIONXML"
+    )
+    # the right channels with responses, but an epoch that ended before the window
+    old = channel_level.select(station="FSB4", channel="HH?")
+    for ch in old[0][0]:
+        ch.response = fake_response()
+        ch.end_date = UTCDateTime(run_section.window_start_s - 86400)
+    old.write(str(xml_dir / "UU.FSB4.xml"), format="STATIONXML")
     client = FixtureClient()
-    build(run_section, cfg, cache, client=client)
-    assert client.levels == ["response"]
+    build(run_section, cfg, cache, client=client, http_get=no_http, dem=no_dem)
+    assert client.levels == ["response"] * 3
 
 
-# --- ENU, profiles, availability, DEM -----------------------------------------------------------
+@pytest.mark.smoke
+def test_station_service_errors_are_retried_then_raised(
+    run_section: RunSection, fast: StationSelection, tmp_path: Path
+) -> None:
+    class Flaky(FixtureClient):
+        def __init__(self, errors: list[Exception]) -> None:
+            super().__init__()
+            self.errors = errors
+
+        def get_stations(self, **kw: Any) -> None:
+            if self.errors:
+                raise self.errors.pop(0)
+            super().get_stations(**kw)
+
+    ok = build(run_section, fast, tmp_path / "a", client=Flaky([FDSNException("timeout")]))
+    assert [r["id"] for r in ok.rows] == EXPECTED_IDS
+    with pytest.raises(InventoryError, match="no data"):
+        build(run_section, fast, tmp_path / "b", client=Flaky([FDSNNoDataException("none")]))
+    errors: list[Exception] = [OSError("down")] * (fast.query.retries + 1)
+    with pytest.raises(InventoryError, match="failed after"):
+        build(run_section, fast, tmp_path / "c", client=Flaky(errors))
+
+
+# --- ENU, profiles, DEM -------------------------------------------------------------------------
 
 
 @pytest.mark.smoke
@@ -350,94 +754,14 @@ def test_profile_rules(cfg: StationSelection) -> None:
     assert inv.match_profile(100.0, cfg) == "surface-100"
     assert inv.match_profile(200.0, cfg) == "surface-hi"
     assert inv.match_profile(250.0, cfg) == "surface-hi"
+    assert inv.match_profile(500.0, cfg) == "borehole-A"
     assert inv.match_profile(1000.0, cfg) == "borehole-A"
-    assert inv.match_profile(40.0, cfg) is None
-
-
-def _triplet() -> Triplet:
-    return Triplet(
-        network="XX",
-        station="TST",
-        location="00",
-        code="HH",
-        family="velocity",
-        rank=0,
-        channels=("HHZ", "HHN", "HHE"),
-        sample_rate_hz=100.0,
-        depth_m=0.0,
-        latitude=38.5,
-        longitude=-112.9,
-        channel_elev_m=1600.0,
-        station_elev_m=1600.0,
-        station_latitude=38.5,
-        station_longitude=-112.9,
-    )
-
-
-def _row(cha: str, day: str, value: float, qual: str = "M") -> dict[str, Any]:
-    return {"value": value, "loc": "00", "cha": cha, "qual": qual, "start": f"{day}T00:00:00"}
+    for rate in (40.0, 110.0, 260.0, 400.0, 1100.0, 2000.0):
+        assert inv.match_profile(rate, cfg) is None
 
 
 @pytest.mark.smoke
-def test_partial_day_coverage_is_overlap_weighted(
-    run_section: RunSection, cfg: StationSelection
-) -> None:
-    run = run_section.model_copy(
-        update={
-            "windowStart": datetime(2026, 9, 10, 12, tzinfo=UTC),
-            "windowEnd": datetime(2026, 9, 11, 6, tzinfo=UTC),
-        }
-    )
-    rows = [_row(c, "2026-09-10", 100.0) for c in ("HHZ", "HHN", "HHE")]
-    rows += [_row(c, "2026-09-11", 50.0) for c in ("HHZ", "HHN", "HHE")]
-    rows.append(_row("HHZ", "2026-09-11", 0.0, qual="D"))  # other quality code: best one wins
-    seen: dict[str, Any] = {}
-
-    def http(url: str, params: Any, timeout_s: float) -> HttpResult:
-        seen.update(params)
-        body = {"measurements": {cfg.availability.metric: rows}}
-        return HttpResult(200, json.dumps(body))
-
-    chosen = [Chosen(id="XX.TST", triplet=_triplet(), kind="surface")]
-    cov = inv.fetch_coverage(chosen, run, cfg, http)
-    assert seen["timewindow"] == "2026-09-10T00:00:00,2026-09-12T00:00:00"
-    assert seen["cha"] == "HHZ,HHN,HHE"
-    assert cov["XX.TST"]["HHZ"] == pytest.approx(12 / 18 + 0.5 * 6 / 18)
-    assert inv.station_coverage(cov["XX.TST"]) == pytest.approx(12 / 18 + 0.5 * 6 / 18)
-
-
-@pytest.mark.smoke
-def test_missing_measurement_and_service_failure(
-    run_section: RunSection, cfg: StationSelection
-) -> None:
-    chosen = [Chosen(id="XX.TST", triplet=_triplet(), kind="surface")]
-
-    def no_content(url: str, params: Any, timeout_s: float) -> HttpResult:
-        return HttpResult(204, "")
-
-    as_error = cfg.model_copy(
-        update={"availability": cfg.availability.model_copy(update={"onMissing": "error"})}
-    )
-    with pytest.raises(AvailabilityError, match="no percent_availability measurement"):
-        inv.fetch_coverage(chosen, run_section, as_error, no_content)
-    as_unused = cfg.model_copy(
-        update={"availability": cfg.availability.model_copy(update={"onMissing": "unused"})}
-    )
-    cov = inv.fetch_coverage(chosen, run_section, as_unused, no_content)
-    assert inv.station_coverage(cov["XX.TST"]) is None
-
-    def down(url: str, params: Any, timeout_s: float) -> HttpResult:
-        return HttpResult(503, "Service Unavailable")
-
-    with pytest.raises(AvailabilityError, match="HTTP 503"):
-        inv.fetch_coverage(chosen, run_section, cfg, down)
-
-
-@pytest.mark.smoke
-def test_epqs_dem_retries_then_parses_and_rejects_nodata(cfg: StationSelection) -> None:
-    fast = cfg.model_copy(
-        update={"elevation": cfg.elevation.model_copy(update={"demBackoffS": 0.0})}
-    )
+def test_epqs_dem_retries_then_parses_and_rejects_nodata(fast: StationSelection) -> None:
     replies = [HttpResult(500, "busy"), HttpResult(200, '{"value": "1686.542602539"}')]
 
     def http(url: str, params: Any, timeout_s: float) -> HttpResult:
@@ -457,7 +781,7 @@ def test_epqs_dem_retries_then_parses_and_rejects_nodata(cfg: StationSelection) 
 
 
 @pytest.mark.smoke
-def test_station_selection_rejects_unknown_and_overlapping_codes(raw_signal_yaml: dict) -> None:
+def test_station_selection_rejects_unknown_and_inconsistent_knobs(raw_signal_yaml: dict) -> None:
     raw = json.loads(json.dumps(raw_signal_yaml["stations"]))
     raw["notAKnob"] = 1
     with pytest.raises(ValidationError):
@@ -466,6 +790,10 @@ def test_station_selection_rejects_unknown_and_overlapping_codes(raw_signal_yaml
     rules["accelerometerCodes"] = [*rules["accelerometerCodes"], "HH"]
     with pytest.raises(ValidationError, match="overlap"):
         ChannelRules.model_validate(rules)
+    elevation = dict(raw_signal_yaml["stations"]["elevation"])
+    elevation["maxShallowMismatchM"] = elevation["toleranceM"] / 2
+    with pytest.raises(ValidationError, match="maxShallowMismatchM"):
+        ElevationCheck.model_validate(elevation)
 
 
 # --- stage --------------------------------------------------------------------------------------
@@ -484,12 +812,20 @@ def test_stage_writes_stations_parquet(
     fake_ctx: Any, cfg: StationSelection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     io = pytest.importorskip("hq_contracts.io")  # CONTRACT-01 (H4)
-    build(fake_ctx.config.run, cfg, fake_ctx.cache_dir)  # seeds XML, DEM and response caches
-    monkeypatch.setattr(inv, "requests_get", mustang_http)
+    seeded = build(fake_ctx.config.run, cfg, fake_ctx.cache_dir)  # seeds every cache
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("network access from run(ctx) on a warm cache")
+
+    monkeypatch.setattr(inv, "requests_get", refuse)
+    monkeypatch.setattr(inv._LazyClient, "get", refuse)
     inv.run(fake_ctx)
     df = io.read_table(fake_ctx.path(inv.STATIONS_FILE))
-    assert sorted(df["id"]) == EXPECTED_IDS
+    assert list(df["id"]) == EXPECTED_IDS
     assert {"enu_e", "enu_n", "enu_u", "sensorDepthM", "sensorElevM"} <= set(df.columns)
+    fork = df[df["id"] == "UU.FORK"].iloc[0]
+    assert (fork["sensorDepthM"], fork["sensorElevM"]) == (281.0, pytest.approx(1408.0))
+    assert list(df["usedInRun"]) == [r["usedInRun"] for r in seeded.rows]
     report = json.loads(fake_ctx.path(inv.REPORT_FILE).read_text(encoding="utf-8"))
     assert report["counts"]["selected"] == len(EXPECTED_IDS)
     rec = fake_ctx.records[inv.STAGE]
@@ -504,3 +840,4 @@ def test_missing_contracts_package_fails_loudly(
     monkeypatch.setitem(sys.modules, "hq_contracts.io", None)
     with pytest.raises(inv.InventoryError, match="CONTRACT-01"):
         inv.write_stations_parquet(result.rows, tmp_path / inv.STATIONS_FILE)
+    assert not list(tmp_path.glob(inv.STATIONS_FILE + "*"))
