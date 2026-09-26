@@ -215,3 +215,88 @@ mapping exactly, no hard-coded numbers in rendered text, no per-frame allocation
 docs/02, paths stay in-lane. List concrete findings with file:line, most serious first. Don't
 rewrite the code yourself.
 ```
+
+## WEB-07 implementation plan · prepared before the 1–5 AM sleep window
+
+Status: planned on `agent/WEB-07`; issue #27 stays open. Implementation starts around 5 AM after the
+Gate S depth decision. No merges during the 1–5 AM sleep window. The plan does not claim Gate S,
+Gate M, deployed acceptance, or WEB-07 completion.
+
+### Starting point and invariant
+
+WEB-02, WEB-04, the WEB-01 provider cleanup and WEB-05 are integrated into `feat/web`. The scene and
+drawer share H4's provider; the existing shell already maps P to `setView("plan")`, E to the hero,
+and R to reset. `reveal()` preserves a selected plan view. Camera-director tests already cover
+starting the reveal top-down and interrupting a dolly with a view change.
+
+Build a first-class grid-north-up plan view plus a coordinated east-versus-depth section. Both views
+must show exactly the same population, appearance times, filter state and selection as the 3D scene.
+They must consume `useBundle` with no additional fetching or new store/contract fields. Every event
+position comes from ENU; every displayed depth comes from `(refSurfaceElevM - elevM) / 1000`.
+Never use catalog published depth as display depth, rotate to true north, snap sensors to terrain,
+or change inclusion because the depth gate failed.
+
+### Implementation order
+
+1. Fetch origin and inspect the integration state. If main advanced, merge it into feat/web before
+   merging the refreshed lane baseline into this branch. Read the Gate S outcome and current
+   requests; use the real showcase bundle through `?mode=showcase` when it exists. A missing bundle
+   remains an explicit provider error. Keep the synthetic banner for mock data.
+2. Add pure projection/layout helpers and tests under `scene/plan/`. Fit the plan to the same framed
+   candidate population as the 3D view with a data-derived scale bar; include the selected event
+   without silently changing membership. Define the depth section as all events projected onto east
+   versus site depth, explicitly labelled as a projection (no invented slice width or spatial cutoff).
+   Include borehole wellhead-to-sensor lines and finite error extents when fitting it.
+3. Add an orthographic plan camera under `scene/plan/`, wired from H3's Canvas. Use east right and
+   grid north up, exact top-down orientation, and equal horizontal scales. Reuse the existing
+   instanced glyphs, filter driver, selection and reveal clock. Give the plan camera explicit
+   ownership while active; update the H3 camera rig seam so its perspective preset/dolly and orbit
+   momentum cannot overwrite the plan framing. Pan/zoom remain available, rotation does not.
+   Restore the perspective camera and controls cleanly on P/reset, including rapid repeated toggles.
+4. Render the coordinated depth section in a compact, labelled Canvas2D panel in `scene/plan/`.
+   Precompute typed position/error arrays on bundle changes. Its frame callback reads existing
+   appearance times, filter look and selected id, reuses scratch state, and allocates nothing.
+   Use the same token colors and opacity rules as the event material; public points begin visible,
+   candidates appear on the shared reveal clock, and STRICT keeps B/C at background weight.
+   Give the panel a true-scale default; if a deliberate exaggeration is needed to fit, label its
+   numerical factor permanently and independently of the 3D scene's factor. Use SceneMeta.depthLabel
+   verbatim, data-derived ticks, grid-east distance and a visible explanation of the projection.
+5. Plan halos must convey horizontal error whenever hErrM is usable, even if vErrM is null. Do not
+   reuse the 3D ellipsoid's requirement for both errors. Missing uncertainty has no invented halo;
+   the depth section omits only the unavailable vertical error. Implement the plan halo instances in
+   H3 paths and preserve the existing 3D halo behavior. Use MAX blending so overlaps never brighten
+   the uncertainty into event-like signals.
+6. Coordinate picking from both views through `select(id)`. Keep the drawer's E/Escape behavior and
+   the existing ring; use stable ids and the renderer's appearance/filter gates. Reserve space for
+   shell controls and move/size the section so it never covers the evidence drawer or capture its
+   pointer events. Datum, scale, synthetic warning and any exaggeration must remain readable at
+   1280×720 and 4K. Use the stable scene label portal introduced by WEB-01 for 3D HTML labels.
+
+### Acceptance and review before a PR
+
+- Pure tests: grid-north/east orientation, equal plan scale, elevation-derived depths despite a
+  conflicting depthKm, true borehole sensor positions, zero/null uncertainty, degenerate extents,
+  aspect changes and deterministic framing. No contract changes or new synthetic bundle generator.
+- State/browser sequences: P before reveal; P then Space; S then P then Space; P during the reveal;
+  repeated P; resize in plan; E and click from both views; Escape; R while revealing; R after pan/zoom.
+  Counts and appearance times must agree with the same providers/selector used in 3D. Reset restores
+  the initial oblique frame and releases all camera/control ownership.
+- Validate the insurance use case explicitly: missing vErrM still permits honest plan uncertainty;
+  depth-on-edge flags and large/null vertical errors remain visible in evidence without asserting
+  that depth is constrained. Gate S failure changes presentation priority, not data or scientific claims.
+- Headed Chrome and Safari checks at 1280×720 and 4K: readable axes/datum, no panel/drawer overlap,
+  no shader or page exceptions, no new network requests during reveal, and at least 60 fps with
+  2,000 generator-produced events plus terrain/bloom while the depth panel runs. Record actual
+  browser/device, DPR, median fps and slow-frame measurements. If the second view exceeds budget,
+  optimize its drawing batches before reducing visual detail; do not silently thin events.
+- Run `make check`, ticket acceptance and a full self-review against coordinates, frozen store,
+  lane boundaries, determinism and allocation budget. Push and open the template PR into feat/web
+  with Closes #27 only when the implementation is ready; manually close #27 after its approved merge.
+
+### Handoffs to preserve
+
+H4 owns mounting `EvidenceDrawer` from `@/drawer` (REQ-H3-5), matching mock evidence with provider
+preloads (REQ-H3-3), and the deployed mock build for Gate M. The stock mock currently needs the
+labelled slab because its projection differs from the DEM (REQ-H3-4). Keep the real terrain assets
+and `?terrain=slab` fallback intact. After WEB-07, WEB-06 remains scheduled after Gate E and WEB-08
+retains the full ten-run, two-browser hardening checklist.
