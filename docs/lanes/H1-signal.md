@@ -16,7 +16,7 @@
 | Contracts + `hq_contracts.io` | H4 | `packages/contracts/` | code against the spec in `docs/02` |
 | `RunContext` / `hq run` | H4 | `hq/runs.py`, `hq/cli.py` | a local `RunContext` stand-in in your tests |
 | Public catalog (for the 3 known events) | H2 | `runs/<id>/catalog.parquet` | lands ~8:25 PM; do SEIS-01 and SEIS-03 first |
-| Tier bars and station statics (STA/LTA sweep scoring only) | H2 | `runs/<id>/run.json` → `tiering`, `runs/<id>/statics.parquet` | scoring is a CLI rerun on a run that went through `tier` (SEIS-07 → As built) |
+| Tier bars and station statics (STA/LTA sweep scoring only) | H2 | `runs/<id>/run.json` → `tiering`; `runs/<id>/statics.parquet` once `hq.baseline.score` passes it (REQ-H1-5; not read yet) | scoring is a CLI rerun on a run that went through `tier` (SEIS-07 → As built) |
 
 ## What you produce
 
@@ -67,7 +67,7 @@
 
 - **Goal:** run PhaseNet on the known-event windows for each candidate weight set per profile, and pick the weights.
 - **Files:** `hq/pick/__init__.py`, `hq/pick/phasenet.py`, `hq/pick/ab.py`, `tests/signal/test_pick.py`
-- **In → out:** known-event windows → `runs/<id>/known/picks.parquet`, `known/ab.csv`, `known/ab.json` (chosen weights, adopted profiles, Check B), one record-section PNG per event; `known/pick_known.record.json` (runtime, counts, params), written by `run(ctx)` only, not by the CLI
+- **In → out:** known-event windows → `runs/<id>/known/picks.parquet`, `known/ab.csv`, `known/ab.json` (chosen weights, adopted profiles, Check B), one record-section PNG per event. `known/pick_known.record.json` (runtime, counts, params) comes only from `hq.pick.ab.run(ctx)`, which no stage or CLI calls: a real run has no record of this sub-step (flagged in the SEIS-08 PR)
 - **Depends on:** SEIS-02, SEIS-03
 - **Accept (Check B):** P and S picks on ≥ 8 stations for ≥ 3 events; P before S on every station; Spearman ρ ≥ 0.8 between P time and epicentral distance; the A/B table names the chosen weights per profile. Then `make publish-run RUN=<runId>` and give H2 the runId.
 
@@ -83,11 +83,11 @@
 
 - **Goal:** classical picks with `recursive_sta_lta` + `trigger_onset` on the same preprocessed traces, in the `Pick` schema, with a threshold sweep that maximizes the baseline's own Tier A count once H2's pipeline exists.
 - **Files:** `hq/baseline/__init__.py`, `hq/baseline/run.py`, `hq/baseline/score.py`, `tests/signal/test_baseline.py`
-- **In → out:** cache → `runs/<id>/picks_stalta.parquet`, `baseline_sweep.parquet` (model `BaselineSweep`; scores null where a point was not scored); `baseline_reference.json`, written by a scored CLI rerun only
+- **In → out:** cache → `runs/<id>/picks_stalta.parquet`, `baseline_sweep.parquet` (an H1-local table, not a docs/02 model: its attrs label is `BaselineSweep`, and listing it in docs/02 is a request to H4 proposed in the SEIS-08 PR; scores null where a point was not scored); `baseline_reference.json`, written by a scored CLI rerun only
 - **Depends on:** SEIS-03, SEIS-05
 - **Accept:** picks load through H2's `associate()` unchanged; the sweep is saved; the chosen thresholds are in `signal.yaml`.
 - **As built: scoring.** `hq run` never scores: stage `baseline` runs before `tier`, so the run's tier bars don't exist yet (`sweep.scoreMode: none`, pinned by a test). Scoring is a CLI rerun (`python -m hq.baseline.run --score-mode coordinate`) on a tiered run, through VAL-01's `rerun_tables` path against the run's own bars (`ProcessingRun.tiering`). The PhaseNet `picks.parquet` is scored first, alone, as the reference row. Coordinate mode stops at a coordinate-wise local optimum, so its best Tier A is a lower bound on the grid maximum. When every scored point has the same Tier A count the objective is flat and no best point is named: that means "not tuned by the sweep", not "tuned". `--score-only` scores without rewriting `picks_stalta.parquet` (which must already hold the chosen thresholds' picks); `--keep-scores` rewrites the picks at a new `baseline.chosen` and keeps the earlier scoring, after checking that it describes the same pick sets. `baseline_reference.json` holds the reference row, the best point (or null), the chosen-at-scoring row, the search path, per-point diagnostics and the rerun notes; `run.json` → `picker.baseline.sweepScoring` holds the same without the per-point list.
-- **Scale (REQ-H1-5, decided Sat).** H2 chose option (a): validation reruns locate with the showcase run's own `statics.parquet` (`locate(..., statics=)`, H2 PR #94), and H4 wires it into VAL-01. `hq.baseline.score` must pass the table the same way before a scoring run counts as scale (a); until then it locates without statics (its module docstring, and the flag in the SEIS-08 PR). Scale (b) is superseded: `baseline_tuning_b.json` in the showcase run is historical and read by no stage. The lead sets `baseline.chosen` from the scale-(a) rescoring; SEIS-08 implements no scale-(b) bars option.
+- **Scale (REQ-H1-5, decided Sat).** H2 chose option (a): validation reruns locate with the showcase run's own `statics.parquet` (`locate(..., statics=)`, H2 PR #94), and H4 wires it into VAL-01. `hq.baseline.score` must pass the table the same way before a scoring run counts as scale (a). Until then it locates without statics: under `statics.mode: referenceEvents`, `hq.locate.locate` has no match pass and applies none (its module docstring, and the flag in the SEIS-08 PR). Scale (b) is superseded: `baseline_tuning_b.json` in the showcase run is historical and read by no stage. The lead sets `baseline.chosen` from the scale-(a) rescoring; SEIS-08 implements no scale-(b) bars option.
 
 ### SEIS-08 · P1 · 2–6 PM Saturday — Lane hardening pass
 
@@ -138,7 +138,7 @@ Do the resampling yourself, before the model. Don't let a library default decide
 - Short windows suit microseismic data: STA ~0.05–0.1 s, LTA ~2–5 s at 100 Hz. P onsets from Z; S from horizontals after the P.
 - Tune on/off thresholds to maximize STA/LTA's own Tier A count, on the run's own bars and statics (SEIS-07 → Scale). Giving the baseline its best shot is what makes the comparison honest.
 - **Pick probability.** STA/LTA has no calibrated confidence, so every baseline pick gets `baseline.prob`, a typical PhaseNet pick prob (its source is in the `signal.yaml` comment). It must stay ≥ `seismology.associator.minPickProb` (scoring checks it), and a baseline event's `meanPickProb` is that constant: it carries no confidence.
-- **Statics caveat.** The run's station statics absorb PhaseNet's station timing bias, not the late bias of STA/LTA onsets (trigger-level crossing, and the prefilter's group delay), so scale (a) still leans toward PhaseNet. Say so beside any comparison.
+- **Statics caveat.** The run's station statics are residuals of PhaseNet picks at the public regional catalog's hypocentres of matched events. They absorb PhaseNet's station timing bias, not the late bias of STA/LTA onsets (trigger-level crossing, and the prefilter's group delay), so scale (a) still leans toward PhaseNet. Say so beside any comparison.
 
 ## Definition of done (the hardening pass checks every line)
 
@@ -147,23 +147,23 @@ Do the resampling yourself, before the model. Don't let a library default decide
 - [x] No zero-filled samples anywhere; gap-edge picks dropped and counted
   - Evidence: no fill in `read_window`, `for_picking` or `split_blocks`; drops counted in `pick_report.json` and `stages.json`; `test_missing_raw_sample_off_the_model_grid_drops_gap_edge_picks` (SEIS-08 PR).
 - [x] Every knob in `signal.yaml`; every pick carries `picker` with the weights name
-  - Evidence: `SignalConfig` forbids unknown keys and has no Python defaults; `run.json` records the whole `picker` and `preprocess` blocks; picker names checked in all three pick tables (SEIS-08 PR).
-- [x] `hq run` from a clean cache reproduces identical picks
-  - Evidence: bit-identical on the same platform and `uv.lock`; a cross-platform clean-cache run differs only by float32 argmax ties (Notes below, numbers in the SEIS-08 PR).
+  - Evidence: `SignalConfig` forbids unknown keys and has no Python defaults; `run.json` records the whole `picker` and `preprocess` blocks; picker names checked in all three pick tables (SEIS-08 PR). `display_copy`'s filter shape stays in code (`DISPLAY_*` in `hq/preprocess/profiles.py`), because docs/02 fixes its signature with no config and it shapes display copies only.
+- [ ] `hq run` from a clean cache reproduces identical picks
+  - Partly shown (numbers in the SEIS-08 PR). Reruns from the warm cache are bit-identical on the same platform and `uv.lock`. No same-platform clean-cache run has been done. The one clean-cache run, on another platform, matched every STA/LTA pick; its PhaseNet probabilities differ in the last float32 digits, and one argmax tie moved one pick by a sample. Open: a small same-platform clean-cache check after the freeze.
 - [x] Runtimes and counts recorded in `run.json` for inventory, download, pick, baseline
   - Evidence: `run.json` `runtimeS` and `picker.*` params for all four stages; their counts in `stages.json` (Notes below).
 - [x] `pytest -m smoke tests/signal` < 30 s, offline
-  - Evidence: suite-wide network guard in `tests/signal/conftest.py`; timed on an idle machine (SEIS-08 PR).
+  - Evidence: suite-wide in-process network guard in `tests/signal/conftest.py`, pinned by `test_offline_guard.py` (spawned workers rely on injected fakes); under 30 s on an idle machine with warm imports at the SEIS-08 head, while a cold first run took longer (numbers in the SEIS-08 PR).
 - [x] `read_window`, `read_inventory`, `display_copy`, `for_picking` match the `docs/02` signatures exactly
   - Evidence: `test_library_apis_match_docs02_signatures_exactly` (names, kinds, no defaults, return types).
 
 **Notes (SEIS-08).**
 
-- "Identical" means bit-identical on the same platform and `uv.lock`. Across platforms, float32 PhaseNet probabilities differ in the last digits and can flip an argmax tie between adjacent samples (numbers in the SEIS-08 PR).
+- "Identical" means bit-identical on the same platform and `uv.lock`, shown so far for reruns from a warm cache. Across platforms, float32 PhaseNet probabilities differ in the last digits and can flip an argmax tie between adjacent samples (numbers in the SEIS-08 PR).
 - A run whose inventory predates `stations.availability.onMissingNoProbeData` can differ from a rerun in `usedInRun` for a station that served no data, and in that station's `gaps.parquet` rows. Picks don't change.
 - Counts live in `stages.json`, because `ProcessingRun` has no counts field (`hq/runs.py`, `RunContext.record`); runtimes and params are in `run.json`.
-- The known-event sub-steps are not registered stages: each writes `known/<step>.record.json` instead of `run.json`.
-- The smoke budget is measured on an idle machine. Under heavy load the torch and seisbench imports of the one real-seisbench test dominate the suite's time.
+- The known-event sub-steps are not registered stages, so neither writes `run.json`. The windows CLI writes `known/known_windows.record.json`. The A/B's `known/pick_known.record.json` comes only from `hq.pick.ab.run(ctx)`, which no stage or CLI calls, so a real run has no record of it. Runs built before commit `c43b853` (the showcase run of record is one) carry both sub-steps in `run.json` and `stages.json` instead, and have no `known/*.record.json`.
+- The smoke budget holds on an idle machine with warm imports. Under heavy load the whole suite slows, not one test, so a loaded timing says nothing about the budget; the first run after a busy spell (cold import and bytecode caches) is slower too.
 
 ## Kickoff prompt
 
