@@ -82,7 +82,10 @@ def seismology_config() -> SeismologyConfig:
 
 @pytest.fixture
 def comcat_quakeml() -> Path:
-    """Real ComCat QuakeML for the showcase query, trimmed to 3 events (newest first, as served)."""
+    """Real ComCat QuakeML for the showcase query, trimmed to 3 events (newest first, as served).
+
+    Provenance: fixtures/comcat_uu_3events.provenance.txt.
+    """
     return FIXTURES / "comcat_uu_3events.quakeml"
 
 

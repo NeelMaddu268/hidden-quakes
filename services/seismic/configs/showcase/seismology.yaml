@@ -9,7 +9,8 @@ catalog:
   providerLabel: USGS ComCat          # CatalogEvent.source = "<contributor> via USGS ComCat"
   timeoutS: 120
   # QuakeML event types kept after the query; the raw QuakeML keeps everything served, and every
-  # dropped event is logged and counted by type. null keeps every type.
+  # dropped event is logged and counted by type. null keeps every type. A served type outside the
+  # QuakeML 1.2 enum (ObsPy cannot parse such an event) is a dropped type here, and fails with null.
   eventTypes: [earthquake]
   minMagnitude: null                  # no magnitude limit
   maxMagnitude: null
@@ -26,11 +27,15 @@ catalog:
       surfaceElevM: 0.0               # m ASL; elevM = surfaceElevM - depth
       # UUSS gives the date without a time zone; start a day later so no ambiguous origin converts.
       validFrom: "2012-10-02T00:00:00Z"
+      # CatalogEvent.depthDatum = "<label>; source: <first sourceUrl>" on every row.
+      label: km below sea level (UUSS catalog depth datum)
       description: >-
         km below sea level. UUSS Catalog Details, "Format for Earthquake Summary Data", Depth column:
         the depth datum is sea level for earthquakes from Oct 1, 2012 on (1.5 km above sea level
         before that in the Utah region). ComCat: the depth datum depends on the contributing
-        network, and its QuakeML carries no datum field.
+        network. ComCat serves QuakeML 1.2, which defines Origin.depth relative to nominal sea
+        level (WGS84 geoid); UUSS's own statement above agrees.
       sourceUrls:
         - https://quake.utah.edu/resources/catalog-details/
         - https://earthquake.usgs.gov/data/comcat/index.php#depth
+        - https://quake.ethz.ch/quakeml/Documents
