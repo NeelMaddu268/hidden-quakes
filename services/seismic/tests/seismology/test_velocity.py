@@ -29,8 +29,6 @@ from hq.locate.velocity import (
     profile_figure,
 )
 
-pytestmark = pytest.mark.smoke
-
 SHOWCASE = SEISMIC_ROOT / "configs" / "showcase"
 # Unmodified bytes of GDR 1613 Inverted_1D_VelocityModel.csv (CC BY 4.0; attribution in
 # fixtures/README.txt): "TVDSS (m),vp (m/s),vs (m/s)," then rows with trailing commas, CRLF.
@@ -160,6 +158,7 @@ def _extend(model: LayerModel, elev_m: float, cfg: SeismologyConfig) -> LayerMod
 # --- the committed FORGE model ---------------------------------------------------------------
 
 
+@pytest.mark.smoke
 def test_committed_file_matches_source_bytes(forge: LayerModel) -> None:
     raw = SOURCE_FIXTURE.read_bytes()
     assert hashlib.sha256(raw).hexdigest() == forge.header["sourceSha256"]
@@ -171,6 +170,7 @@ def test_committed_file_matches_source_bytes(forge: LayerModel) -> None:
     np.testing.assert_array_equal(forge.vs_m_per_s, src[:, 2])
 
 
+@pytest.mark.smoke
 def test_committed_model_is_physical(forge: LayerModel, cfg: SeismologyConfig) -> None:
     assert np.all(np.diff(forge.top_elev_m) < 0)
     assert np.all(forge.vp_m_per_s > 0) and np.all(forge.vs_m_per_s > 0)
@@ -184,6 +184,7 @@ def test_committed_model_is_physical(forge: LayerModel, cfg: SeismologyConfig) -
         assert np.all((values >= low) & (values <= high)), values
 
 
+@pytest.mark.smoke
 def test_committed_header_states_source_and_datum(forge: LayerModel) -> None:
     for key in (*REQUIRED_HEADER, *EVIDENCE_KEYS):
         assert forge.header[key], key
@@ -199,6 +200,7 @@ def test_committed_header_states_source_and_datum(forge: LayerModel) -> None:
     assert "CC BY 4.0" in forge.license
 
 
+@pytest.mark.smoke
 def test_to_record_carries_sourceref_layers_and_evidence(forge: LayerModel) -> None:
     rec = forge.to_record()
     assert set(rec) == RECORD_KEYS
@@ -217,12 +219,14 @@ def test_to_record_carries_sourceref_layers_and_evidence(forge: LayerModel) -> N
     json.dumps(rec)  # ProcessingRun is JSON
 
 
+@pytest.mark.smoke
 def test_verified_false_reaches_the_record(tmp_path: Path, cfg: SeismologyConfig) -> None:
     model = _load(_write(tmp_path, {**VALID_HEADER, "verified": "false"}, VALID_ROWS), cfg)
     assert model.source.verified is False
     assert model.to_record()["source"]["verified"] is False
 
 
+@pytest.mark.smoke
 def test_sourceref_stand_in_matches_docs02() -> None:
     assert {f.name for f in dataclasses.fields(SourceRef)} == SOURCEREF_FIELDS
 
@@ -230,6 +234,7 @@ def test_sourceref_stand_in_matches_docs02() -> None:
 # --- lookup and boundary convention ------------------------------------------------------------
 
 
+@pytest.mark.smoke
 def test_boundary_takes_layer_below(forge: LayerModel) -> None:
     tops = forge.top_elev_m
     for i in range(1, forge.n_layers):
@@ -241,6 +246,7 @@ def test_boundary_takes_layer_below(forge: LayerModel) -> None:
     assert forge.vs_at(tops[-1] - 5000.0) == forge.vs_m_per_s[-1]  # half-space
 
 
+@pytest.mark.smoke
 def test_lookup_is_vectorized_and_matches_scalar_reference(forge: LayerModel) -> None:
     rng = np.random.default_rng(1613)
     elev = rng.uniform(forge.top_elev_m[-1] - 1000.0, forge.top_elev_m[0], size=(40, 25))
@@ -253,6 +259,7 @@ def test_lookup_is_vectorized_and_matches_scalar_reference(forge: LayerModel) ->
     assert forge.vs_at(float(forge.top_elev_m[2])).shape == ()
 
 
+@pytest.mark.smoke
 def test_above_top_raises(forge: LayerModel) -> None:
     with pytest.raises(ValueError, match="above the top"):
         forge.vp_at(forge.top_of_model_elev_m + 0.001)
@@ -262,6 +269,7 @@ def test_above_top_raises(forge: LayerModel) -> None:
         forge.vp_at([0.0, np.nan])
 
 
+@pytest.mark.smoke
 def test_top_extension_is_explicit_and_recorded(forge: LayerModel, cfg: SeismologyConfig) -> None:
     source_top = forge.top_of_model_elev_m
     ext = _extend(forge, 2450.0, cfg)
@@ -284,6 +292,7 @@ def test_top_extension_is_explicit_and_recorded(forge: LayerModel, cfg: Seismolo
         forge.vp_at(2400.0)
 
 
+@pytest.mark.smoke
 def test_top_extension_is_a_no_op_when_the_model_already_reaches(
     forge: LayerModel, cfg: SeismologyConfig
 ) -> None:
@@ -295,6 +304,7 @@ def test_top_extension_is_a_no_op_when_the_model_already_reaches(
         _extend(forge, float("nan"), cfg)
 
 
+@pytest.mark.smoke
 def test_top_extension_is_capped_above_the_source_top(forge: LayerModel) -> None:
     top = forge.top_of_model_elev_m
     assert forge.with_top_extended_to(top + 500.0, max_extension_m=500.0).top_of_model_elev_m == (
@@ -318,10 +328,12 @@ def _assert_read_only(model: LayerModel) -> None:
         model.header["verified"] = "false"  # type: ignore[index]
 
 
+@pytest.mark.smoke
 def test_arrays_and_header_are_read_only(forge: LayerModel) -> None:
     _assert_read_only(forge)
 
 
+@pytest.mark.smoke
 def test_pickle_and_copies_round_trip(forge: LayerModel, cfg: SeismologyConfig) -> None:
     for model in (forge, _extend(forge, 2450.0, cfg)):
         for twin in (pickle.loads(pickle.dumps(model)), copy.deepcopy(model), copy.copy(model)):
@@ -345,17 +357,20 @@ def test_pickle_and_copies_round_trip(forge: LayerModel, cfg: SeismologyConfig) 
         ("license", "other"),
     ],
 )
+@pytest.mark.smoke
 def test_header_must_agree_with_fields(forge: LayerModel, key: str, value: str) -> None:
     with pytest.raises(LayerFileError, match=f"disagree on \\['{key}'\\]"):
         dataclasses.replace(forge, header={**forge.header, key: value})
 
 
+@pytest.mark.smoke
 def test_single_layer_half_space() -> None:
     model = _toy([500.0], [4000.0], [2300.0])
     np.testing.assert_array_equal(model.vp_at([500.0, 0.0, -9000.0]), [4000.0] * 3)
 
 
 @pytest.mark.parametrize("empty", ["citation", "url", "source_file", "license", "name", "datum"])
+@pytest.mark.smoke
 def test_empty_provenance_fails(empty: str) -> None:
     toy = _toy([500.0], [4000.0], [2300.0])
     if empty == "citation":
@@ -369,6 +384,7 @@ def test_empty_provenance_fails(empty: str) -> None:
         dataclasses.replace(toy, source=source, **changes)
 
 
+@pytest.mark.smoke
 def test_check_units_catches_a_model_built_directly(cfg: SeismologyConfig) -> None:
     guards: dict[str, Any] = {
         "vp_range_m_per_s": cfg.velocity.plausibleVpMPerS,
@@ -385,11 +401,13 @@ def test_check_units_catches_a_model_built_directly(cfg: SeismologyConfig) -> No
 # --- malformed files fail loudly ---------------------------------------------------------------
 
 
+@pytest.mark.smoke
 def test_valid_tmp_file_loads(tmp_path: Path, cfg: SeismologyConfig) -> None:
     model = _load(_write(tmp_path, VALID_HEADER, VALID_ROWS), cfg)
     assert model.n_layers == 3 and model.source.verified is True
 
 
+@pytest.mark.smoke
 def test_byte_order_mark_is_ignored(tmp_path: Path, cfg: SeismologyConfig) -> None:
     path = _write(tmp_path, VALID_HEADER, VALID_ROWS)
     path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
@@ -397,6 +415,7 @@ def test_byte_order_mark_is_ignored(tmp_path: Path, cfg: SeismologyConfig) -> No
 
 
 @pytest.mark.parametrize("missing", REQUIRED_HEADER)
+@pytest.mark.smoke
 def test_missing_header_field_fails(tmp_path: Path, cfg: SeismologyConfig, missing: str) -> None:
     header = {k: v for k, v in VALID_HEADER.items() if k != missing}
     with pytest.raises(LayerFileError, match=missing):
@@ -423,11 +442,13 @@ def test_missing_header_field_fails(tmp_path: Path, cfg: SeismologyConfig, missi
         (["1.8,2296,1163", "1.595,2600,1203", "-0.61,5521,3334"], "topElevM in km"),
     ],
 )
+@pytest.mark.smoke
 def test_bad_rows_fail(tmp_path: Path, cfg: SeismologyConfig, rows: list[str], match: str) -> None:
     with pytest.raises(LayerFileError, match=match):
         _load(_write(tmp_path, VALID_HEADER, rows), cfg)
 
 
+@pytest.mark.smoke
 def test_bad_columns_fail(tmp_path: Path, cfg: SeismologyConfig) -> None:
     with pytest.raises(LayerFileError, match="columns must be"):
         _load(_write(tmp_path, VALID_HEADER, VALID_ROWS, columns="depthM,vp,vs"), cfg)
@@ -442,6 +463,7 @@ def test_bad_columns_fail(tmp_path: Path, cfg: SeismologyConfig) -> None:
         ("# name:\n", "empty"),
     ],
 )
+@pytest.mark.smoke
 def test_bad_header_lines_fail(
     tmp_path: Path, cfg: SeismologyConfig, text: str, match: str
 ) -> None:
@@ -451,12 +473,14 @@ def test_bad_header_lines_fail(
         _load(path, cfg)
 
 
+@pytest.mark.smoke
 def test_bad_verified_value_fails(tmp_path: Path, cfg: SeismologyConfig) -> None:
     with pytest.raises(LayerFileError, match="verified"):
         _load(_write(tmp_path, {**VALID_HEADER, "verified": "yes"}, VALID_ROWS), cfg)
 
 
 @pytest.mark.parametrize("missing", ["verifiedBasis", "sourceSha256"])
+@pytest.mark.smoke
 def test_verified_true_needs_basis_and_hash(
     tmp_path: Path, cfg: SeismologyConfig, missing: str
 ) -> None:
@@ -470,11 +494,13 @@ def test_verified_true_needs_basis_and_hash(
 @pytest.mark.parametrize(
     "sha", ["806cfad0", "806CFAD01F65CF9F2DAC3376A1BDC458F3BEDAF65E359C3E2815E28D249DD994", "x" * 64]
 )
+@pytest.mark.smoke
 def test_malformed_sha256_fails(tmp_path: Path, cfg: SeismologyConfig, sha: str) -> None:
     with pytest.raises(LayerFileError, match="sourceSha256"):
         _load(_write(tmp_path, {**VALID_HEADER, "sourceSha256": sha}, VALID_ROWS), cfg)
 
 
+@pytest.mark.smoke
 def test_comment_inside_table_and_blank_lines_fail(tmp_path: Path, cfg: SeismologyConfig) -> None:
     with pytest.raises(LayerFileError, match="before the table"):
         _load(_write(tmp_path, VALID_HEADER, [VALID_ROWS[0], "# late", VALID_ROWS[1]]), cfg)
@@ -495,6 +521,7 @@ def _figure_texts(model: LayerModel, cfg: SeismologyConfig, run: RunSection) -> 
     return [t.get_text() for t in fig.texts] + [t.get_text() for ax in fig.axes for t in ax.texts]
 
 
+@pytest.mark.smoke
 def test_profile_figure_states_the_datum_source_and_extension(
     forge: LayerModel, cfg: SeismologyConfig, run: RunSection
 ) -> None:
@@ -521,6 +548,7 @@ def test_plot_profile_writes_png(
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+@pytest.mark.smoke
 def test_layer_path_ignores_the_working_directory(
     cfg: SeismologyConfig, forge: LayerModel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -529,6 +557,7 @@ def test_layer_path_ignores_the_working_directory(
     assert load_configured_model(cfg.velocity).to_record() == forge.to_record()
 
 
+@pytest.mark.smoke
 def test_seismology_config(cfg: SeismologyConfig) -> None:
     assert not cfg.velocity.layerFile.is_absolute()
     assert cfg.velocity.layer_path().is_file()
@@ -548,6 +577,7 @@ def test_seismology_config(cfg: SeismologyConfig) -> None:
 
 
 @pytest.mark.parametrize("where", YAML_SECTIONS)
+@pytest.mark.smoke
 def test_unknown_config_keys_fail(where: str) -> None:
     raw = yaml.safe_load((SHOWCASE / "seismology.yaml").read_text(encoding="utf-8"))
     target = raw

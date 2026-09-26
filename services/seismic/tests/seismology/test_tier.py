@@ -44,7 +44,6 @@ N_MATCHED = 40
 N_UNMATCHED = 20
 REF = 1627.7  # reference surface elevation (m) of the pinned run section below
 
-pytestmark = pytest.mark.smoke
 
 
 # --- synthetic tables -------------------------------------------------------------------------
@@ -158,6 +157,7 @@ def numpy_bar(values: np.ndarray, better: str, q: float) -> float:
 # --- bars -----------------------------------------------------------------------------------------
 
 
+@pytest.mark.smoke
 def test_bars_are_quantiles_of_the_matched_set(cfg: SeismologyConfig) -> None:
     events, matches, matched_ids = seeded_world()
     result = assign_tiers(events, matches, cfg)
@@ -201,6 +201,7 @@ def test_bars_are_quantiles_of_the_matched_set(cfg: SeismologyConfig) -> None:
     assert assign_tiers(shifted, matches, cfg).tiering["thresholds"] == th
 
 
+@pytest.mark.smoke
 def test_a_bar_on_the_metrics_bound_is_flagged(cfg: SeismologyConfig) -> None:
     """A quarter of M without S picks puts the A bar at nS >= 0: recorded as excluding nothing."""
     models = [event(k, nS=0 if k < 4 else 4) for k in range(12)]  # the 9th best of 12 is a 0
@@ -211,6 +212,7 @@ def test_a_bar_on_the_metrics_bound_is_flagged(cfg: SeismologyConfig) -> None:
     assert not any(bars[m.name]["excludesNothing"] for m in METRICS if m.name != "nS")
 
 
+@pytest.mark.smoke
 def test_boundary_equality_passes(cfg: SeismologyConfig) -> None:
     """Every matched event identical: each bar equals every value, and all of them pass A."""
     models = [event(k) for k in range(12)]
@@ -224,6 +226,7 @@ def test_boundary_equality_passes(cfg: SeismologyConfig) -> None:
     assert reason.startswith("rmsS 0.0501 > 0.0500 (A: p75 of matched, n=12); > 0.0500 (B")
 
 
+@pytest.mark.smoke
 def test_reasons_never_read_as_false_inequalities(cfg: SeismologyConfig) -> None:
     """A value within one display unit of the B bar: value and bars share one precision."""
     gaps = [100.0] * 8 + [130.6, 150.0, 160.0, 188.9]  # A bar 130.6 (9th of 12), B bar 188.9
@@ -236,6 +239,7 @@ def test_reasons_never_read_as_false_inequalities(cfg: SeismologyConfig) -> None
     )
 
 
+@pytest.mark.smoke
 def test_null_errors_fail_a_and_b(cfg: SeismologyConfig) -> None:
     models = [event(k) for k in range(12)]
     events = located(models + [event(12, hErrM=None), event(13, vErrM=None)])
@@ -246,6 +250,7 @@ def test_null_errors_fail_a_and_b(cfg: SeismologyConfig) -> None:
     assert "vErrM null (no formal error): fails A and B" in out["tierReasons"].iloc[13]
 
 
+@pytest.mark.smoke
 def test_a_null_error_in_the_matched_set_never_loosens_a_bar(cfg: SeismologyConfig) -> None:
     """One null hErrM among 12 matched: both bars come from the 11 matched values, so the null
     event fails, and so does an event worse than every matched value."""
@@ -268,6 +273,7 @@ def test_a_null_error_in_the_matched_set_never_loosens_a_bar(cfg: SeismologyConf
     assert rebuilt.bars["B"]["hErrM"].passes(200.0) and not rebuilt.bars["B"]["hErrM"].passes(None)
 
 
+@pytest.mark.smoke
 def test_too_few_matched_values_on_one_metric_fail_loudly(cfg: SeismologyConfig) -> None:
     min_matched = cfg.tiering.minMatched
     models = [event(k, vErrM=None if k < 3 else 200.0) for k in range(min_matched + 2)]
@@ -281,6 +287,7 @@ def test_too_few_matched_values_on_one_metric_fail_loudly(cfg: SeismologyConfig)
 # --- rules ----------------------------------------------------------------------------------------
 
 
+@pytest.mark.smoke
 def test_depth_on_edge_and_map_on_top_exclude_tier_a(cfg: SeismologyConfig) -> None:
     models = [event(k) for k in range(12)]
     events = located(models + [event(12, depthOnEdge=True), event(13)])
@@ -298,6 +305,7 @@ def test_depth_on_edge_and_map_on_top_exclude_tier_a(cfg: SeismologyConfig) -> N
     assert len(reasons.iloc[0]) == len(METRICS)  # a Tier A event: one string per metric only
 
 
+@pytest.mark.smoke
 def test_nearest_station_rule(cfg: SeismologyConfig) -> None:
     factor = cfg.tiering.strictNearestStationFactor
     models = [event(k, depth_m=3000.0, minEpiDistM=100.0) for k in range(12)]
@@ -315,6 +323,7 @@ def test_nearest_station_rule(cfg: SeismologyConfig) -> None:
     assert "refSurfaceElevM - elevM" in focal
 
 
+@pytest.mark.smoke
 def test_nearest_station_rule_measures_depth_below_the_nearest_used_sensor(
     cfg: SeismologyConfig,
 ) -> None:
@@ -366,6 +375,7 @@ def test_nearest_station_rule_measures_depth_below_the_nearest_used_sensor(
 # --- the final table ------------------------------------------------------------------------------
 
 
+@pytest.mark.smoke
 def test_final_events_are_contract_shaped(cfg: SeismologyConfig,
                                           tmp_path: Path) -> None:
     events, matches, matched_ids = seeded_world()
@@ -398,6 +408,7 @@ def test_final_events_are_contract_shaped(cfg: SeismologyConfig,
     assert read_models(tmp_path / "events.parquet", SeismicEvent) == from_frame(out, SeismicEvent)
 
 
+@pytest.mark.smoke
 def test_zero_events_give_a_typed_empty_table(cfg: SeismologyConfig) -> None:
     events = located([])
     result = assign_tiers(events, matches_for(events, [], n_unmatched_public=3),
@@ -411,6 +422,7 @@ def test_zero_events_give_a_typed_empty_table(cfg: SeismologyConfig) -> None:
     assert result.tiering["counts"]["all"] == {"A": 0, "B": 0, "C": 0}
 
 
+@pytest.mark.smoke
 def test_too_few_matched_fails_loudly_and_supplied_bars_apply(
     cfg: SeismologyConfig,
 ) -> None:
@@ -429,6 +441,7 @@ def test_too_few_matched_fails_loudly_and_supplied_bars_apply(
         assign_tiers(events, few, other, thresholds=main.tiering)
 
 
+@pytest.mark.smoke
 def test_inconsistent_inputs_fail_loudly(cfg: SeismologyConfig) -> None:
     events, matches, _ = seeded_world()
     stray = matches.copy()
@@ -497,6 +510,7 @@ def stations_for(events: pd.DataFrame, nearest_elev: dict[int, float] | None = N
     return pd.DataFrame(rows)
 
 
+@pytest.mark.smoke
 def test_event_picks_carry_event_and_residual(cfg: SeismologyConfig) -> None:
     events, matches, _ = seeded_world()
     final = assign_tiers(events, matches, cfg).events
@@ -563,6 +577,7 @@ def write_run(ctx: Any, *, flags: bool = True) -> tuple[pd.DataFrame, pd.DataFra
     return events, matches
 
 
+@pytest.mark.smoke
 def test_stage_writes_final_tables_and_record(
     make_ctx: Any, run: RunSection, cfg: SeismologyConfig
 ) -> None:
@@ -606,6 +621,7 @@ def test_stage_checks_depth_against_the_run_section(
         stage.run(other)
 
 
+@pytest.mark.smoke
 def test_stage_refuses_matches_written_for_other_locations(
     make_ctx: Any, run: RunSection, cfg: SeismologyConfig
 ) -> None:
@@ -633,6 +649,7 @@ def test_stage_refuses_matches_written_for_other_locations(
 
 
 @pytest.mark.parametrize("first", [None, "hq.tier.run"])
+@pytest.mark.smoke
 def test_stage_resolves_to_the_stage_function(first: str | None) -> None:
     if first is not None:
         importlib.import_module(first)
@@ -695,6 +712,7 @@ def test_sweep_counts_tier_a_with_the_configured_runs_bars(
     assert from_frame(frame, SweepPoint) == points
 
 
+@pytest.mark.smoke
 def test_sweep_without_loc04_names_it() -> None:
     locate_pkg = importlib.import_module("hq.locate")
     if hasattr(locate_pkg, "locate_detailed"):
