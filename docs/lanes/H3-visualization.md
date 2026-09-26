@@ -48,7 +48,7 @@ The layout split: **you own the canvas, the drawer and the time scrubber.** H4's
 - **Files:** `scripts/bake-dem.py`, `apps/web/public/terrain/*`, `scene/terrain/`, `scene/references/`
 - **In → out:** DEM tiles + `run.yaml` origin + stations + features → terrain and reference layers
 - **Accept:** the ruler label reads `SceneMeta.depthLabel`; borehole markers sit at `sensorElevM`; unverified features render dashed with "approximate" or not at all.
-- **As built:** the "16-bit `height.png`" is **rg16**: an 8-bit RGB PNG with v = R·256 + G (B = 0) spanning `elevMinM..elevMaxM`, because browsers truncate 16-bit PNGs to 8 bits in canvas and WebGL. `meta.json` documents the encoding, bounds (pixel centres, row 0 = north), source and attribution, plus checksums the browser checks so a lossy decode falls back loudly. Rebake with `uv run scripts/bake-dem.py` (`--self-test`, `--half-width-km`, `--size`, `--offline`). The "Terrain" kill switch (docs/03) is `FORCE_ABSTRACT_SLAB` in `scene/terrain/Terrain.tsx`; `?terrain=slab` previews it.
+- **As built:** the "16-bit `height.png`" is **rg16**: an 8-bit RGB PNG with v = R·256 + G (B = 0) spanning `elevMinM..elevMaxM`, because browsers truncate 16-bit PNGs to 8 bits in canvas and WebGL. `meta.json` documents the encoding, bounds (pixel centres, row 0 = north), source and attribution, plus checksums the browser checks so a lossy decode falls back loudly. Rebake with `uv run scripts/bake-dem.py` (`--self-test`, `--half-width-km`, `--size`, `--offline`). The "Terrain" kill switch (docs/03) is `FORCE_ABSTRACT_SLAB` in `scene/terrain/surface.ts`; `?terrain=slab` previews it.
 
 ### WEB-03 · P0 · Start ~9:00 PM — The reveal
 
