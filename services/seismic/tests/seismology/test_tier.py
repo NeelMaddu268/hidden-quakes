@@ -544,7 +544,7 @@ def test_stage_writes_final_tables_and_record(
     assert params["rules"]["A"]["mapOnVolumeTop"]["applied"]
     assert params["rules"]["A"]["nearestStation"]["focalDepthBelow"] == "nearestUsedSensor"
     assert params["input"]["stations"] == "stations.parquet"
-    assert params["sweep"] == {"enabled": False}
+    assert params["sweep"] == {"enabled": False, "removedEarlierSweep": True}
     assert params["config"]["quantiles"] == {"A": 0.25, "B": 0.0}
 
 
@@ -633,7 +633,7 @@ def test_sweep_without_loc04_names_it() -> None:
 
     with pytest.raises(TierError, match="LOC-04"):
         real_pipeline(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None,  # type: ignore[arg-type]
-                      None, run_id="x", cache_dir=Path("."))  # type: ignore[arg-type]
+                      None, run_id="x", cache_dir=Path("."), statics={})  # type: ignore[arg-type]
 
 
 def test_stage_writes_sweep_parquet_when_enabled(
@@ -646,7 +646,15 @@ def test_stage_writes_sweep_parquet_when_enabled(
     ctx = make_ctx(run, cfg_with(cfg, sweep={"enabled": True}))
     write_run(ctx)
     write_table(pd.DataFrame({"id": ["x"]}), ctx.path("catalog.parquet"), "CatalogEvent")
+    statics = pd.DataFrame({"stationId": ["T.E0000", "T.E0000"], "phase": ["P", "S"],
+                            "staticS": [0.0, -0.12], "nEvents": [3, 3]})
+    write_table(statics, ctx.path("statics.parquet"), "StationStatic")
     seen: list[Thresholds] = []
+    pipeline_kwargs: list[dict[str, Any]] = []
+
+    def fake_pipeline(*args: Any, **kwargs: Any) -> tuple[None, None]:
+        pipeline_kwargs.append(kwargs)
+        return None, None
 
     def fake_score(run_points: Any, pipeline: Any, cfg: Any, thresholds: Thresholds) -> Any:
         seen.append(thresholds)
@@ -655,10 +663,17 @@ def test_stage_writes_sweep_parquet_when_enabled(
         return [SweepPoint(params=row.params, candidates=3, recoveredPublic=2, tierA=1)], [
             {"params": row.params, "tierA": 1}]
 
-    monkeypatch.setattr("hq.tier.sweep.real_pipeline", lambda *a, **k: (None, None))
+    monkeypatch.setattr("hq.tier.sweep.real_pipeline", fake_pipeline)
     monkeypatch.setattr("hq.tier.sweep.score_sweep", fake_score)
     stage.run(ctx)
     assert read_models(ctx.path("sweep.parquet"), SweepPoint)[0].tierA == 1
     (rec,) = ctx.records
     assert rec["counts"]["sweepPoints"] == 1 and rec["params"]["sweep"]["enabled"]
     assert seen[0].to_record() == rec["params"]["thresholds"]
+    # Sweep points are located with the statics events_located.parquet was located with.
+    assert pipeline_kwargs[0]["statics"] == {("T.E0000", "P"): 0.0, ("T.E0000", "S"): -0.12}
+    assert rec["params"]["sweep"]["statics"] == {
+        "table": "statics.parquet", "stationPhases": 2, "nonZero": 1, "maxAbsS": 0.12}
+    ctx.path("statics.parquet").unlink()
+    with pytest.raises(FileNotFoundError):
+        stage.run(ctx)

@@ -8,9 +8,9 @@ public regional catalog and tiered, and becomes one docs/02 ``SweepPoint``: ``ca
 configured run's own matched set (``thresholds``), so points compare on one scale: a point's own
 matched set would move the bars with the point.
 
-The configured point is re-evaluated through the same driver (a fresh association, location
-without station statics) so it compares with the other points; its numbers can differ from
-``events.parquet`` when the locate stage applied statics. The stage logs both.
+The configured point is re-evaluated through the same driver (a fresh association, located with
+the run's ``statics.parquet``, the statics ``events_located.parquet`` carries) so it compares with
+the other points. The stage logs its Tier A next to the one in ``events.parquet``.
 
 ``locate`` is LOC-04's ``hq.locate.locate_detailed``, imported only when the sweep runs
 (``real_pipeline``); a branch without it fails with a message naming LOC-04. Tests inject a
@@ -18,7 +18,7 @@ without station statics) so it compares with the other points; its numbers can d
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -108,8 +108,10 @@ def real_pipeline(
     *,
     run_id: str,
     cache_dir: Path,
+    statics: Mapping[tuple[str, str], float],
 ) -> tuple[RunPoints, SweepPipeline]:
-    """The real association sweep and LOC-04 / MATCH-02 steps for one run's tables."""
+    """The real association sweep and LOC-04 / MATCH-02 steps for one run's tables; every point
+    is located with ``statics`` ({(stationId, phase): s}, the run's ``statics.parquet``)."""
     try:
         from hq.locate import locate_detailed  # LOC-04
     except ImportError as exc:
@@ -125,7 +127,7 @@ def real_pipeline(
         assoc: "AssocResult",
     ) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame | None]:
         details = locate_detailed(assoc, picks, stations, cfg, run, run_id=run_id,
-                                  cache_dir=cache_dir)
+                                  cache_dir=cache_dir, statics=dict(statics))
         return details.result.events, details.flags, details.result.arrivals
 
     def match_events(events: pd.DataFrame) -> pd.DataFrame:
