@@ -12,7 +12,7 @@ import mockValidation from "../../../public/data/mock/validation.json";
 import { Shell } from "../Shell";
 import { bundleFiles, fakeFetch, type FixtureOptions } from "../test-fixture";
 import { formatNumber } from "./format";
-import { DEPTH_NOTE, STRICT_COMPARE_NOTE } from "./rows";
+import { chanceNote, DEPTH_NOTE, STRICT_COMPARE_NOTE } from "./rows";
 
 const validation = mockValidation as unknown as Validation;
 const summary = mockMeta.summary as unknown as AnalysisSummary;
@@ -80,7 +80,9 @@ describe("validation panel", () => {
     // The depth figure comes from the synthetic test with every station recording; its row says so.
     expect(screen.getByTestId("validation-note-depth").textContent).toBe(DEPTH_NOTE);
     expect(screen.queryByTestId("validation-note-strict")).toBeNull();
-    expect(screen.queryByTestId("validation-note-chance")).toBeNull();
+    // The chance value is a mean over the null test's scrambles; its note says so from the data.
+    expect(screen.getByTestId("validation-note-chance").textContent).toBe(chanceNote(validation.nullTest));
+    expect(screen.getByTestId("validation-note-chance").textContent).toContain(`Mean of ${validation.nullTest!.nShuffles} timing scrambles`);
   });
 
   it("drops the validation-sourced rows when the bundle has no validation.json", async () => {
