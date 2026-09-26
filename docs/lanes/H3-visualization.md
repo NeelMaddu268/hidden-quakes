@@ -218,9 +218,9 @@ rewrite the code yourself.
 
 ## WEB-07 implementation plan · prepared before the 1–5 AM sleep window
 
-Status: foundation implemented on `agent/WEB-07`; issue #27 stays open. The user asked H3 to
-continue ahead of the original ~5 AM start. Camera/component wiring and Gate S verification remain. No merges during the 1–5 AM sleep window. The plan does not claim Gate S,
-Gate M, deployed acceptance, or WEB-07 completion.
+Status (04:10 EDT Sat): implemented and accepted on `agent/WEB-07` (headed Chrome 153 + WebKit 26.5); see
+"WEB-07 completion checkpoint" at the end. Merge after the 1–5 AM no-merge window. Gate S (the depth call) is
+still undecided; plan view is ready to become the hero view if it fails, with no code change.
 
 ### Starting point and invariant
 
@@ -373,3 +373,44 @@ The release was replaced again at 07:27:29 UTC (03:27 EDT): 945,879 bytes, SHA-2
 root picks and baseline outputs that were in the earlier 04:05 archive; events/arrivals/matches remain
 absent. Scratch inspection did not extract over the earlier fetched run. REQ-H3-8 has an appended FYI.
 Do not overlay versions into a misleading mixed run or infer a real-data depth gate from synthetic.json.
+
+### WEB-07 completion checkpoint · 2026-09-26 04:10 EDT
+
+Implemented on `agent/WEB-07` (6bd8d93 → 7e64650) on top of the 3038c14 foundation:
+
+- **Camera ownership.** `plan/PlanCamera.tsx`: orthographic, straight down, grid north up (`up = [0,0,-1]`),
+  MapControls pan/zoom, no rotation. Canvas mounts it *instead of* CameraRig when `view === "plan"`, so
+  presets, the reveal dolly and orbit momentum can't touch it; drei restores the perspective camera and
+  OrbitControls on P/reset. The pose is declarative (props): drei rebuilds MapControls for whichever camera
+  is default at render time, and a one-shot effect had set the target on the stale perspective-bound
+  instance (plan tilted ~7.4°). `PlanInvariant` now console.errors on entry unless the live camera is
+  orthographic, straight down and grid-north-up; a probe build of the old code proved it fires.
+- **Framing.** `plan/view.ts`: R3F's pixel frustum → zoom = px/km; the framed structure is centered in the
+  region right of the depth-section panel (`plan/layout.ts`); clipping covers every event.
+- **Horizontal uncertainty.** `plan/PlanRingsLayer.tsx` + `ringMaterial.ts`: hErrM-only rings (valid when
+  vErrM is null; none without a usable hErrM), MAX blending, under the bloom threshold, same reveal/STRICT
+  gates as the 3D halos; the 3D ellipsoids are hidden in plan.
+- **Depth section.** `plan/section.ts` + `DepthSection.tsx`: docked Canvas2D panel, every event projected
+  onto grid east vs `(refSurfaceElevM − elevM)/1000`, true scale, SceneMeta.depthLabel verbatim, boreholes at
+  sensorElevM with wellhead lines, STRICT uncertainty arms only where errors exist, shared reveal clock,
+  filter look and selection; click selects with the 3D picker's gates; redraws only on change. It carries
+  the abstract-surface note in plan (the 3D ruler, a point seen end-on, and the stacked slices are hidden).
+- **Layout.** The panel clears the drawer, title/Run details, counters and filter pills, REVEAL, and the
+  bottom-left validation panel + mode pills at 1280×720 → 4K (unit tests + real DOM boxes in the browser).
+- **Safari terrain (found here).** WebKit altered the grayscale `hillshade.png` on decode (non-deterministic
+  checksum), so Safari fell back to the slab. The bake now stores the hillshade in R = G = B of an RGB PNG;
+  height.png byte-identical, checksums unchanged; both engines load the real terrain.
+
+Acceptance (static export, `NEXT_PUBLIC_ALLOW_MOCK=1`; 2,000 events from `scripts/mock-fixture.py` knobs,
+local only): P before the reveal (public only in the section), Space from plan (section fills on the reveal
+clock), STRICT (rings, B/C to background, arms), E hero + drawer (no overlap, also after resizing to
+1920×1080 and back), Esc, pan + 7 rapid P toggles, R → exact start-frame hash (Chrome `c46fd1ca…`, WebKit
+`b307d155…`), P mid-reveal from 3D, slab fallback note in plan, 4K layout; no page/console errors, HTTP
+failures or external requests. Chrome 153 (Apple M4 Pro, 120 Hz): median 120 fps in every phase with 2,000
+events + terrain + bloom + panel, 0 frames > 20 ms. WebKit 26.5: median 58.8 fps (rAF capped at 60),
+0 frames > 33 ms. `make check`: seismic 465 passed / 2 skipped, API 26, web 492, tokens 12, copy clean.
+
+WEB-08 items found while testing (not WEB-07 scope): the VE badge's CornerNote sits in the canvas's
+bottom-left, under H4's mode pills (hidden today only because the mock's VE is 1); in 3D oblique the depth
+ruler title and unverified-well labels can overlap; the true-scale section shows a compact cluster when
+Tier C events scatter wide (a "fit structure" toggle would help, clearly labelled).
