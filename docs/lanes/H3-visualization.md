@@ -415,7 +415,7 @@ bottom-left, under H4's mode pills (hidden today only because the mock's VE is 1
 ruler title and unverified-well labels can overlap; the true-scale section shows a compact cluster when
 Tier C events scatter wide (a "fit structure" toggle would help, clearly labelled).
 
-### WEB-08 hardening checkpoint · 2026-09-26 05:55 EDT
+### WEB-08 hardening checkpoint · 2026-09-26 05:45 EDT
 
 Fixed ahead of the Saturday QA pass (branch `agent/WEB-08`, PR into feat/web "Refs #29"; the ticket stays
 open for the 2–6 PM pass with a fresh reviewer and a human on the demo laptop with the real bundle):
