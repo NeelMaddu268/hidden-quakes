@@ -87,6 +87,21 @@ export function baselineRan(rows: readonly Nullable<BaselineRow>[] | null | unde
 }
 
 /** The rows to show, in the lane doc's order; absent sources yield no row. */
+/**
+ * The line under "Chance associations": the value is a mean over the null test's timing
+ * scrambles, and how many of those reached the strict tier is the other half of the claim
+ * (H2, Sat evening). Every number comes from `validation.nullTest`; a missing field drops its
+ * clause rather than guessing.
+ */
+export function chanceNote(nullTest: Nullable<NonNullable<Validation["nullTest"]>> | null | undefined): string {
+  const n = nullTest?.nShuffles;
+  const strict = nullTest?.meanChanceStrict;
+  const scrambles = isFiniteNumber(n) ? `Mean of ${formatNumber(n, DECIMALS.count)} timing scrambles` : "Mean over timing scrambles";
+  if (!isFiniteNumber(strict)) return scrambles;
+  if (strict === 0) return `${scrambles}; none reached the strict tier`;
+  return `${scrambles}; about ${formatNumber(strict, DECIMALS.chance)} per scramble reached the strict tier`;
+}
+
 export function rows(summary: SummaryInput, validation: ValidationInput): ValidationRow[] {
   const s = summary ?? {};
   const v = validation ?? {};
@@ -140,6 +155,7 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
       id: "chance",
       label: "Chance associations",
       value: formatNumber(meanChanceEvents, DECIMALS.chance),
+      note: chanceNote(v.nullTest),
     });
   }
   return out;
