@@ -31,7 +31,7 @@ class Station(BaseModel):
     location: str = ""
     latitude: float
     longitude: float
-    surfaceElevM: float           # StationXML station elevation (wellhead for boreholes)
+    surfaceElevM: float           # site ground surface at the sensor (DEM-checked; wellhead for boreholes)
     sensorDepthM: float           # StationXML channel depth; 0 for surface sensors
     sensorElevM: float            # surfaceElevM - sensorDepthM
     kind: Literal["surface", "borehole", "strong_motion"]
@@ -284,12 +284,14 @@ CONTRACT-01 also ships `packages/contracts/python/hq_contracts/io.py`:
 - `to_frame(models: list[BaseModel]) -> pd.DataFrame` and `from_frame(df, Model) -> list[Model]`
 - `write_table(df, path, model_name)` / `read_table(path) -> pd.DataFrame`: parquet with `schemaVersion` and `model` in the file metadata
 - **Flattening rule:** nested models become prefixed columns joined by `_` (`enu_e`, `quality_nStations`, `catalogMatch_dtS`). Lists stay list columns. `None` stays null. Times stay float64 epoch seconds. `dict`-typed fields (`Station.staticsS`, `SweepPoint.params`) are one JSON-text column, because a parquet struct can't hold a row-dependent key set; build frames with `to_frame` and read them with `from_frame` and you never see it.
+- **Dtype rule (CONTRACT-02, REQ-H2-3):** `to_frame` sets every column's dtype from the model annotation, so an empty table or an all-null column has the same type as a full one: `float` → `float64` (NaN for null), `int` → `int64` (`Int64` when optional or inside an optional nested model), `bool` → `bool` (`boolean` when optional), `str` / `Literal` / dict-as-JSON → `string`, lists → `object`. `dtypes_for(Model)` returns the map. Parquet then carries real Arrow types (`double`, `int64`, `bool`, `large_string`), never `null`. `Model` also sets `allow_inf_nan=False`, so a NaN in a required float fails at write time, not in the exporter.
 
 Every lane reads and writes run tables only through these helpers, so a column rename can't silently break a neighbor.
 
 | File in `runs/<runId>/` | Writer | Rows | Columns |
 | --- | --- | --- | --- |
 | `stations.parquet` | H1 | `Station` | model fields |
+| `inventory_report.json` | H1 | one entry per station considered | per-station elevation decision with its numbers, coverage, dropped triplets, skipped sites, flags; diagnostic, never read by another stage |
 | `gaps.parquet` | H1 | one per gap | `stationId, channel, gapStart, gapEnd` |
 | `picks.parquet` | H1 | `Pick` (PhaseNet) | model fields; `eventId` null |
 | `picks_stalta.parquet` | H1 | `Pick` (`picker="stalta"`) | model fields |
@@ -308,8 +310,10 @@ Every lane reads and writes run tables only through these helpers, so a column r
 | `synthetic.json` | H2 | `SyntheticTest` | JSON |
 | `diagnostics.md` | H2 | depth diagnostics table + conclusions | Markdown, human-readable |
 | `magnitude.json` | H2 | `MagCalibration` | JSON (P1) |
-| `validation.json` | H4 | `Validation` | JSON |
+| `null_test.json` | H4 | `NullTest` | JSON sidecar; always written by `validate`, also embedded in `validation.json` |
+| `validation.json` | H4 | `Validation` | JSON; written once H2's `synthetic.json` exists |
 | `run.json` | every stage via `ctx.record` | `ProcessingRun` | JSON |
+| `stages.json` | every stage via `ctx.record` | `{stage: {runtimeS, counts}}` | JSON sidecar; `ProcessingRun` has no counts field |
 
 ## 3. Config files
 
@@ -320,9 +324,10 @@ One YAML file per lane in `services/seismic/configs/showcase/`, one Pydantic con
 | `run.yaml` | H2 | `RunSection` (`hq/config/run.py`) | `name`, `windowStart`, `windowEnd` (ISO UTC), `bbox`, `origin {lat, lon, elevM}`, `refSurfaceElevM` |
 | `signal.yaml` | H1 | `SignalConfig` (`hq/config/signal.py`) | station selection, download, preprocessing profiles, picker weights and thresholds, baseline |
 | `seismology.yaml` | H2 | `SeismologyConfig` (`hq/config/seismology.py`) | catalog query, velocity model, grids, associator, locator, statics, tiering, matching, magnitude |
-| `export.yaml` | H4 | `ExportConfig` (`hq/config/export.py`) | modes, hero rule, evidence window and band, max traces, display rate |
+| `export.yaml` | H4 | `ExportConfig` (`hq/config/export.py`) | modes, hero rule, evidence window and band, max traces, display rate, bundle budget, reference features |
+| `validate.yaml` | H4 | `ValidateConfig` (`hq/config/validate.py`) | null test (shuffles, shift range, seed, profile), baseline profiles, G-R binning |
 
-`hq.config.load_config(dir: Path) -> RunConfig`, where `RunConfig` has fields `run`, `signal`, `seismology`, `export`. Unknown keys are an error, not a warning.
+`hq.config.load_config(dir: Path) -> RunConfig`, where `RunConfig` has fields `run`, `signal`, `seismology`, `export`, `validate`. Unknown keys are an error, not a warning.
 
 ## 4. Stage API (`hq/runs.py`, H4)
 
@@ -334,9 +339,16 @@ class RunContext:
     cache_dir: Path               # data/cache
     config: RunConfig
     def path(self, name: str) -> Path: ...        # run_dir / name
+    def read_run(self) -> ProcessingRun: ...      # the current run.json
     def record(self, stage: str, *, runtime_s: float,
-               counts: dict[str, int], params: dict | None = None) -> None: ...
+               counts: dict[str, int], params: dict | None = None,
+               field: str | None = None) -> None: ...
         # merges into run.json: runtimeS[stage], plus params into the matching ProcessingRun field
+        # (pick → picker, associate → associator, locate → locator, tier → tiering,
+        # match and catalog → matching). Other stages pass field= (one of picker, associator,
+        # velocityModel, locator, tiering, matching) or omit params. counts go to stages.json.
+    def update_run(self, **fields) -> None: ...
+        # only stationIds, pickerModel, pickerWeights, softwareVersions; validated through the model
 
 # every stage module exposes exactly this
 def run(ctx: RunContext) -> None: ...
