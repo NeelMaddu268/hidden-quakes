@@ -8,7 +8,7 @@
     "enu": {
       "e": 1064.5,
       "n": 10693.6,
-      "u": 37.8
+      "u": 360.0
     },
     "id": "XX.M01",
     "kind": "surface",
@@ -19,13 +19,13 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1665.5,
+    "sensorElevM": 1987.7,
     "staticsS": {
       "P": -0.033,
       "S": 0.006
     },
     "station": "M01",
-    "surfaceElevM": 1665.5,
+    "surfaceElevM": 1987.7,
     "usedInRun": true
   },
   {
@@ -37,7 +37,7 @@
     "enu": {
       "e": 3351.0,
       "n": 8337.0,
-      "u": 127.3
+      "u": 289.1
     },
     "id": "XX.M02",
     "kind": "surface",
@@ -48,10 +48,10 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1755.0,
+    "sensorElevM": 1916.8,
     "staticsS": {},
     "station": "M02",
-    "surfaceElevM": 1755.0,
+    "surfaceElevM": 1916.8,
     "usedInRun": true
   },
   {
@@ -63,7 +63,7 @@
     "enu": {
       "e": 8766.0,
       "n": 5356.7,
-      "u": 142.2
+      "u": 371.3
     },
     "id": "XX.M03",
     "kind": "surface",
@@ -74,13 +74,13 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1769.9,
+    "sensorElevM": 1999.0,
     "staticsS": {
       "P": 0.006,
       "S": -0.054
     },
     "station": "M03",
-    "surfaceElevM": 1769.9,
+    "surfaceElevM": 1999.0,
     "usedInRun": true
   },
   {
@@ -92,7 +92,7 @@
     "enu": {
       "e": 10268.0,
       "n": 3903.5,
-      "u": 131.8
+      "u": 412.8
     },
     "id": "XX.M04",
     "kind": "surface",
@@ -103,10 +103,10 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1759.5,
+    "sensorElevM": 2040.5,
     "staticsS": {},
     "station": "M04",
-    "surfaceElevM": 1759.5,
+    "surfaceElevM": 2040.5,
     "usedInRun": true
   },
   {
@@ -118,7 +118,7 @@
     "enu": {
       "e": 8879.7,
       "n": -3340.1,
-      "u": 118.1
+      "u": 313.6
     },
     "id": "XX.M05",
     "kind": "surface",
@@ -129,13 +129,13 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1745.8,
+    "sensorElevM": 1941.3,
     "staticsS": {
       "P": -0.051,
       "S": 0.055
     },
     "station": "M05",
-    "surfaceElevM": 1745.8,
+    "surfaceElevM": 1941.3,
     "usedInRun": true
   },
   {
@@ -147,7 +147,7 @@
     "enu": {
       "e": 6517.0,
       "n": -6203.9,
-      "u": -37.4
+      "u": 232.7
     },
     "id": "XX.M06",
     "kind": "surface",
@@ -158,10 +158,10 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1590.3,
+    "sensorElevM": 1860.4,
     "staticsS": {},
     "station": "M06",
-    "surfaceElevM": 1590.3,
+    "surfaceElevM": 1860.4,
     "usedInRun": true
   },
   {
@@ -173,7 +173,7 @@
     "enu": {
       "e": 4836.1,
       "n": -9614.7,
-      "u": -127.7
+      "u": 280.0
     },
     "id": "XX.M07",
     "kind": "surface",
@@ -184,13 +184,13 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1500.0,
+    "sensorElevM": 1907.7,
     "staticsS": {
       "P": 0.028,
       "S": -0.003
     },
     "station": "M07",
-    "surfaceElevM": 1500.0,
+    "surfaceElevM": 1907.7,
     "usedInRun": true
   },
   {
@@ -202,7 +202,7 @@
     "enu": {
       "e": 255.9,
       "n": -10039.3,
-      "u": -127.7
+      "u": 206.3
     },
     "id": "XX.M08",
     "kind": "surface",
@@ -213,13 +213,13 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1500.0,
+    "sensorElevM": 1834.0,
     "staticsS": {
       "P": 0.013,
       "S": 0.03
     },
     "station": "M08",
-    "surfaceElevM": 1500.0,
+    "surfaceElevM": 1834.0,
     "usedInRun": true
   },
   {
@@ -231,7 +231,7 @@
     "enu": {
       "e": -3605.0,
       "n": -10131.3,
-      "u": -127.7
+      "u": 238.3
     },
     "id": "XX.M09",
     "kind": "surface",
@@ -242,10 +242,10 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1500.0,
+    "sensorElevM": 1866.0,
     "staticsS": {},
     "station": "M09",
-    "surfaceElevM": 1500.0,
+    "surfaceElevM": 1866.0,
     "usedInRun": true
   },
   {
@@ -257,7 +257,7 @@
     "enu": {
       "e": -7342.5,
       "n": -5862.6,
-      "u": -127.7
+      "u": 145.0
     },
     "id": "XX.M10",
     "kind": "surface",
@@ -268,13 +268,13 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1500.0,
+    "sensorElevM": 1772.7,
     "staticsS": {
       "P": 0.051,
       "S": 0.053
     },
     "station": "M10",
-    "surfaceElevM": 1500.0,
+    "surfaceElevM": 1772.7,
     "usedInRun": true
   },
   {
@@ -286,7 +286,7 @@
     "enu": {
       "e": -11029.7,
       "n": -1634.7,
-      "u": -127.7
+      "u": 264.5
     },
     "id": "XX.M11",
     "kind": "surface",
@@ -297,10 +297,10 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1500.0,
+    "sensorElevM": 1892.2,
     "staticsS": {},
     "station": "M11",
-    "surfaceElevM": 1500.0,
+    "surfaceElevM": 1892.2,
     "usedInRun": true
   },
   {
@@ -312,7 +312,7 @@
     "enu": {
       "e": -10278.4,
       "n": 2462.1,
-      "u": -127.7
+      "u": 231.7
     },
     "id": "XX.M12",
     "kind": "surface",
@@ -323,13 +323,13 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1500.0,
+    "sensorElevM": 1859.4,
     "staticsS": {
       "P": -0.028,
       "S": 0.004
     },
     "station": "M12",
-    "surfaceElevM": 1500.0,
+    "surfaceElevM": 1859.4,
     "usedInRun": true
   },
   {
@@ -341,7 +341,7 @@
     "enu": {
       "e": -6112.3,
       "n": 6431.0,
-      "u": -97.4
+      "u": 196.4
     },
     "id": "XX.M13",
     "kind": "surface",
@@ -352,10 +352,10 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1530.3,
+    "sensorElevM": 1824.1,
     "staticsS": {},
     "station": "M13",
-    "surfaceElevM": 1530.3,
+    "surfaceElevM": 1824.1,
     "usedInRun": false
   },
   {
@@ -367,7 +367,7 @@
     "enu": {
       "e": -4546.7,
       "n": 10149.7,
-      "u": -32.1
+      "u": 353.9
     },
     "id": "XX.M14",
     "kind": "surface",
@@ -378,10 +378,10 @@
     "preprocessProfile": "surface",
     "sampleRateHz": 100.0,
     "sensorDepthM": 0.0,
-    "sensorElevM": 1595.6,
+    "sensorElevM": 1981.6,
     "staticsS": {},
     "station": "M14",
-    "surfaceElevM": 1595.6,
+    "surfaceElevM": 1981.6,
     "usedInRun": true
   },
   {
@@ -393,7 +393,7 @@
     "enu": {
       "e": 1150.0,
       "n": -550.0,
-      "u": -352.4
+      "u": -364.7
     },
     "id": "XX.M15",
     "kind": "borehole",
@@ -404,12 +404,12 @@
     "preprocessProfile": "borehole",
     "sampleRateHz": 1000.0,
     "sensorDepthM": 380.0,
-    "sensorElevM": 1275.3,
+    "sensorElevM": 1263.0,
     "staticsS": {
       "P": 0.007
     },
     "station": "M15",
-    "surfaceElevM": 1655.3,
+    "surfaceElevM": 1643.0,
     "usedInRun": true
   },
   {
@@ -421,7 +421,7 @@
     "enu": {
       "e": 2650.0,
       "n": -1750.0,
-      "u": -683.2
+      "u": -675.3
     },
     "id": "XX.M16",
     "kind": "borehole",
@@ -432,12 +432,12 @@
     "preprocessProfile": "borehole",
     "sampleRateHz": 1000.0,
     "sensorDepthM": 720.0,
-    "sensorElevM": 944.5,
+    "sensorElevM": 952.4,
     "staticsS": {
       "P": -0.06
     },
     "station": "M16",
-    "surfaceElevM": 1664.5,
+    "surfaceElevM": 1672.4,
     "usedInRun": true
   },
   {
@@ -449,7 +449,7 @@
     "enu": {
       "e": 900.0,
       "n": -2150.0,
-      "u": -1104.1
+      "u": -1051.7
     },
     "id": "XX.M17",
     "kind": "borehole",
@@ -460,12 +460,12 @@
     "preprocessProfile": "borehole",
     "sampleRateHz": 1000.0,
     "sensorDepthM": 1050.0,
-    "sensorElevM": 523.6,
+    "sensorElevM": 576.0,
     "staticsS": {
       "P": -0.012
     },
     "station": "M17",
-    "surfaceElevM": 1573.6,
+    "surfaceElevM": 1626.0,
     "usedInRun": true
   }
 ]

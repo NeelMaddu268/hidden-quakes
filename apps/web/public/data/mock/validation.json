@@ -3,7 +3,7 @@
     {
       "associationProfile": "full",
       "candidates": 500,
-      "medianRmsS": 0.073,
+      "medianRmsS": 0.071,
       "medianStations": 8.0,
       "method": "phasenet",
       "recoveredPublic": 38,
@@ -15,8 +15,8 @@
     },
     {
       "associationProfile": "p_only",
-      "candidates": 370,
-      "medianRmsS": 0.095,
+      "candidates": 390,
+      "medianRmsS": 0.092,
       "medianStations": 7.2,
       "method": "phasenet",
       "recoveredPublic": 35,
@@ -28,8 +28,8 @@
     },
     {
       "associationProfile": "full",
-      "candidates": 205,
-      "medianRmsS": 0.117,
+      "candidates": 218,
+      "medianRmsS": 0.114,
       "medianStations": 6.4,
       "method": "stalta",
       "recoveredPublic": 29,
@@ -41,8 +41,8 @@
     },
     {
       "associationProfile": "p_only",
-      "candidates": 150,
-      "medianRmsS": 0.139,
+      "candidates": 171,
+      "medianRmsS": 0.135,
       "medianStations": 6.0,
       "method": "stalta",
       "recoveredPublic": 24,
@@ -54,8 +54,8 @@
     }
   ],
   "gr": {
-    "bSigma": 0.038,
-    "bValue": 0.767,
+    "bSigma": 0.07,
+    "bValue": 1.031,
     "magBins": [
       -0.5,
       -0.25,
@@ -71,35 +71,35 @@
       2.25,
       2.5
     ],
-    "mcPublic": 0.7,
+    "mcPublic": 0.95,
     "mcRecovered": -0.3,
     "publicCum": [
       37,
       37,
       37,
       35,
-      32,
-      22,
-      20,
-      17,
-      13,
-      5,
+      29,
+      26,
+      18,
+      10,
+      7,
+      3,
       1,
       1,
-      0
+      1
     ],
     "recoveredCum": [
-      406,
-      221,
-      129,
-      71,
-      45,
-      25,
-      16,
+      384,
+      195,
+      105,
+      66,
+      40,
+      17,
       10,
-      4,
+      6,
+      3,
       2,
-      2,
+      1,
       1,
       0
     ]
@@ -111,8 +111,8 @@
       "c": 0.00189,
       "d": -2.09
     },
-    "looMae": 0.238,
-    "n": 34
+    "looMae": 0.211,
+    "n": 32
   },
   "nullTest": {
     "meanChanceEvents": 2.4,

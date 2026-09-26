@@ -75,8 +75,8 @@
     "softwareVersions": {
       "hq_contracts": "1.0",
       "mock-fixture": "synthetic",
-      "numpy": "2.5.3",
-      "pydantic": "2.13.5"
+      "numpy": "synthetic (pinned in services/seismic/uv.lock)",
+      "pydantic": "synthetic (pinned in services/seismic/uv.lock)"
     },
     "stationIds": [
       "XX.M01",
@@ -152,12 +152,12 @@
   },
   "scene": {
     "depthLabel": "Depth below site surface (ref 1627.7 m ASL)",
-    "heroEventId": "hq-mock-13-000482",
+    "heroEventId": "hq-mock-13-000284",
     "isSynthetic": true,
     "originElevM": 1627.7,
     "originLat": 38.51,
     "originLon": -112.9,
-    "projection": "EPSG:32612 minus origin",
+    "projection": "local equirectangular minus origin (mock)",
     "refSurfaceElevM": 1627.7,
     "runId": "mock-13",
     "verticalExaggeration": 1.0
@@ -177,7 +177,7 @@
       "strictStalta": 46
     },
     "candidateCount": 500,
-    "medianRmsS": 0.073,
+    "medianRmsS": 0.071,
     "medianStations": 8.0,
     "publicCatalogCount": 43,
     "recall": 0.8837,
@@ -186,11 +186,11 @@
     "strictAdditionalCount": 124,
     "strictQualityCount": 150,
     "unmatchedPublicIds": [
-      "mockpub012",
+      "mockpub001",
       "mockpub016",
-      "mockpub018",
-      "mockpub038",
-      "mockpub041"
+      "mockpub017",
+      "mockpub030",
+      "mockpub032"
     ]
   }
 }
