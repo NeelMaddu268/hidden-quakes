@@ -24,7 +24,17 @@ export interface ValidationRow {
   id: RowId;
   label: string;
   value: string;
+  /** One short line under the row, for a value that must not be read against another row unqualified. */
+  note?: string;
 }
+
+/**
+ * Why the comparison's PhaseNet count can differ from "Strict events": the baseline rerun applies
+ * one statics table to every event, while the published run leaves each matched event out of its
+ * own statics (VAL-01 → `validation_notes.json`). Shown under the row so the two counts never sit
+ * on the card side by side without it.
+ */
+export const STRICT_COMPARE_NOTE = "Rerun with one statics table for every event; the count differs from the strict count above";
 
 /** Display precision per row (decimals shown), not a data threshold. */
 const DECIMALS = { count: 0, stations: 1, residual: 3, depth: 0, gain: 2, chance: 1 } as const;
@@ -103,6 +113,7 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
       id: "strictCompare",
       label: "Strict events, PhaseNet vs STA/LTA",
       value: `${formatNumber(comparison.phasenet, DECIMALS.count)} vs ${formatNumber(comparison.stalta, DECIMALS.count)}`,
+      note: STRICT_COMPARE_NOTE,
     });
   }
   // Lane doc: "Baseline ran and gain > 1 in both profiles". The value is summary.baseline.gain;

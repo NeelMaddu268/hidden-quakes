@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AnalysisSummary, BaselineRow, Validation } from "@/providers";
-import { baselineRan, rows, strictComparison, type RowId, type SummaryInput, type ValidationInput } from "./rows";
+import { baselineRan, rows, STRICT_COMPARE_NOTE, strictComparison, type RowId, type SummaryInput, type ValidationInput } from "./rows";
 
 const SUMMARY: AnalysisSummary = {
   runId: "t",
@@ -187,6 +187,15 @@ describe("rows()", () => {
 
     it("labels are words only", () => {
       expect(rows(SUMMARY, VALIDATION).find((r) => r.id === "strictCompare")!.label).not.toMatch(/\d/);
+    });
+
+    it("carries the statics note, in words, and is the only row that carries a note", () => {
+      const list = rows(SUMMARY, VALIDATION);
+      const row = list.find((r) => r.id === "strictCompare")!;
+      expect(row.note).toBe(STRICT_COMPARE_NOTE);
+      expect(row.note).toMatch(/statics/);
+      expect(row.note).not.toMatch(/\d/);
+      for (const other of list) if (other.id !== "strictCompare") expect(other.note).toBeUndefined();
     });
   });
 });
