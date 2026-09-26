@@ -88,6 +88,7 @@ describe("featureGeometry", () => {
     expect(featureGeometry(feature({ kind: "well", path: [] }), 1)).toBeNull();
     const tiny = feature({ kind: "boundary", path: [{ e: 0, n: 0, u: 0 }, { e: 1, n: 1, u: 0 }] });
     expect(featureGeometry(tiny, 1)).toBeNull();
+    expect(featureGeometry({ ...tiny, path: tiny.path.slice(0, 1) }, 1)).toBeNull();
     expect(featureIssue(tiny)).toMatch(/< 3/);
     expect(featureIssue(feature({ kind: "well", path: [] }))).toMatch(/empty path/);
     expect(featureIssue(feature({ kind: "well" }))).toBeNull();
