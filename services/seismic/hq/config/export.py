@@ -68,7 +68,8 @@ class EvidenceConfig(BaseModel):
     bandHz: tuple[float, float] = (2.0, 20.0)  # zero-phase bandpass (low, high) of the display copy
     maxTraces: int = Field(default=MAX_EVIDENCE_TRACES, ge=1, le=MAX_EVIDENCE_TRACES)
     displayRateHz: float = Field(default=100.0, gt=0.0)  # WaveformSnippet.dt = 1 / displayRateHz
-    preloadCount: int = Field(default=20, ge=0)  # evidence files the web app fetches up front
+    # How many evidence files the web app fetches up front is the web app's own knob
+    # (apps/web/src/providers/config.ts EVIDENCE_PRELOAD_COUNT); the exporter has no say in it.
     # Extra seconds read on both sides of the window before filtering, so the display copy's
     # detrend/taper and the resampler never touch the samples that end up in the snippet.
     padS: float = Field(default=1.0, ge=0.0)
