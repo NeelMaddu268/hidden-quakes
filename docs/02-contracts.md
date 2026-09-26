@@ -311,7 +311,9 @@ Every lane reads and writes run tables only through these helpers, so a column r
 | `diagnostics.md` | H2 | depth diagnostics table + conclusions | Markdown, human-readable |
 | `magnitude.json` | H2 | `MagCalibration` | JSON (P1) |
 | `null_test.json` | H4 | `NullTest` | JSON sidecar; always written by `validate`, also embedded in `validation.json` |
-| `validation.json` | H4 | `Validation` | JSON; written once H2's `synthetic.json` exists |
+| `baseline.json` | H4 | `BaselineRow[]` | JSON sidecar; always written by `validate` (empty without H1's `picks_stalta.parquet`), also embedded in `validation.json` |
+| `gr.json` | H4 | `GRCurve` | JSON sidecar; written by `validate` when magnitudes exist and the docs/03 magnitude kill switch passes, also embedded in `validation.json` |
+| `validation.json` | H4 | `Validation` | JSON; written once H2's `synthetic.json` exists; the exporter assembles it from the sidecars above (plus `synthetic.json`, `sweep.parquet`, `magnitude.json`) when it is absent |
 | `run.json` | every stage via `ctx.record` | `ProcessingRun` | JSON |
 | `stages.json` | every stage via `ctx.record` | `{stage: {runtimeS, counts}}` | JSON sidecar; `ProcessingRun` has no counts field |
 
