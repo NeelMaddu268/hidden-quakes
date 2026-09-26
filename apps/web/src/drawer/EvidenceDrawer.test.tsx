@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Confidence } from "../providers/confidence";
 import type { BundleState, EventEvidence, EvidenceState, SeismicEvent, Station, WaveformSnippet } from "../scene/types";
 import { useDemo } from "../state/demo";
 import { EvidenceDrawer } from "./index";
@@ -15,6 +16,9 @@ vi.mock("../scene/data", () => ({
   useBundle: () => data.bundle,
   useEvidence: (id: string | null) => (id === null ? { status: "idle" } : (data.evidence[id] ?? { status: "loading" })),
 }));
+// ML-01's optional confidence.json, likewise controllable (null: the bundle has none).
+const conf = vi.hoisted(() => ({ value: null as Confidence | null }));
+vi.mock("../providers/confidence", () => ({ useConfidence: () => conf.value }));
 
 // ---- Test-local synthetic records (rule 5) ----------------------------------------------------
 
@@ -474,5 +478,58 @@ describe("closing", () => {
     select(HERO);
     act(() => useDemo.getState().reset());
     expect(drawer().dataset.open).toBe("false");
+  });
+});
+
+describe("ML-01 decoy-test score (confidence.json)", () => {
+  const scores: Record<string, number> = { [HERO]: 0.8765, "hq-test-000002": 0 };
+  const confidence = (over: Partial<Confidence> = {}): Confidence => ({
+    label: "Decoy test",
+    description: "How much this event looks like real timing rather than a decoy",
+    rocAuc: 0.8,
+    score: (id) => scores[id] ?? null,
+    ...over,
+  });
+  const scoreStat = () => document.querySelector(".hqd-depth .hqd-stat + .hqd-stat") as HTMLElement | null;
+
+  afterEach(() => {
+    conf.value = null;
+  });
+
+  it("sits beside the depth, two decimals, with the file's sentence as its tooltip", () => {
+    conf.value = confidence();
+    render(<EvidenceDrawer />);
+    select(HERO);
+    const stat = scoreStat()!;
+    expect(stat.querySelector(".hqd-label")!.textContent).toBe("Decoy test");
+    expect(stat.querySelector(".hqd-stat-value")!.textContent).toBe("0.88");
+    expect(stat.getAttribute("title")).toBe(conf.value.description);
+    // Same row as the depth: the header gains no line, so the record section stays put.
+    expect(document.querySelectorAll(".hqd-depth")).toHaveLength(1);
+    expect(document.querySelector(".hqd-depth")!.children).toHaveLength(2);
+    expectNoBadValues();
+    select("hq-test-000002");
+    expect(scoreStat()!.querySelector(".hqd-stat-value")!.textContent).toBe("0.00");
+  });
+
+  it("is absent for an unscored event and for a bundle without the file", () => {
+    conf.value = confidence();
+    render(<EvidenceDrawer />);
+    select("hq-test-000003");
+    expect(scoreStat()).toBeNull();
+    conf.value = null;
+    select(HERO);
+    expect(scoreStat()).toBeNull();
+    expect(document.querySelector(".hqd-depth")!.children).toHaveLength(1);
+  });
+
+  it("falls back to a words-only label and no tooltip when the file has neither", () => {
+    conf.value = confidence({ label: null, description: null });
+    render(<EvidenceDrawer />);
+    select(HERO);
+    const stat = scoreStat()!;
+    expect(stat.querySelector(".hqd-label")!.textContent).toBe("Decoy test score");
+    expect(stat.hasAttribute("title")).toBe(false);
+    expect(drawer().textContent).not.toMatch(/probability|predict|confirmed/i);
   });
 });
