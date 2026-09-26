@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { makeRectList } from "./labelPlacement";
 import type { SceneBounds } from "../camera/bounds";
 import { surfaceExtentM } from "../terrain/grid";
 import { ABSTRACT_SURFACE_LABEL, useSurfaceChoice } from "../terrain/surface";
@@ -31,12 +32,14 @@ export function References({ bundle, bounds, planView = false }: ReferencesProps
   const terrainMeta = choice === "terrain" && asset.status === "ready" ? asset.meta : null;
   // Slices span the surface extent, so they wait until the terrain has settled (no resize flash).
   const extent = useMemo(() => surfaceExtentM(terrainMeta, bounds), [terrainMeta, bounds]);
+  // The ruler writes its label boxes here each frame (priority −1); the feature labels keep clear of them.
+  const labelObstacles = useMemo(() => makeRectList(16), []);
   return (
     <group name="references">
-      {!planView && <DepthRuler scene={scene} bounds={bounds} />}
+      {!planView && <DepthRuler scene={scene} bounds={bounds} obstacles={labelObstacles} />}
       {!planView && choice !== "none" && <DepthSlices scene={scene} extent={extent} />}
       <StationsLayer stations={bundle.stations} scene={scene} />
-      <FeaturesLayer features={bundle.features} scene={scene} />
+      <FeaturesLayer features={bundle.features} scene={scene} obstacles={labelObstacles} planView={planView} />
       <VerticalBadge scene={scene} />
       {choice === "slab" && (
         // Permanent while the slab stands in for the terrain: before the reveal, in every view, in plan.
