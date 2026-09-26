@@ -43,8 +43,6 @@ const GAP_KM = 0.09;
 const MARKER_SIZE_PX = 20;
 /** Leader from an anchor to a label moved off its line (labelPlacement), fainter than the label. */
 const LEADER_OPACITY = 0.55;
-/** Room for the depth ruler's obstacles plus the plan panel. */
-const FIXED_CAPACITY = 32;
 
 const MARKER_VERTEX_SHADER = /* glsl */ `
   attribute float aDashed;
@@ -173,10 +171,11 @@ interface LabelFrameState {
   lastCamera: Float64Array;
 }
 
-function makeLabelFrameState(n: number): LabelFrameState {
+/** `obstacleCapacity`: rects the ruler can publish; one more for the plan panel. */
+function makeLabelFrameState(n: number, obstacleCapacity: number): LabelFrameState {
   return {
     placement: makeLabelPlacement(n),
-    fixed: makeRectList(FIXED_CAPACITY),
+    fixed: makeRectList(obstacleCapacity + 1),
     v: new Vector3(),
     written: new Int8Array(n).fill(-1),
     writtenW: new Float32Array(n),
@@ -210,7 +209,9 @@ function FeatureLabels({ labels, obstacles, planView }: FeatureLabelsProps) {
   const frame = useRef<LabelFrameState | null>(null);
 
   useFrame(({ camera, size }) => {
-    if (!frame.current || frame.current.placement.n !== n) frame.current = makeLabelFrameState(n);
+    if (!frame.current || frame.current.placement.n !== n) {
+      frame.current = makeLabelFrameState(n, obstacles ? obstacles.rects.length / 4 : 0);
+    }
     const st = frame.current;
     const { placement: p, fixed, v } = st;
     clearRects(fixed);

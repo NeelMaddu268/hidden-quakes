@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo } from "react";
-import { makeRectList } from "./labelPlacement";
 import type { SceneBounds } from "../camera/bounds";
 import { surfaceExtentM } from "../terrain/grid";
 import { ABSTRACT_SURFACE_LABEL, useSurfaceChoice } from "../terrain/surface";
 import { verticalBadgeText } from "./badge";
+import { makeRectList } from "./labelPlacement";
+import { rulerDepthsKm } from "./ruler";
 import { CornerNote } from "./CornerNote";
 import type { GeoFeature, SceneMeta, Station } from "../types";
 import { DepthRuler } from "./DepthRuler";
@@ -32,8 +33,9 @@ export function References({ bundle, bounds, planView = false }: ReferencesProps
   const terrainMeta = choice === "terrain" && asset.status === "ready" ? asset.meta : null;
   // Slices span the surface extent, so they wait until the terrain has settled (no resize flash).
   const extent = useMemo(() => surfaceExtentM(terrainMeta, bounds), [terrainMeta, bounds]);
-  // The ruler writes its label boxes here each frame (priority −1); the feature labels keep clear of them.
-  const labelObstacles = useMemo(() => makeRectList(16), []);
+  // The ruler writes its label boxes (title + one per tick) here each frame (priority −1); the feature
+  // labels, placed later in the frame, keep clear of them.
+  const labelObstacles = useMemo(() => makeRectList(1 + rulerDepthsKm().length), []);
   return (
     <group name="references">
       {!planView && <DepthRuler scene={scene} bounds={bounds} obstacles={labelObstacles} />}
