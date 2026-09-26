@@ -955,6 +955,8 @@ def test_stage_run_returns_none_and_records(fake_ctx: Any, monkeypatch: pytest.M
     )
     assert record["counts"]["checkBEventsPassed"] == 3 and record["runtimeS"] > 0
     assert record["params"]["candidateWeights"]
+    preprocess = fake_ctx.config.signal.preprocess.model_dump(mode="json")
+    assert record["params"]["preprocess"] == preprocess  # every knob (CLAUDE.md rule 8)
 
 
 # --- contracts I/O (runs once CONTRACT-01 lands) --------------------------------------------------

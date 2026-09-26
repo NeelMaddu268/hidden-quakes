@@ -838,6 +838,7 @@ def test_stage_writes_report_and_records(fake_ctx: Any, raw_signal_yaml: dict) -
     assert params["pThreshold"] == 0.1 and params["seisbench"]["blinding"] == [50, 50]
     assert params["run"]["workers"] == cfg.picker.run.workers
     assert params["chunks"] == cfg.preprocess.chunks.model_dump(mode="json")
+    assert params["preprocess"] == cfg.preprocess.model_dump(mode="json")  # every knob (rule 8)
     assert params["weightsUsedByProfile"] == {"surface-100": "instance"}
     report = json.loads(ctx.path("pick_report.json").read_text(encoding="utf-8"))
     assert report["weightsUsedByProfile"] == {"surface-100": "instance"}

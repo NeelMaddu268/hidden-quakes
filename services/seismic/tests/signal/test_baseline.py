@@ -840,6 +840,7 @@ def test_stage_writes_picks_and_a_null_sweep_while_h2_is_missing(
         **cfg.baseline.model_dump(mode="json"),
         "pickerGapEdgeS": cfg.picker.gapEdgeS,
         "preprocessChunks": cfg.preprocess.chunks.model_dump(mode="json"),
+        "preprocess": cfg.preprocess.model_dump(mode="json"),  # the whole block (rule 8)
         "sweepBestTierA": None,
         "sweepScoring": None,
     }
