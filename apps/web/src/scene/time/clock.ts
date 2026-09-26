@@ -64,17 +64,27 @@ export function advancePlayback(
   deltaS: number,
   rate: number,
   windowEnd: number,
-  maxDeltaS = 0.1,
+  maxDeltaS = MAX_PLAYBACK_DELTA_S,
 ): { tNow: number; done: boolean } {
   const dt = deltaS > 0 ? Math.min(deltaS, maxDeltaS) : 0;
   const next = tNow + dt * rate;
   return next >= windowEnd ? { tNow: windowEnd, done: true } : { tNow: next, done: false };
 }
 
+/** A time-driver step: where the playhead goes and whether the replay keeps playing. */
+export interface TimeStep {
+  tNow: number;
+  playing: boolean;
+}
+
+/** Longest real frame a playback step honours (s): a background tab never jumps the playhead. */
+export const MAX_PLAYBACK_DELTA_S = 0.1;
+
 /**
- * What the time driver does this frame, or null for nothing: start the replay when time mode has just
- * taken effect (playhead at windowStart, playing), otherwise advance a playing replay and stop it at the
- * window end. Pure, so the whole playback rule is tested without a canvas.
+ * What the time driver does this frame, written into `out` (the driver's preallocated step, so a playing
+ * replay allocates nothing per frame); returns false for "nothing to do". Starts the replay when time mode
+ * has just taken effect (playhead at windowStart, playing), otherwise advances a playing replay and stops
+ * it at the window end. Pure, so the whole playback rule is tested without a canvas.
  */
 export function stepTime(
   s: TimeStateLike & { playing: boolean },
@@ -82,11 +92,19 @@ export function stepTime(
   windowStart: number,
   windowEnd: number,
   rate: number,
-): { tNow: number; playing: boolean } | null {
-  if (shouldStartReplay(s)) return { tNow: windowStart, playing: true };
-  if (!s.playing || !timeActive(s)) return null;
-  const step = advancePlayback(s.tNow as number, deltaS, rate, windowEnd);
-  return { tNow: step.tNow, playing: !step.done };
+  out: TimeStep,
+): boolean {
+  if (shouldStartReplay(s)) {
+    out.tNow = windowStart;
+    out.playing = true;
+    return true;
+  }
+  if (!s.playing || !timeActive(s)) return false;
+  const dt = deltaS > 0 ? Math.min(deltaS, MAX_PLAYBACK_DELTA_S) : 0;
+  const next = (s.tNow as number) + dt * rate;
+  out.tNow = next >= windowEnd ? windowEnd : next;
+  out.playing = next < windowEnd;
+  return true;
 }
 
 /** Number of `binS`-wide bins covering [windowStart, windowEnd] (at least 1). */
