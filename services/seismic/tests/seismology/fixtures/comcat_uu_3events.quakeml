@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<q:quakeml xmlns="http://quakeml.org/xmlns/bed/1.2" xmlns:anss="http://anss.org/xmlns/event/0.1" xmlns:catalog="http://anss.org/xmlns/catalog/0.1" xmlns:q="http://quakeml.org/xmlns/quakeml/1.2">
+ <eventParameters publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?starttime=2026-09-10T000000.000000&amp;endtime=2026-09-11T000000.000000&amp;minlatitude=38.28&amp;maxlatitude=38.74&amp;minlongitude=-113.2&amp;maxlongitude=-112.6">
+  <event catalog:datasource="uu" catalog:eventsource="uu" catalog:eventid="80155936" publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?eventid=uu80155936&amp;format=quakeml">
+   <description>
+    <type>earthquake name</type>
+    <text>16 km NE of Milford, Utah</text>
+   </description>
+   <origin catalog:datasource="uu" catalog:dataid="uu80155936" catalog:eventsource="uu" catalog:eventid="80155936" publicID="quakeml:earthquake.usgs.gov/product/origin/uu80155936/uu/1789137476500">
+    <time>
+     <value>2026-09-10T23:42:53.300Z</value>
+    </time>
+    <longitude>
+     <value>-112.9005</value>
+    </longitude>
+    <latitude>
+     <value>38.512166666667</value>
+    </latitude>
+    <depth>
+     <value>2740</value>
+     <uncertainty>250</uncertainty>
+    </depth>
+    <originUncertainty>
+     <horizontalUncertainty>240</horizontalUncertainty>
+     <preferredDescription>horizontal uncertainty</preferredDescription>
+    </originUncertainty>
+    <quality>
+     <usedPhaseCount>27</usedPhaseCount>
+     <usedStationCount>17</usedStationCount>
+     <standardError>0.06</standardError>
+     <azimuthalGap>89</azimuthalGap>
+     <minimumDistance>0.00282</minimumDistance>
+    </quality>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>UU</agencyID>
+     <creationTime>2026-09-11T14:37:56.500Z</creationTime>
+     <version>1</version>
+    </creationInfo>
+   </origin>
+   <magnitude catalog:datasource="uu" catalog:dataid="uu80155936" catalog:eventsource="uu" catalog:eventid="80155936" publicID="quakeml:earthquake.usgs.gov/product/origin/uu80155936/uu/1789137476500#magnitude">
+    <mag>
+     <value>1.34</value>
+     <uncertainty>0.014098274917496</uncertainty>
+    </mag>
+    <type>ml</type>
+    <stationCount>2</stationCount>
+    <originID>quakeml:earthquake.usgs.gov/product/origin/uu80155936/uu/1789137476500</originID>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>UU</agencyID>
+     <creationTime>2026-09-11T14:37:56.500Z</creationTime>
+    </creationInfo>
+   </magnitude>
+   <preferredOriginID>quakeml:earthquake.usgs.gov/product/origin/uu80155936/uu/1789137476500</preferredOriginID>
+   <preferredMagnitudeID>quakeml:earthquake.usgs.gov/product/origin/uu80155936/uu/1789137476500#magnitude</preferredMagnitudeID>
+   <type>earthquake</type>
+   <creationInfo>
+    <agencyID>uu</agencyID>
+    <creationTime>2026-09-11T14:37:56.500Z</creationTime>
+    <version>1</version>
+   </creationInfo>
+  </event>
+  <event catalog:datasource="uu" catalog:eventsource="uu" catalog:eventid="80155911" publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?eventid=uu80155911&amp;format=quakeml">
+   <description>
+    <type>earthquake name</type>
+    <text>16 km NE of Milford, Utah</text>
+   </description>
+   <origin catalog:datasource="uu" catalog:dataid="uu80155911" catalog:eventsource="uu" catalog:eventid="80155911" publicID="quakeml:earthquake.usgs.gov/product/origin/uu80155911/uu/1789080391280">
+    <time>
+     <value>2026-09-10T22:23:28.740Z</value>
+    </time>
+    <longitude>
+     <value>-112.9005</value>
+    </longitude>
+    <latitude>
+     <value>38.52</value>
+    </latitude>
+    <depth>
+     <value>2780</value>
+     <uncertainty>440</uncertainty>
+    </depth>
+    <originUncertainty>
+     <horizontalUncertainty>290</horizontalUncertainty>
+     <preferredDescription>horizontal uncertainty</preferredDescription>
+    </originUncertainty>
+    <quality>
+     <usedPhaseCount>18</usedPhaseCount>
+     <usedStationCount>12</usedStationCount>
+     <standardError>0.04</standardError>
+     <azimuthalGap>122</azimuthalGap>
+     <minimumDistance>0.009992</minimumDistance>
+    </quality>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>UU</agencyID>
+     <creationTime>2026-09-10T22:46:31.280Z</creationTime>
+     <version>2</version>
+    </creationInfo>
+   </origin>
+   <magnitude catalog:datasource="uu" catalog:dataid="uu80155911" catalog:eventsource="uu" catalog:eventid="80155911" publicID="quakeml:earthquake.usgs.gov/product/origin/uu80155911/uu/1789080391280#magnitude">
+    <mag>
+     <value>1.19</value>
+     <uncertainty>0.47330094578138</uncertainty>
+    </mag>
+    <type>md</type>
+    <stationCount>7</stationCount>
+    <originID>quakeml:earthquake.usgs.gov/product/origin/uu80155911/uu/1789080391280</originID>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>UU</agencyID>
+     <creationTime>2026-09-10T22:46:31.280Z</creationTime>
+    </creationInfo>
+   </magnitude>
+   <preferredOriginID>quakeml:earthquake.usgs.gov/product/origin/uu80155911/uu/1789080391280</preferredOriginID>
+   <preferredMagnitudeID>quakeml:earthquake.usgs.gov/product/origin/uu80155911/uu/1789080391280#magnitude</preferredMagnitudeID>
+   <type>earthquake</type>
+   <creationInfo>
+    <agencyID>uu</agencyID>
+    <creationTime>2026-09-10T22:46:31.280Z</creationTime>
+    <version>2</version>
+   </creationInfo>
+  </event>
+  <event catalog:datasource="uu" catalog:eventsource="uu" catalog:eventid="80155571" publicID="quakeml:earthquake.usgs.gov/fdsnws/event/1/query?eventid=uu80155571&amp;format=quakeml">
+   <description>
+    <type>earthquake name</type>
+    <text>14 km NE of Milford, Utah</text>
+   </description>
+   <origin catalog:datasource="uu" catalog:dataid="uu80155571" catalog:eventsource="uu" catalog:eventid="80155571" publicID="quakeml:earthquake.usgs.gov/product/origin/uu80155571/uu/1789493655160">
+    <time>
+     <value>2026-09-10T09:27:56.880Z</value>
+    </time>
+    <longitude>
+     <value>-112.89666666667</value>
+    </longitude>
+    <latitude>
+     <value>38.492833333333</value>
+    </latitude>
+    <depth>
+     <value>4060</value>
+     <uncertainty>240</uncertainty>
+    </depth>
+    <originUncertainty>
+     <horizontalUncertainty>290</horizontalUncertainty>
+     <preferredDescription>horizontal uncertainty</preferredDescription>
+    </originUncertainty>
+    <quality>
+     <usedPhaseCount>39</usedPhaseCount>
+     <usedStationCount>29</usedStationCount>
+     <standardError>0.18</standardError>
+     <azimuthalGap>38</azimuthalGap>
+     <minimumDistance>0.007545</minimumDistance>
+    </quality>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>UU</agencyID>
+     <creationTime>2026-09-15T17:34:15.160Z</creationTime>
+     <version>3</version>
+    </creationInfo>
+   </origin>
+   <magnitude catalog:datasource="uu" catalog:dataid="uu80155571" catalog:eventsource="uu" catalog:eventid="80155571" publicID="quakeml:earthquake.usgs.gov/product/origin/uu80155571/uu/1789493655160#magnitude">
+    <mag>
+     <value>2.14</value>
+     <uncertainty>0.23488071611879</uncertainty>
+    </mag>
+    <type>ml</type>
+    <stationCount>15</stationCount>
+    <originID>quakeml:earthquake.usgs.gov/product/origin/uu80155571/uu/1789493655160</originID>
+    <evaluationMode>manual</evaluationMode>
+    <creationInfo>
+     <agencyID>UU</agencyID>
+     <creationTime>2026-09-15T17:34:15.160Z</creationTime>
+    </creationInfo>
+   </magnitude>
+   <preferredOriginID>quakeml:earthquake.usgs.gov/product/origin/uu80155571/uu/1789493655160</preferredOriginID>
+   <preferredMagnitudeID>quakeml:earthquake.usgs.gov/product/origin/uu80155571/uu/1789493655160#magnitude</preferredMagnitudeID>
+   <type>earthquake</type>
+   <creationInfo>
+    <agencyID>uu</agencyID>
+    <creationTime>2026-09-15T17:34:15.160Z</creationTime>
+    <version>3</version>
+   </creationInfo>
+  </event>
+  <creationInfo>
+   <creationTime>2026-09-26T01:01:35.000Z</creationTime>
+  </creationInfo>
+ </eventParameters>
+</q:quakeml>
