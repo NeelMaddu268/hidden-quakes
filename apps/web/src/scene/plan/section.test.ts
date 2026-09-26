@@ -7,7 +7,9 @@ import {
   buildSectionModel,
   drawSection,
   niceStep,
+  outsideText,
   sectionHit,
+  sectionOutside,
   sectionPlot,
   type Ctx2D,
   type SectionState,
@@ -61,6 +63,13 @@ class RecordingCtx implements Ctx2D {
   stroke() { this.strokes.push({ style: this.strokeStyle, alpha: this.globalAlpha, arcs: this.path, segs: this.segs }); }
   fillText(t: string) { this.texts.push(t); }
   setLineDash() {}
+  clips: number[][] = [];
+  saves = 0;
+  restores = 0;
+  save() { this.saves++; }
+  restore() { this.restores++; }
+  rect(x: number, y: number, w: number, h: number) { this.clips.push([x, y, w, h]); }
+  clip() {}
 }
 
 const style: SectionStyle = { recovered: "amber", publicDot: "white", station: "grey", contour: "c", textDim: "t", halo: "halo", tickFont: "10px mono", dpr: 2 };
@@ -98,14 +107,42 @@ describe("depth section model", () => {
 });
 
 describe("sectionPlot", () => {
-  it("is true scale (one px/km for both axes) and fits the whole population, outliers included", () => {
-    for (const [e, d] of [[-3, 5], [2, 2.5], [-1, 4]]) {
-      const x = plot.ox + e * plot.k, y = plot.oy + d * plot.k;
-      expect(x).toBeGreaterThanOrEqual(plot.x0);
-      expect(x).toBeLessThanOrEqual(plot.x0 + plot.w);
-      expect(y).toBeGreaterThanOrEqual(plot.y0);
-      expect(y).toBeLessThanOrEqual(plot.y0 + plot.h);
-    }
+  const inside = (p: typeof plot, e: number, d: number) => {
+    const x = p.ox + e * p.k, y = p.oy + d * p.k;
+    return x >= p.x0 && x <= p.x0 + p.w && y >= p.y0 && y <= p.y0 + p.h;
+  };
+
+  it("is true scale and frames Tier A and B from the site surface down (as the plan camera frames them)", () => {
+    expect(plot.framedOn).toBe("structure");
+    for (const [e, d] of [[0, 2], [1, 3], [2, 2.5], [0, 0]]) expect(inside(plot, e, d), `${e},${d}`).toBe(true); // a, b, d, surface
+    // Equal scale: one k for both axes, set by the tighter axis.
+    expect(plot.k).toBeCloseTo(Math.min((plot.w - 12) / (plot.fit.maxEast - plot.fit.minEast), (plot.h - 12) / (plot.fit.maxDepth - plot.fit.minDepth)), 9);
+  });
+
+  it("counts every event outside the frame instead of hiding it silently", () => {
+    // Tier C "c" (4 km deep) and public "p2" (−3 km east, 5 km deep) lie outside the structure frame.
+    expect(inside(plot, -1, 4)).toBe(false);
+    expect(inside(plot, -3, 5)).toBe(false);
+    expect(sectionOutside(model, plot)).toEqual({ candidates: 1, publicEvents: 1 });
+    expect(outsideText({ candidates: 1, publicEvents: 1 })).toBe("1 candidate and 1 public events outside this frame");
+    expect(outsideText({ candidates: 12, publicEvents: 0 })).toBe("12 candidate events outside this frame");
+    expect(outsideText({ candidates: 0, publicEvents: 1 })).toBe("1 public event outside this frame");
+    expect(outsideText({ candidates: 0, publicEvents: 0 })).toBe("Every event is inside this frame");
+    expect(outsideText(null)).toBe("");
+  });
+
+  it("frames every event when there is no Tier A or B", () => {
+    const onlyC = buildSectionModel([ev("x", -1000, REF - 4000, "C", 0), ev("y", 3000, REF - 1000, "C", 1)], catalog, stations, { refSurfaceElevM: REF }, 0);
+    const p = sectionPlot(onlyC, W, H);
+    expect(p.framedOn).toBe("all");
+    expect(sectionOutside(onlyC, p)).toEqual({ candidates: 0, publicEvents: 0 });
+  });
+
+  it("clips drawing to the plot area (outside events never draw over the axes)", () => {
+    const ctx = draw(state());
+    expect(ctx.clips).toContainEqual([plot.x0, plot.y0, plot.w, plot.h]);
+    expect(ctx.saves).toBe(1);
+    expect(ctx.restores).toBe(1);
   });
 
   it("labels ticks with derived round numbers only, including the surface at 0", () => {
