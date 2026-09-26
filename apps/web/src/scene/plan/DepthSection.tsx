@@ -13,6 +13,8 @@ import {
   buildSectionModel,
   drawSection,
   sectionHit,
+  outsideText,
+  sectionOutside,
   sectionPlot,
   type SectionState,
   type SectionStyle,
@@ -20,15 +22,17 @@ import {
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 
-/** Header (title + projection note) and footer (axis captions) heights inside the panel, CSS px. */
-const HEADER_PX = 38;
+/** Header (title, projection and framing note, outside count) and footer (axis captions), CSS px. */
+const HEADER_PX = 52;
 const FOOTER_PX = 36;
 /** Click radius in the section, CSS px (the 3D picker's default). */
 const HIT_PX = 10;
 
 /**
- * The plan view's depth section (WEB-07): a docked panel beside the plan map that projects every event
- * onto grid east against depth below the site surface, at true scale. Mounted only in plan view. It
+ * The plan view's depth section (WEB-07): a docked panel beside the plan map that projects events onto
+ * grid east against depth below the site surface, at true scale, framed on the structure the plan
+ * camera frames (Tier A and B) from the surface down (WEB-08); the header states how many events lie
+ * outside that frame, so none are hidden without saying so. Mounted only in plan view. It
  * shares the scene's reveal clock, filter look and selection (clicks select through the store, so the
  * drawer opens exactly as from the map), and it never covers the shell or the evidence drawer.
  */
@@ -63,6 +67,7 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
   const cssW = rect ? rect.width - 2 : 0;
   const cssH = rect ? rect.height - headerPx - FOOTER_PX : 0;
   const plot = useMemo(() => (cssW > 0 && cssH > 0 ? sectionPlot(model, cssW, cssH) : null), [model, cssW, cssH]);
+  const outside = useMemo(() => (plot ? sectionOutside(model, plot) : null), [model, plot]);
 
   // Draw loop: redraws only when something visible changed (reveal clock, filter look, selection,
   // size), so a settled section costs nothing per frame.
@@ -159,7 +164,12 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
         <div style={{ color: colors.text, fontSize: 11, fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase" }}>
           Depth section
         </div>
-        <div style={{ fontSize: 10.5 }}>Every event projected onto grid east · true scale (1 km = 1 km)</div>
+        <div style={{ fontSize: 10.5 }}>
+          Grid east · true scale (1 km = 1 km) · {plot?.framedOn === "all" ? "framed on every event" : "framed on Tier A and B"}
+        </div>
+        <div style={{ fontSize: 10.5, ...numeric }} data-testid="depth-section-outside">
+          {outsideText(outside)}
+        </div>
       </header>
       <canvas
         ref={canvas}

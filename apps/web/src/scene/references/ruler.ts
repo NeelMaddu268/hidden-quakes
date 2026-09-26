@@ -11,8 +11,12 @@ export const RULER_MAX_DEPTH_KM = 6;
 export const RULER_TICK_KM = 1;
 /** Tick length (km, scene units), drawn outward (west) from the spine. */
 export const RULER_TICK_LENGTH_KM = 0.35;
-/** Gap between the framed data and the ruler, as a fraction of the framing radius. */
-export const RULER_GAP_FRACTION = 0.12;
+/**
+ * Gap between the framed data (Tier A and B) and the ruler, as a fraction of the framing radius: wide
+ * enough that the spine and tick labels clear the scattered Tier C events around a compact structure
+ * (the real showcase's column), close enough to read as the structure's scale.
+ */
+export const RULER_GAP_FRACTION = 0.3;
 
 export type Vec3 = [number, number, number];
 
