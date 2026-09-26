@@ -243,11 +243,22 @@ def build_tables(ctx: runs.RunContext, window: LiveWindow, n_events: int) -> Syn
 class SyntheticSource:
     """Smoothed noise plus a Ricker wavelet at every predicted arrival of the station."""
 
-    def __init__(self, stations: list[m.Station], arrivals: pd.DataFrame) -> None:
+    def __init__(
+        self,
+        stations: list[m.Station],
+        arrivals: pd.DataFrame,
+        *,
+        fail_reads_after: int | None = None,
+    ) -> None:
         self.stations = {s.id: s for s in stations}
         self.arrivals = arrivals
+        self.fail_reads_after = fail_reads_after
+        self.reads = 0
 
     def read_window(self, station_id: str, t0: float, t1: float, *, cache_dir: Path) -> Stream:
+        self.reads += 1
+        if self.fail_reads_after is not None and self.reads > self.fail_reads_after:
+            raise RuntimeError(f"synthetic cache failure after {self.fail_reads_after} reads")
         station = self.stations[station_id]
         n = round((t1 - t0) * RATE_HZ) + 1
         times = t0 + np.arange(n) / RATE_HZ
@@ -292,13 +303,17 @@ class FakeRunner:
 
     ``n_events`` sets how many candidate events the next window holds; ``fail`` makes the run
     fail the way a missing lane stage does (``hq.runs.StageMissingError`` naming the owner);
-    ``block`` holds the run until the event is set (overlap tests).
+    ``block`` holds the run until the event is set (overlap tests); ``fail_reads_after`` makes
+    the waveform source raise after that many window reads (the live export pass reads every
+    station once per event, so N_STATIONS * n_events lets the live pass through and breaks the
+    snapshot pass).
     """
 
     config: LiveConfig
     n_events: int = 3
     fail: bool = False
     block: threading.Event | None = None
+    fail_reads_after: int | None = None
     started: threading.Event = field(default_factory=threading.Event)
     windows: list[LiveWindow] = field(default_factory=list)
 
@@ -322,14 +337,16 @@ class FakeRunner:
             registry = (runs.StageSpec("pick", MISSING_STAGE_MODULE, MISSING_STAGE_OWNER),)
             runs.run_stages(ctx, ["pick"], registry=registry)  # raises StageMissingError
         tables = build_tables(ctx, window, self.n_events)
+        source = SyntheticSource(
+            tables.stations, tables.arrivals, fail_reads_after=self.fail_reads_after
+        )
         return PipelineRun(
             run_id=ctx.run_id,
             run_dir=ctx.run_dir,
             cache_dir=ctx.cache_dir,
             config=ctx.config,
             waveforms=LaneWaveformSource(
-                read_window=SyntheticSource(tables.stations, tables.arrivals).read_window,
-                display_copy=SyntheticSource(tables.stations, tables.arrivals).display_copy,
+                read_window=source.read_window, display_copy=source.display_copy
             ),
             stages_ran=("tier",),
         )

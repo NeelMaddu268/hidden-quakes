@@ -183,25 +183,57 @@ def test_empty_window_serves_no_events_and_ok_status(
     meta = BundleMeta.model_validate(client.get(f"{API}/meta").json())
     assert meta.summary.candidateCount == 0 and meta.scene.heroEventId is None
     assert client.get("/health").json()["status"] == "ok"
-    assert record.snapshotWritten and check_bundle(worker.snapshot_dir)["events"] == 0
+    # The default snapshot policy never freezes an empty window (it would replace the committed
+    # failover bundle with zero events), so nothing was written.
+    assert not live_config.snapshot.writeEmptyWindows
+    assert not record.snapshotWritten and not worker.snapshot_dir.exists()
 
 
-def test_empty_window_keeps_snapshot_when_configured(
+def test_empty_window_keeps_the_last_snapshot_by_default(
     live_config: LiveConfig, clock: FakeClock, tmp_path: Path
 ) -> None:
-    config = live_config.model_copy(
-        update={"snapshot": live_config.snapshot.model_copy(update={"writeEmptyWindows": False})}
-    )
-    runner = FakeRunner(config, n_events=2)
-    worker = make_worker(config, runner, clock, tmp_path)
+    runner = FakeRunner(live_config, n_events=2)
+    worker = make_worker(live_config, runner, clock, tmp_path)
     assert worker.run_window_now() is not None
     before = (worker.snapshot_dir / "meta.json").read_bytes()
     runner.n_events = 0
-    clock.advance(config.window.everyS)
+    clock.advance(live_config.window.everyS)
     record = worker.run_window_now()
     assert record is not None and record.outcome == "empty" and not record.snapshotWritten
     assert (worker.snapshot_dir / "meta.json").read_bytes() == before
-    assert client_for(worker, config, runner).get(f"{API}/events").json() == []
+    assert check_bundle(worker.snapshot_dir, mode="snapshot")["events"] == 2
+    assert client_for(worker, live_config, runner).get(f"{API}/events").json() == []
+
+
+def test_empty_window_is_frozen_when_configured(
+    live_config: LiveConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    config = live_config.model_copy(
+        update={"snapshot": live_config.snapshot.model_copy(update={"writeEmptyWindows": True})}
+    )
+    runner = FakeRunner(config, n_events=0)
+    worker = make_worker(config, runner, clock, tmp_path)
+    record = worker.run_window_now()
+    assert record is not None and record.outcome == "empty" and record.snapshotWritten
+    assert check_bundle(worker.snapshot_dir, mode="snapshot")["events"] == 0
+
+
+def test_snapshot_failure_never_fails_a_good_window(
+    live_config: LiveConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    """The live export pass reads each of the 4 stations once; the snapshot pass then hits the
+    synthetic cache failure (a RuntimeError, not an ExportError)."""
+    runner = FakeRunner(live_config, n_events=1, fail_reads_after=4)
+    worker = make_worker(live_config, runner, clock, tmp_path)
+    record = worker.run_window_now()
+    assert record is not None and record.outcome == "ok" and record.eventCount == 1
+    assert not record.snapshotWritten
+    assert record.error is not None and record.error.startswith("snapshot: RuntimeError")
+    assert not worker.snapshot_dir.exists()
+    client = client_for(worker, live_config, runner)
+    assert len(client.get(f"{API}/events").json()) == 1
+    assert client.get("/health").json()["served"]["runId"] == record.runId
+    assert read_state(worker.state_file).latest == record
 
 
 # --- failures keep the last good window ----------------------------------------------------------

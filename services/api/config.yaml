@@ -38,9 +38,10 @@ paths:
 snapshot:
   # Rewrite the snapshot bundle after every window that produced a valid bundle.
   enabled: true
-  # Also freeze a window with no candidate events. false keeps the last snapshot that showed
-  # something; the API still serves the empty window live.
-  writeEmptyWindows: true
+  # Also freeze a window with no candidate events. false (the default) keeps the last snapshot
+  # that showed something, so an empty window never overwrites the git-tracked
+  # apps/web/public/data/snapshot/ with zero events; the API still serves the empty window live.
+  writeEmptyWindows: false
 
 serve:
   # Cap on GET /api/live/events, in reveal order (Tier A first). docs/01 sizes events.json at

@@ -95,9 +95,10 @@ class SnapshotConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool
-    # Also freeze a window with no candidate events. False keeps the last snapshot that showed
-    # something; the API still serves the empty window live.
-    writeEmptyWindows: bool
+    # Also freeze a window with no candidate events. False (the default) keeps the last snapshot
+    # that showed something, so an empty window never replaces the committed failover bundle
+    # with zero events; the API still serves the empty window live.
+    writeEmptyWindows: bool = False
 
 
 class ServeConfig(BaseModel):
