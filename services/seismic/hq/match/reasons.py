@@ -44,8 +44,8 @@ Expected arrival windows
     the unpadded bracket: no path is shorter than ``R`` or faster than ``vMax``, and by Fermat's
     principle the first arrival is never later than the straight ray. When the run dir has a
     ``statics.parquet`` (LOC-05), each station-phase's window moves by its term: the terms are
-    the delays the 1D model can't hold (up to ``statics.referenceCapS``, far above any pad), and
-    ``tPred`` carries them the same way. ``pad`` is ``arrivalPadS`` (public location and
+    the delays the 1D model can't hold (up to ``statics.referenceCapS``, too large to budget in
+    the pad), and ``tPred`` carries them the same way. ``pad`` is ``arrivalPadS`` (public location and
     origin-time error, the terms' common origin-time constant, pick error). Windows are clipped
     to the run window, and only stations with ``usedInRun`` count.
 """
