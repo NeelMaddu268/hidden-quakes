@@ -14,7 +14,7 @@ import {
   type Station,
 } from "@hq/contracts";
 import type { FetchLike } from "./fetch";
-import { useBundle, useEvidence, useFailedOver, useLiveStatus, useValidation } from "./hooks";
+import { useBundle, useConfidence, useEvidence, useFailedOver, useLiveStatus, useValidation } from "./hooks";
 import { LiveProvider, fetchWithTimeout, formatWindow, liveLabel } from "./live";
 import { parseMode } from "./mode";
 import { ProviderRoot, isFailoverError, preloadEvidence } from "./root";
@@ -222,6 +222,7 @@ function fakeFetch(
 function Counter() {
   const bundle = useBundle();
   const validation = useValidation();
+  const confidence = useConfidence();
   if (bundle.status === "loading") return <p>loading</p>;
   if (bundle.status === "error") return <p role="alert">{bundle.message}</p>;
   return (
@@ -232,6 +233,7 @@ function Counter() {
       <p data-testid="events">{bundle.events.length}</p>
       <p data-testid="synthetic">{String(bundle.info.isSynthetic)}</p>
       <p data-testid="validation">{validation === null ? "none" : "loaded"}</p>
+      <p data-testid="confidence">{confidence === null ? "none" : String(confidence.heldOutRocAuc)}</p>
     </div>
   );
 }
@@ -363,6 +365,26 @@ describe("ProviderRoot without injected provider", () => {
     );
     expect(screen.getByText("loading")).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId("run").textContent).toBe("run-b"));
+  });
+
+  it("serves confidence.json (ML-01) when the bundle has one and null when it does not", async () => {
+    const files = bundleFiles("c");
+    const confidence = { schema: "hq.confidence/1", runId: "c", model: { name: "gbm" }, heldOutRocAuc: 0.9, scores: { "ev-1": 0.7 } };
+    const fetchImpl = fakeFetch({ showcase: { ...files, "confidence.json": confidence }, mock: files });
+    const withFile = render(
+      <ProviderRoot provider={new StaticBundleProvider("showcase", { fetchImpl })}>
+        <Counter />
+      </ProviderRoot>,
+    );
+    await waitFor(() => expect(screen.getByTestId("confidence").textContent).toBe("0.9"));
+    withFile.unmount();
+    render(
+      <ProviderRoot provider={new StaticBundleProvider("mock", { fetchImpl })}>
+        <Counter />
+      </ProviderRoot>,
+    );
+    await waitFor(() => expect(screen.getByTestId("run").textContent).toBe("c"));
+    expect(screen.getByTestId("confidence").textContent).toBe("none");
   });
 
   it("a failing validation.json never demotes a ready bundle", async () => {

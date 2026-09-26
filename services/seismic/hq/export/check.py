@@ -28,6 +28,7 @@ from hq_contracts.models import (
     BaselineGain,
     BundleMeta,
     CatalogEvent,
+    Confidence,
     DataMode,
     EventEvidence,
     GeoFeature,
@@ -42,6 +43,7 @@ from hq.config.export import MAX_EVIDENCE_TRACES, EvidenceConfig, ExportConfig, 
 from hq.config.validate import BaselineConfig
 from hq.export.files import (
     CATALOG_JSON,
+    CONFIDENCE_JSON,
     EVENTS_JSON,
     EVIDENCE_DIR,
     FEATURES_JSON,
@@ -62,7 +64,7 @@ REQUIRED_FILES: tuple[str, ...] = (
     EVENTS_JSON,
     FEATURES_JSON,
 )
-OPTIONAL_FILES: tuple[str, ...] = (VALIDATION_JSON,)
+OPTIONAL_FILES: tuple[str, ...] = (VALIDATION_JSON, CONFIDENCE_JSON)
 DATA_MODES: tuple[str, ...] = get_args(DataMode.__value__)
 MAX_LISTED = 5
 SAMPLE_LIMIT = 1.0  # WaveformSnippet.samples are scaled to [-1, 1]
@@ -245,6 +247,31 @@ def _check_baseline_claim(
             problems.append("summary.baseline.gain != strictPhasenet / strictStalta")
 
 
+def _check_confidence(
+    meta: BundleMeta,
+    confidence: Confidence | None,
+    events_by_id: dict[str, SeismicEvent],
+    problems: list[str],
+) -> None:
+    """ML-01: an optional ``confidence.json`` must belong to this run and score only its events;
+    the held-out ROC AUC, when given, lies in [0, 1]. Absent is fine (no card row)."""
+    if confidence is None:
+        return
+    if confidence.runId != meta.run.id:
+        problems.append(
+            f"{CONFIDENCE_JSON}: runId {confidence.runId!r} != meta.run.id {meta.run.id!r}"
+        )
+    unknown = sorted(set(confidence.scores) - set(events_by_id))
+    if unknown:
+        problems.append(
+            f"{CONFIDENCE_JSON}: {len(unknown)} scored id(s) are not in events.json: "
+            f"{_listed(unknown)}"
+        )
+    auc = confidence.heldOutRocAuc
+    if auc is not None and not 0.0 <= auc <= 1.0:
+        problems.append(f"{CONFIDENCE_JSON}: heldOutRocAuc {auc} is outside [0, 1]")
+
+
 def _check_hero(
     meta: BundleMeta, events: dict[str, SeismicEvent], evidence_ids: set[str], problems: list[str]
 ) -> None:
@@ -367,6 +394,9 @@ def check_bundle(
     validation: Validation | None = None
     if (bundle_dir / VALIDATION_JSON).is_file():
         validation = _parse(bundle_dir / VALIDATION_JSON, Validation, problems)
+    confidence: Confidence | None = None
+    if (bundle_dir / CONFIDENCE_JSON).is_file():
+        confidence = _parse(bundle_dir / CONFIDENCE_JSON, Confidence, problems)
     if meta is None or stations is None or catalog is None or events is None or features is None:
         raise BundleCheckError(bundle_dir, problems)
 
@@ -391,6 +421,7 @@ def check_bundle(
         problems.append("features.json: duplicate feature ids")
     events_by_id = _check_events(meta, events, problems)
     _check_catalog(catalog, events_by_id, problems)
+    _check_confidence(meta, confidence, events_by_id, problems)
     _check_summary(meta, events, catalog, validation, rounding, problems)
     evidence_ids = _check_evidence(bundle_dir, events_by_id, stations, max_bytes, problems)
     _check_hero(meta, events_by_id, evidence_ids, problems)
@@ -403,6 +434,7 @@ def check_bundle(
         "features": len(features),
         "evidenceFiles": len(evidence_ids),
         "hasValidation": int(validation is not None),
+        "hasConfidence": int(confidence is not None),
         "bytes": total_bytes,
     }
     log.info(

@@ -7,6 +7,7 @@
 import type {
   BundleMeta,
   CatalogEvent,
+  Confidence,
   DataMode,
   EventEvidence,
   GeoFeature,
@@ -23,6 +24,7 @@ export type {
   BundleMeta,
   CatalogEvent,
   CatalogMatch,
+  Confidence,
   DataMode,
   Enu,
   EventEvidence,
@@ -66,6 +68,8 @@ export interface SeismicDataProvider {
   getFeatures(): Promise<GeoFeature[]>;
   getEventEvidence(id: string): Promise<EventEvidence>;
   getValidation(): Promise<Validation | null>;
+  /** ML-01 (H2): `confidence.json`, optional in a bundle; `null` when absent. */
+  getConfidence(): Promise<Confidence | null>;
 }
 
 export type BundleState =

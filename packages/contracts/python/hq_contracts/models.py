@@ -8,7 +8,7 @@ seconds UTC as float64; horizontal ENU is UTM 12N meters minus the run origin; f
 unit suffixes (``M``, ``S``, ``Km``, ``Hz``, ``Deg``). Every model rejects unknown keys.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypeAliasType
@@ -287,6 +287,30 @@ class Validation(Model):
     synthetic: SyntheticTest
 
 
+CONFIDENCE_SCHEMA = "hq.confidence/1"
+
+
+class Confidence(Model):
+    """ML-01 (H2): one score per candidate event from a classifier trained to tell recovered
+    public events from the rest, with the model's metadata and its held-out ROC AUC. A sidecar
+    of the run (``confidence.json``) and an optional bundle file next to ``validation.json``;
+    absent means no score and no card row. Added Sat evening after the contract freeze as a new
+    file that carries its own ``schema`` tag, so ``SCHEMA_VERSION`` and every frozen bundle stay
+    as they are. ``scores`` are not probabilities that an event is real (docs/00)."""
+
+    schema_: Literal["hq.confidence/1"] = Field(alias="schema")
+    runId: str
+    model: dict[str, Any]  # H2's model metadata (name, features, training set), verbatim
+    heldOutRocAuc: float | None = None  # None when no held-out split could be scored
+    scores: dict[str, float]  # event id -> score
+
+    # ``schema`` is a BaseModel attribute, so the field is ``schema_`` with the alias on disk;
+    # dumps write the alias (``model_dump`` / ``model_dump_json`` need no ``by_alias``).
+    model_config = ConfigDict(
+        extra="forbid", allow_inf_nan=False, populate_by_name=True, serialize_by_alias=True
+    )
+
+
 class LiveStatus(Model):
     updatedAt: float
     windowS: float
@@ -312,6 +336,7 @@ class Bundle(Model):
     events: list[SeismicEvent]
     features: list[GeoFeature]
     validation: Validation
+    confidence: Confidence
     evidence: EventEvidence
     live: LiveStatus
 
@@ -345,6 +370,7 @@ ALL_MODELS: tuple[type[Model], ...] = (
     MagCalibration,
     SyntheticTest,
     Validation,
+    Confidence,
     LiveStatus,
     BundleMeta,
     Bundle,

@@ -206,3 +206,53 @@ def test_docs_in_the_repo_are_untouched(rendered: tuple[Path, list, str]) -> Non
     # The renderer reads the docs; the placeholders must still be there afterwards.
     assert "{publicCatalogCount}" in PITCH_DOC.read_text(encoding="utf-8")
     assert "<from meta.json: summary.publicCatalogCount>" in DEVPOST_DOC.read_text(encoding="utf-8")
+
+
+def test_classifier_sentence_needs_confidence_json(story: ModuleType, tmp_path: Path) -> None:
+    """ML-01: the held-out AUC renders at two decimals from confidence.json; without the file,
+    or with a null AUC, the classifier sentence is marked for omission."""
+    bundle = tmp_path / "bundle"
+    shutil.copytree(MOCK_BUNDLE, bundle)
+    rows, _ = story.render(bundle, tmp_path / "absent")
+    by_name = {(r.doc, r.name): r for r in rows}
+    pitch = by_name[("pitch-and-qa.md", "{heldOutRocAuc}")]
+    devpost = by_name[("devpost.md", "<from confidence.json: heldOutRocAuc>")]
+    assert pitch.status == story.STATUS_CONDITION and "omit this sentence" in pitch.text
+    assert devpost.status == story.STATUS_CONDITION
+
+    meta = json.loads((bundle / "meta.json").read_text(encoding="utf-8"))
+    (bundle / "confidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "hq.confidence/1",
+                "runId": meta["run"]["id"],
+                "model": {"name": "gbm"},
+                "heldOutRocAuc": 0.9137,
+                "scores": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    rows, _ = story.render(bundle, tmp_path / "present")
+    value = {(r.doc, r.name): r.text for r in rows}
+    assert value[("pitch-and-qa.md", "{heldOutRocAuc}")] == "0.91"
+    assert value[("devpost.md", "<from confidence.json: heldOutRocAuc>")] == "0.91"
+    filled = (tmp_path / "present" / "pitch-filled.md").read_text(encoding="utf-8")
+    assert "held-out ROC AUC of 0.91" in filled
+
+    (bundle / "confidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "hq.confidence/1",
+                "runId": meta["run"]["id"],
+                "model": {},
+                "heldOutRocAuc": None,
+                "scores": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    rows, _ = story.render(bundle, tmp_path / "null")
+    assert {(r.doc, r.name): r for r in rows}[
+        ("pitch-and-qa.md", "{heldOutRocAuc}")
+    ].status == story.STATUS_CONDITION

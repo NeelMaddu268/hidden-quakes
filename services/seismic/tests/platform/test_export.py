@@ -1389,3 +1389,73 @@ def test_statics_table_fills_station_statics(
     write_table(pd.DataFrame({"stationId": ["XT.R01"]}), path, STATICS_MODEL)
     with pytest.raises(ExportError, match="lacks columns"):
         load_run_tables(ctx.run_dir)
+
+
+# --- ML-01: confidence.json rides along when the run has one -----------------------------------
+
+
+def confidence_for(
+    run_id: str, events: list[m.SeismicEvent], auc: float | None = 0.87
+) -> m.Confidence:
+    return m.Confidence(
+        schema="hq.confidence/1",
+        runId=run_id,
+        model={"name": "gbm", "features": ["nStations", "rmsS"], "trainedOn": "matched vs rest"},
+        heldOutRocAuc=auc,
+        scores={e.id: 0.5 for e in events[:3]},
+    )
+
+
+def test_confidence_json_is_copied_checked_and_optional(
+    ctx: runs.RunContext, synthetic_run: SyntheticRun, tmp_path: Path
+) -> None:
+    out_dir, result = do_export(ctx, tmp_path / "b0" / "showcase", run=synthetic_run)
+    assert not (out_dir / "confidence.json").exists()
+    assert result.counts["hasConfidence"] == 0
+    assert check_bundle(out_dir)["hasConfidence"] == 0
+
+    events = Bundle(out_dir).events
+    confidence = confidence_for(ctx.run_id, events)
+    ctx.path("confidence.json").write_text(confidence.model_dump_json(by_alias=True))
+    out_dir, result = do_export(ctx, tmp_path / "b1" / "showcase", run=synthetic_run)
+    written = m.Confidence.model_validate(read_json(out_dir / "confidence.json"))
+    assert written == confidence
+    assert json.loads((out_dir / "confidence.json").read_text())["schema"] == "hq.confidence/1"
+    assert result.counts["hasConfidence"] == 1
+    assert check_bundle(out_dir)["hasConfidence"] == 1
+
+    # A null AUC is allowed (no held-out split): the file is copied, the card shows no row.
+    ctx.path("confidence.json").write_text(
+        confidence_for(ctx.run_id, events, auc=None).model_dump_json(by_alias=True)
+    )
+    out_dir, _ = do_export(ctx, tmp_path / "b2" / "showcase", run=synthetic_run)
+    assert m.Confidence.model_validate(read_json(out_dir / "confidence.json")).heldOutRocAuc is None
+
+
+def test_confidence_json_from_another_run_or_with_foreign_ids_is_refused(
+    ctx: runs.RunContext, synthetic_run: SyntheticRun, tmp_path: Path
+) -> None:
+    out_dir, _ = do_export(ctx, tmp_path / "b0" / "showcase", run=synthetic_run)
+    events = Bundle(out_dir).events
+    stale = confidence_for("some-other-run", events)
+    ctx.path("confidence.json").write_text(stale.model_dump_json(by_alias=True))
+    with pytest.raises(ExportError, match="runId"):
+        do_export(ctx, tmp_path / "b1" / "showcase", run=synthetic_run)
+
+    foreign = confidence_for(ctx.run_id, events)
+    foreign = foreign.model_copy(update={"scores": {**foreign.scores, "hq-not-an-event": 0.1}})
+    ctx.path("confidence.json").write_text(foreign.model_dump_json(by_alias=True))
+    with pytest.raises(ExportError, match="not events of this run"):
+        do_export(ctx, tmp_path / "b2" / "showcase", run=synthetic_run)
+
+    # check_bundle catches the same on a bundle edited after export, plus an AUC outside [0, 1].
+    ctx.path("confidence.json").unlink()
+    out_dir, _ = do_export(ctx, tmp_path / "b3" / "showcase", run=synthetic_run)
+    bad = confidence_for(ctx.run_id, events, auc=1.5).model_copy(
+        update={"scores": {"hq-stray": 0.2}}
+    )
+    (out_dir / "confidence.json").write_text(bad.model_dump_json(by_alias=True))
+    with pytest.raises(BundleCheckError) as info:
+        check_bundle(out_dir)
+    problems = "\n".join(info.value.problems)
+    assert "not in events.json" in problems and "outside [0, 1]" in problems

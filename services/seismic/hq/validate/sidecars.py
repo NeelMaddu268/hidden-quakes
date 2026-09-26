@@ -15,6 +15,7 @@ from typing import Any
 
 from hq_contracts.models import (
     BaselineRow,
+    Confidence,
     GRCurve,
     MagCalibration,
     NullTest,
@@ -69,6 +70,7 @@ BASELINE = Sidecar(
 )
 GR = Sidecar("gr.json", TypeAdapter(GRCurve), "GRCurve", "validate", H4)
 VALIDATION = Sidecar("validation.json", TypeAdapter(Validation), "Validation", "validate", H4)
+CONFIDENCE = Sidecar("confidence.json", TypeAdapter(Confidence), "Confidence", "confidence", H2)
 NOTES = Sidecar(
     "validation_notes.json", TypeAdapter(ValidationNotes), "ValidationNotes", "validate", H4
 )
@@ -79,4 +81,5 @@ NULL_TEST_JSON = NULL_TEST.filename
 BASELINE_JSON = BASELINE.filename
 GR_JSON = GR.filename
 VALIDATION_JSON = VALIDATION.filename
+CONFIDENCE_JSON = CONFIDENCE.filename
 NOTES_JSON = NOTES.filename
