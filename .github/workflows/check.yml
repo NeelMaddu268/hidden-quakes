@@ -1,0 +1,65 @@
+# `make check` plus the static export, on every PR and on every push to main and the lane branches.
+# Vercel deploys main on its own (docs/deploy.md); this job only proves the build is green.
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main, "feat/*"]
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Every `uv run` in the Makefile (services/seismic and services/api) stays on its lockfile.
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads the pnpm version from `packageManager` in package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            services/seismic/uv.lock
+            services/api/uv.lock
+
+      - name: Install JS workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python pipeline
+        run: cd services/seismic && uv sync --frozen
+
+      - name: Install live worker (services/api, its own venv)
+        run: cd services/api && uv sync --frozen
+
+      - name: make check
+        run: make check
+
+      # `next build` fetches Google Fonts once per build; .next/cache keeps the compiler cache warm.
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/src/**', 'packages/**/*.ts') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Static export
+        run: pnpm --filter web build
+
+      - name: Export has a page and the data folder
+        run: test -f apps/web/out/index.html && test -d apps/web/out/data
