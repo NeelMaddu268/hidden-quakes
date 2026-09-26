@@ -468,6 +468,48 @@ def test_stalta_labelled_picks_associate_unchanged(world: dict[str, Any]) -> Non
     _check_stalta_unchanged(world, world["picks"])
 
 
+def test_real_sweep_driver_scores_every_point(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``hq.tier.sweep.real_pipeline`` with the real closures (association at every point,
+    ``locate_detailed``, ``match``, tiers), which produced the published sweep.parquet; the
+    stage test fakes them. Not smoke: a drifted signature fails here, not in a full-day tier run.
+    """
+    import importlib
+
+    from hq.associate import core
+    from hq.associate.sweep import grid
+    from hq.tier import derive_thresholds
+    from hq.tier.sweep import real_pipeline, score_sweep
+
+    for target in (core, importlib.import_module("hq.locate")):  # homogeneous-model picks
+        monkeypatch.setattr(target, "load_configured_model", lambda _cfg: HOMOGENEOUS)
+    raw = world["cfg"].model_dump(mode="json")
+    raw["associator"]["sweep"] = {"enabled": False, "minStations": [5, 8], "nSPicks": [1],
+                                  "minPickProb": [0.3]}
+    raw["tiering"]["minMatched"] = 3
+    cfg = SeismologyConfig.model_validate(raw)
+    run, events = world["run"], world["events"]
+    lat, lon, _ = from_enu(events["e"], events["n"], events["elevM"] - run.origin.elevM, run.origin)
+    catalog = pd.DataFrame({"id": [f"pub{k}" for k in range(len(events))], "t": events["t"],
+                            "latitude": lat, "longitude": lon, "elevM": events["elevM"],
+                            "enu_e": events["e"], "enu_n": events["n"],
+                            "enu_u": events["elevM"] - run.origin.elevM})
+    run_points, pipeline = real_pipeline(world["picks"], world["stations"], catalog, cfg, run,
+                                         run_id="test-run", cache_dir=world["cache"], statics={})
+    configured, _, _ = _associate_toy(world, cfg=cfg)
+    located, flags, arrivals = pipeline.locate(configured)
+    matches = pipeline.match(located)
+    assert flags is not None and arrivals is not None and matches["eventId"].notna().any()
+    matched = located[located["id"].isin(matches["eventId"].dropna())]
+    points, record = score_sweep(run_points, pipeline, cfg, derive_thresholds(matched,
+                                                                               cfg.tiering))
+    assert [p.params for p in points] == grid(cfg.associator)
+    at = next(p for p in points if p.params["minStations"] == cfg.associator.minStations)
+    assert at.candidates == len(located) and at.recoveredPublic == len(matched)
+    assert all(p.tierA <= p.candidates for p in points) and len(record) == len(points)
+
+
 def test_zero_picks_give_typed_zero_row_tables(world: dict[str, Any], tmp_path: Path) -> None:
     empty = pd.DataFrame({c: pd.Series([], dtype=d) for c, d in (
         ("id", "string"), ("stationId", "string"), ("phase", "string"), ("t", "float64"),
