@@ -7,6 +7,9 @@ function ev(id: string, tier: "A" | "B" | "C", hErrM: number | null, vErrM: numb
   return {
     id,
     runId: "t",
+    source: "hq-pipeline",
+    magnitude: null,
+    catalogMatch: null,
     t: 0,
     latitude: 0,
     longitude: 0,
