@@ -47,5 +47,9 @@ export async function fetchJson<T>(
   }
   if (response.status === 404 && options.notFoundAsNull) return null;
   if (!response.ok) throw new BundleFetchError(url, response.status);
-  return (await response.json()) as T;
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    throw new BundleFetchError(url, response.status, `invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }

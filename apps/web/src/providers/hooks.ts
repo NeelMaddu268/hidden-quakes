@@ -7,8 +7,16 @@ import type { LiveStatus, Validation } from "@hq/contracts";
 import { ProviderContext, errorMessage } from "./root";
 import type { BundleState, EvidenceState, SeismicDataProvider } from "./types";
 
+function useProviderContext(hook: string) {
+  const context = useContext(ProviderContext);
+  if (!context.mounted) {
+    throw new Error(`${hook} must be used inside <ProviderRoot> (mount it once in page.tsx)`);
+  }
+  return context;
+}
+
 export function useBundle(): BundleState {
-  return useContext(ProviderContext).bundle;
+  return useProviderContext("useBundle").bundle;
 }
 
 interface EvidenceLoad {
@@ -18,7 +26,7 @@ interface EvidenceLoad {
 }
 
 export function useEvidence(eventId: string | null): EvidenceState {
-  const { provider } = useContext(ProviderContext);
+  const { provider } = useProviderContext("useEvidence");
   const [load, setLoad] = useState<EvidenceLoad | null>(null);
 
   useEffect(() => {
@@ -46,10 +54,10 @@ export function useEvidence(eventId: string | null): EvidenceState {
 
 /** `null` until loaded, and `null` for bundles without `validation.json`. */
 export function useValidation(): Validation | null {
-  return useContext(ProviderContext).validation;
+  return useProviderContext("useValidation").validation;
 }
 
 /** `null` outside live mode. */
 export function useLiveStatus(): LiveStatus | null {
-  return useContext(ProviderContext).liveStatus;
+  return useProviderContext("useLiveStatus").liveStatus;
 }

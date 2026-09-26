@@ -21,3 +21,14 @@ export function parseMode(search: string): DataMode {
 export function mockAllowed(): boolean {
   return process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_ALLOW_MOCK === "1";
 }
+
+/**
+ * Switch modes with a full navigation. `ProviderRoot` reads the mode once per document, so a
+ * soft route change would not be seen; every byte reloads anyway, and the demo store restarts
+ * from its start frame, which is what a data switch should do on stage.
+ */
+export function navigateToMode(mode: DataMode): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("mode", mode);
+  window.location.assign(url.toString());
+}
