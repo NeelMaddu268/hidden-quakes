@@ -26,15 +26,15 @@ Two halves joined by files (`docs/01-architecture.md`). A batch pipeline (Python
 | --- | --- | --- | --- |
 | inventory | H1 Signal | `hq.ingest.inventory` | `stations.parquet` (+ StationXML in `data/cache/stationxml/`) |
 | catalog | H2 Seismology | `hq.match.catalog` | `catalog.parquet`, `catalog.quakeml` |
-| download | H1 Signal | `hq.ingest.download` | `gaps.parquet` (+ miniSEED in `data/cache/mseed/`) |
-| pick | H1 Signal | `hq.pick` (PhaseNet via SeisBench) | `picks.parquet`, `known/` |
-| baseline | H1 Signal | `hq.baseline` (STA/LTA) | `picks_stalta.parquet`, `baseline_sweep.parquet` |
-| associate | H2 Seismology | `hq.associate` (PyOcto) | `assoc_events.parquet`, `assoc_picks.parquet`, `sweep.parquet` |
-| locate | H2 Seismology | `hq.locate` | `events_located.parquet`, `residuals.parquet`, `statics.parquet`, `synthetic.json` |
+| download | H1 Signal | `hq.ingest.download` | `gaps.parquet`, `download_report.json` (+ miniSEED in `data/cache/mseed/`) |
+| pick | H1 Signal | `hq.pick` (PhaseNet via SeisBench) | `picks.parquet`, `pick_report.json`, `known/` |
+| baseline | H1 Signal | `hq.baseline` (STA/LTA) | `picks_stalta.parquet`, `baseline_sweep.parquet`, `baseline_reference.json` |
+| associate | H2 Seismology | `hq.associate` (PyOcto) | `assoc_events.parquet`, `assoc_picks.parquet` |
+| locate | H2 Seismology | `hq.locate` | `events_located.parquet`, `arrivals.parquet`, `statics.parquet`, `synthetic.json`, `locate_flags.parquet`, `diagnostics.md` |
 | match | H2 Seismology | `hq.match` | `matches.parquet`, `match_sensitivity.parquet` |
-| tier | H2 Seismology | `hq.tier` | `events.parquet` (final `SeismicEvent` rows) |
+| tier | H2 Seismology | `hq.tier` | `events.parquet` (final `SeismicEvent` rows), `sweep.parquet` (association sweep) |
 | magnitude | H2 Seismology | `hq.magnitude` | updates `events.parquet`, `magnitude.json` |
-| validate | H4 Platform | `hq.validate` | `validation.json` |
+| validate | H4 Platform | `hq.validate` | `validation.json` (+ sidecars `null_test.json`, `baseline.json`, `gr.json`, `validation_notes.json`) |
 | export | H4 Platform | `hq.export` | `apps/web/public/data/<mode>/` |
 
 Every stage is `run(ctx: RunContext) -> None`. `hq run configs/showcase` runs them in order; `hq stage <name> --run <runId>` reruns one. Picks are stored once at a low probability floor and filtered downstream, waveforms download once into a shared cache, and every run records its full config in `run.json` (`ProcessingRun`), so every number on screen traces to a config.
