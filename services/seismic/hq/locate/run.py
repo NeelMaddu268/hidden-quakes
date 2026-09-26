@@ -45,7 +45,12 @@ import pandas as pd
 from hq_contracts.io import read_table, write_table
 
 from hq.locate import LocateDetails
-from hq.locate.diagnostics import DiagnosticsInputs, build_diagnostics, catalog_uncertainties
+from hq.locate.diagnostics import (
+    DiagnosticsInputs,
+    PreviousLocation,
+    build_diagnostics,
+    catalog_uncertainties,
+)
 from hq.locate.locator import LocatorSetup
 from hq.locate.result import ARRIVALS_MODEL, EVENTS_MODEL, FLAGS_MODEL, STATICS_MODEL
 from hq.locate.statics import REFERENCE_EVENTS, locate_with_statics, reference_pairs
@@ -84,7 +89,8 @@ PART_SUFFIX = ".part"
 # matches MATCH-02's, events_located and locate_flags this stage's own).
 INPUT_MODELS = {"picks": "Pick", "stations": "Station", "assoc_events": "AssocEvent",
                 "assoc_picks": "AssocPick", "catalog": "CatalogEvent", "matches": "Match",
-                "events_located": EVENTS_MODEL, "locate_flags": FLAGS_MODEL}
+                "events_located": EVENTS_MODEL, "locate_flags": FLAGS_MODEL,
+                "arrivals": ARRIVALS_MODEL}
 
 
 def _part(path: Path) -> Path:
@@ -196,6 +202,16 @@ def synthetic_test(
     return result
 
 
+def previous_location(ctx: "RunContext", events: pd.DataFrame | None) -> PreviousLocation | None:
+    """The run dir's events_located / locate_flags / arrivals from before this stage run (the
+    1D vs 3D section of diagnostics.md compares against them), or None when any is absent."""
+    paths = [ctx.path(n) for n in (FLAGS_TABLE, ARRIVALS_TABLE)]
+    if events is None or not all(p.is_file() for p in paths):
+        return None
+    return PreviousLocation(events=events, flags=_read(paths[0], "locate_flags"),
+                            arrivals=_read(paths[1], "arrivals"))
+
+
 def run(ctx: "RunContext") -> None:
     """Stage ``locate`` (docs/02 §4); see the module docstring."""
     started = time.perf_counter()
@@ -211,6 +227,7 @@ def run(ctx: "RunContext") -> None:
     reference = reference_input(ctx)
     previous = (_read(ctx.path(EVENTS_TABLE), "events_located")
                 if ctx.path(EVENTS_TABLE).is_file() else None)
+    earlier = previous_location(ctx, previous)
     outcome = locate_with_statics(assoc, picks, stations, cfg, run_cfg, run_id=ctx.run_id,
                                   cache_dir=ctx.cache_dir, reference=reference,
                                   previous_events=previous)
@@ -233,6 +250,7 @@ def run(ctx: "RunContext") -> None:
             known_ids=known_ids(ctx.path(KNOWN_WINDOWS)),
             synthetic=synthetic,
             statics=outcome.report,
+            previous=earlier,
         )
     )
 

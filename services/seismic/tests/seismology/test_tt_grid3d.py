@@ -359,3 +359,77 @@ def test_toy_layer_model_is_the_column(loc02: Any) -> None:
     ref: LayerModel = loc02.toy_model(TOPS, VP, VS)
     np.testing.assert_array_equal(col.vp_m_per_s, ref.vp_m_per_s)
     np.testing.assert_array_equal(col.top_elev_m[1:], ref.top_elev_m[1:])
+
+
+def test_stage_locate_with_grid3d_writes_the_1d_vs_3d_section(
+    loc02: Any, make_ctx: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stage locate on grid1d, then on grid3d in the same run dir: diagnostics.md compares them."""
+    import importlib
+
+    from hq_contracts.io import read_table, write_table
+
+    from hq.associate.result import EVENT_DTYPES, PICK_DTYPES, typed_frame
+    from hq.locate.coords import from_enu
+
+    run = loc02.run_section()
+    raw = grid3d_config(loc02).model_dump(mode="json")
+    raw["diagnostics"]["datumCheck"]["elevM"] = [-2000.0]
+    raw["synthetic"]["nEvents"] = 2
+    cfg3 = SeismologyConfig.model_validate(raw)
+    raw["locator"]["method"] = "grid1d"
+    cfg1 = SeismologyConfig.model_validate(raw)
+
+    def vel(e: Any, n: Any, z: Any) -> Any:  # the 1D layers plus an east-west contrast
+        return layered(VP)(e, n, z) * (1.0 + 0.08 * np.tanh(e / 2000.0))
+
+    source = toy_model(run, vel, lambda e, n, z: vel(e, n, z) / 1.8)
+    monkeypatch.setattr("hq.locate.locator.open_model3d", lambda path, cfg: source)
+    st = loc02.stations(run.origin.elevM)
+    lat, lon, _ = from_enu(st["enu_e"], st["enu_n"], st["enu_u"], run.origin)
+    stations = st.assign(latitude=lat, longitude=lon, usedInRun=True)
+    locator = build_locator(dataclasses.replace(loc02.setup(cfg3, run), cache_dir=tmp_path,
+                                                model3d=source))
+    frames, events, links = [], [], []
+    for k, (e, n, z) in enumerate(((500.0, -300.0, -2000.0), (-1200.0, 900.0, -3200.0))):
+        t0 = run.window_start_s + 3600.0 * (k + 1)
+        p = loc02.exact_picks(locator, e, n, z, t0, prob=0.8)
+        p["t"] = [t0 + float(locator.station_times(s, ph, e, n, z))
+                  for s, ph in zip(p["stationId"], p["phase"], strict=True)]
+        p["id"] = [f"pick:{k}:{s}:{ph}" for s, ph in zip(p["stationId"], p["phase"], strict=True)]
+        frames.append(p)
+        la, lo, _ = from_enu(e, n, z - run.origin.elevM, run.origin)
+        events.append({"assocId": f"a{k}", "t": t0, "latitude": float(la), "longitude": float(lo),
+                       "elevM": z, "nPicks": len(p), "nP": int((p["phase"] == "P").sum()),
+                       "nS": int((p["phase"] == "S").sum())})
+        links += [{"assocId": f"a{k}", "pickId": i} for i in p["id"]]
+    picks = pd.concat(frames, ignore_index=True).assign(picker="phasenet:test", eventId=None)
+    ctx = dataclasses.replace(make_ctx(run, cfg1), cache_dir=tmp_path)
+    write_table(picks, ctx.path(cfg1.associator.picksTable), "Pick")
+    write_table(stations, ctx.path("stations.parquet"), "Station")
+    write_table(typed_frame({c: [r[c] for r in events] for c in EVENT_DTYPES}, EVENT_DTYPES),
+                ctx.path("assoc_events.parquet"), "AssocEvent")
+    write_table(typed_frame({c: [r[c] for r in links] for c in PICK_DTYPES}, PICK_DTYPES),
+                ctx.path("assoc_picks.parquet"), "AssocPick")
+    stage = importlib.import_module("hq.locate.run").run
+    stage(ctx)
+    assert set(read_table(ctx.path("events_located.parquet"))["quality_method"]) == {"grid1d"}
+    ctx3 = dataclasses.replace(ctx, config=dataclasses.replace(ctx.config, seismology=cfg3))
+    stage(ctx3)
+    ev = read_table(ctx.path("events_located.parquet"))
+    assert set(ev["quality_method"]) == {GRID3D}
+    report = ctx.path("diagnostics.md").read_text(encoding="utf-8")
+    assert "## 1D vs 3D travel times (LOC-07)" in report
+    assert "Against the run dir's earlier grid1d locations of the same association (2 events" in report
+    assert "method `grid3d`" in report and "3D minus 1D table time" in report
+    assert "from the 3D tables themselves (grid3d)" in report  # row 2
+    velocity, params = ctx3.records[-2]["params"], ctx3.records[-1]["params"]
+    assert velocity["method"] == GRID3D and velocity["fallback1d"]["stations"] == {}
+    assert params["method"] == GRID3D and params["tables3d"]["stations3d"]
+    assert params["synthetic"]["method"] == GRID3D
+    # The picks are exact 3D times: grid3d puts the events back on the fine lattice.
+    truth = {"a0": (500.0, -300.0, -2000.0), "a1": (-1200.0, 900.0, -3200.0)}
+    flags = read_table(ctx.path("locate_flags.parquet"))
+    for r in ev.merge(flags[["eventId", "assocId"]], left_on="id", right_on="eventId").itertuples():
+        e, n, z = truth[r.assocId]
+        assert abs(r.elevM - z) <= 25.0 and np.hypot(r.enu_e - e, r.enu_n - n) <= 25.0
