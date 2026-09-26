@@ -34,24 +34,46 @@ export function withoutEventParam(href: string): string {
 }
 
 /**
- * Open the drawer for `eventId` after the reveal: starts the reveal when the demo is still on
- * its start frame, then selects once the scene reports "revealed". Returns an unsubscribe; the
- * selection is skipped if that fires first (unmount, or a reset before the settle).
+ * The reveal settles in about seven seconds at full frame rate; on a slow machine the scene's
+ * clock (clamped per frame) can take far longer. A shared link should still open its drawer, so
+ * after this long the selection is made even if the settle has not been reported.
  */
-export function openEventAfterReveal(eventId: string, store = useDemo): () => void {
+export const OPEN_FALLBACK_MS = 20_000;
+
+/**
+ * Open the drawer for `eventId` after the reveal: starts the reveal when the demo is still on
+ * its start frame, then selects once the scene reports "revealed" (or after `OPEN_FALLBACK_MS`,
+ * whichever comes first). Returns a cancel; the selection is skipped if that fires first
+ * (unmount, or a reset before the settle).
+ */
+export function openEventAfterReveal(eventId: string, store = useDemo, fallbackMs = OPEN_FALLBACK_MS): () => void {
   const state = store.getState();
   if (state.phase === "revealed") {
     state.select(eventId);
     return () => {};
   }
   if (state.phase === "public") state.reveal();
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    unsubscribe();
+    clearTimeout(timer);
+  };
   const unsubscribe = store.subscribe((next, prev) => {
     if (next.phase === "revealed" && prev.phase !== "revealed") {
-      unsubscribe();
+      finish();
       next.select(eventId);
     }
   });
-  return unsubscribe;
+  const timer = setTimeout(() => {
+    if (done) return;
+    finish();
+    const now = store.getState();
+    // A reset in the meantime put the demo back on its start frame: nothing to open onto.
+    if (now.phase !== "public") now.select(eventId);
+  }, fallbackMs);
+  return finish;
 }
 
 /**
