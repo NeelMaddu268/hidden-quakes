@@ -35,6 +35,7 @@ from hq.locate.statics import (
     residual_sigma,
     self_consistent_terms,
 )
+from hq.tier import TierError
 
 SEED = 20260926
 NOISE = {"P": 0.004, "S": 0.008}
@@ -421,9 +422,16 @@ def test_stage_runs_pass_1_then_pass_2_after_a_match(
     assert record["pass"] == 2 and record["previousMedianRmsS"] == pytest.approx(
         float(first["quality_rmsS"].median()))
 
-    # matches.parquet now refers to the pass-1 locations: a third locate must refuse it.
+    # matches.parquet now refers to the pass-1 locations: a third locate must refuse it, and so
+    # must stage tier.
     with pytest.raises(ValueError, match="stale"):
         stage.run(ctx)
+    tier_stage = importlib.import_module("hq.tier.run")
+    with pytest.raises(TierError, match="stale"):
+        tier_stage.check_matches_current(second, matches, world["catalog"],
+                                         world["cfg"].tiering.consistencyTolM)
+    tier_stage.check_matches_current(second, match(second, world["catalog"], world["cfg"]).matches,
+                                     world["catalog"], world["cfg"].tiering.consistencyTolM)
 
 
 def test_catalog_hypocentres_off_the_grid_are_left_out(world: dict[str, Any]) -> None:

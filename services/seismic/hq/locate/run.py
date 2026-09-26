@@ -20,6 +20,8 @@ reference events (mapped to their association events through the ``events_locate
 ``locate_flags.parquet`` the match read; a matches table written for other located events fails
 the stage), and ``catalog.parquet`` gives their hypocentres. Without ``matches.parquet`` it runs
 pass 1 and logs that the statics pass needs a match first. selfConsistent needs nothing more.
+After pass 2 the run dir's ``matches.parquet`` belongs to the pass-1 locations (logged): stage
+tier (``hq.tier.run.check_matches_current``) and a further locate refuse it until match reruns.
 
 ``ctx.record`` gets the counts, the runtime, the locator record (``ProcessingRun.locator``, with
 the stage's conventions under ``locate``, the synthetic test's params under ``synthetic`` and the
@@ -259,6 +261,10 @@ def run(ctx: "RunContext") -> None:
         "locateRuntimeS": details.runtime_s,
     }
     log.info("locate: wrote %s in %.1f s", ", ".join(p.name for p in targets), runtime_s)
+    if reference is not None:
+        log.warning("locate: pass 2 relocated every event; %s still holds the match of the "
+                    "pass-1 locations: rerun stage match before tier (stage tier and a further "
+                    "locate refuse it until then)", MATCHES_TABLE)
     ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params=details.velocity_model,
                field="velocityModel")
     ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params=params)
