@@ -153,7 +153,8 @@ def check_same_association(pairs: pd.DataFrame, assoc_picks: pd.DataFrame) -> No
     if bad:
         raise ValueError(
             f"reference events {bad[:5]} were located from another association than "
-            "assoc_picks.parquet holds now: rerun stage locate (pass 1) and match on this "
+            "assoc_picks.parquet holds now, so matches.parquet is stale: rerun stage associate "
+            "(it removes the stale matches.parquet), then locate (pass 1) and match on this "
             "association first"
         )
 
