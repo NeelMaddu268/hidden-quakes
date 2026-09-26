@@ -3,5 +3,8 @@
   "private": true,
   "scripts": {
     "check": "make check"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^16.0.0"
   }
 }
