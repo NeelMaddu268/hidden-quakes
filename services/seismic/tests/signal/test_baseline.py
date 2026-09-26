@@ -10,6 +10,7 @@ import json
 import logging
 import sys
 import types
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,7 +26,7 @@ import hq.baseline as stage
 from hq.config.run import RunSection
 from hq.config.signal import SignalConfig
 from hq.ingest.cache import CacheMissError
-from hq.preprocess.chunks import ModelChunk, pick_is_kept
+from hq.preprocess.chunks import ModelChunk, iter_model_chunks, pick_is_kept
 from hq.preprocess.profiles import TimeMap
 
 bl = importlib.import_module("hq.baseline.run")  # the module; ``hq.baseline.run`` is the stage
@@ -125,6 +126,21 @@ def small_cfg(raw_signal_yaml: dict[str, Any], **baseline: Any) -> SignalConfig:
     return SignalConfig.model_validate(raw)
 
 
+def small_grid(
+    p_on: list[float],
+    s_on: list[float],
+    off: float,
+    chosen: tuple[float, float],
+    *,
+    score: bool = True,
+) -> dict[str, Any]:
+    """``baseline`` overrides for a small sweep; ``chosen`` (pOn, sOn) must be on its grid."""
+    return {
+        "sweep": {"pOn": p_on, "sOn": s_on, "offLevels": [off], "scoreWithH2": score},
+        "chosen": {"pOn": chosen[0], "pOff": off, "sOn": chosen[1], "sOff": off},
+    }
+
+
 @pytest.fixture()
 def cfg(raw_signal_yaml: dict[str, Any]) -> SignalConfig:
     return small_cfg(raw_signal_yaml)
@@ -199,19 +215,20 @@ def test_borehole_b_timemap_is_applied_exactly_once(
     windows = spy_on_sta_lta(monkeypatch)
     rate = 1000.0
     tp, ts = T + 30.123, T + 30.9
-    # Frequencies well above borehole-B's 5 Hz zero-phase highpass corner, whose symmetric ringing
-    # would put a precursor ahead of a low-frequency onset (a property of the profile, not of the
-    # time mapping under test).
+    # Frequencies inside borehole-B's STA/LTA prefilter (20-300 Hz real) and well above the
+    # profile's 5 Hz zero-phase highpass corner, whose symmetric ringing would put a precursor
+    # ahead of a low-frequency onset (a property of the profile, not of the time mapping). The
+    # wide band passes about ten times more of the white test noise than 2-30 Hz, hence amp 15.
     pieces = station_pieces(
         T - 45.0,
         T + 105.0,
-        Arrivals(p=[(tp, 5.0)], s=[(ts, 5.0)]),
+        Arrivals(p=[(tp, 15.0)], s=[(ts, 15.0)]),
         rate=rate,
         codes="DP",
         horizontals="12",
         seed=3,
-        p_freq=25.0,
-        s_freq=15.0,
+        p_freq=60.0,
+        s_freq=40.0,
     )
     res = pick(
         FakeCache({"XX.SYN": pieces}),
@@ -277,15 +294,74 @@ def test_gap_edge_drops_are_counted_and_neighbour_picks_discarded(cfg: SignalCon
 
 
 @pytest.mark.smoke
+def test_warm_up_and_p_near_edge_losses_are_counted(cfg: SignalConfig) -> None:
+    arr = Arrivals(
+        # 3 s after a gap on every component: inside the P warm-up (6 s) and the S warm-up
+        # (12 s) of the segments that start at the gap end.
+        p=[(T + 73.0, 30.0), (T + 135.5, 30.0)],
+        s=[(T + 74.5, 60.0), (T + 139.5, 60.0)],
+    )
+    pieces = station_pieces(T - 60.0, T + 260.0, arr, seed=17, gaps=((T + 60.0, T + 70.0),))
+    # A gap on N alone, [130, 135): the P at 135.5 on the continuous Z is within gapEdgeS of a
+    # data edge (dropped); its S on the continuous E at 139.5 is clear of every edge but has no
+    # P. On N the same S falls in the S warm-up of the segment that starts at 135 (after ObsPy's
+    # own zeroed first ltaS, so it does trigger there).
+    split: list[Trace] = []
+    for tr in pieces:
+        if (
+            tr.stats.channel == "HHN"
+            and tr.stats.starttime < UTCDateTime(T + 130.0) < tr.stats.endtime
+        ):
+            split.append(tr.slice(tr.stats.starttime, UTCDateTime(T + 130.0 - 0.5 / RATE)))
+            split.append(tr.slice(UTCDateTime(T + 135.0), tr.stats.endtime))
+        else:
+            split.append(tr)
+    res = pick(FakeCache({"XX.SYN": split}), cfg, T, T + 200.0)
+    assert res.picks == []
+    assert res.counts["droppedNearGapEdgeP"] == 1  # 135.5
+    assert res.counts["sLostPNearGapEdge"] == 1  # 139.5 on E
+    assert res.counts["suppressedWarmupP"] == 1  # 73
+    # 74.5 on N and on E (both horizontals start at the gap end), 139.5 on N (starts at 135),
+    # and a noise trigger on N at 139.0, where ObsPy's own zeroing of the first ltaS ends and
+    # the unconverged LTA inflates the ratio: the artefact the warm-up exists to suppress.
+    assert res.counts["suppressedWarmupS"] == 4
+    assert res.reason == "every trigger near a data edge or inside a warm-up span"
+
+
+@pytest.mark.smoke
+def test_reason_for_no_picks_names_empty_and_too_short_chunks() -> None:
+    r = bl.StationResult(stationId="XX.A", profile="surface-100")
+    r.chunks.planned, r.chunks.empty = 2, 2
+    assert r.reason == "no usable data: 2 of 2 chunks empty"
+    r.chunks.empty, r.chunks.noSegments = 1, 1
+    assert r.reason == (
+        "no usable data: 1 of 2 chunks empty, 1 with every segment too short for for_picking"
+    )
+    r.chunks.empty = 0
+    assert r.reason == "no usable data: 1 with every segment too short for for_picking"
+
+
+@pytest.mark.smoke
+def test_a_station_error_names_the_station(cfg: SignalConfig) -> None:
+    # 200 Hz data on a station configured as surface-100: for_picking rejects the rate. The
+    # stage fails loudly (no per-station fallback) and the error says which station.
+    pieces = station_pieces(T - 60.0, T + 160.0, Arrivals(), rate=200.0, seed=1)
+    with pytest.raises(ValueError) as err:
+        pick(FakeCache({"XX.SYN": pieces}), cfg, T, T + 100.0)
+    assert any("station XX.SYN (profile surface-100)" in n for n in err.value.__notes__)
+
+
+@pytest.mark.smoke
 def test_short_segments_are_skipped_and_counted(raw_signal_yaml: dict[str, Any]) -> None:
     # One chunk [0, 100) read over [-40, 140]; a gap leaves segments [-40, 5) (45 s) and
-    # [50, 140] (90 s), both long enough for for_picking. P needs ltaS 2 s + margin, S 4 s + margin.
+    # [50, 140] (90 s), both long enough for for_picking. A segment needs warmupS + margin: its
+    # first warmupS can never trigger (P warm-up 6 s, S 12 s).
     pieces = station_pieces(T - 60.0, T + 260.0, Arrivals(), gaps=((T + 5.0, T + 50.0),))
     cache = FakeCache({"XX.SYN": pieces})
     expected = {  # margin -> (P skipped, S skipped): the 45 s segment fails once need > 45 s
-        40.0: (0, 0),  # P 42 s, S 44 s
-        42.0: (0, 2),  # P 44 s, S 46 s: both horizontals of the 45 s segment skipped
-        44.0: (1, 2),  # P 46 s
+        30.0: (0, 0),  # P 36 s, S 42 s
+        34.0: (0, 2),  # P 40 s, S 46 s: both horizontals of the 45 s segment skipped
+        40.0: (1, 2),  # P 46 s
     }
     for margin, (skip_p, skip_s) in expected.items():
         res = pick(cache, small_cfg(raw_signal_yaml, minSegmentMarginS=margin), T, T + 100.0)
@@ -293,7 +369,9 @@ def test_short_segments_are_skipped_and_counted(raw_signal_yaml: dict[str, Any])
         assert res.counts["segmentsSkippedShortS"] == skip_s, margin
         assert res.counts["segmentsP"] == 2 - skip_p and res.counts["segmentsS"] == 4 - skip_s
     res = pick(cache, small_cfg(raw_signal_yaml, minSegmentMarginS=100.0), T, T + 100.0)
-    assert res.picks == [] and res.reason == "every segment shorter than ltaS + minSegmentMarginS"
+    assert (
+        res.picks == [] and res.reason == "every segment shorter than warmupS + minSegmentMarginS"
+    )
 
 
 # --- sweep ----------------------------------------------------------------------------------------
@@ -373,15 +451,92 @@ def test_keep_masks_match_pick_is_kept() -> None:
             assert (k, n) == (ok, why == "near_gap_edge"), ti
 
 
+def trig(*pairs: tuple[float, float]) -> tuple[np.ndarray, np.ndarray]:
+    """One component's triggers as (onset, end) arrays."""
+    on = np.array([a for a, _ in pairs], dtype=float)
+    end = np.array([b for _, b in pairs], dtype=float)
+    return on, end
+
+
 @pytest.mark.smoke
-def test_s_after_p_takes_the_earliest_horizontal_onset_in_the_window() -> None:
-    p = np.array([10.0, 20.0, 21.0, 30.0])
-    h = np.array([5.0, 10.1, 10.5, 12.0, 21.6, 30.0])
-    # P 10 -> [10.15, 15]: 10.5 (10.1 is too early); P 20 and P 21 both choose 21.6 (one S);
-    # P 30 -> [30.15, 35]: nothing
-    assert bl.s_after_p(p, h, 0.15, 5.0).tolist() == [10.5, 21.6]
-    assert bl.s_after_p(p[:0], h, 0.15, 5.0).size == 0
-    assert bl.s_after_p(p, h[:0], 0.15, 5.0).size == 0
+def test_s_after_p_searches_each_horizontal_past_its_own_p_trigger() -> None:
+    p = np.array([10.0, 20.0, 21.0, 30.0, 40.0, 50.0])
+    n = trig(
+        (5.0, 5.5),
+        (10.1, 10.3),
+        (10.5, 11.0),
+        (21.6, 22.0),
+        (30.02, 31.0),
+        (33.0, 33.5),
+        (39.5, 40.6),
+        (40.7, 41.0),
+    )
+    e = trig((12.0, 12.5), (30.25, 30.5), (30.8, 31.3))
+    # P 10: N's 10.1 is the P on N (on within 0.3 s), N's search starts at its end -> 10.5;
+    #       E's first is 12.0; the earlier of the two wins -> 10.5.
+    # P 20 and P 21 both choose 21.6 (one S).
+    # P 30: N carries the P until 31.0; E's own P trigger (an emergent P crossing 0.25 s late)
+    #       ends at 30.5 and E's next onset, 30.8, is the S, although N is still triggered.
+    # P 40: a trigger already on at the P (39.5-40.6) holds N's search until 40.6 -> 40.7.
+    # P 50: nothing within maxSMinusPS.
+    assert bl.s_after_p(p, (n, e), 0.3, 0.15, 5.0).tolist() == [10.5, 21.6, 30.8, 40.7]
+    # Without the tolerance E's late P becomes the S of P 30.
+    assert bl.s_after_p(p, (n, e), 0.0, 0.15, 5.0).tolist() == [10.5, 21.6, 30.25, 40.7]
+    # One trigger list for both horizontals: N's P trigger would hide E's S until 31.0.
+    on, end = (np.concatenate(x) for x in zip(n, e, strict=True))
+    order = np.argsort(on, kind="stable")
+    merged = (on[order], end[order])
+    assert bl.s_after_p(p, (merged,), 0.3, 0.15, 5.0).tolist() == [10.5, 21.6, 33.0, 40.7]
+    assert bl.s_after_p(p[:0], (n, e), 0.3, 0.15, 5.0).size == 0
+    assert bl.s_after_p(p, (), 0.3, 0.15, 5.0).size == 0
+    assert bl.s_after_p(p, (trig(), trig()), 0.3, 0.15, 5.0).size == 0
+
+
+@pytest.mark.smoke
+def test_p_energy_on_the_horizontals_is_not_an_s(raw_signal_yaml: dict[str, Any]) -> None:
+    # P on all components, no S wave: N carries the P from the onset, E's P crosses the trigger
+    # level 0.2 s later (an emergent P on that component).
+    tp = T + 50.0
+    pieces = station_pieces(T - 60.0, T + 260.0, Arrivals(p=[(tp, 30.0)]), seed=13)
+    rate = RATE
+    t = (T - 60.0) + np.arange(round(320.0 * rate)) / rate
+    for tr in pieces:
+        comp = tr.stats.channel[-1]
+        if comp == "N":
+            tr.data = tr.data + burst(t, tp, 12.0, 12.0, 0.6)
+        elif comp == "E":
+            tr.data = tr.data + burst(t, tp + 0.2, 12.0, 12.0, 0.6)
+    cache = FakeCache({"XX.SYN": pieces})
+    cfg = small_cfg(raw_signal_yaml)
+    res = pick(cache, cfg, T, T + 100.0)
+    assert_close(times(res, "P"), [tp])
+    assert times(res, "S") == []
+    # Both horizontals did trigger: N with the P, E 0.2 s later. The plain earliest-onset rule
+    # (every trigger a point, no P tolerance) would have made E's late P an S.
+    b = cfg.baseline
+    chosen = bl.chosen_point(b)
+    chunk = next(
+        iter_model_chunks(
+            "XX.SYN",
+            ("HHZ", "HHN", "HHE"),
+            "surface-100",
+            T,
+            T + 100.0,
+            cfg,
+            cache_dir=Path("unused"),
+            read_window=cache.read_window,
+        )
+    )
+    prefilter = b.prefilter["surface-100"]
+    onsets = bl.chunk_onsets(
+        chunk, b, prefilter, [chosen.p_pair], [chosen.s_pair], chosen, Counter()
+    )
+    (n_on, _), (e_on, _) = onsets.h[chosen.s_pair]  # s.components "NE"
+    assert [round(x - tp, 1) for x in (*n_on.tolist(), *e_on.tolist())] == [0.0, 0.2]
+    p = onsets.p[chosen.p_pair]
+    points = ((n_on, n_on), (e_on, e_on))
+    naive = bl.s_after_p(p, points, 0.0, b.minSMinusPS, b.maxSMinusPS)
+    assert [round(x - tp, 1) for x in naive.tolist()] == [0.2]
 
 
 # --- config ---------------------------------------------------------------------------------------
@@ -393,6 +548,7 @@ def test_config_is_validated_and_cross_checked(
 ) -> None:
     bl.check_config(signal_cfg)  # the shipped signal.yaml passes
     assert signal_cfg.baseline.prob == 1.0
+    assert bl.gap_edge_s(signal_cfg) == signal_cfg.picker.gapEdgeS  # one distance, both pickers
 
     def with_baseline(**over: Any) -> SignalConfig:
         return small_cfg(raw_signal_yaml, **over)
@@ -403,9 +559,14 @@ def test_config_is_validated_and_cross_checked(
         {"s": {**b["s"], "warmupS": 1.0}},  # warm-up shorter than the LTA
         {"s": {**b["s"], "components": "ZE"}},  # P and S share Z
         {"chosen": {**b["chosen"], "pOff": 6.0}},  # off above on
+        {"chosen": {**b["chosen"], "pOn": 7.0}},  # not a sweep grid point
+        {"chosen": {**b["chosen"], "sOff": 1.0}},  # the grid has one off level for both phases
         {"sweep": {**b["sweep"], "pOn": [4.0, 3.0]}},  # not increasing
         {"sweep": {**b["sweep"], "offLevels": [1.0, 3.5]}},  # an off level above an on level
         {"minSMinusPS": 6.0},  # empty S window
+        {"prefilter": {}},  # every profile needs a band
+        {"prefilter": {**b["prefilter"], "borehole-B": None}},  # no unfiltered STA/LTA
+        {"gapEdgeS": 1.0},  # the gap-edge distance is picker.gapEdgeS, shared with PhaseNet
         {"notAKnob": 1},
     ]
     for over in bad:
@@ -414,16 +575,39 @@ def test_config_is_validated_and_cross_checked(
 
     with pytest.raises(ValueError, match="not model components"):
         bl.check_config(with_baseline(p={**b["p"], "components": "X"}))
-    with pytest.raises(ValueError, match="Nyquist"):
-        bl.check_config(with_baseline(prefilter={"lowHz": 2.0, "highHz": 50.0, "corners": 4}))
+    no_b = {k: v for k, v in b["prefilter"].items() if k != "borehole-B"}
+    with pytest.raises(ValueError, match=r"missing \['borehole-B'\]"):
+        bl.check_config(with_baseline(prefilter=no_b))
+    with pytest.raises(ValueError, match=r"not a profile \['borehole-C'\]"):
+        bl.check_config(
+            with_baseline(prefilter={**b["prefilter"], "borehole-C": no_b["borehole-A"]})
+        )
+    # Nyquist is the REAL one of each profile: 50 Hz at the 100 Hz model rate, 500 Hz for the
+    # time-stretched borehole-B (1000 Hz input), whose shipped band reaches 300 Hz.
+    band = {"lowHz": 2.0, "corners": 4}
+    for profile, high, nyquist in (("surface-100", 50.0, 50.0), ("borehole-B", 500.0, 500.0)):
+        wide = {**b["prefilter"], profile: {**band, "highHz": high}}
+        with pytest.raises(ValueError, match=f"real Nyquist {nyquist} Hz of profile {profile}"):
+            bl.check_config(with_baseline(prefilter=wide))
+    assert signal_cfg.baseline.prefilter["borehole-B"].highHz > 50.0
+
+    def with_chunks(raw: dict[str, Any], overlap: float) -> SignalConfig:
+        raw["preprocess"]["chunks"].update({"overlapS": overlap, "minOverlapS": 10.0})
+        return SignalConfig.model_validate(raw)
+
     raw = copy.deepcopy(raw_signal_yaml)
-    raw["preprocess"]["chunks"].update({"overlapS": 11.5, "minOverlapS": 10.0})
-    with pytest.raises(ValueError, match="overlapS"):
-        bl.check_config(SignalConfig.model_validate(raw))  # S warm-up is 12 s
+    with pytest.raises(ValueError, match=r"max\(s.warmupS"):
+        bl.check_config(with_chunks(raw, 11.5))  # S warm-up is 12 s
     raw["baseline"]["s"]["warmupS"] = raw["baseline"]["s"]["ltaS"]  # 4 s
-    raw["preprocess"]["chunks"]["overlapS"] = 10.5
-    with pytest.raises(ValueError, match="maxSMinusPS"):
-        bl.check_config(SignalConfig.model_validate(raw))  # P warm-up 6 s + 5 s S window
+    with pytest.raises(ValueError, match=r"p.warmupS \+ maxSMinusPS"):
+        bl.check_config(with_chunks(raw, 10.5))  # P warm-up 6 s + 5 s S window
+    raw = copy.deepcopy(raw_signal_yaml)
+    with pytest.raises(ValueError, match="settleLtaMultiple"):
+        bl.check_config(with_chunks(raw, 39.0))  # 10 x S ltaS 4 s = 40 s
+    bl.check_config(with_chunks(raw, 40.0))
+    raw["picker"]["gapEdgeS"] = 40.0
+    with pytest.raises(ValueError, match="picker.gapEdgeS"):
+        bl.check_config(with_chunks(raw, 40.0))  # an edge that close could lie outside the read
 
 
 # --- tables and the stage --------------------------------------------------------------------------
@@ -608,7 +792,16 @@ def test_stage_writes_picks_and_a_null_sweep_while_h2_is_missing(
     )
     assert any("XX.GONE: not cached" in r.getMessage() for r in warnings)
     rec = ctx.records["baseline"]
-    assert rec["params"] == cfg.baseline.model_dump(mode="json")
+    # Nested under the stage key (H4, REQ-H1-2): the pick stage owns ProcessingRun.picker's
+    # top level, so baseline keys such as maxWorkers never overwrite another stage's.
+    assert list(rec["params"]) == ["baseline"]
+    params = rec["params"]["baseline"]
+    assert params == {
+        **cfg.baseline.model_dump(mode="json"),
+        "pickerGapEdgeS": cfg.picker.gapEdgeS,
+        "preprocessChunks": cfg.preprocess.chunks.model_dump(mode="json"),
+        "sweepBestTierA": None,
+    }
     counts = rec["counts"]
     assert counts["stations"] == 4 and counts["stationsWithPicks"] == 3
     assert counts["stationsNotCached"] == 1
@@ -616,6 +809,8 @@ def test_stage_writes_picks_and_a_null_sweep_while_h2_is_missing(
     assert counts["sweepPoints"] == len(grid) and counts["sweepScored"] == 0
     assert counts["chunksYielded"] == 3 * 2
     assert counts["chunksPlanned"] == 3 * 2 + 1  # XX.GONE fails on its first read
+    for key in ("sLostPNearGapEdge", "suppressedWarmupP", "suppressedWarmupS"):
+        assert counts[key] == 0, key  # gap-free data, arrivals clear of every warm-up span
     assert all(isinstance(v, int) for v in counts.values())
     assert rec["runtime_s"] > 0.0
     out = capsys.readouterr().out
@@ -625,6 +820,8 @@ def test_stage_writes_picks_and_a_null_sweep_while_h2_is_missing(
 
 
 @pytest.mark.smoke
+# Stand-in io only: the real hq_contracts leg runs in the other stage tests.
+@pytest.mark.parametrize("table_io", ["stand-in"], indirect=True)
 def test_stage_output_is_identical_across_worker_counts(
     table_io: TableIO,
     fake_ctx: Any,
@@ -633,10 +830,10 @@ def test_stage_output_is_identical_across_worker_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     missing_h2(monkeypatch)
-    sweep = {"pOn": [4.0, 8.0], "sOn": [4.0, 8.0], "offLevels": [1.5]}
+    grid = small_grid([4.0, 8.0], [4.0, 8.0], 1.5, (8.0, 8.0))
     frames = []
     for name, workers in (("serial", 1), ("threads", 3), ("rerun", 3)):
-        cfg = small_cfg(raw_signal_yaml, maxWorkers=workers, sweep=sweep)
+        cfg = small_cfg(raw_signal_yaml, maxWorkers=workers, **grid)
         ctx = stage_ctx(fake_ctx, run_section, cfg, name)
         seed_stage(table_io, ctx, monkeypatch)
         stage.run(ctx)
@@ -659,6 +856,7 @@ def test_sweep_is_scored_through_h2_when_it_exists(
     run_section: RunSection,
     raw_signal_yaml: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     seen: list[pd.DataFrame] = []
 
@@ -687,13 +885,23 @@ def test_sweep_is_scored_through_h2_when_it_exists(
 
     pipeline = bl.H2Pipeline(associate, locate, match, assign_tiers)
     monkeypatch.setattr(bl, "load_h2_pipeline", lambda: pipeline)
-    sweep = {"pOn": [4.0, 40.0], "sOn": [4.0], "offLevels": [1.5]}
-    cfg = small_cfg(raw_signal_yaml, sweep=sweep)
+    catalog_reads: list[str] = []
+    read_table = table_io.io.read_table
+
+    def counting_read_table(path: Path) -> pd.DataFrame:
+        catalog_reads.extend([Path(path).name] if Path(path).name == "catalog.parquet" else [])
+        out: pd.DataFrame = read_table(path)
+        return out
+
+    monkeypatch.setattr(table_io.io, "read_table", counting_read_table)
+    # chosen = pOn 40, which the scores below do not favour
+    cfg = small_cfg(raw_signal_yaml, **small_grid([4.0, 40.0], [4.0], 1.5, (40.0, 4.0)))
     ctx = stage_ctx(fake_ctx, run_section, cfg, "h2", seismology=object())
     seed_stage(table_io, ctx, monkeypatch)
     catalog = pd.DataFrame({"id": ["pub-1", "pub-2"]})
     table_io.io.write_table(catalog, ctx.path("catalog.parquet"), "CatalogEvent")
-    stage.run(ctx)
+    with caplog.at_level(logging.INFO):
+        stage.run(ctx)
 
     out = table_io.io.read_table(ctx.path(bl.SWEEP_FILE))
     assert out["candidates"].tolist() == [2, 0]  # 6 P picks -> 2 events; pOn 40 picks nothing
@@ -702,9 +910,47 @@ def test_sweep_is_scored_through_h2_when_it_exists(
     assert out["nP"].tolist() == [6, 0]
     assert ctx.records["baseline"]["counts"]["sweepScored"] == 2
     assert len(seen) == 2
+    assert catalog_reads == ["catalog.parquet"]  # once for the whole sweep, not per point
+    per_point = [r.getMessage() for r in caplog.records if "Tier A in" in r.getMessage()]
+    assert [m.split(" {")[0] for m in per_point] == ["baseline sweep 1/2", "baseline sweep 2/2"]
+    best = {"pOn": 4.0, "pOff": 1.5, "sOn": 4.0, "sOff": 1.5}
+    assert ctx.records["baseline"]["params"]["baseline"]["sweepBestTierA"] == best
+    assert any(
+        r.levelno == logging.WARNING and "is not the best Tier A point" in r.getMessage()
+        for r in caplog.records
+    )
     for frame in seen:  # the Pick table H2's associate() gets is the published schema
         assert list(frame.columns) == PICK_FIELDS
         assert (frame["picker"] == "stalta").all() and (frame["prob"] == 1.0).all()
+
+
+@pytest.mark.smoke
+# Stand-in io only: the real hq_contracts leg runs in the other stage tests.
+@pytest.mark.parametrize("table_io", ["stand-in"], indirect=True)
+def test_sweep_scoring_can_be_switched_off(
+    table_io: TableIO,
+    fake_ctx: Any,
+    run_section: RunSection,
+    raw_signal_yaml: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def must_not_load() -> Any:
+        raise AssertionError("H2 must not be loaded when sweep.scoreWithH2 is false")
+
+    monkeypatch.setattr(bl, "load_h2_pipeline", must_not_load)
+    grid = small_grid([4.0, 8.0], [4.0], 1.5, (4.0, 4.0), score=False)
+    cfg = small_cfg(raw_signal_yaml, **grid)
+    ctx = stage_ctx(fake_ctx, run_section, cfg, "no-score")
+    seed_stage(table_io, ctx, monkeypatch)
+    with caplog.at_level(logging.INFO):
+        stage.run(ctx)
+    out = table_io.io.read_table(ctx.path(bl.SWEEP_FILE))
+    assert out[list(bl.SWEEP_SCORE_COLUMNS)].isna().all().all()
+    assert out["nP"].tolist() == [6, 6]
+    assert ctx.records["baseline"]["counts"]["sweepScored"] == 0
+    assert any("scoreWithH2 is false" in r.getMessage() for r in caplog.records)
+    assert not any("H2 pipeline not merged" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.smoke
