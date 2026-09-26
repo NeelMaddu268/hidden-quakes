@@ -559,15 +559,35 @@ def locate(
     *,
     run_id: str | None = None,
     cache_dir: Path | None = None,
+    statics: pd.DataFrame | None = None,
 ) -> LocateResult:
     """Locate every association event (docs/02 §5); see the module docstring.
 
     ``run_id`` (keyword only; the docs/02 call leaves it out, and ``run.name`` stands in) goes
     into event ids and ``runId``. ``cache_dir`` caches the travel-time tables under
-    ``<cache_dir>/ttgrids/``. Statics follow ``statics.mode`` (``hq.locate.statics``):
-    selfConsistent iterates them here; referenceEvents needs a match pass this call has no
-    access to, so it locates without statics (pass 1).
+    ``<cache_dir>/ttgrids/``. Without ``statics``, statics follow ``statics.mode``
+    (``hq.locate.statics``): selfConsistent iterates them here; referenceEvents needs a match
+    pass this call has no access to, so it locates without statics (pass 1).
+
+    ``statics`` (keyword only): a ``statics.parquet``-shaped table (``stationId``, ``phase``,
+    ``staticS``) of fixed station terms, applied additively to every event instead of
+    ``statics.mode``; station-phases not in it get 0. Validation reruns pass the showcase run's
+    own ``statics.parquet`` so their events are located, and so graded by the run's tier bars,
+    on the same scale as the run's events (REQ-H1-5).
     """
+    if statics is not None:
+        from hq.locate.statics import statics_map  # imports this package
+
+        missing = {"stationId", "phase", "staticS"} - set(statics.columns)
+        if missing:
+            raise ValueError(f"locate: statics table lacks columns {sorted(missing)}")
+        if statics["staticS"].isna().any():
+            raise ValueError("locate: statics table has null staticS values")
+        return locate_detailed(
+            assoc, picks, stations, cfg, run, run_id=run_id, cache_dir=cache_dir,
+            statics=statics_map(statics),
+        ).result
+
     from hq.locate.statics import locate_with_statics  # imports this package
 
     return locate_with_statics(
