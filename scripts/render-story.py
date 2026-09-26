@@ -11,6 +11,8 @@ writes three files under ``--out`` (default ``data/story/``, gitignored):
     numbers.md          placeholder -> value -> source field, one row per placeholder
     pitch-filled.md     docs/demo/pitch-and-qa.md with the placeholders substituted
     devpost-filled.md   docs/demo/devpost.md with the placeholders substituted
+    video-shot-list-filled.md
+                        docs/demo/video-shot-list.md (the pitch's placeholders) substituted
 
 It never edits the docs in the repo. Substituted text is one of:
 
@@ -36,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -50,12 +53,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_DEMO = REPO_ROOT / "docs" / "demo"
 PITCH_DOC = DOCS_DEMO / "pitch-and-qa.md"
 DEVPOST_DOC = DOCS_DEMO / "devpost.md"
+SHOTS_DOC = DOCS_DEMO / "video-shot-list.md"  # the pitch's placeholders, spoken over the video
 DEFAULT_OUT = REPO_ROOT / "data" / "story"
+DEPLOY_DOC = REPO_ROOT / "docs" / "deploy.md"
+PUBLIC_LINK_RE = re.compile(r"\*\*Public link: <(https://[^>\s]+)>\*\*")
 
 NUMBERS_MD = "numbers.md"
 PITCH_FILLED_MD = "pitch-filled.md"
 DEVPOST_FILLED_MD = "devpost-filled.md"
-OUTPUT_FILES = (NUMBERS_MD, PITCH_FILLED_MD, DEVPOST_FILLED_MD)
+SHOTS_FILLED_MD = "video-shot-list-filled.md"
+OUTPUT_FILES = (NUMBERS_MD, PITCH_FILLED_MD, DEVPOST_FILLED_MD, SHOTS_FILLED_MD)
 
 SYNTHETIC_BANNER = (
     "# SYNTHETIC BUNDLE, NOT FOR SUBMISSION\n"
@@ -287,6 +294,48 @@ def gated(gate_file: str, gate_path: str, inner: Resolver, *, sentence: str) -> 
     return resolve
 
 
+def deployed_url() -> Resolver:
+    """The public link, read from ``docs/deploy.md`` ("Public link: <https://...>") so the
+    Devpost carries the one URL the deploy doc names and never a team-internal alias."""
+
+    def resolve(bundle: Bundle) -> Resolved:
+        source = "docs/deploy.md → Public link"
+        text = DEPLOY_DOC.read_text(encoding="utf-8") if DEPLOY_DOC.is_file() else ""
+        match = PUBLIC_LINK_RE.search(text)
+        if match is None:
+            return Resolved(
+                "[not available: docs/deploy.md names no public link]", source, STATUS_NOT_AVAILABLE
+            )
+        return Resolved(match.group(1), source, STATUS_VALUE)
+
+    return resolve
+
+
+def repo_url() -> Resolver:
+    """The GitHub repository URL from this checkout's ``origin`` remote (https form, no
+    ``.git``); read by hand when there is no remote."""
+
+    def resolve(bundle: Bundle) -> Resolved:
+        source = "git remote origin (https form)"
+        try:
+            raw = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "config", "--get", "remote.origin.url"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+        except OSError:
+            raw = ""
+        if not raw:
+            return Resolved("[manual: the GitHub repository URL]", source, STATUS_MANUAL)
+        url = re.sub(r"^git@github\.com:", "https://github.com/", raw)
+        url = re.sub(r"^ssh://git@github\.com/", "https://github.com/", url)
+        url = url.removesuffix(".git")
+        return Resolved(url, source, STATUS_VALUE)
+
+    return resolve
+
+
 def manual(where: str) -> Resolver:
     def resolve(bundle: Bundle) -> Resolved:
         return Resolved(f"[manual: {where}]", where, STATUS_MANUAL)
@@ -440,6 +489,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
     Spec("{strictAdditionalCount}", meta_field("summary.strictAdditionalCount")),
     Spec("{N}", meta_field("summary.publicCatalogCount"), label="{N} (PUBLIC counter)"),
     Spec("{nStations}", hero_station_count()),
+    # Metres, whole: the Validation card rounds this row the same way (rows.ts DECIMALS.depth).
     Spec("{medianVErrM}", validation_field("synthetic.medianVErrM", decimals=0)),
     Spec(
         "{gain}",
@@ -545,6 +595,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
         manual("/api/live/status → latencyS and /health → served.latencyS; only if measured"),
     ),
     Spec("{windowLabel}", meta_field("run.windowLabel")),
+    Spec("{runId}", meta_field("run.id")),
     Spec("{value}", literal("describes the placeholder form; not a placeholder")),
 )
 
@@ -585,7 +636,8 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
     Spec("<from meta.json: run.pickerWeights>", meta_field("run.pickerWeights")),
     Spec("<from meta.json: run.velocityModel.name>", velocity_model_name()),
     Spec(
-        "<from validation.json: synthetic.medianVErrM>", validation_field("synthetic.medianVErrM")
+        "<from validation.json: synthetic.medianVErrM>",
+        validation_field("synthetic.medianVErrM", decimals=0),
     ),
     Spec(
         "<from validation.json: nullTest.meanChanceEvents>",
@@ -644,8 +696,8 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
     Spec("<from evidence/<heroEventId>.json: traces.length>", hero_station_count()),
     Spec("<heroEventId>", meta_field("scene.heroEventId")),
     Spec("<scene.heroEventId>", meta_field("scene.heroEventId")),
-    Spec("<deployed URL>", manual("the production URL (docs/deploy.md)")),
-    Spec("<repo URL>", manual("the GitHub repository URL")),
+    Spec("<deployed URL>", deployed_url()),
+    Spec("<repo URL>", repo_url()),
     Spec("<video URL>", manual("the uploaded video URL")),
     Spec("<from FILE: field>", literal("describes the placeholder form; not a placeholder")),
 )
@@ -653,6 +705,7 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
 DOCS: tuple[tuple[str, Path, tuple[Spec, ...], str], ...] = (
     ("pitch", PITCH_DOC, PITCH_SPECS, PITCH_FILLED_MD),
     ("devpost", DEVPOST_DOC, DEVPOST_SPECS, DEVPOST_FILLED_MD),
+    ("pitch", SHOTS_DOC, PITCH_SPECS, SHOTS_FILLED_MD),
 )
 
 
@@ -821,12 +874,14 @@ def render(
     *,
     pitch_doc: Path = PITCH_DOC,
     devpost_doc: Path = DEVPOST_DOC,
+    shots_doc: Path = SHOTS_DOC,
 ) -> tuple[list[Row], str]:
-    """Render the three output files; returns the rows and the stdout report."""
+    """Render the output files; returns the rows and the stdout report."""
     bundle = load_bundle(bundle_dir)
     docs = (
         ("pitch", pitch_doc, PITCH_SPECS, PITCH_FILLED_MD),
         ("devpost", devpost_doc, DEVPOST_SPECS, DEVPOST_FILLED_MD),
+        ("pitch", shots_doc, PITCH_SPECS, SHOTS_FILLED_MD),
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     rows: list[Row] = []
