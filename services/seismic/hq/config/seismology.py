@@ -394,6 +394,24 @@ class StaticsConfig(BaseModel):
     sigmaFlagRatio: float = Field(gt=1)
 
 
+class HarvestConfig(BaseModel):
+    """Pick harvest (LOC-10, ``hq.locate.harvest``): after a statics-corrected locate, picks in no
+    association event within ``windowS`` of an event's predicted arrival at a station-phase it
+    has no pick for are added to it, and the events that gained picks are relocated once."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # false: locate never harvests (every output as before LOC-10) and the two checks below are
+    # skipped; the section itself is required, like every other one.
+    enabled: bool
+    # Window half-width per phase (s) around tPred (PhaseSigma reused for its P/S shape only);
+    # at most locator.outlier.floorS (checked when enabled).
+    windowS: PhaseSigma
+    # At least associator.minPickProb and every associator.sweep.minPickProb (checked when
+    # enabled), so no sweep point gets back picks its associator excluded.
+    minProb: float = Field(gt=0, le=1)
+
+
 class CatalogDatum(BaseModel):
     """Depth datum of one catalog contributor (keyed by its QuakeML ``catalog:datasource``)."""
 
@@ -723,6 +741,7 @@ class SeismologyConfig(BaseModel):
     matching: MatchingConfig
     diagnostics: DiagnosticsConfig
     statics: StaticsConfig
+    harvest: HarvestConfig
     tiering: TieringConfig
     magnitude: MagnitudeConfig
 
@@ -767,6 +786,20 @@ class SeismologyConfig(BaseModel):
                 f"matching.reasons.minStations {reasons.minStations} must not exceed "
                 f"associator.minStations {assoc.minStations}: a public event picked on enough "
                 "stations for the associator would read 'too few picks'"
+            )
+        harvest, floor = self.harvest, self.locator.outlier.floorS
+        if harvest.enabled and max(harvest.windowS.P, harvest.windowS.S) > floor:
+            raise ValueError(
+                f"harvest.windowS {harvest.windowS.P} / {harvest.windowS.S} must not exceed "
+                f"locator.outlier.floorS {floor}: a harvested pick must sit inside the outlier "
+                "floor at the location it was harvested for"
+            )
+        highest = max(assoc.minPickProb, *assoc.sweep.minPickProb)
+        if harvest.enabled and harvest.minProb < highest:
+            raise ValueError(
+                f"harvest.minProb {harvest.minProb} must not be below associator.minPickProb "
+                f"(largest, sweep included) {highest}: harvest never takes picks the associator "
+                "would not read"
             )
         zone = self.synthetic.zone
         reach = math.hypot(zone.centerEM, zone.centerNM) + zone.radiusM

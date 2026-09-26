@@ -65,6 +65,17 @@ Statics (LOC-05, ``hq.locate.statics``)
     (pass 2, terms at the public-catalog hypocentres of the matched events, each matched event
     relocated with terms computed without it) -> match -> tier. Stage ``locate`` runs pass 2 when
     ``matches.parquet`` is in the run dir; ``locate()`` has no matches and runs pass 1.
+
+Pick harvest (LOC-10, ``hq.locate.harvest``, off unless ``harvest.enabled``)
+    Every statics-corrected locate of a whole association (stage locate pass 2, selfConsistent's
+    last iteration, ``locate(statics=...)``, the tier sweep and, with ``locator.method``
+    grid3d, the grid1d comparison, which runs pass 2 too) passes ``harvest=True``: picks in
+    no association event within ``harvest.windowS`` of an event's predicted arrival at a
+    station-phase it has no pick for are added and the events that gained picks relocated. They
+    appear only as extra ``pickIds``, filled ``arrivals`` rows (``tObs``, ``residualS``,
+    ``pickId``) and more ``event_picks`` rows: recover them as an event's ``pickIds`` minus its
+    association's picks. ``counts`` and the record (``harvest``) gain harvest keys only when it
+    ran, so with it off every output is as before.
 """
 
 import atexit
@@ -110,6 +121,7 @@ from hq.locate.velocity import LayerModel, load_configured_model
 
 if TYPE_CHECKING:
     from hq.associate.result import AssocResult
+    from hq.locate.harvest import HarvestReport
 
 log = logging.getLogger(__name__)
 
@@ -282,6 +294,7 @@ class LocateDetails:
     record: dict[str, Any]  # ProcessingRun.locator params
     velocity_model: dict[str, Any]  # ProcessingRun.velocityModel: the top-extended model
     runtime_s: float
+    harvest: "HarvestReport | None" = None  # set only when the pick harvest ran (LOC-10)
 
 
 def _event_row(
@@ -393,6 +406,7 @@ def locate_detailed(
     static_events: Mapping[tuple[str, str], int] | None = None,
     model: LayerModel | None = None,
     model3d: Model3dSource | None = None,
+    harvest: bool = False,
 ) -> LocateDetails:
     """``locate`` plus flags, the per-event locations, counts and the run record.
 
@@ -402,6 +416,13 @@ def locate_detailed(
     how many events each static was estimated from (default: the located events that used a
     pick of that station-phase). ``model`` replaces the configured layer file and ``model3d``
     the configured 3D model file (tests).
+
+    ``harvest`` (LOC-10): when true and ``harvest.enabled``, picks in no association event are
+    harvested at the events' predicted arrivals and the events that gained picks relocated
+    (``hq.locate.harvest``); ``details.harvest`` then holds the report, and the counts and the
+    record gain harvest keys. Callers pass it only on a statics-corrected locate of the whole
+    association (every association event, so the free picks are those of no event); otherwise,
+    and with ``harvest.enabled`` false, nothing changes.
     """
     started = time.perf_counter()
     rid = run.name if run_id is None else run_id
@@ -425,6 +446,17 @@ def locate_detailed(
     located = (
         locate_many(setup, frames, event_statics=per_event, locator=locator) if frames else []
     )
+    n_picks = sum(len(f) for f in frames)  # associated picks
+    harvested: HarvestReport | None = None
+    if harvest and cfg.harvest.enabled and located:
+        # Imported per call, not at the top: the harvest runs only when enabled, and
+        # test_self_consistent_harvests_on_the_last_iteration_only monkeypatches it on the module.
+        from hq.locate.harvest import harvest_and_relocate
+
+        frames, located, harvested = harvest_and_relocate(
+            setup, locator, assoc_ids, frames, located, per_event, picks,
+            set(assoc.picks["pickId"].astype(str)), cfg.harvest,
+        )
 
     order = sorted(range(len(located)), key=lambda k: (located[k].t0, assoc_ids[k]))
     locations = tuple(located[k] for k in order)
@@ -474,7 +506,7 @@ def locate_detailed(
         statics=typed_frame(static_rows, STATIC_DTYPES),
     )
     flag_frame = typed_frame(flags, FLAG_DTYPES)
-    n_picks = sum(len(f) for f in frames)
+    n_all = sum(len(f) for f in frames)  # associated plus harvested picks
     n_used = sum(int(loc.arrivals["usedInLocation"].sum()) for loc in locations)
     counts = {
         "assocEvents": len(assoc_ids),
@@ -482,7 +514,7 @@ def locate_detailed(
         "stations": len(used),
         "picksIn": n_picks,
         "picksUsed": n_used,
-        "picksDroppedAsOutliers": n_picks - n_used,
+        "picksDroppedAsOutliers": n_all - n_used,
         "eventsRelocatedAfterOutliers": sum(loc.relocated for loc in locations),
         "eventsOutlierPassSkipped": int(flag_frame["outlierPassSkipped"].sum()),
         "eventsDepthOnEdge": int(result.events["quality_depthOnEdge"].sum()),
@@ -496,6 +528,14 @@ def locate_detailed(
         "arrivalsWithPick": int(result.arrivals["pickId"].notna().sum()),
         "statics": len(result.statics),
     }
+    if harvested is not None:
+        hc = harvested.counts
+        counts.update({
+            "picksHarvested": hc["picks"], "picksHarvestedUsed": hc["picksUsed"],
+            "eventsHarvested": hc["events"], "harvestAmbiguousPicks": hc["ambiguousPicks"],
+            "harvestSkippedUntrustedSlots": hc["skippedUntrustedSlots"],
+            "harvestSkippedMultiCandidateSlots": hc["skippedMultiCandidateSlots"],
+        })
     pickers = (
         sorted(str(p) for p in picks["picker"].dropna().unique()) if "picker" in picks else None
     )
@@ -527,12 +567,15 @@ def locate_detailed(
             "method": locator.method,
         },
     }
+    if harvested is not None:
+        record["harvest"] = harvested.to_record(
+            dict(zip(ordered_assoc, result.events["id"].astype(str), strict=True)))
     runtime = time.perf_counter() - started
     log.info(
         "locate: %d of %d association events located on %d stations (%d of %d picks used, %d "
         "relocated after outliers; depthOnEdge %d, MAP on volume top %d, PDF truncated %d) in "
         "%.1f s",
-        counts["events"], counts["assocEvents"], counts["stations"], n_used, n_picks,
+        counts["events"], counts["assocEvents"], counts["stations"], n_used, n_all,
         counts["eventsRelocatedAfterOutliers"], counts["eventsDepthOnEdge"],
         counts["eventsMapOnVolumeTop"], counts["eventsPdfTruncated"], runtime,
     )
@@ -547,6 +590,7 @@ def locate_detailed(
         record=record,
         velocity_model=locator.velocity_model_record(),
         runtime_s=runtime,
+        harvest=harvested,
     )
 
 
@@ -573,7 +617,8 @@ def locate(
     ``staticS``) of fixed station terms, applied additively to every event instead of
     ``statics.mode``; station-phases not in it get 0. Validation reruns pass the showcase run's
     own ``statics.parquet`` so their events are located, and so graded by the run's tier bars,
-    on the same scale as the run's events (REQ-H1-5).
+    on the same scale as the run's events (REQ-H1-5). With ``harvest.enabled`` this path also
+    harvests picks (LOC-10), as stage locate's pass 2 does.
 
     With ``locator.nWorkers`` above 1 the events are located in spawned worker processes, which
     re-import the caller's ``__main__``: call this from a script whose top level is guarded by
@@ -590,7 +635,7 @@ def locate(
             raise ValueError("locate: statics table has null staticS values")
         return locate_detailed(
             assoc, picks, stations, cfg, run, run_id=run_id, cache_dir=cache_dir,
-            statics=statics_map(statics),
+            statics=statics_map(statics), harvest=True,
         ).result
 
     from hq.locate.statics import locate_with_statics  # imports this package

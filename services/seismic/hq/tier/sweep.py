@@ -18,7 +18,9 @@ it. Every point's ``recoveredPublic`` and matched-event Tier A are therefore in-
 warns and records it (``sweep.statics.inSample``).
 
 ``real_pipeline`` binds LOC-04's ``hq.locate.locate_detailed``, MATCH-02's ``hq.match.match``
-and LOC-03's association sweep, imported only when the sweep runs. Tests inject a
+and LOC-03's association sweep, imported only when the sweep runs. With ``harvest.enabled``
+every point's locate also harvests picks (LOC-10, ``hq.locate.harvest``), as stage locate's
+pass 2 did for ``events.parquet``. Tests inject a
 ``SweepPipeline`` and the association step.
 """
 
@@ -126,7 +128,7 @@ def real_pipeline(
         assoc: "AssocResult",
     ) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame | None]:
         details = locate_detailed(assoc, picks, stations, cfg, run, run_id=run_id,
-                                  cache_dir=cache_dir, statics=dict(statics))
+                                  cache_dir=cache_dir, statics=dict(statics), harvest=True)
         return details.result.events, details.flags, details.result.arrivals
 
     def match_events(events: pd.DataFrame) -> pd.DataFrame:
