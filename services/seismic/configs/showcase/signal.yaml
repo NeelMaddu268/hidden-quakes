@@ -14,7 +14,47 @@ known: {}
 preprocess: {}
 
 # --- SEIS-04 / SEIS-06: PhaseNet picking -------------------------------------------------------------
-picker: {}
+picker:
+  model: seisbench.PhaseNet
+  weightsVersion: "2"                      # pinned; from_pretrained never queries the remote
+  candidateWeights: [instance, stead, original, scedc]
+  defaultWeights: instance                 # placeholder until known/ab.csv names the winners
+  weightsByProfile:                        # placeholders; copy the A/B winners in here
+    surface-100: instance
+    surface-hi: instance
+    borehole-A: instance
+    borehole-B: instance
+  pThreshold: 0.1                          # store everything >= 0.1; H2 filters later
+  sThreshold: 0.1
+  gapEdgeS: 1.0                            # real s; picks this close to a block edge are dropped
+  sampleRateHz: 100.0                      # for_picking output rate; asserted before the model
+  batchSize: 256
+  torchThreads: 4
+  seed: 0
+  seisbench:                               # passed verbatim to classify(); beats weight defaults
+    overlap: 1500
+    stacking: avg
+    blinding: [250, 250]
+    strict: true
+    flexibleHorizontalComponents: false    # for_picking already renamed 1/2 to N/E
+  ab:
+    profileVariants:
+      borehole-A: [borehole-B]
+    minStationsForRho: 3
+    recordSection:
+      bandHz: [2.0, 20.0]
+      windowS: [-5.0, 30.0]
+      padS: 5.0
+      component: Z
+      widthIn: 10.0
+      heightPerTraceIn: 0.45
+      minHeightIn: 4.0
+      dpi: 120
+      traceHalfHeight: 0.45
+    checkB:
+      minStationsPS: 8
+      minRho: 0.8
+      minEventsPass: 3
 
 # --- SEIS-07: STA/LTA baseline -----------------------------------------------------------------------
 baseline: {}
