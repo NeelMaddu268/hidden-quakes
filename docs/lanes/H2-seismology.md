@@ -195,7 +195,7 @@ If someone already knows NonLinLoc well, it's an acceptable swap for steps 1–4
 2. **Tier A (Strict):** on every metric, at least as good as the 25th-percentile-worst event in M; no `depthOnEdge`; at least one station within about 2× the focal depth.
 3. **Tier B (Good):** on every metric, no worse than the worst matched event.
 4. **Tier C (Candidate):** associated but outside that range.
-5. Store each threshold with its source quantile. How we say it: Strict = "located at least as well as three-quarters of the public-catalog events we recovered, on every metric." Caveat to own: public events are the larger ones, so tiers are conservative for small events.
+5. Store each threshold with its source quantile. How we say it: Strict = "on every quality metric, at least as good as a bar that three-quarters of the public-catalog events we recovered meet." Each bar is set per metric; this does not mean three-quarters of recovered events pass every bar at once (`ProcessingRun.tiering` stores how many do). Caveat to own: public events are the larger ones, so tiers are conservative for small events.
 
 ### Magnitude
 
