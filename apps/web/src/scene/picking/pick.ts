@@ -42,7 +42,7 @@ export interface PickHit {
   index: number;
   /** Screen distance from the pointer to the instance center, CSS px. */
   distPx: number;
-  /** Clip-space w: distance along the view axis (smaller = nearer the camera). */
+  /** Depth ordering key: clip w for perspective, NDC z for orthographic (smaller = nearer). */
   depth: number;
 }
 
@@ -65,6 +65,8 @@ export function pickNearest(positions: ArrayLike<number>, q: PickQuery): PickHit
   const m = q.viewProj;
   const tie = q.tieEpsPx ?? PICK_TIE_EPS_PX;
   const count = Math.floor(positions.length / 3);
+  // Orthographic clip w is constant: use clip depth to distinguish stacked events.
+  const orthographic = m[3] === 0 && m[7] === 0 && m[11] === 0;
   let best: PickHit | null = null;
   for (let i = 0; i < count; i++) {
     if (q.visible && !q.visible(i)) continue;
@@ -86,7 +88,7 @@ export function pickNearest(positions: ArrayLike<number>, q: PickQuery): PickHit
     let reach = q.thresholdPx;
     if (q.radius && q.focalPx) reach = Math.max(reach, Math.min(q.maxRadiusPx ?? Infinity, (q.radius(i) * q.focalPx) / cw));
     if (dist > reach) continue;
-    const hit: PickHit = { index: i, distPx: dist, depth: cw };
+    const hit: PickHit = { index: i, distPx: dist, depth: orthographic ? ndcZ : cw };
     if (betterHit(hit, best, tie)) best = hit;
   }
   return best;
