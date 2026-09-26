@@ -7,5 +7,4 @@ CATALOG_JSON = "catalog.json"
 EVENTS_JSON = "events.json"
 FEATURES_JSON = "features.json"
 VALIDATION_JSON = "validation.json"
-CONFIDENCE_JSON = "confidence.json"  # ML-01 (H2) sidecar, copied when present
 EVIDENCE_DIR = "evidence"

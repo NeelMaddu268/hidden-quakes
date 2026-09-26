@@ -26,7 +26,7 @@
  * after a failover is the visible error too.
  */
 import { createContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import type { Confidence, DataMode, LiveStatus, Validation } from "@hq/contracts";
+import type { DataMode, LiveStatus, Validation } from "@hq/contracts";
 import { EVIDENCE_PRELOAD_COUNT, LIVE_HEARTBEAT_MS, LIVE_POLL_MS } from "./config";
 import { BundleFetchError } from "./fetch";
 import { LiveProvider, type LiveStatusSummary } from "./live";
@@ -41,7 +41,6 @@ export interface ProviderContextValue {
   provider: SeismicDataProvider | null;
   bundle: BundleState;
   validation: Validation | null;
-  confidence: Confidence | null;
   liveStatus: LiveStatus | null;
   /** True while `live` mode is showing the snapshot bundle because the worker is unreachable. */
   failedOver: boolean;
@@ -53,7 +52,6 @@ export const ProviderContext = createContext<ProviderContextValue>({
   provider: null,
   bundle: { status: "loading" },
   validation: null,
-  confidence: null,
   liveStatus: null,
   failedOver: false,
 });
@@ -133,7 +131,6 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
 
   const [loadedBundle, setLoadedBundle] = useState<Loaded<BundleState> | null>(null);
   const [loadedValidation, setLoadedValidation] = useState<Loaded<Validation | null> | null>(null);
-  const [loadedConfidence, setLoadedConfidence] = useState<Loaded<Confidence | null> | null>(null);
   const [loadedLive, setLoadedLive] = useState<Loaded<LiveStatus> | null>(null);
 
   useEffect(() => {
@@ -178,16 +175,6 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
       .catch((error: unknown) => {
         console.warn("validation.json unavailable:", errorMessage(error));
         if (!cancelled) setLoadedValidation({ provider: activeProvider, value: null });
-      });
-    // confidence.json (ML-01) is optional the same way: absent or failing means no scores.
-    activeProvider
-      .getConfidence()
-      .then((confidence) => {
-        if (!cancelled) setLoadedConfidence({ provider: activeProvider, value: confidence });
-      })
-      .catch((error: unknown) => {
-        console.warn("confidence.json unavailable:", errorMessage(error));
-        if (!cancelled) setLoadedConfidence({ provider: activeProvider, value: null });
       });
     return () => {
       cancelled = true;
@@ -263,8 +250,6 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
           : { status: "loading" };
     const validation =
       loadedValidation && loadedValidation.provider === activeProvider ? loadedValidation.value : null;
-    const confidence =
-      loadedConfidence && loadedConfidence.provider === activeProvider ? loadedConfidence.value : null;
     const liveStatus = loadedLive && loadedLive.provider === activeProvider ? loadedLive.value : null;
     return {
       mounted: true,
@@ -272,11 +257,10 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
       provider: activeProvider,
       bundle,
       validation,
-      confidence,
       liveStatus,
       failedOver,
     };
-  }, [resolvedMode, activeProvider, live, resolved.error, loadedBundle, loadedValidation, loadedConfidence, loadedLive, failedOver]);
+  }, [resolvedMode, activeProvider, live, resolved.error, loadedBundle, loadedValidation, loadedLive, failedOver]);
 
   return <ProviderContext.Provider value={value}>{children}</ProviderContext.Provider>;
 }
@@ -286,7 +270,6 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
 function warmFallback(fallback: SeismicDataProvider): void {
   fallback.getEvents().catch(() => undefined);
   fallback.getValidation().catch(() => undefined);
-  fallback.getConfidence().catch(() => undefined);
 }
 
 /** Warm the provider's memo for the hero and the first events of the reveal. Errors are ignored

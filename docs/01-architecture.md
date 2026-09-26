@@ -129,7 +129,6 @@ apps/web/public/data/<mode>/        mode = mock | showcase | snapshot
   events.json            SeismicEvent[] (~400 B each; < 1 MB at 2,000 events)
   features.json          GeoFeature[] (wells/facilities, each with a SourceRef)
   validation.json        Validation
-  confidence.json        Confidence       optional (ML-01, H2): classifier scores + held-out ROC AUC
   evidence/{eventId}.json   EventEvidence (20–60 KB each)
                             place each trace by its own t0 (x = t0 + i·dt − event.t); windows need not share an origin
 

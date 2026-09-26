@@ -25,7 +25,6 @@ export type Phase = "P" | "S";
  */
 export interface Bundle {
   catalog: CatalogEvent[];
-  confidence: Confidence;
   events: SeismicEvent[];
   evidence: EventEvidence;
   features: GeoFeature[];
@@ -62,28 +61,6 @@ export interface Enu {
   e: number;
   n: number;
   u: number;
-}
-/**
- * ML-01 (H2): one score per candidate event from a classifier trained to tell recovered
- * public events from the rest, with the model's metadata and its held-out ROC AUC. A sidecar
- * of the run (``confidence.json``) and an optional bundle file next to ``validation.json``;
- * absent means no score and no card row. Added Sat evening after the contract freeze as a new
- * file that carries its own ``schema`` tag, so ``SCHEMA_VERSION`` and every frozen bundle stay
- * as they are. ``scores`` are not probabilities that an event is real (docs/00).
- *
- * This interface was referenced by `Bundle`'s JSON-Schema
- * via the `definition` "Confidence".
- */
-export interface Confidence {
-  heldOutRocAuc: number | null;
-  model: {
-    [k: string]: unknown;
-  };
-  runId: string;
-  schema: "hq.confidence/1";
-  scores: {
-    [k: string]: number;
-  };
 }
 /**
  * This interface was referenced by `Bundle`'s JSON-Schema

@@ -273,16 +273,8 @@ class Bundle(BaseModel):          # schema export only; the bundle is separate f
     events: list[SeismicEvent]
     features: list[GeoFeature]
     validation: Validation
-    confidence: Confidence
     evidence: EventEvidence
     live: LiveStatus
-
-class Confidence(Model):          # ML-01 (H2), added Sat evening after the freeze as a NEW optional file
-    schema: Literal["hq.confidence/1"]   # the file's own tag; SCHEMA_VERSION and frozen bundles unchanged
-    runId: str
-    model: dict[str, Any]         # H2's model metadata (name, features, training set), verbatim
-    heldOutRocAuc: float | None   # None when no held-out split could be scored
-    scores: dict[str, float]      # event id -> score; NOT a probability the event is real (docs/00)
 ```
 
 ## 2. Tables on disk (`hq_contracts.io`)
@@ -328,7 +320,6 @@ Every lane reads and writes run tables only through these helpers, so a column r
 | `gr.json` | H4 | `GRCurve` | JSON sidecar; written by `validate` when magnitudes exist and the docs/03 magnitude kill switch passes, also embedded in `validation.json`; `publicCum` counts the public regional catalog's magnitudes of one `magType` only (the calibration type in `ProcessingRun.matching["magnitude"]["calibrationMagType"]`, else `validate.yaml` `gr.publicMagType`) |
 | `validation_notes.json` | H4 | `hq.validate.notes.ValidationNotes` (H4's own model, not a contract) | JSON sidecar; always written by `validate`, never embedded: `{nullTest, baseline, gr}`. `nullTest` / `baseline`: the bars the reruns tiered against and where they came from (`thresholds.source`: `run`, the run's own `ProcessingRun.tiering["thresholds"]`, the default; or `phasenetRerun`, bars H2's `assign_tiers` derived from the PhaseNet `full` rerun, `validate.yaml` `rerunBars: reference`; `thresholds.record`, `thresholds.nMatched`, `thresholds.quantiles`, `thresholds.bars` = tier → metric → `{op, value}`), the Tier A rules H2's `assign_tiers` reported (`tieringRules.focalDepthBelow`, `tieringRules.mapOnVolumeTopApplied`, `thresholdSource`), `staticsApplied: true` (every rerun's `locate` got the run's `statics.parquet` as `statics=`, REQ-H1-5 a), the `p_only` associator overrides, `reruns` / `rerunsTiered`; `gr`: `magType` and its source, `publicIncluded`, `publicExcludedByType`, the `maxLooMae` gate applied and its source, `looMae` next to H2's `nullModelMae` and `skill`; `baseline` is null without `picks_stalta.parquet`, `gr` null without any magnitude |
 | `validation.json` | H4 | `Validation` | JSON; written once H2's `synthetic.json` exists; the exporter assembles it from the sidecars above (plus `synthetic.json`, `sweep.parquet`, `magnitude.json`) when it is absent |
-| `confidence.json` | H2 | `Confidence` | JSON sidecar of ML-01 (Sat evening); optional. The exporter copies it into the bundle next to `validation.json` when its `runId` is the run's and every scored id is a located event; `check_bundle` accepts it; the web reads it through `useConfidence()` and the Validation card shows the held-out ROC AUC. Absent file: no row, no error |
 | `run.json` | every stage via `ctx.record` | `ProcessingRun` | JSON |
 | `stages.json` | every stage via `ctx.record` | `{stage: {runtimeS, counts}}` | JSON sidecar; `ProcessingRun` has no counts field |
 
