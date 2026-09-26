@@ -223,13 +223,18 @@ statics:
   # diagnostics.stationResidualFlagS (hq.locate.statics.explain_terms).
   explain:
     neighbours: 3 # nearest other stations whose median term is compared (same phase)
+    # ...counting only stations at most this far (m, epicentral) from the station: a station
+    # farther away samples other near-surface structure and can't stand in for this one's.
+    neighbourMaxDistM: 8000.0
     lateralFraction: 0.5 # same sign and at least this share of the term: lateral structure
     minRatioTermS: 0.05 # S/P term ratio only when |P term| >= this (s)
     ratioBand: 1.3 # factor around the model's Vp/Vs (path) and around 1 (equal delays)
     # An early term at a station farther than this (m) from the events' median epicentre: the
     # sources sit in the layer model's half-space (top -610 m ASL), so the ray length in it grows
     # with distance, and the layer file marks the half-space as extrapolation. About 4x the
-    # synthetic zone's deepest point below the half-space top. Reported as an untested hypothesis.
+    # synthetic zone's deepest point below the half-space top. A hypothesis: another station that
+    # far with a same-phase term later than diagnostics.stationResidualFlagS contradicts it, and
+    # the term then counts as unexplained unless other evidence holds.
     farStationM: 15000.0
   sigmaFlagRatio: 1.5
 

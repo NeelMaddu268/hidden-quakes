@@ -302,9 +302,11 @@ class StaticsExplainConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # The median term of a station's nearest other stations (same phase) explains its term as
-    # lateral structure when it has the term's sign and at least this fraction of its size.
+    # The median term of a station's nearest other stations (same phase, at most
+    # neighbourMaxDistM away) explains its term as lateral structure when it has the term's sign
+    # and at least this fraction of its size.
     neighbours: int = Field(ge=1)
+    neighbourMaxDistM: float = Field(gt=0)
     lateralFraction: float = Field(gt=0, le=1)
     # S term / P term of one station (same sign), compared only when |P term| is at least this.
     minRatioTermS: float = Field(gt=0)
@@ -313,7 +315,8 @@ class StaticsExplainConfig(BaseModel):
     # and S delays, a timing offset is possible.
     ratioBand: float = Field(gt=1)
     # An early term at a station farther than this (m) from the events' median epicentre: rays
-    # bottoming in the model's deepest (extrapolated) layers; reported as an untested hypothesis.
+    # bottoming in the model's deepest (extrapolated) layers; a hypothesis, contradicted (and then
+    # not a verdict) when another station that far has a late term above the flag.
     farStationM: float = Field(gt=0)
 
 

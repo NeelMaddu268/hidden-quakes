@@ -216,12 +216,34 @@ def test_explain_terms_gives_every_flagged_term_a_verdict(
     assert ex["explanation"].str.len().gt(0).all()
     assert "unexplained static" in ex.set_index(["stationId", "phase"]).loc[("U1", "S"),
                                                                              "explanation"]
-    # S-dominated: the local Vp/Vs differs from the model's.
+    assert "consistent with lateral structure" in ex.set_index(["stationId", "phase"]).loc[
+        ("W1", "S"), "explanation"]
+    # S-dominated: near-station rock whose Vp/Vs differs from the model's; it moves P too.
     vp = terms.assign(staticS=np.where((terms["stationId"] == "C1") & (terms["phase"] == "S"),
                                        0.9, terms["staticS"]))
     ex2 = explain_terms(vp, st, model, (0.0, 0.0), 0.15, 3, seismology_config.statics.explain)
-    row = ex2.set_index(["stationId", "phase"]).loc[("C1", "S")]
-    assert row["verdict"] == "vpvs" and "higher than the model's" in row["explanation"]
+    rows2 = ex2.set_index(["stationId", "phase"])
+    assert rows2.loc[("C1", "S"), "verdict"] == "vpvs" == rows2.loc[("C1", "P"), "verdict"]
+    assert "higher Vp/Vs than the model's" in rows2.loc[("C1", "S"), "explanation"]
+    assert "delays P and delays S more" in rows2.loc[("C1", "P"), "explanation"]
+    # A late term at another distant station contradicts the far-station hypothesis.
+    far2 = pd.concat([st, pd.DataFrame({"id": ["F2"], "enu_e": [-20000.0], "enu_n": [0.0],
+                                        "sensorElevM": [1500.0]})], ignore_index=True)
+    late = pd.concat([terms, pd.DataFrame([
+        {"stationId": "F2", "phase": ph, "staticS": v, "rawS": v, "nEvents": 10, "madS": 0.01}
+        for ph, v in (("P", 0.40), ("S", 0.0))])], ignore_index=True)
+    ex3 = explain_terms(late, far2, model, (0.0, 0.0), 0.15, 3,
+                        seismology_config.statics.explain).set_index(["stationId", "phase"])
+    assert ex3.loc[("F1", "P"), "verdict"] == "unexplained"
+    assert ex3.loc[("F1", "P"), "farContradictedBy"] == "F2"
+    assert "contradicts that: F2 at 20.0 km" in ex3.loc[("F1", "P"), "explanation"]
+    # Neighbours beyond neighbourMaxDistM don't count.
+    tight = seismology_config.statics.explain.model_copy(update={"neighbourMaxDistM": 500.0})
+    ex4 = explain_terms(terms, st, model, (0.0, 0.0), 0.15, 3, tight).set_index(
+        ["stationId", "phase"])
+    assert ex4.loc[("W1", "S"), "verdict"] != "lateral"
+    assert "No other station with a S term lies within 0.5 km" in ex4.loc[("W1", "S"),
+                                                                          "explanation"]
 
 
 @pytest.mark.smoke

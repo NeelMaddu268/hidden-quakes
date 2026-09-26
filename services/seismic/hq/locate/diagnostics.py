@@ -1271,22 +1271,33 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
         lines.append(_row([str(r.stationId), str(r.phase), f"{r.staticS:+.3f}",
                            f"{r.rawS:+.3f}", str(int(r.nEvents)), _f(r.madS, ".3f"), note]))
     ex = rep.explanations
+    xcfg = scfg.explain
     n_un = int((ex["verdict"] == "unexplained").sum())
     n_far = int((ex["verdict"] == "far").sum())
+    n_contra = int((ex["farContradictedBy"].astype(str) != "").sum())
     counts = ex["verdict"].value_counts()
     lines += ["", f"### Written explanation of every static above {flag:g} s", "",
               f"{len(ex)} static(s) above {flag:g} s: " + (", ".join(
                   f"{k} {int(v)}" for k, v in counts.items()) if len(ex) else "none") + ". "
               + (f"{n_un} unexplained (the depth gate asks for none). " if n_un else
                  "None unexplained. ")
-              + (f"{n_far} rest on the far-station hypothesis, which these terms can't test. "
-                 if n_far else "")
-              + "Verdicts: lateral = nearby stations share the delay (structure the 1D model "
-              "can't hold, row 7); path = P and S changed in proportion to the model's Vp/Vs; "
-              "vpvs = the delay is mostly in S (the local Vp/Vs differs from the model's); "
-              "timing = equal P and S delays; far = early at a distant station. Evidence rules: "
-              "seismology.yaml `statics.explain`; the verdict is the first that holds, in that "
-              "order.", ""]
+              + (f"For {n_contra} early term(s) at stations beyond farStationM "
+                 f"{xcfg.farStationM / 1000:g} km, another station that far has a late term above "
+                 f"{flag:g} s, which contradicts the far-station hypothesis (named in the "
+                 "explanation). " if n_contra else "")
+              + (f"{n_far} rest on the far-station hypothesis, which no other distant station "
+                 "contradicts but nothing here tests further. " if n_far else "")
+              + "Each verdict says what the term is consistent with, not a tested cause: "
+              f"lateral = the nearest stations within {xcfg.neighbourMaxDistM / 1000:g} km share "
+              "the delay (structure the 1D model can't hold, row 7; the only verdict that draws "
+              "on other stations' terms); path = P and S changed in proportion to the model's "
+              "Vp/Vs; vpvs = S changed proportionally more than P (near-station rock whose Vp/Vs "
+              "differs from the model's, which moves both phases); timing = equal P and S "
+              "delays; far = early at a distant station. The S/P bands (ratioBand "
+              f"{xcfg.ratioBand:g}) leave few same-sign ratios without a label, so a path, vpvs "
+              "or timing verdict shows a term is consistent with near-station structure or "
+              "timing, not that this cause was tested. Evidence rules: seismology.yaml "
+              "`statics.explain`; the verdict is the first that holds, in that order.", ""]
     if len(ex):
         lines += [_row(["stationId", "phase", "staticS (s)", "verdict", "explanation"]),
                   _row(["---"] * 5)]
