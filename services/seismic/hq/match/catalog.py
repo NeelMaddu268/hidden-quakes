@@ -41,6 +41,7 @@ from obspy.core.event import Catalog, Event, ResourceIdentifier
 from hq.config.run import RunSection, epoch_s
 from hq.config.seismology import CatalogConfig
 from hq.locate.coords import to_enu
+from hq.locate.provenance import stage_provenance
 
 if TYPE_CHECKING:
     from hq.runs import RunContext
@@ -483,6 +484,7 @@ def run(ctx: "RunContext") -> None:
                 "idsWithArrivalsProduct": kept_with_product,
                 "quakemlSha256": hashlib.sha256(raw).hexdigest(),
                 "config": cfg.model_dump(mode="json"),  # every catalog knob, recorded once
+                "provenance": stage_provenance(),
             }
         },
     )

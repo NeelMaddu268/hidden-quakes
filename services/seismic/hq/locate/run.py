@@ -64,6 +64,7 @@ from hq.locate.diagnostics import (
     catalog_uncertainties,
 )
 from hq.locate.locator import GRID1D, GRID3D, LocatorSetup
+from hq.locate.provenance import stage_provenance
 from hq.locate.result import ARRIVALS_MODEL, EVENTS_MODEL, FLAGS_MODEL, STATICS_MODEL
 from hq.locate.statics import (
     REFERENCE_EVENTS,
@@ -374,6 +375,7 @@ def run(ctx: "RunContext") -> None:
                         for key in TABLE_CONFIG_SECTIONS},
         "statics": {"config": cfg.statics.model_dump(mode="json"), **rep.to_record()},
         "locateRuntimeS": details.runtime_s,
+        "provenance": stage_provenance(),
         "grid1dComparisonRuntimeS": None if grid1d is None else grid1d.runtime_s,
     }
     log.info("locate: wrote %s in %.1f s", ", ".join(p.name for p in targets), runtime_s)

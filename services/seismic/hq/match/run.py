@@ -30,6 +30,7 @@ from hq_contracts.io import read_table, write_table
 from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
 from hq.locate.coords import to_enu
+from hq.locate.provenance import stage_provenance
 from hq.locate.velocity import load_configured_model
 from hq.match import REASONS, STRING_DTYPE, Tolerance, match
 from hq.match import catalog as catalog_stage
@@ -255,6 +256,7 @@ def run(ctx: "RunContext") -> None:
         **{f"unmatched.{code}": n for code, n in by_code.items()},
     }
     params = _params(cfg, explained, arrivals, result.sensitivity, window, chance)
+    params["provenance"] = stage_provenance()
     ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params={"match": params})
 
 
