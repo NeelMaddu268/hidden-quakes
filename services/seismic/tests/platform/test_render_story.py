@@ -20,6 +20,7 @@ pytestmark = pytest.mark.smoke
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = REPO_ROOT / "scripts" / "render-story.py"
 MOCK_BUNDLE = REPO_ROOT / "apps" / "web" / "public" / "data" / "mock"
+SHOWCASE_BUNDLE = REPO_ROOT / "apps" / "web" / "public" / "data" / "showcase"
 PITCH_DOC = REPO_ROOT / "docs" / "demo" / "pitch-and-qa.md"
 DEVPOST_DOC = REPO_ROOT / "docs" / "demo" / "devpost.md"
 SHOTS_DOC = REPO_ROOT / "docs" / "demo" / "video-shot-list.md"
@@ -137,6 +138,98 @@ def test_values_come_from_the_bundle(rendered: tuple[Path, list, str]) -> None:
         f"`{meta['summary']['publicCatalogCount']} PUBLIC → {meta['summary']['candidateCount']} RECOVERED`"
         in devpost
     )
+
+
+needs_showcase = pytest.mark.skipif(
+    not (SHOWCASE_BUNDLE / "meta.json").is_file(), reason="no showcase bundle in this checkout"
+)
+
+
+def _meta_validation_bundle(tmp_path: Path, source: Path) -> Path:
+    """A bundle with only ``meta.json`` and ``validation.json`` copied from ``source`` (the hero
+    evidence file is left out; it renders as not available)."""
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    for name in ("meta.json", "validation.json"):
+        shutil.copy(source / name, bundle / name)
+    return bundle
+
+
+@needs_showcase
+def test_science_qa_placeholders_come_from_the_showcase_bundle(
+    story: ModuleType, tmp_path: Path
+) -> None:
+    """DEMO-03 science Q&A: the baseline misfit/station/candidate counts, the matched strict
+    count, the held-out depth difference and the fewest stations on a recovered public event
+    render from the run of record's bundle, rounded as the doc quotes them."""
+    bundle = _meta_validation_bundle(tmp_path, SHOWCASE_BUNDLE)
+    rows, _ = story.render(bundle, tmp_path / "out")
+    value = {r.name: r for r in rows if r.doc == "pitch-and-qa.md"}
+    meta = json.loads((SHOWCASE_BUNDLE / "meta.json").read_text(encoding="utf-8"))
+    validation = json.loads((SHOWCASE_BUNDLE / "validation.json").read_text(encoding="utf-8"))
+    full = {
+        row["method"]: row for row in validation["baseline"] if row["associationProfile"] == "full"
+    }
+    held_out = meta["run"]["locator"]["statics"]["crossValidatedOffsets"]["after"]
+    expected = {
+        "{staltaCandidates}": str(full["stalta"]["candidates"]),
+        "{staltaRecoveredPublic}": str(full["stalta"]["recoveredPublic"]),
+        "{phasenetMedianRmsS}": f"{full['phasenet']['medianRmsS']:.3f}",
+        "{staltaMedianRmsS}": f"{full['stalta']['medianRmsS']:.3f}",
+        "{phasenetMedianStations}": f"{full['phasenet']['medianStations']:g}",
+        "{staltaMedianStations}": f"{full['stalta']['medianStations']:g}",
+        "{strictMatchedCount}": str(meta["run"]["tiering"]["counts"]["matched"]["A"]),
+        "{medianStations}": f"{meta['summary']['medianStations']:g}",
+        "{heldOutMedianAbsDzM}": f"{held_out['medianAbsDzM']:.0f}",
+        "{medianVErrM}": f"{validation['synthetic']['medianVErrM']:.0f}",  # as the card rounds it
+    }
+    for token, text in expected.items():
+        assert value[token].status == story.STATUS_VALUE, token
+        assert value[token].text == text, token
+    # The Tier B nStations bar is the fewest stations on any recovered public event: check it
+    # against the events themselves.
+    events = json.loads((SHOWCASE_BUNDLE / "events.json").read_text(encoding="utf-8"))
+    matched = [e["quality"]["nStations"] for e in events if e["catalogMatch"] is not None]
+    assert value["{minMatchedStations}"].status == story.STATUS_VALUE
+    assert value["{minMatchedStations}"].text == f"{min(matched):g}"
+    filled = (tmp_path / "out" / story.PITCH_FILLED_MD).read_text(encoding="utf-8")
+    dz = expected["{heldOutMedianAbsDzM}"]
+    assert f"the median depth difference from the catalog is {dz} m" in filled
+
+
+@needs_showcase
+def test_min_matched_stations_needs_the_worst_of_matched_bar(
+    story: ModuleType, tmp_path: Path
+) -> None:
+    """A Tier B quantile other than zero makes the nStations bar something other than the worst
+    recovered public event, so the clause is marked for omission instead of misquoted."""
+    bundle = _meta_validation_bundle(tmp_path, SHOWCASE_BUNDLE)
+    meta = json.loads((bundle / "meta.json").read_text(encoding="utf-8"))
+    meta["run"]["tiering"]["thresholds"]["quantiles"]["B"] = 0.1
+    (bundle / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    rows, _ = story.render(bundle, tmp_path / "out")
+    row = {r.name: r for r in rows if r.doc == "pitch-and-qa.md"}["{minMatchedStations}"]
+    assert row.status == story.STATUS_CONDITION and "omit this clause" in row.text
+
+
+@needs_showcase
+def test_baseline_fields_need_both_full_rows(story: ModuleType, tmp_path: Path) -> None:
+    """The STA/LTA numbers are quoted only next to PhaseNet's: with the STA/LTA full row gone,
+    every baseline placeholder is marked for omission."""
+    bundle = _meta_validation_bundle(tmp_path, SHOWCASE_BUNDLE)
+    validation = json.loads((bundle / "validation.json").read_text(encoding="utf-8"))
+    validation["baseline"] = [
+        row
+        for row in validation["baseline"]
+        if not (row["method"] == "stalta" and row["associationProfile"] == "full")
+    ]
+    (bundle / "validation.json").write_text(json.dumps(validation), encoding="utf-8")
+    rows, _ = story.render(bundle, tmp_path / "out")
+    by_name = {r.name: r for r in rows if r.doc == "pitch-and-qa.md"}
+    for token in ("{staltaMedianRmsS}", "{phasenetMedianRmsS}", "{staltaMedianStations}"):
+        assert by_name[token].status == story.STATUS_CONDITION, token
+    # The card's own "A of N candidates" denominator (main's resolver) needs only the STA/LTA row.
+    assert by_name["{staltaCandidates}"].status == story.STATUS_NOT_AVAILABLE
 
 
 def test_missing_validation_renders_not_available(story: ModuleType, tmp_path: Path) -> None:
