@@ -22,15 +22,15 @@ Every stage is a function `run(ctx: RunContext) -> None` that reads and writes f
 | --- | --- | --- | --- | --- |
 | inventory | H1 | `hq.ingest.inventory` | config | `stations.parquet` (+ StationXML in `data/cache/stationxml/`) |
 | catalog | H2 | `hq.match.catalog` | config | `catalog.parquet`, `catalog.quakeml` |
-| download | H1 | `hq.ingest.download` | `stations.parquet` | `gaps.parquet` (+ mseed in `data/cache/mseed/`) |
-| pick | H1 | `hq.pick.run` | cache, stations | `picks.parquet`, `known/` (known-event windows, record sections) |
-| baseline | H1 | `hq.baseline.run` | cache, stations | `picks_stalta.parquet`, `baseline_sweep.parquet` |
+| download | H1 | `hq.ingest.download` | `stations.parquet` | `gaps.parquet`, `download_report.json` (per-station coverage; the exporter reads it for stations that served nothing) (+ mseed in `data/cache/mseed/`) |
+| pick | H1 | `hq.pick.run` | cache, stations | `picks.parquet`, `pick_report.json`, `known/` (known-event windows, record sections) |
+| baseline | H1 | `hq.baseline.run` | cache, stations; for scoring the sweep: `picks.parquet`, `catalog.parquet`, `run.json` tiering (the run's bars, so scoring is a CLI rerun on a tiered run) | `picks_stalta.parquet`, `baseline_sweep.parquet`, `baseline_reference.json` (when scored) |
 | associate | H2 | `hq.associate.run` | picks, stations | `assoc_events.parquet`, `assoc_picks.parquet` |
 | locate | H2 | `hq.locate.run` | assoc, picks, stations, grids (+ `matches.parquet`, `catalog.parquet` on the statics pass) | `events_located.parquet`, `arrivals.parquet`, `statics.parquet`, `synthetic.json`, `locate_flags.parquet` (H2-internal), `diagnostics.md` |
 | match | H2 | `hq.match.run` | located events, catalog | `matches.parquet`, `match_sensitivity.parquet` |
 | tier | H2 | `hq.tier.run` | located events, matches | `events.parquet` (final `SeismicEvent` rows), `sweep.parquet` (association sweep rerun through locate, match and tier) |
 | magnitude | H2 | `hq.magnitude.run` | events, cache | updates `events.parquet`, `magnitude.json` |
-| validate | H4 | `hq.validate` | everything above | `validation.json` (+ sidecars `null_test.json`, `baseline.json`, `gr.json`, `validation_notes.json`) |
+| validate | H4 | `hq.validate` | everything above (`statics.parquet` goes into every rerun's `locate`, `run.json` tiering into every rerun's `assign_tiers`) | `validation.json` (+ sidecars `null_test.json`, `baseline.json`, `gr.json`, `validation_notes.json`) |
 | export | H4 | `hq.export` | everything above + cache | `apps/web/public/data/<mode>/` |
 
 Two notes on the runner (`hq/runs.py`):

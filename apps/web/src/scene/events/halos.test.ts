@@ -63,6 +63,8 @@ describe("buildHaloInstances", () => {
     expect(halos.count).toBe(2);
     expect(halos.tierAWithoutHalo).toBe(1); // "c" has no hErrM
     expect(Array.from(halos.eventIndex)).toEqual([0, 3]);
+    // Each halo carries its event's origin time, so time mode hides it with the event (WEB-06).
+    expect(Array.from(halos.times)).toEqual([cand.times[0], cand.times[3]]);
     const m0 = halos.matrices.slice(0, 16);
     expect(m0[0]).toBeCloseTo(0.12, 6);
     expect(m0[5]).toBeCloseTo(0.3, 6);

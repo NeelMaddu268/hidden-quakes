@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHaloUniforms, HALO_FRAGMENT_SHADER, HALO_VERTEX_SHADER } from "./haloMaterial";
+import { TIME_ALL } from "../time/clock";
 
 describe("halo shaders", () => {
   it("declare exactly the uniforms the factory provides", () => {
@@ -18,5 +19,13 @@ describe("halo shaders", () => {
     const u = createHaloUniforms("#FFD08A");
     expect(u.uOpacity.value).toBe(0);
     expect(u.uRevealElapsed.value).toBeLessThan(0);
+  });
+});
+
+describe("time mode (WEB-06)", () => {
+  it("shows a halo only once time mode's now reaches its event, and defaults to off", () => {
+    expect(HALO_VERTEX_SHADER).toContain("attribute float aTime;");
+    expect(HALO_VERTEX_SHADER).toContain("step(aTime, uTimeNow)");
+    expect(createHaloUniforms("#FFD08A").uTimeNow.value).toBe(TIME_ALL);
   });
 });

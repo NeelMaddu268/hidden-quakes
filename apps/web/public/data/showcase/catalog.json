@@ -1,0 +1,776 @@
+[
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.53,
+    "elevM": -2530.0,
+    "enu": {
+      "e": 164.44077821471728,
+      "n": 218.65075360052288,
+      "u": -4157.7
+    },
+    "id": "uu80155441",
+    "latitude": 38.512,
+    "longitude": -112.89816666667,
+    "mag": 1.69,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000023",
+    "source": "UU via USGS ComCat",
+    "t": 1789007653.48
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.49,
+    "elevM": -2490.0,
+    "enu": {
+      "e": 83.76016816077754,
+      "n": -168.26396577153355,
+      "u": -4117.7
+    },
+    "id": "uu80155451",
+    "latitude": 38.5085,
+    "longitude": -112.899,
+    "mag": 1.11,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000034",
+    "source": "UU via USGS ComCat",
+    "t": 1789012055.34
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.14,
+    "elevM": -2140.0,
+    "enu": {
+      "e": 95.62071498809382,
+      "n": -298.035435795784,
+      "u": -3767.7
+    },
+    "id": "uu80155461",
+    "latitude": 38.507333333333,
+    "longitude": -112.89883333333,
+    "mag": 1.23,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000056",
+    "source": "UU via USGS ComCat",
+    "t": 1789016620.34
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.22,
+    "elevM": -2220.0,
+    "enu": {
+      "e": -227.9334985045134,
+      "n": 226.75758487731218,
+      "u": -3847.7
+    },
+    "id": "uu80155481",
+    "latitude": 38.512,
+    "longitude": -112.90266666667,
+    "mag": 1.85,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000086",
+    "source": "UU via USGS ComCat",
+    "t": 1789022032.25
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.43,
+    "elevM": -2430.0,
+    "enu": {
+      "e": 205.74838856526185,
+      "n": 106.77559758536518,
+      "u": -4057.7
+    },
+    "id": "uu80155491",
+    "latitude": 38.511,
+    "longitude": -112.89766666667,
+    "mag": 1.54,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000089",
+    "source": "UU via USGS ComCat",
+    "t": 1789022214.0
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.47,
+    "elevM": -2470.0,
+    "enu": {
+      "e": 101.72946917475201,
+      "n": -2.1006300719454885,
+      "u": -4097.7
+    },
+    "id": "uu80155496",
+    "latitude": 38.51,
+    "longitude": -112.89883333333,
+    "mag": 0.88,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000095",
+    "source": "UU via USGS ComCat",
+    "t": 1789022780.59
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.68,
+    "elevM": -2680.0,
+    "enu": {
+      "e": 144.94610117631964,
+      "n": -21.496432439424098,
+      "u": -4307.7
+    },
+    "id": "uu80155501",
+    "latitude": 38.509833333333,
+    "longitude": -112.89833333333,
+    "mag": 0.85,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000102",
+    "source": "UU via USGS ComCat",
+    "t": 1789023657.31
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.59,
+    "elevM": -2590.0,
+    "enu": {
+      "e": 100.96585522568785,
+      "n": -39.09248732589185,
+      "u": -4217.7
+    },
+    "id": "uu80155541",
+    "latitude": 38.509666666667,
+    "longitude": -112.89883333333,
+    "mag": 1.36,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000147",
+    "source": "UU via USGS ComCat",
+    "t": 1789028640.66
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.71,
+    "elevM": -2710.0,
+    "enu": {
+      "e": 82.21123370912392,
+      "n": 460.89781316928566,
+      "u": -4337.7
+    },
+    "id": "uu80155551",
+    "latitude": 38.514166666667,
+    "longitude": -112.89916666667,
+    "mag": 1.24,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000152",
+    "source": "UU via USGS ComCat",
+    "t": 1789029347.4
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 4.06,
+    "elevM": -4060.0,
+    "enu": {
+      "e": 251.38168543833308,
+      "n": -1911.0760380327702,
+      "u": -5687.7
+    },
+    "id": "uu80155571",
+    "latitude": 38.492833333333,
+    "longitude": -112.89666666667,
+    "mag": 2.14,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000194",
+    "source": "UU via USGS ComCat",
+    "t": 1789032476.88
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.13,
+    "elevM": -2130.0,
+    "enu": {
+      "e": -19.117602513171732,
+      "n": -221.65095891989768,
+      "u": -3757.7
+    },
+    "id": "uu80155581",
+    "latitude": 38.508,
+    "longitude": -112.90016666667,
+    "mag": 1.76,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000214",
+    "source": "UU via USGS ComCat",
+    "t": 1789033696.63
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.58,
+    "elevM": -2580.0,
+    "enu": {
+      "e": 214.1763700489537,
+      "n": -189.45900403894484,
+      "u": -4207.7
+    },
+    "id": "uu80155591",
+    "latitude": 38.508333333333,
+    "longitude": -112.8975,
+    "mag": 0.91,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000264",
+    "source": "UU via USGS ComCat",
+    "t": 1789036716.45
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 1.59,
+    "elevM": -1590.0,
+    "enu": {
+      "e": -231.3690098078805,
+      "n": 763.4407938271761,
+      "u": -3217.7
+    },
+    "id": "uu80155596",
+    "latitude": 38.516833333333,
+    "longitude": -112.90283333333,
+    "mag": 1.5,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000267",
+    "source": "UU via USGS ComCat",
+    "t": 1789036854.77
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.3,
+    "elevM": -2300.0,
+    "enu": {
+      "e": -2.2922338857897557,
+      "n": -110.97558321431279,
+      "u": -3927.7
+    },
+    "id": "uu80155601",
+    "latitude": 38.509,
+    "longitude": -112.9,
+    "mag": 1.75,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000269",
+    "source": "UU via USGS ComCat",
+    "t": 1789037027.1
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.41,
+    "elevM": -2410.0,
+    "enu": {
+      "e": -6.4945311830961145,
+      "n": -314.43077513575554,
+      "u": -4037.7
+    },
+    "id": "uu80155626",
+    "latitude": 38.507166666667,
+    "longitude": -112.9,
+    "mag": 1.12,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000301",
+    "source": "UU via USGS ComCat",
+    "t": 1789039650.11
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.3,
+    "elevM": -2300.0,
+    "enu": {
+      "e": 156.8072380592348,
+      "n": -151.26781513914466,
+      "u": -3927.7
+    },
+    "id": "uu80155636",
+    "latitude": 38.508666666667,
+    "longitude": -112.89816666667,
+    "mag": 1.65,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000333",
+    "source": "UU via USGS ComCat",
+    "t": 1789043929.69
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.05,
+    "elevM": -2050.0,
+    "enu": {
+      "e": -43.60737612727098,
+      "n": 704.046754556708,
+      "u": -3677.7
+    },
+    "id": "uu80155641",
+    "latitude": 38.516333333333,
+    "longitude": -112.90066666667,
+    "mag": 1.82,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000338",
+    "source": "UU via USGS ComCat",
+    "t": 1789044482.43
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.74,
+    "elevM": -2740.0,
+    "enu": {
+      "e": 147.23636449844344,
+      "n": 89.47914061695337,
+      "u": -4367.7
+    },
+    "id": "uu80155661",
+    "latitude": 38.510833333333,
+    "longitude": -112.89833333333,
+    "mag": 1.16,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000372",
+    "source": "UU via USGS ComCat",
+    "t": 1789049991.49
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.47,
+    "elevM": -2470.0,
+    "enu": {
+      "e": 131.94025875540683,
+      "n": 52.787214171141386,
+      "u": -4097.7
+    },
+    "id": "uu80155666",
+    "latitude": 38.5105,
+    "longitude": -112.8985,
+    "mag": 1.31,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000387",
+    "source": "UU via USGS ComCat",
+    "t": 1789050850.04
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.23,
+    "elevM": -2230.0,
+    "enu": {
+      "e": 169.37818431621417,
+      "n": 1162.2438859269023,
+      "u": -3857.7
+    },
+    "id": "uu80155671",
+    "latitude": 38.5205,
+    "longitude": -112.89833333333,
+    "mag": 0.88,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000392",
+    "source": "UU via USGS ComCat",
+    "t": 1789051332.68
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.83,
+    "elevM": -2830.0,
+    "enu": {
+      "e": 80.70557893556543,
+      "n": -316.23135301470757,
+      "u": -4457.7
+    },
+    "id": "uu80155676",
+    "latitude": 38.507166666667,
+    "longitude": -112.899,
+    "mag": 1.35,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000402",
+    "source": "UU via USGS ComCat",
+    "t": 1789052560.71
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.38,
+    "elevM": -2380.0,
+    "enu": {
+      "e": 113.58985917916289,
+      "n": -131.8721041381359,
+      "u": -4007.7
+    },
+    "id": "uu80155681",
+    "latitude": 38.508833333333,
+    "longitude": -112.89866666667,
+    "mag": 1.18,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000411",
+    "source": "UU via USGS ComCat",
+    "t": 1789053477.28
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.75,
+    "elevM": -2750.0,
+    "enu": {
+      "e": -24.48014033853542,
+      "n": 222.5516441212967,
+      "u": -4377.7
+    },
+    "id": "uu80155706",
+    "latitude": 38.512,
+    "longitude": -112.90033333333,
+    "mag": 1.4,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000445",
+    "source": "UU via USGS ComCat",
+    "t": 1789056758.54
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 1.95,
+    "elevM": -1950.0,
+    "enu": {
+      "e": 63.117460142239,
+      "n": -463.89868309814483,
+      "u": -3577.7
+    },
+    "id": "uu80155711",
+    "latitude": 38.505833333333,
+    "longitude": -112.89916666667,
+    "mag": 1.3,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000446",
+    "source": "UU via USGS ComCat",
+    "t": 1789057069.31
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.31,
+    "elevM": -2310.0,
+    "enu": {
+      "e": 96.76607899100054,
+      "n": -242.54766889475286,
+      "u": -3937.7
+    },
+    "id": "uu80155716",
+    "latitude": 38.507833333333,
+    "longitude": -112.89883333333,
+    "mag": 1.27,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000458",
+    "source": "UU via USGS ComCat",
+    "t": 1789058043.21
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.23,
+    "elevM": -2230.0,
+    "enu": {
+      "e": -21.791987132106442,
+      "n": -351.1224344233051,
+      "u": -3857.7
+    },
+    "id": "uu80155721",
+    "latitude": 38.506833333333,
+    "longitude": -112.90016666667,
+    "mag": 1.16,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000460",
+    "source": "UU via USGS ComCat",
+    "t": 1789058166.42
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.39,
+    "elevM": -2390.0,
+    "enu": {
+      "e": 124.68734780594241,
+      "n": -298.63536565285176,
+      "u": -4017.7
+    },
+    "id": "uu80155726",
+    "latitude": 38.507333333333,
+    "longitude": -112.8985,
+    "mag": 1.42,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000464",
+    "source": "UU via USGS ComCat",
+    "t": 1789058458.34
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.75,
+    "elevM": -2750.0,
+    "enu": {
+      "e": 47.40203678270336,
+      "n": 887.2049241447821,
+      "u": -4377.7
+    },
+    "id": "uu80155731",
+    "latitude": 38.518,
+    "longitude": -112.89966666667,
+    "mag": 1.35,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000469",
+    "source": "UU via USGS ComCat",
+    "t": 1789059136.75
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.29,
+    "elevM": -2290.0,
+    "enu": {
+      "e": 29.05016461753985,
+      "n": 702.5455687334761,
+      "u": -3917.7
+    },
+    "id": "uu80155741",
+    "latitude": 38.516333333333,
+    "longitude": -112.89983333333,
+    "mag": 1.93,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000480",
+    "source": "UU via USGS ComCat",
+    "t": 1789059970.39
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.46,
+    "elevM": -2460.0,
+    "enu": {
+      "e": 120.8436477923533,
+      "n": 219.55056373402476,
+      "u": -4087.7
+    },
+    "id": "uu80155756",
+    "latitude": 38.512,
+    "longitude": -112.89866666667,
+    "mag": 1.0,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000512",
+    "source": "UU via USGS ComCat",
+    "t": 1789062158.06
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.65,
+    "elevM": -2650.0,
+    "enu": {
+      "e": 95.97942463413347,
+      "n": 423.6058840928599,
+      "u": -4277.7
+    },
+    "id": "uu80155761",
+    "latitude": 38.513833333333,
+    "longitude": -112.899,
+    "mag": 0.9,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000516",
+    "source": "UU via USGS ComCat",
+    "t": 1789062456.08
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.39,
+    "elevM": -2390.0,
+    "enu": {
+      "e": 193.88715548987966,
+      "n": 236.54694455768913,
+      "u": -4017.7
+    },
+    "id": "uu80155776",
+    "latitude": 38.512166666667,
+    "longitude": -112.89783333333,
+    "mag": 1.17,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000522",
+    "source": "UU via USGS ComCat",
+    "t": 1789062833.01
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 1.43,
+    "elevM": -1430.0,
+    "enu": {
+      "e": -4.980424684705213,
+      "n": 462.6986510846764,
+      "u": -3057.7
+    },
+    "id": "uu80155786",
+    "latitude": 38.514166666667,
+    "longitude": -112.90016666667,
+    "mag": 1.39,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000530",
+    "source": "UU via USGS ComCat",
+    "t": 1789063855.85
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.52,
+    "elevM": -2520.0,
+    "enu": {
+      "e": -72.28809547884157,
+      "n": 723.1433658897877,
+      "u": -4147.7
+    },
+    "id": "uu80155791",
+    "latitude": 38.5165,
+    "longitude": -112.901,
+    "mag": 1.19,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000531",
+    "source": "UU via USGS ComCat",
+    "t": 1789063915.02
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.51,
+    "elevM": -2510.0,
+    "enu": {
+      "e": -22.18735200219089,
+      "n": 333.5272829402238,
+      "u": -4137.7
+    },
+    "id": "uu80155811",
+    "latitude": 38.513,
+    "longitude": -112.90033333333,
+    "mag": 2.17,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000548",
+    "source": "UU via USGS ComCat",
+    "t": 1789065489.0
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 1.8,
+    "elevM": -1800.0,
+    "enu": {
+      "e": -148.38762560585747,
+      "n": 558.1819028388709,
+      "u": -3427.7
+    },
+    "id": "uu80155816",
+    "latitude": 38.515,
+    "longitude": -112.90183333333,
+    "mag": 2.05,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000549",
+    "source": "UU via USGS ComCat",
+    "t": 1789065595.91
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.39,
+    "elevM": -2390.0,
+    "enu": {
+      "e": 94.07007093675202,
+      "n": 331.126188358292,
+      "u": -4017.7
+    },
+    "id": "uu80155821",
+    "latitude": 38.513,
+    "longitude": -112.899,
+    "mag": 1.24,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000555",
+    "source": "UU via USGS ComCat",
+    "t": 1789066334.8
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.58,
+    "elevM": -2580.0,
+    "enu": {
+      "e": 80.66620601841714,
+      "n": 1090.0601891148835,
+      "u": -4207.7
+    },
+    "id": "uu80155856",
+    "latitude": 38.519833333333,
+    "longitude": -112.89933333333,
+    "mag": 1.11,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000576",
+    "source": "UU via USGS ComCat",
+    "t": 1789069221.13
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.2,
+    "elevM": -2200.0,
+    "enu": {
+      "e": 25.217913999804296,
+      "n": 1220.7325319238007,
+      "u": -3827.7
+    },
+    "id": "uu80155866",
+    "latitude": 38.521,
+    "longitude": -112.9,
+    "mag": 1.17,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000589",
+    "source": "UU via USGS ComCat",
+    "t": 1789071300.87
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.84,
+    "elevM": -2840.0,
+    "enu": {
+      "e": 75.31845639873063,
+      "n": 831.1168224159628,
+      "u": -4467.7
+    },
+    "id": "uu80155876",
+    "latitude": 38.5175,
+    "longitude": -112.89933333333,
+    "mag": 1.17,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000599",
+    "source": "UU via USGS ComCat",
+    "t": 1789073712.79
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 3.31,
+    "elevM": -3310.0,
+    "enu": {
+      "e": 349.50589928985573,
+      "n": 732.940061878413,
+      "u": -4937.7
+    },
+    "id": "uu80155881",
+    "latitude": 38.516666666667,
+    "longitude": -112.89616666667,
+    "mag": 1.14,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000600",
+    "source": "UU via USGS ComCat",
+    "t": 1789073738.18
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.78,
+    "elevM": -2780.0,
+    "enu": {
+      "e": -20.667186430306174,
+      "n": 1110.657500764355,
+      "u": -4407.7
+    },
+    "id": "uu80155911",
+    "latitude": 38.52,
+    "longitude": -112.9005,
+    "mag": 1.19,
+    "magType": "md",
+    "matchedEventId": "hq-20260926-0210-a04c611-000624",
+    "source": "UU via USGS ComCat",
+    "t": 1789079008.74
+  },
+  {
+    "depthDatum": "km below sea level (UUSS catalog depth datum); source: https://quake.utah.edu/resources/catalog-details/",
+    "depthKm": 2.74,
+    "elevM": -2740.0,
+    "enu": {
+      "e": -38.630359825911,
+      "n": 241.34783620666713,
+      "u": -4367.7
+    },
+    "id": "uu80155936",
+    "latitude": 38.512166666667,
+    "longitude": -112.9005,
+    "mag": 1.34,
+    "magType": "ml",
+    "matchedEventId": "hq-20260926-0210-a04c611-000646",
+    "source": "UU via USGS ComCat",
+    "t": 1789083773.3
+  }
+]

@@ -55,6 +55,7 @@ export function PlanRingsLayer({ rings, drive }: { rings: PlanHaloInstances; dri
     >
       <planeGeometry args={[1, 1]}>
         <instancedBufferAttribute attach="attributes-aAppearAt" args={[rings.appearAt, 1]} />
+        <instancedBufferAttribute attach="attributes-aTime" args={[rings.times, 1]} />
       </planeGeometry>
       <shaderMaterial
         ref={material}

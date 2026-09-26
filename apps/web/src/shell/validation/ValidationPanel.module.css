@@ -33,9 +33,20 @@
 
 .row {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1.25rem;
+  gap: 0 1.25rem;
+}
+
+/* A qualifying line under a row: full width, quieter than the label, allowed to wrap. */
+.note {
+  flex-basis: 100%;
+  margin-top: 0.1rem;
+  font-size: 0.62rem;
+  line-height: 1.3;
+  color: var(--hq-text-dim);
+  white-space: normal;
 }
 
 .label {

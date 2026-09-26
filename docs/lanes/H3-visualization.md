@@ -452,3 +452,58 @@ Playwright harness is outside the repo):
 | "Not random dots" screenshot | **open**: needs the real showcase bundle (REQ-H3-8) |
 
 `make check`: seismic 686 passed / 2 skipped, API 26, web 523, tokens 12, copy clean.
+
+### WEB-06 checkpoint · 2026-09-26 10:30 EDT
+
+Time mode (branch `agent/WEB-06`, PR into feat/web "Closes #28"). Semantics follow docs/02 §6, README ("T turns
+on the time scrubber, which replays the window") and docs/01 (the scrubber "appears after the reveal"):
+
+- **Replay.** Time mode takes effect only once the reveal has finished; a T on the pre-reveal frame changes nothing (the
+  start frame stays pixel-identical). When it takes effect, `TimeDriver` (priority −2) sets `tNow = windowStart` and
+  plays at `LOOK.time.playbackRate` (1 h/s: a day in 24 s), stopping at `windowEnd`. T again, or R, shows every event.
+- **Gating everywhere.** An event is shown when `t <= tNow`, in every place that draws or picks events: the event shader
+  (`aTime` / `uTimeNow`), the Tier A halos, the plan rings, the depth section (draw and click) and the picker. They all
+  read one value, `sceneFx.timeNowRel` (seconds since windowStart; `TIME_ALL` when off). Events from the last
+  `glowWindowS` (30 min of data time) glow brighter and slightly larger in their own hue (no whitening, so recent amber
+  never reads as a white public event).
+- **Scrubber** (`scene/time/TimeScrubber`, H4 mounts it: REQ-H3-10). Bottom band between the validation card and the
+  corner notes (`time/layout.ts`; hidden while the open drawer leaves no room). Per-10-minute histogram, recovered above
+  the baseline and the public regional catalog below, one shared scale, future bins dimmed, playhead; UTC clock;
+  play/pause; "N public · M recovered" on screen so far (Tier A under STRICT). Drag or click to scrub (pauses); with the
+  strip focused, arrows step a bin (Shift: an hour), Home/End. Every number is counted from the bundle.
+
+Acceptance (`work/web06-time-check.mjs`, headed Chrome 153 and WebKit 26.5; a local-only page.tsx swap stands in for
+REQ-H3-10): at 1280×720 and 3840×2160, T before the reveal leaves the start frame unchanged. After the reveal, T shows
+0 events at windowStart (0 amber / 0 white pixels) and all of them at windowEnd; counts match the bundle at 12:00 and
+under STRICT; playback measured 3,589–3,605 data-s/s and stops at windowEnd; the depth section is empty at windowStart
+and full at windowEnd; the scrubber clears the shell and the drawer; R returns the exact start frame. With 2,000 events,
+playback holds 120 fps (Chrome, 0 frames > 20 ms) and WebKit's 60 Hz cap (0 frames > 33 ms). The production page
+without the scrubber mounted replays correctly with no errors. Time mode off is inert: the 10-run determinism hashes
+equal WEB-08's in both engines. `make check`: seismic 778 / 3 skipped, API 26, web 575, tokens 12, copy clean.
+
+### WEB-08 real-data checkpoint · 2026-09-26 11:05 EDT
+
+The real showcase run (20260926-0210-a04c611, republished 12:07Z with events, arrivals and matches) exports on this
+laptop up to evidence, which needs H1's waveform cache (REQ-H3-9: `CacheMissError`, nothing written). To QA the scene on
+real data before the cache arrives, H4's exporter was run unchanged with a no-waveform source into scratch (a
+local-only preview, never committed, never presented as evidence). Its shape is a compact near-vertical column several
+km below the site, and it exposed four defects the mock never did, fixed on `agent/WEB-08` (#29 stays open):
+
+- **Revealed frame.** The side preset framed only the event cloud, so the surface, the ruler's 0 km and the wellhead
+  labels fell off the top. It now targets the middle of the column from the surface to the deepest framed event and
+  frames the surface.
+- **Depth section.** It fitted the whole population including stations (tens of km of grid east), so the structure was a
+  few pixels wide. `sectionStructureFit` now frames Tier A and B (trimmed like the plan camera) from the surface down at
+  true scale. Drawing is clipped to the plot, and the header states how many events lie outside the frame.
+- **Label under the counters.** Feature labels now also keep clear of the shell's overlay blocks and H3's panels
+  (`overlayObstacles.ts`: read-only rects of the shell root's children and H3 panels, re-measured 4× a second).
+- **Ruler among Tier C.** `RULER_GAP_FRACTION` 0.12 → 0.3.
+
+Verified on the mock and the real preview, headed Chrome 153 + WebKit 26.5:
+- Strict preset label-overlap check passes.
+- 10-run determinism passes in both engines. The start frames are unchanged. The revealed frames have new baselines,
+  since the side view was reframed on purpose: Chrome `3c71a6c6…`, WebKit `f4f6a0ec…`.
+- Full plan acceptance passes, including 2,000 events at 120 fps (Chrome) and the 60 Hz cap (WebKit).
+- The real-bundle check passes (`PREVIEW_NO_EVIDENCE=1`: the evidence and E steps are skipped).
+
+`make check`: seismic 778 / 3 skipped, API 26, web 584, tokens 12, copy clean.

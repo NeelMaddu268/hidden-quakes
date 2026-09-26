@@ -1,0 +1,568 @@
+{
+  "baseline": [
+    {
+      "associationProfile": "full",
+      "candidates": 654,
+      "medianRmsS": 0.032722280023743916,
+      "medianStations": 11.0,
+      "method": "phasenet",
+      "recoveredPublic": 43,
+      "tiers": {
+        "A": 33,
+        "B": 170,
+        "C": 451
+      }
+    },
+    {
+      "associationProfile": "p_only",
+      "candidates": 596,
+      "medianRmsS": 0.02534385866871442,
+      "medianStations": 11.0,
+      "method": "phasenet",
+      "recoveredPublic": 43,
+      "tiers": {
+        "A": 0,
+        "B": 0,
+        "C": 596
+      }
+    },
+    {
+      "associationProfile": "full",
+      "candidates": 4120,
+      "medianRmsS": 0.04730423014911195,
+      "medianStations": 6.0,
+      "method": "stalta",
+      "recoveredPublic": 43,
+      "tiers": {
+        "A": 0,
+        "B": 4,
+        "C": 4116
+      }
+    },
+    {
+      "associationProfile": "p_only",
+      "candidates": 3556,
+      "medianRmsS": 0.06007967007970749,
+      "medianStations": 6.0,
+      "method": "stalta",
+      "recoveredPublic": 43,
+      "tiers": {
+        "A": 0,
+        "B": 0,
+        "C": 3556
+      }
+    }
+  ],
+  "gr": {
+    "bSigma": 0.036288169941025614,
+    "bValue": 0.8308788404152231,
+    "magBins": [
+      -0.8,
+      -0.7,
+      -0.6,
+      -0.5,
+      -0.4,
+      -0.3,
+      -0.2,
+      -0.1,
+      0.0,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1.0,
+      1.1,
+      1.2,
+      1.3,
+      1.4,
+      1.5,
+      1.6,
+      1.7,
+      1.8,
+      1.9,
+      2.0,
+      2.1,
+      2.2,
+      2.3,
+      2.4,
+      2.5,
+      2.6,
+      2.7,
+      2.8
+    ],
+    "mcPublic": null,
+    "mcRecovered": 0.1,
+    "publicCum": [
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      23,
+      22,
+      22,
+      21,
+      19,
+      17,
+      14,
+      12,
+      10,
+      8,
+      6,
+      4,
+      3,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "recoveredCum": [
+      654,
+      651,
+      646,
+      627,
+      590,
+      552,
+      504,
+      439,
+      375,
+      332,
+      291,
+      239,
+      198,
+      159,
+      133,
+      111,
+      87,
+      66,
+      46,
+      40,
+      36,
+      24,
+      19,
+      14,
+      12,
+      7,
+      5,
+      5,
+      3,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0
+    ]
+  },
+  "magnitude": {
+    "coefficients": {
+      "a": 1.0,
+      "b": 1.2295577646792426,
+      "c": 0.21305013029081588
+    },
+    "looMae": 0.10874507229008822,
+    "n": 23
+  },
+  "nullTest": {
+    "meanChanceEvents": 94.0,
+    "meanChanceStrict": 0.0,
+    "nShuffles": 20,
+    "shiftRangeS": 30.0,
+    "stdChanceEvents": 49.70333039778701
+  },
+  "sweep": [
+    {
+      "candidates": 1021,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 4,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 943,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 5,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 893,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 6,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 722,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 8,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 1013,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 4,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 938,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 5,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 892,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 6,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 724,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 8,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 982,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 4,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 921,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 5,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 879,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 6,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 720,
+      "params": {
+        "minPickProb": 0.1,
+        "minStations": 8,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 39
+    },
+    {
+      "candidates": 825,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 4,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 768,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 5,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 726,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 6,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 578,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 8,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 820,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 4,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 764,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 5,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 724,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 6,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 578,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 8,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 803,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 4,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 759,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 5,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 718,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 6,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 575,
+      "params": {
+        "minPickProb": 0.2,
+        "minStations": 8,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 35
+    },
+    {
+      "candidates": 690,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 4,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 656,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 5,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 618,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 6,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 492,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 8,
+        "nSPicks": 0
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 688,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 4,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 654,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 5,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 617,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 6,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 491,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 8,
+        "nSPicks": 1
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 681,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 4,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 653,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 5,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 615,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 6,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    },
+    {
+      "candidates": 490,
+      "params": {
+        "minPickProb": 0.3,
+        "minStations": 8,
+        "nSPicks": 2
+      },
+      "recoveredPublic": 43,
+      "tierA": 33
+    }
+  ],
+  "synthetic": {
+    "medianDepthBiasM": -5.4710117683989665,
+    "medianHErrM": 46.64416391093262,
+    "medianVErrM": 59.23312892146055,
+    "nEvents": 200,
+    "p90VErrM": 144.4055832357911,
+    "pickSigmaS": {
+      "P": 0.02,
+      "S": 0.04
+    }
+  }
+}

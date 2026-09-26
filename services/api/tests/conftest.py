@@ -53,11 +53,32 @@ MISSING_STAGE_OWNER = "H1 Signal"
 def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail any test that opens a network connection, even indirectly."""
 
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+
+    def is_local(address: Any) -> bool:
+        # asyncio's self-pipe is a loopback socket pair on Windows; AF_UNIX addresses are paths.
+        if isinstance(address, (str, bytes)):
+            return True
+        host = address[0] if isinstance(address, tuple) and address else address
+        return host in ("127.0.0.1", "::1", "localhost")
+
     def refuse(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("network access in an offline test")
 
-    monkeypatch.setattr(socket.socket, "connect", refuse)
-    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
+    def connect(self: socket.socket, address: Any) -> None:
+        if is_local(address):
+            return real_connect(self, address)
+        refuse()
+
+    def connect_ex(self: socket.socket, address: Any) -> int:
+        if is_local(address):
+            return real_connect_ex(self, address)
+        refuse()
+        return 1  # unreachable
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
     monkeypatch.setattr(socket, "create_connection", refuse)
     monkeypatch.setattr(socket, "getaddrinfo", refuse)
 

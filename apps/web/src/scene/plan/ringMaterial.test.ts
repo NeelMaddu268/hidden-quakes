@@ -2,6 +2,7 @@ import { InstancedMesh, Matrix4, PlaneGeometry, Quaternion, ShaderMaterial, Vect
 import { describe, expect, it } from "vitest";
 import { LOOK } from "../look";
 import { createRingUniforms, RING_FRAGMENT_SHADER, RING_VERTEX_SHADER, writeRingMatrices } from "./ringMaterial";
+import { TIME_ALL } from "../time/clock";
 
 describe("plan ring shaders", () => {
   it("declare exactly the uniforms the factory provides", () => {
@@ -46,5 +47,13 @@ describe("writeRingMatrices", () => {
 
   it("fails loudly when arrays disagree", () => {
     expect(() => writeRingMatrices(new Float32Array(3), new Float32Array(2), new Float32Array(32))).toThrow();
+  });
+});
+
+describe("time mode (WEB-06)", () => {
+  it("shows a ring only once time mode's now reaches its event, and defaults to off", () => {
+    expect(RING_VERTEX_SHADER).toContain("attribute float aTime;");
+    expect(RING_VERTEX_SHADER).toContain("step(aTime, uTimeNow)");
+    expect(createRingUniforms("#FFD08A").uTimeNow.value).toBe(TIME_ALL);
   });
 });
