@@ -452,3 +452,31 @@ Playwright harness is outside the repo):
 | "Not random dots" screenshot | **open**: needs the real showcase bundle (REQ-H3-8) |
 
 `make check`: seismic 686 passed / 2 skipped, API 26, web 523, tokens 12, copy clean.
+
+### WEB-06 checkpoint · 2026-09-26 10:30 EDT
+
+Time mode (branch `agent/WEB-06`, PR into feat/web "Closes #28"). Semantics follow docs/02 §6, README ("T turns
+on the time scrubber, which replays the window") and docs/01 (the scrubber "appears after the reveal"):
+
+- **Replay.** Time mode takes effect only once the reveal has finished; a T on the pre-reveal frame changes nothing (the
+  start frame stays pixel-identical). When it takes effect, `TimeDriver` (priority −2) sets `tNow = windowStart` and
+  plays at `LOOK.time.playbackRate` (1 h/s: a day in 24 s), stopping at `windowEnd`. T again, or R, shows every event.
+- **Gating everywhere.** An event is shown when `t <= tNow`, in every place that draws or picks events: the event shader
+  (`aTime` / `uTimeNow`), the Tier A halos, the plan rings, the depth section (draw and click) and the picker. They all
+  read one value, `sceneFx.timeNowRel` (seconds since windowStart; `TIME_ALL` when off). Events from the last
+  `glowWindowS` (30 min of data time) glow brighter and slightly larger in their own hue (no whitening, so recent amber
+  never reads as a white public event).
+- **Scrubber** (`scene/time/TimeScrubber`, H4 mounts it: REQ-H3-10). Bottom band between the validation card and the
+  corner notes (`time/layout.ts`; hidden while the open drawer leaves no room). Per-10-minute histogram, recovered above
+  the baseline and the public regional catalog below, one shared scale, future bins dimmed, playhead; UTC clock;
+  play/pause; "N public · M recovered" on screen so far (Tier A under STRICT). Drag or click to scrub (pauses); with the
+  strip focused, arrows step a bin (Shift: an hour), Home/End. Every number is counted from the bundle.
+
+Acceptance (`work/web06-time-check.mjs`, headed Chrome 153 and WebKit 26.5; a local-only page.tsx swap stands in for
+REQ-H3-10): at 1280×720 and 3840×2160, T before the reveal leaves the start frame unchanged. After the reveal, T shows
+0 events at windowStart (0 amber / 0 white pixels) and all of them at windowEnd; counts match the bundle at 12:00 and
+under STRICT; playback measured 3,589–3,605 data-s/s and stops at windowEnd; the depth section is empty at windowStart
+and full at windowEnd; the scrubber clears the shell and the drawer; R returns the exact start frame. With 2,000 events,
+playback holds 120 fps (Chrome, 0 frames > 20 ms) and WebKit's 60 Hz cap (0 frames > 33 ms). The production page
+without the scrubber mounted replays correctly with no errors. Time mode off is inert: the 10-run determinism hashes
+equal WEB-08's in both engines. `make check`: seismic 778 / 3 skipped, API 26, web 575, tokens 12, copy clean.
