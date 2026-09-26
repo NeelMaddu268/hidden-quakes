@@ -118,7 +118,8 @@ class PreprocessConfig(_Section):
     targetRateHz: float = Field(gt=0.0)
     rateRelTol: float = Field(gt=0.0, lt=1e-3)
     maxUpsampleFactor: int = Field(ge=1)
-    minSegmentS: float = Field(gt=0.0)
+    minSegmentModelS: float = Field(gt=0.0)  # model seconds: real seconds x TimeMap factor
+    joinMisalignmentSamples: float = Field(gt=0.0, lt=0.5)  # fraction of one input sample
     detrend: Literal["linear", "constant", "simple"]
     taper: TaperConfig
     antiAlias: AntiAliasConfig
