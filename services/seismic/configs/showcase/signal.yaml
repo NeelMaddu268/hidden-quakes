@@ -64,6 +64,7 @@ stations:
     backoffS: 2.0
     cacheFile: availability_mustang.json   # raw replies; delete it to re-query
     onMissing: used             # no measurement (MUSTANG lag): coverage null, usedInRun true
+    onMissingNoProbeData: unused  # ...unless no rate probe got data either (full-day window)
   rateCheck:
     # StationXML can disagree with the data (an epoch saying 200 Hz that serves 100 Hz). The
     # profile follows the rate, so each chosen triplet is probed with a few seconds of dataselect.
@@ -154,6 +155,25 @@ preprocess:
       maxRateHz: 1000.0
       bandpassHz: [5.0, 400.0]   # real Hz; at 1000 Hz input the model sees 0.5-40 Hz
       bandpassCorners: 4
+  # Full-window picking reads the cache one chunk at a time (hq.preprocess.chunks), so PhaseNet
+  # (SEIS-06) and STA/LTA (SEIS-07) see identical preprocessed traces. [t0, t1) is tiled into keep
+  # intervals; each is read with overlapS extra on both sides, preprocessed on its own, and a
+  # picker keeps only the picks inside the keep interval (the rest belong to the neighbour).
+  chunks:
+    lengthS: 3600.0          # keep intervals sit on multiples of this since the epoch (hours),
+                             # clipped to the window, so a sub-window run reproduces the full run's chunks
+    overlapS: 60.0           # real s read before and after every keep interval, then discarded
+    minOverlapS: 32.0        # overlapS may not go below this: one full PhaseNet window (3001 samples = 30 s
+                             # of model time, at most 30 s real; with SeisBench's overlap 1500 and avg
+                             # stacking a sample is covered by windows that start up to 30 s earlier) +
+                             # taper (maxLengthS 1 s) + zero-phase filter settling (below 1 s for these
+                             # filters). The baseline adds its own run-time checks (STA/LTA warm-up and LTA
+                             # settling, gap-edge distance). SeisBench anchors its window grid at each trace
+                             # start, so PhaseNet's stacked probabilities near a keep boundary can still
+                             # differ between neighbouring chunks (a SEIS-06 concern, not fixed by overlap)
+    edgeProbeS: 1.0          # every read reaches this much further, so data that continues past a chunk
+                             # cut is told apart from a real data edge (gap, or data start/end). Must
+                             # exceed one input sample interval (checked per trace) and stay below overlapS
 
 # --- SEIS-04 / SEIS-06: PhaseNet picking -------------------------------------------------------------
 picker:
@@ -168,7 +188,8 @@ picker:
     borehole-B: instance
   pThreshold: 0.1                          # store everything >= 0.1; H2 filters later
   sThreshold: 0.1
-  gapEdgeS: 1.0                            # real s; picks this close to a block edge are dropped
+  gapEdgeS: 1.0                            # real s; picks this close to a block edge (A/B) or to a
+                                           # raw data edge (full window, hq.pick.run) are dropped
   batchSize: 256
   torchThreads: 4
   seed: 0
@@ -178,6 +199,21 @@ picker:
     blinding: [250, 250]                   # samples with no output at each block edge; sum <= overlap
     strict: true
     flexibleHorizontalComponents: false    # for_picking already renamed 1/2 to N/E
+  run:                                     # SEIS-06 full-window picking (hq.pick.run). The profile per
+                                           # station is stations.parquet's preprocessProfile: to adopt an
+                                           # A/B variant (known/ab.json), change stations.profiles and
+                                           # rerun the inventory; the stage warns while they disagree
+    workers: 6                             # station-parallel worker processes (spawned; each loads its
+                                           # model once per weights); 1 runs in-process. Does not change
+                                           # the picks: results are assembled in station order
+    torchThreadsPerWorker: 3               # torch intra-op threads per worker: 6 x 3 = 18 of 24 logical
+                                           # cores. picker.torchThreads stays the single-process A/B value.
+                                           # 1, 3 and 12 threads gave identical picks when checked; torch
+                                           # does not promise that in general
+    onCacheMiss: error                     # usedInRun station with no cached file at all: error (stop
+                                           # before any picking, listing every such station) | report
+                                           # (zero picks, reason in pick_report.json). Manifest-only
+                                           # (nodata) stations count as cached: "no data in window"
   ab:
     profileVariants:
       borehole-A: [borehole-B]
@@ -202,4 +238,93 @@ picker:
       minEventsPass: 3
 
 # --- SEIS-07: STA/LTA baseline -----------------------------------------------------------------------
-baseline: {}
+# Classical picks (ObsPy recursive_sta_lta + trigger_onset) on exactly the chunks PhaseNet sees
+# (hq.preprocess.chunks), kept or dropped by the same rule and the same distance, picker.gapEdgeS.
+# P from Z, S from the horizontals after a P. Windows are REAL seconds, so a time-stretched
+# borehole-B trace gets the same physical windows (factor x more model samples).
+baseline:
+  # STA/LTA has no calibrated confidence, so every trigger gets prob 1.0. The swept trigger thresholds
+  # below are the baseline's only tuning dimension: no association probability threshold ever drops a
+  # baseline pick. A baseline event's meanPickProb is therefore always 1.0 and says nothing about
+  # confidence; it is not comparable with a PhaseNet event's.
+  prob: 1.0
+  minSegmentMarginS: 5.0     # a segment shorter than warmupS + 5 s is skipped and counted (its first
+                             # warmupS can never trigger)
+  maxWorkers: 4              # stations in parallel (threads: the C STA/LTA, filters and mseed reads
+                             # release the GIL); 1 runs inline
+  settleLtaMultiple: 10.0    # preprocess.chunks.overlapS must hold 10 x ltaS of data ahead of a keep start
+                             # (ahead of keep start - maxSMinusPS for P). The recursive LTA forgets its zero
+                             # start as exp(-t / ltaS), so at a keep start the CF of two chunkings differs
+                             # by < exp(-10) = 5e-5 and picks do not depend on where the chunks are cut
+  # Causal Butterworth bandpass before the STA/LTA, per preprocessing profile, in real Hz (every
+  # profile needs one). It removes microseism and long-period drift, which would otherwise dominate the
+  # LTA of raw counts, and it keeps picks independent of the chunking (for_picking's linear detrend
+  # runs per chunk). This filter adds no precursor of its own (the zero-phase filters inside
+  # for_picking still do), but it delays onsets by its group delay, more at low frequency: for 2-30 Hz
+  # about 135 ms at 3 Hz, 47 ms at 5 Hz and 18-25 ms at 8-20 Hz, so S (lower frequency) is biased
+  # later than P. PhaseNet sees the whole preprocessed band: up to 40-50 Hz at the 100 Hz model rate,
+  # 5-400 Hz real for borehole-B.
+  prefilter:
+    surface-100: {lowHz: 2.0, highHz: 30.0, corners: 4}
+    surface-hi: {lowHz: 2.0, highHz: 30.0, corners: 4}
+    borehole-A: {lowHz: 2.0, highHz: 30.0, corners: 4}
+    borehole-B: {lowHz: 20.0, highHz: 300.0, corners: 4}   # the same 2-30 Hz on the model's time axis
+                                                            # (factor 10), where borehole-B's energy is
+  p:
+    components: Z
+    staS: 0.1                # lane doc range: STA 0.05-0.1 s, LTA 2-5 s at 100 Hz. Windows are not swept;
+    ltaS: 2.0                # the sweep varies the trigger thresholds only
+    warmupS: 6.0             # 3 x ltaS: the recursive LTA starts from zero at every segment start, so the
+                             # ratio is inflated there and the CF is zeroed for this long. After a gap this,
+                             # not picker.gapEdgeS, is the real exclusion; triggers suppressed inside it
+                             # (and not already within gapEdgeS of the edge) are counted, suppressedWarmupP/S
+  s:
+    components: NE           # borehole 1/2 arrive renamed to N/E by for_picking
+    staS: 0.1
+    ltaS: 4.0
+    warmupS: 12.0            # 3 x ltaS
+  # S, per P of the same station (a P within picker.gapEdgeS of a data edge does not count; S picks
+  # lost that way are counted): each horizontal is searched on its own, from the P onset. On one
+  # horizontal, a trigger that is on at any time within pHorizontalTolS of the P onset is the P's own
+  # energy there, never an S, and the search on that component starts once it has turned off. The
+  # component's S is its earliest other trigger starting in [tP + minSMinusPS, tP + maxSMinusPS]; the
+  # pick is the earlier of the two components'. The window spans hypocentral distances from a few
+  # hundred metres (borehole sensors above the seismicity) to the far side of the bbox. One S per P;
+  # two Ps choosing the same trigger give one S. Earliest rather than strongest: the first new
+  # horizontal energy is the onset, a later and stronger trigger is more often coda. Known limits of
+  # classical S picking: when P energy keeps a horizontal trigger on until the S arrives, that S has
+  # no onset of its own on that component, and an S less than about pHorizontalTolS after its P is
+  # taken for the P (docs/02 BaselineGain also scores a p_only association).
+  pHorizontalTolS: 0.3       # P reaches all three components at once, but an emergent P can cross a
+                             # horizontal's trigger level a few tenths of a second after the vertical: a
+                             # trigger on within 0.3 s of the P onset is the P. Evidence (SEIS-07 PR, run
+                             # preview-checkb): against PhaseNet's S picks on the known events it kept
+                             # every PhaseNet-consistent S of the plain earliest-onset rule, and on a live
+                             # hour it removed most S picks just after their P (P-coda re-triggers).
+                             # Joining both horizontals into one trigger list lost many consistent S picks
+  minSMinusPS: 0.15
+  maxSMinusPS: 5.0
+  # Thresholds of picks_stalta.parquet; must be a point of the sweep grid. Provisional: the lane doc
+  # asks for the sweep point with the most Tier A events, which needs H2's associate/locate/match/tier
+  # (not merged yet); until then baseline_sweep.parquet holds pick counts only. Once it is scored the
+  # stage logs the best Tier A point and warns while it differs from this one.
+  chosen:
+    pOn: 5.0
+    pOff: 1.5
+    sOn: 5.0
+    sOff: 1.5
+  # Grid pOn x sOn x offLevels; each off level serves both phases at that point. The characteristic
+  # function is computed once per segment; every grid point only re-runs trigger_onset. Off is an
+  # absolute level, not a fraction of on: with a fixed off a higher on can only remove a trigger or
+  # move its onset later (each run of the CF above off holds at most one trigger), so the P count
+  # falls or stays as pOn rises, except where a later onset leaves a data-edge zone or crosses the
+  # run window start. An off tied to on could split one trigger into two. The S count is not
+  # strictly monotone either: a later S onset, or a later P, can move a trigger into an S window.
+  sweep:
+    pOn: [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
+    sOn: [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
+    offLevels: [1.0, 1.5, 2.0]
+    scoreWithH2: true        # score every grid point through H2's associate -> locate -> match ->
+                             # assign_tiers: one full H2 run per point (147 with this grid), logged per
+                             # point. Set false, or shrink the grid, if that is too slow. Until H2's
+                             # modules are merged the stage warns and writes null scores either way
