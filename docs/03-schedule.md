@@ -16,7 +16,7 @@ We have ~36 hours and strong agents, so code volume isn't the constraint. Two th
 | **E · end to end** | 8:00 AM Sat | Showcase mode on the public URL; drawer opens real evidence | H4 |
 | **Depth call** | 10:00 AM Sat | Depth gate passes, or the plan-view hero becomes permanent | H2 |
 | **D · demo** | 2:00 PM Sat | Full 2-minute flow works; an outsider explains it in 20 seconds | Everyone |
-| **P · pipeline freeze** | 9:00 PM Sat (moved from 6 PM at 4:50 PM Sat: H2 is testing LOC-10; the 6 PM team meeting still happens) | Final showcase `runId` exported and deployed | H2 + H4 |
+| **P · pipeline freeze** | Passed early, about 6:45 PM Sat (H2's call: run `20260926-0210-a04c611` is final and no v4 follows; the 9 PM slot from the 4:50 PM move is void) | Final showcase `runId` exported and deployed | H2 + H4 |
 | **F · feature freeze** | 12:00 AM Sun | Nothing new after this | H4 |
 
 ### Check A and Check B (10:00 PM)
@@ -52,7 +52,7 @@ We have ~36 hours and strong agents, so code volume isn't the constraint. Two th
 | **2 PM** | **18** | **Gate D; outsider test at 4 PM** | | | |
 | 2–6 PM | 18–22 | Lane hardening pass | Final run, thresholds locked | Polish from outsider test | Pitch v1, API-05 |
 | **6 PM** | **22** | **Integration meeting 6** (Gate P moved to 9 PM) | | | |
-| **9 PM** | **25** | **Gate P: pipeline freeze** | | | |
+| **~6:45 PM** | **23** | **Gate P: data freeze, called early by H2** (run `20260926-0210-a04c611` final; no v4) | | | |
 | 6 PM–12 AM | 22–28 | Everyone: Devpost screenshots, video, Live if stable, language audit, second outsider test at 10 PM | | | |
 | **12 AM Sun** | **28** | **Gate F: feature freeze** | | | |
 | 12–4 AM | 28–32 | Everyone: five rehearsals, hostile Q&A drills, Devpost, README, multi-browser + Wi-Fi-off tests; pairs sleep in 3-hour shifts | | | |
@@ -74,7 +74,7 @@ Before the first meeting, foundations land on `main` directly so nobody waits: `
 | --- | --- | --- |
 | Contracts (`packages/contracts`, `docs/02`) | 8:30 PM Fri | PR + approval from affected lanes + version bump |
 | Tier definitions and match tolerances | 10:00 AM Sat | Only with a rerun under a new `runId` |
-| Showcase run | 9:00 PM Sat (moved from 6 PM) | Bug-fix reruns with the same config |
+| Showcase run | Frozen about 6:45 PM Sat (run `20260926-0210-a04c611`; H2 called no v4) | Nothing: the bundle on `main` is final |
 | Features | 12:00 AM Sun | Bugs, polish, docs |
 | UI copy and claims | 2:00 AM Sun | Typo fixes |
 | Code | 6:00 AM Sun | Emergency fixes only |
@@ -91,7 +91,7 @@ Only two switches end Hidden Quakes, and both fire before 4 AM. Everything else 
 | Depth | Over 20% of Tier A pinned at the grid top, or the vertical distribution is nonphysical | 4 AM first, final 10 AM | No structure or fracture claims. Hero becomes plan view + depth section + halos + Strict subset. |
 | Baseline | STA/LTA within ~20% of PhaseNet's strict count at comparable rms | 2 PM Sat | Drop the neural-advantage claim; keep the table as context |
 | Magnitude | Leave-one-out MAE above ~0.4 | 2 PM Sat | Cut magnitude sizing and G-R |
-| Ridgecrest | Not started by the pipeline freeze | 9 PM Sat | Cut |
+| Ridgecrest | Not started by the pipeline freeze | ~6:45 PM Sat (freeze called early) | Cut |
 | Live | Unstable, or latency over ~10 min | 10 PM Sat | Cut the LIVE pill |
 | Evidence drawer | Too slow or heavy | Any time | Drop to 8 traces per event |
 | Terrain | DEM work slows integration | 12 AM Sat | Clean abstract slab, labeled as such |
