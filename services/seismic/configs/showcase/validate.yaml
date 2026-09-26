@@ -17,14 +17,37 @@ nullTest:
   # Which picks go in: "full" = every pick, "p_only" = P picks only (see hq.config.validate).
   profile: full
 
-# Baseline comparison (VAL-01): two pickers x two association profiles.
+# Baseline comparison (VAL-01): two pickers x two association profiles through H2's
+# associate -> locate -> match -> assign_tiers with the seismology.yaml of record
+# -> Validation.baseline (one BaselineRow per picker x profile) and, when the rule below holds,
+# AnalysisSummary.baseline. Needs H1's picks_stalta.parquet; without it the table stays empty.
 baseline:
-  # Association profiles every picker runs through; BaselineGain needs gain > 1 in both.
+  # Association profiles every picker runs through ("full" = every pick, "p_only" = P picks
+  # only). BaselineGain is quoted on "full" and claimed only when the gain holds in both "full"
+  # and "p_only", so both must be listed for the summary to carry a gain.
   profiles: [full, p_only]
+  # The gain (PhaseNet Tier A count / STA/LTA Tier A count) must exceed this in every profile,
+  # and STA/LTA must have at least one Tier A event in every profile, for BaselineGain to be
+  # claimed. docs/lanes/H4: "gain > 1 in both profiles".
+  minGain: 1.0
+  # docs/03 baseline kill switch ("STA/LTA within ~20% of PhaseNet's strict count"): a warning
+  # is logged when |strictPhasenet - strictStalta| <= comparableFraction * strictPhasenet in any
+  # profile. Logged only, never decides; the humans drop the claim at Gate D.
+  comparableFraction: 0.2
 
-# Gutenberg-Richter (VAL-01): Aki-Utsu b with Shi-Bolt sigma, Mc by maximum curvature + offset.
+# Gutenberg-Richter (VAL-01): Aki-Utsu b with Shi-Bolt sigma, Mc by maximum curvature + offset,
+# on the public regional catalog's magnitudes (CatalogEvent.mag) and every candidate event's
+# magnitude (SeismicEvent.magnitude.value) -> Validation.gr. Skipped without magnitudes.
 gr:
-  # Width of GRCurve.magBins, magnitude units.
+  # Width of GRCurve.magBins, magnitude units; also the histogram bin for the maximum-curvature
+  # Mc and the binning correction (bin width / 2) in the Aki-Utsu estimator.
   magBinWidth: 0.1
-  # Added to the maximum-curvature magnitude of completeness.
+  # Added to the maximum-curvature magnitude of completeness (Mc = MaxC + offset).
   mcOffsetMag: 0.2
+  # Fewest magnitudes for any estimate: below this the curve is not built (public + recovered
+  # together), a set's Mc is null, and b / sigma are null when fewer recovered magnitudes lie
+  # above Mc.
+  minEvents: 30
+  # docs/03 magnitude kill switch: when H2's magnitude.json reports a leave-one-out MAE above
+  # this, G-R is skipped with a warning and only the calibration is embedded.
+  maxLooMae: 0.4

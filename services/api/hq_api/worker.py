@@ -203,7 +203,7 @@ class LiveWorker:
     ) -> tuple[WindowRecord, ServedWindow]:
         """Export the finished run, measure latency, write the snapshot, load what to serve."""
         cfg = self.config
-        tables = load_run_tables(run.run_dir)
+        tables = load_run_tables(run.run_dir, gr_cfg=run.config.validate.gr)
         export_cfg = run.config.export.model_copy(update={"modes": [LIVE_MODE, SNAPSHOT_MODE]})
         bundle_dir = self.bundles_dir / run.run_id
         result = export_bundle(
@@ -215,6 +215,7 @@ class LiveWorker:
             cache_dir=run.cache_dir,
             out_dir=bundle_dir,
             features_loader=self.features_loader,
+            baseline_cfg=run.config.validate.baseline,
         )
         runtime_s = self.monotonic() - t0
         updated_at = self.clock()
@@ -300,6 +301,7 @@ class LiveWorker:
                 cache_dir=run.cache_dir,
                 out_dir=self.snapshot_dir,
                 features_loader=self.features_loader,
+                baseline_cfg=run.config.validate.baseline,
             )
         except Exception as exc:  # the live bundle is already good; only the snapshot is lost
             log.exception("live: snapshot bundle not written to %s", self.snapshot_dir)
@@ -381,29 +383,34 @@ class LiveWorker:
     async def _tick_forever(self) -> None:
         every_s = self.config.window.everyS
         due = self.clock()
-        while not self._stop.is_set():
-            if self.running:
-                self.skipped += 1
-                log.warning(
-                    "live: tick at %.0f skipped, the previous window is still running "
-                    "(%d skipped so far)",
-                    due,
-                    self.skipped,
-                )
-            else:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(self.run_once(), name=f"hq-live-window-{due:.0f}")
-                self._tasks.add(task)
-                task.add_done_callback(self._tasks.discard)
-                task.add_done_callback(_log_task_error)
-            due += every_s
-            self.next_run_at = due
-            wait_s = max(0.0, due - self.clock())
-            try:
-                await asyncio.wait_for(self._stop.wait(), timeout=wait_s)
-            except TimeoutError:
-                continue
-        self.next_run_at = None
+        try:
+            while not self._stop.is_set():
+                if self.running:
+                    self.skipped += 1
+                    log.warning(
+                        "live: tick at %.0f skipped, the previous window is still running "
+                        "(%d skipped so far)",
+                        due,
+                        self.skipped,
+                    )
+                else:
+                    loop = asyncio.get_running_loop()
+                    task = loop.create_task(self.run_once(), name=f"hq-live-window-{due:.0f}")
+                    self._tasks.add(task)
+                    task.add_done_callback(self._tasks.discard)
+                    task.add_done_callback(_log_task_error)
+                due += every_s
+                self.next_run_at = due
+                wait_s = max(0.0, due - self.clock())
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=wait_s)
+                except TimeoutError:
+                    continue
+        finally:
+            # Reached on a clean stop AND on cancellation. On Python 3.12+ a cancel() issued
+            # right after the stop event is set wins the race inside wait_for, so the loop exits
+            # through CancelledError; without this finally, next_run_at stayed set after stop().
+            self.next_run_at = None
 
     async def stop(self) -> None:
         """Stop the ticker and every tick task, and release the executor without waiting.
@@ -413,12 +420,20 @@ class LiveWorker:
         """
         self._stop.set()
         if self._ticker is not None:
-            self._ticker.cancel()
+            ticker, self._ticker = self._ticker, None
             try:
-                await self._ticker
+                # The stop event ends the loop on its own; the timeout is only a backstop.
+                await asyncio.wait_for(ticker, timeout=self.config.server.gracefulShutdownS)
+            except TimeoutError:
+                log.warning("live: ticker did not stop on its own; cancelling it")
+                ticker.cancel()
+                try:
+                    await ticker
+                except asyncio.CancelledError:
+                    _reraise_if_own_cancel()
             except asyncio.CancelledError:
-                pass
-            self._ticker = None
+                _reraise_if_own_cancel()
+        self.next_run_at = None
         tasks = list(self._tasks)
         for task in tasks:
             task.cancel()
@@ -438,6 +453,13 @@ class LiveWorker:
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
 
+
+def _reraise_if_own_cancel() -> None:
+    """Inside ``stop()``: a CancelledError that came from the ticker is swallowed, one aimed at
+    the task running ``stop()`` itself (``Task.cancel()`` on it) must keep propagating."""
+    current = asyncio.current_task()
+    if current is not None and current.cancelling():
+        raise asyncio.CancelledError
 
 def _log_task_error(task: "asyncio.Task[WindowRecord | None]") -> None:
     if task.cancelled():

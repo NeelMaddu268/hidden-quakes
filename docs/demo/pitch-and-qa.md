@@ -4,17 +4,17 @@ Every `{value}` is read off the screen at demo time, never memorized and never t
 
 ## 10-second pitch
 
-"The public catalog shows {publicCatalogCount} earthquakes under Utah's geothermal frontier on September 10. We rebuilt it from raw public seismometers with neural phase picking and found {candidateCount} candidate events, {strictQualityCount} at strict quality, underground where the public view is nearly empty."
+"The public catalog shows {publicCatalogCount} earthquakes under Utah's geothermal frontier on {windowLabel}. We rebuilt it from raw public seismometers with neural phase picking and found {candidateCount} candidate events, {strictQualityCount} at strict quality, underground where the public view is nearly empty."
 
 ## 30-second pitch
 
-"Enhanced geothermal is expanding around Milford, Utah. Operators have dense downhole monitoring. The public gets the regional catalog: {publicCatalogCount} events here on September 10. *(REVEAL)* Hidden Quakes pulls raw waveforms from the public seismic network, picks P and S arrivals with a neural network, associates them across stations, relocates them underground and scores every one. We recover {recoveredCatalogCount} of the {publicCatalogCount} public events, plus {additionalCount} more candidates, {strictAdditionalCount} of them strict. Click any dot and you see the waveforms that put it there."
+"Enhanced geothermal is expanding around Milford, Utah. Operators have dense downhole monitoring. The public gets the regional catalog: {publicCatalogCount} events here on {windowLabel}. *(REVEAL)* Hidden Quakes pulls raw waveforms from the public seismic network, picks P and S arrivals with a neural network, associates them across stations, relocates them underground and scores every one. We recover {recoveredCatalogCount} of the {publicCatalogCount} public events, plus {additionalCount} more candidates, {strictAdditionalCount} of them strict. Click any dot and you see the waveforms that put it there."
 
 ## 2-minute pitch
 
 | Time | Screen | Say |
 | --- | --- | --- |
-| 0:00–0:10 | Surface view, PUBLIC {N} | "This is Utah's geothermal frontier near Milford. The public regional catalog recorded {publicCatalogCount} earthquakes here on September 10." |
+| 0:00–0:10 | Surface view, PUBLIC {N} | "This is Utah's geothermal frontier near Milford. The public regional catalog recorded {publicCatalogCount} earthquakes here on {windowLabel}." |
 | 0:10–0:25 | Press REVEAL | "That's what made it into the public catalog. We went straight to the raw public seismometers." *(Let the counter finish. Say nothing for two seconds.)* |
 | 0:25–0:45 | Press S, orbit slowly | Depth gate passed: "The strict events concentrate {depthBand} below the surface. That's structure the public view doesn't show." Depth gate failed: "In map view, activity concentrates here, and each halo is that event's own location error." |
 | 0:45–1:05 | Press E | "How do we know this dot is an earthquake? {nStations} stations. The neural picker marks P and S on each, and the lines are where physics says they should land from that location. They agree." |
@@ -45,10 +45,10 @@ Answer in one or two sentences, then show something on screen. If the honest ans
 | 15 | What's your external validation? | Public-catalog recall, a synthetic depth-resolution test, the null test, the STA/LTA baseline, and the published FORGE depth band. Ridgecrest only if it got done. |
 | 16 | Could these belong to Cape Station instead of FORGE? | Possibly. The operations are close together and we deliberately don't attribute. We show verified facility locations and our locations with error; attribution needs operator data. |
 | 17 | Why call this AI? | The detection step is a deep network trained on large labeled seismogram sets, and it's what makes small events visible. The rest is physics. We'd call it ML-assisted monitoring. |
-| 18 | What did you build during HackGT? | Everything in the repo; git history starts at 8 PM Friday. Pre-event work was research into which data and methods exist. No code, fixtures or outputs came over. |
+| 18 | What did you build during HackGT? | Everything in the repo; git history starts at the kickoff commit. Pre-event work was research into which data and methods exist. No code, fixtures or outputs came over. |
 | 19 | How near-real-time is it? | {latency} minutes for the last two hours on this laptop (only if measured). |
-| 20 | Why September 10? | It's a day with public-catalog activity in the region, which gives us reference events to validate against. |
-| 21 | What about the 1,000 Hz borehole sensors? | We don't blindly resample. Each sensor type gets its own profile with explicit anti-aliasing, and we A/B'd a time-stretch variant to keep the high-frequency band. |
+| 20 | Why that day ({windowLabel})? | It's a day with public-catalog activity in the region, which gives us reference events to validate against. |
+| 21 | What about the high-rate borehole sensors? | We don't blindly resample. Each sensor type gets its own profile with explicit anti-aliasing, and we A/B'd a time-stretch variant to keep the high-frequency band. |
 | 22 | Which velocity model? | A published FORGE 1D model from the Geothermal Data Repository, with a public 3D Cape/FORGE model as the upgrade path. The source is recorded in every run. |
 | 23 | Aren't your depths just an artifact of the velocity model? | The synthetic test isolates geometry from the model, station statics absorb model error, and we compared 1D and 3D. How much depths shifted is in Run details. |
 | 24 | Why not use the operator's catalog? | It isn't public in real time, and independence is the point. |
@@ -88,3 +88,29 @@ Answer in one or two sentences, then show something on screen. If the honest ans
 6. Reproducing the showcase: the final `runId`, its config, and expected counts.
 7. Scientific validity: what we claim, what we don't, and the validation results.
 8. Team, roles, and the HackGT compliance statement.
+
+## Numbers to fill Saturday evening
+
+Every spoken `{value}` above is read off the screen at demo time. This table maps each one to the bundle field it renders from (`apps/web/public/data/showcase/`), so the Devpost and README fill-in is one lookup and the pitch never says a number the screen can't back. A field that is null in the bundle means the kill switch fired (`docs/03`): drop the sentence.
+
+| Spoken | Bundle field | Where it shows on screen |
+| --- | --- | --- |
+| `{publicCatalogCount}` | `meta.json` → `summary.publicCatalogCount` | PUBLIC counter; Validation card (recall row) |
+| `{candidateCount}` | `meta.json` → `summary.candidateCount` | RECOVERED counter after the reveal |
+| `{strictQualityCount}` | `meta.json` → `summary.strictQualityCount` | STRICT counter; Validation card |
+| `{recoveredCatalogCount}` | `meta.json` → `summary.recoveredCatalogCount` | Validation card (recall row) |
+| `{additionalCount}` | `meta.json` → `summary.additionalCount` | Not on screen; read from `meta.json` |
+| `{strictAdditionalCount}` | `meta.json` → `summary.strictAdditionalCount` | Not on screen; read from `meta.json` |
+| `{nStations}` (hero event) | `evidence/<scene.heroEventId>.json` → `traces.length`; `events.json` → hero's `quality.nStations` | Evidence drawer header |
+| `{medianVErrM}` | `validation.json` → `synthetic.medianVErrM` | Validation card (depth resolution row) |
+| `{gain}` | `meta.json` → `summary.baseline.gain` (only when present) | Validation card (gain row, shown only when the baseline ran and the gain holds) |
+| `{meanChanceEvents}` | `validation.json` → `nullTest.meanChanceEvents` (only when present) | Validation card (chance associations row) |
+| `{n}` matched events, `{looMae}` (Q27) | `validation.json` → `magnitude.n`, `magnitude.looMae` (only when present) | Not on screen; read from `validation.json` |
+| `{depthBand}` | No bundle field. Read it off the depth ruler with STRICT on; say what is visible, never a mechanism | Scene, depth ruler and slices |
+| `{n}` minutes ago (Live) | `/api/live/status` → `updatedAt` | Live mode label |
+| `{latency}` (Q19) | `/api/live/status` → `latencyS`, and `/health` → `served.latencyS` | Not on screen; read from the API |
+| The window date spoken in the pitches | `meta.json` → `run.windowLabel` | Showcase mode label |
+| Tier thresholds and their quantiles (Q33) | `meta.json` → `run.tiering` | Run details (D) |
+| Velocity model source (Q22) | `meta.json` → `run.velocityModel` | Run details (D) |
+| Depth shift between velocity models (Q23) | Only if H2 records it in `run.locator` or `run.velocityModel`; otherwise say "in H2's diagnostics", not "in Run details" | Run details (D), if recorded |
+| G-R curve (Q28) | `validation.json` → `gr` (only when present) | No G-R panel exists in the shell yet; say "in the bundle" unless one lands |

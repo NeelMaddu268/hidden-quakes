@@ -6,6 +6,7 @@ last window after a restart, skips an overlapping tick, writes a snapshot bundle
 running window promptly, and ``hq-api freeze-snapshot`` copies the last good live bundle into
 the snapshot directory. Offline and fast."""
 
+import asyncio
 import json
 import math
 import shutil
@@ -365,11 +366,13 @@ def test_overlapping_run_is_skipped(
     results: list[object] = []
     thread = threading.Thread(target=lambda: results.append(worker.run_window_now()))
     thread.start()
-    assert runner.started.wait(SCHEDULER_WAIT_S)
-    assert worker.running
-    assert worker.run_window_now() is None  # skipped, not queued
-    assert worker.skipped == 1 and worker.attempts == 1
-    gate.set()
+    try:
+        assert runner.started.wait(SCHEDULER_WAIT_S)
+        assert worker.running
+        assert worker.run_window_now() is None  # skipped, not queued
+        assert worker.skipped == 1 and worker.attempts == 1
+    finally:
+        gate.set()  # a failed assertion must never leave the worker thread blocked at exit
     thread.join(SCHEDULER_WAIT_S)
     assert not thread.is_alive() and not worker.running
     assert results and getattr(results[0], "outcome", None) == "ok"
@@ -393,6 +396,35 @@ def test_old_bundles_are_pruned_but_never_the_served_one(
     kept = sorted(p.name for p in worker.bundles_dir.iterdir())
     assert kept == sorted(ids[1:])
     assert worker.current() is not None and worker.current().record.runId == ids[-1]
+
+
+def test_stop_clears_next_run_at_on_every_python(
+    live_config: LiveConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    """The ticker's ``next_run_at`` is None after ``stop()`` whether the loop ends on the stop
+    event or through cancellation. On Python 3.12+ a cancel issued right after the stop event
+    wins the race inside ``asyncio.wait_for``, which used to skip the reset (REQ-H2-4)."""
+    runner = FakeRunner(live_config, n_events=1)
+
+    async def clean_stop() -> float | None:
+        worker = make_worker(live_config, runner, clock, tmp_path / "clean")
+        worker.start()
+        await asyncio.sleep(0.05)
+        assert worker.next_run_at == pytest.approx(T_START + live_config.window.everyS)
+        await worker.stop()
+        return worker.next_run_at
+
+    async def cancel_first() -> float | None:
+        worker = make_worker(live_config, runner, clock, tmp_path / "cancel")
+        worker.start()
+        await asyncio.sleep(0.05)
+        assert worker._ticker is not None
+        worker._ticker.cancel()  # the worst case: cancellation reaches the loop before the event
+        await worker.stop()
+        return worker.next_run_at
+
+    assert asyncio.run(clean_stop()) is None
+    assert asyncio.run(cancel_first()) is None
 
 
 def test_scheduler_runs_a_window_at_startup(
@@ -431,16 +463,18 @@ def test_shutdown_abandons_a_running_window_promptly(
     worker = make_worker(live_config, runner, clock, tmp_path)
     app = create_app(live_config, runner, worker=worker, scheduler=True)
     caplog.set_level("WARNING", logger="hq_api.worker")
-    with TestClient(app):
-        assert runner.started.wait(SCHEDULER_WAIT_S)
-        assert worker.running
-        t0 = time.perf_counter()
-    stop_s = time.perf_counter() - t0
-    assert stop_s < SCHEDULER_WAIT_S / 4, f"stop() waited {stop_s:.1f} s for the window"
-    assert worker.abandoned and worker.running  # the thread is still blocked on the gate
-    assert not worker._tasks and not worker._pending and worker.next_run_at is None
-    assert any("abandoned" in r.getMessage() for r in caplog.records)
-    gate.set()
+    try:
+        with TestClient(app):
+            assert runner.started.wait(SCHEDULER_WAIT_S)
+            assert worker.running
+            t0 = time.perf_counter()
+        stop_s = time.perf_counter() - t0
+        assert stop_s < SCHEDULER_WAIT_S / 4, f"stop() waited {stop_s:.1f} s for the window"
+        assert worker.abandoned and worker.running  # the thread is still blocked on the gate
+        assert not worker._tasks and not worker._pending and worker.next_run_at is None
+        assert any("abandoned" in r.getMessage() for r in caplog.records)
+    finally:
+        gate.set()  # a failed assertion must never leave the worker thread blocked at exit
     for _ in range(int(SCHEDULER_WAIT_S * 20)):
         if not worker.running:
             break
@@ -464,8 +498,6 @@ def test_stop_without_a_running_window_is_clean_and_idempotent(
             threading.Event().wait(0.05)
     assert not worker.abandoned and not worker.running
     assert worker.current() is not None and len(read_state(worker.state_file).history) == 1
-    import asyncio
-
     asyncio.run(worker.stop())  # a second stop is a no-op
     assert not worker.abandoned
 
