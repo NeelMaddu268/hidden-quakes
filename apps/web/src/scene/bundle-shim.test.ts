@@ -116,6 +116,16 @@ describe("useEvidence (docs/02 §6 shape)", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
   });
 
+  it("never builds a fetch path from an invalid ?mode=", async () => {
+    window.history.replaceState({}, "", "/?mode=..%2Fsecret");
+    const fetch = stubFetch({});
+    const { useEvidence } = await freshShim();
+    const { result } = renderHook(() => useEvidence("hq-1"));
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(result.current.message).toContain("unknown mode");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("rejects a file that belongs to another event", async () => {
     stubFetch({ "/data/mock/evidence/hq-1.json": evidence("hq-2") });
     const { useEvidence } = await freshShim();

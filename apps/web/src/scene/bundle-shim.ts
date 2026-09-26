@@ -11,6 +11,9 @@ type Ready = Extract<BundleState, { status: "ready" }>;
 /** docs/02 §6: mode comes from `?mode=`, default `showcase`. */
 export const DEFAULT_MODE = "showcase";
 
+/** Bundle folder names; anything else in `?mode=` is an error, never part of a fetched path. */
+const MODE_PATTERN = /^[a-z][a-z0-9-]*$/;
+
 /** The data mode for this page load (`?mode=`), or the default outside a browser. */
 export function currentMode(): string {
   if (typeof window === "undefined") return DEFAULT_MODE;
@@ -135,6 +138,10 @@ export function preloadEvidence(mode: string, eventId: string): void {
   const key = evidenceKey(mode, eventId);
   const current = evidenceEntries.get(key);
   if (current && current.status !== "error") return;
+  if (!MODE_PATTERN.test(mode)) {
+    setEvidenceEntry(key, Object.freeze({ status: "error" as const, message: `unknown mode ${JSON.stringify(mode)}` }));
+    return;
+  }
   setEvidenceEntry(key, LOADING);
   getJson<unknown>(evidenceUrl(mode, eventId))
     .then((json) => checkEvidence(json, eventId))
