@@ -60,10 +60,10 @@ log = logging.getLogger(__name__)
 # Columns match() reads from each table (docs/02 §2 flattened names).
 REQUIRED_COLUMNS = ("id", "t", "enu_e", "enu_n")
 
-# docs/02 §2 schemas, as in-memory dtypes so zero-row and all-null frames keep them. Strings use
-# pandas' default ``str`` semantics (missing is NaN) with python storage, which converts to Arrow
-# string, as in hq.match.catalog.
-STRING_DTYPE = pd.StringDtype("python", na_value=np.nan)
+# docs/02 §2 schemas, as in-memory dtypes so zero-row and all-null frames keep them. Strings are
+# pandas ``string`` (missing is pd.NA; Arrow large_string on disk), the docs/02 §2 dtype rule, as
+# in hq.match.catalog and every other H2 table.
+STRING_DTYPE = "string"
 MATCH_DTYPES: dict[str, Any] = {
     "catalogId": STRING_DTYPE,
     "eventId": STRING_DTYPE,

@@ -1,7 +1,8 @@
 """Shared fixtures for H2 seismology tests: config loading, a RunContext stand-in, no network.
 
-The stand-in mirrors the parts of H4's RunContext (docs/02 §4) that H2 stages use until RUN-01
-lands: ``config.run``, ``config.seismology``, ``path(name)`` and ``record(...)``.
+The stand-in mirrors the parts of H4's RunContext (docs/02 §4) that H2 stages use:
+``config.run``, ``config.seismology``, ``path(name)``, ``record(...)`` and the params fields of
+``read_run()``.
 
 LOC-02 helpers (test station geometry, test config, exact picks) reach the tests as the session
 fixture ``loc02``: under ``--import-mode=importlib`` a test module can't import a sibling module.
@@ -13,6 +14,7 @@ import socket
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -61,6 +63,18 @@ class StubRunContext:
 
     def path(self, name: str) -> Path:
         return self.run_dir / name
+
+    def read_run(self) -> Any:
+        """The ProcessingRun params fields as ``records`` leave them, merged one level deep as
+        H4's ``RunContext.record`` merges them (docs/02 §4); only those fields are stubbed."""
+        from hq.runs import PARAM_FIELDS, STAGE_PARAM_FIELDS
+
+        fields: dict[str, dict[str, Any]] = {name: {} for name in PARAM_FIELDS}
+        for rec in self.records:
+            target = rec["field"] or STAGE_PARAM_FIELDS.get(rec["stage"])
+            if rec["params"] is not None and target is not None:
+                fields[target] = {**fields[target], **rec["params"]}
+        return SimpleNamespace(**fields)
 
     def record(
         self,

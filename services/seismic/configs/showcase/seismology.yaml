@@ -122,7 +122,7 @@ grid3d:
 
 # Grid-search locator (LOC-02, hq.locate.locator and hq.locate.uncertainty).
 locator:
-  # grid1d (the showcase default until the lead decides) or grid3d (LOC-07).
+  # grid1d (the showcase method; the lead kept it after LOC-07) or grid3d (LOC-07, a cross-check).
   method: grid1d
   volume:
     halfWidthM: 10000.0 # e and n in [-halfWidthM, +halfWidthM] around the run origin
@@ -400,11 +400,10 @@ associator:
     maxSeedErrorS: 0.05
   # Sweep (docs/lanes/H2 -> Association): every combination of these values, all other knobs as
   # above. sweep.parquet (SweepPoint: located candidates, recoveredPublic, tierA) is written by
-  # LOC-06's tier stage when tiering.sweep.enabled, which runs the sweep with its locate/match/tier
-  # evaluator. This enabled: true
-  # also runs it in stage associate, only to log and record associated counts per point: one
-  # PyOcto run per (minPickProb, nSPicks) pair beyond the configured one, several minutes on a
-  # full day at the permissive points, so it is off by default.
+  # LOC-06's tier stage when tiering.sweep.enabled, which runs this grid with its locate/match/tier
+  # evaluator. Setting enabled: true here also runs the grid in stage associate, only to log and
+  # record associated counts per point: one PyOcto run per (minPickProb, nSPicks) pair beyond the
+  # configured one, several minutes on a full day at the permissive points, so it is off.
   sweep:
     enabled: false
     minStations: [4, 5, 6, 8]
@@ -440,22 +439,20 @@ matching:
     # A public event whose expected arrival windows have waveform data, picks, or picks of one
     # associated event on fewer than this many used stations gets that reason. 4 is the smallest
     # station count in the association sweep (lane doc), so no swept associator setting can form an
-    # event below it. Known gap: not read from the associator's own minStations until LOC-03 merges.
-    # LOC-03 configures associator.minStations 5, so a public event picked on exactly 4 stations
-    # reads "picks not associated" where "below the associator's minimum" would be more useful. At
-    # the LOC-03 merge: read associator.minStations and minPickProb here (or validate that they
-    # agree) and record both side by side in ProcessingRun.matching.match.
+    # event below it. Must not exceed associator.minStations (checked). With associator.minStations
+    # 5, a public event picked on exactly 4 stations reads "picks not associated" where "below the
+    # associator's minimum" would be more useful; both values are recorded in run.json.
     minStations: 4
     # Picks at or above this probability count for "too few picks"; picks below it (stored down to
-    # 0.1) only turn that into "picks below threshold". 0.3 is LOC-03's working associator threshold
-    # and the top of the lane doc's sweep {0.1, 0.2, 0.3}. Known gap: keep equal to the associator's
-    # minPickProb by hand until LOC-03 merges, then read it from there.
+    # 0.1) only turn that into "picks below threshold". Must equal associator.minPickProb (checked).
     minPickProb: 0.3
     # Each expected window [R / vMax, straight-ray time] after the public origin (hq.match.reasons)
-    # is widened by this much on both sides (s). Budget: the public regional catalog's stated errors
-    # for the showcase day (QuakeML, checked 2026-09-25: horizontal <= 420 m, depth <= 770 m, so at
-    # most ~0.9 km of hypocentral distance, <= 0.35 s of S time; rms <= 0.18 s), plus station delays
-    # up to the 0.3 s statics cap (LOC-05) and pick error. That sums to under 0.9 s.
+    # is moved by the station-phase's statics.parquet term (station delays: up to referenceCapS,
+    # so not in the pad) and widened by this much on both sides (s). Budget: the public regional
+    # catalog's stated errors for the showcase day (QuakeML, checked 2026-09-25: horizontal <= 420
+    # m, depth <= 770 m, so at most ~0.9 km of hypocentral distance, <= 0.35 s of S time; rms <=
+    # 0.18 s), the terms' common origin-time constant (about 0.1 s on the showcase run) and pick
+    # error: about 0.7 s, inside this pad.
     arrivalPadS: 1.0
     # A located event carrying this event's in-window picks counts as its "located out of
     # tolerance" candidate only if its origin is within this many seconds of the public origin.
