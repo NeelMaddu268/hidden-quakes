@@ -3,6 +3,7 @@
 
 import { tierStyle, type TierToken } from "@hq/visualization";
 import { writeEnuToScene } from "../coords";
+import { appearTimeOf } from "../reveal/timeline";
 import type { CatalogEvent, SeismicEvent } from "../types";
 
 export const TIER_INDEX: Readonly<Record<TierToken, number>> = { A: 0, B: 1, C: 2 };
@@ -23,6 +24,11 @@ export interface EventInstances {
    * −1 means "always visible" (public-catalog events are on screen before the reveal).
    */
   revealAt: Float32Array;
+  /**
+   * Seconds after reveal() at which each instance appears: `appearTimeOf(revealAt)`, the exact inverse of
+   * the counter clock. −1 for always-visible (public) instances.
+   */
+  appearAt: Float32Array;
   /** Seconds since `ProcessingRun.windowStart` (float32 keeps ~5 ms resolution over a day). */
   times: Float32Array;
 }
@@ -93,7 +99,9 @@ export function buildCandidateInstances(
     times[i] = ev.t - windowStart;
   }
   const revealAt = revealSlots(events.map((e) => e.revealOrder));
-  return { count, ids, indexById, positions, tiers, scales, revealAt, times };
+  const appearAt = new Float32Array(count);
+  for (let i = 0; i < count; i++) appearAt[i] = appearTimeOf(revealAt[i]);
+  return { count, ids, indexById, positions, tiers, scales, revealAt, appearAt, times };
 }
 
 /** Public regional catalog events (the cool-white layer), visible from the first frame. */
@@ -107,6 +115,7 @@ export function buildPublicInstances(
   const tiers = new Float32Array(count); // all 0: full weight
   const scales = new Float32Array(count).fill(tierStyle.A.size);
   const revealAt = new Float32Array(count).fill(-1);
+  const appearAt = new Float32Array(count).fill(-1);
   const times = new Float32Array(count);
   const ids: string[] = new Array(count);
   const indexById = new Map<string, number>();
@@ -118,7 +127,7 @@ export function buildPublicInstances(
     writeEnuToScene(ev.enu, verticalExaggeration, positions, i * 3);
     times[i] = ev.t - windowStart;
   }
-  return { count, ids, indexById, positions, tiers, scales, revealAt, times };
+  return { count, ids, indexById, positions, tiers, scales, revealAt, appearAt, times };
 }
 
 /**

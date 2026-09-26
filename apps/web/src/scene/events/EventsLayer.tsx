@@ -110,7 +110,7 @@ export function EventsLayer({
       <planeGeometry args={[1, 1]}>
         <instancedBufferAttribute attach="attributes-aTier" args={[instances.tiers, 1]} />
         <instancedBufferAttribute attach="attributes-aScale" args={[instances.scales, 1]} />
-        <instancedBufferAttribute attach="attributes-aRevealAt" args={[instances.revealAt, 1]} />
+        <instancedBufferAttribute attach="attributes-aAppearAt" args={[instances.appearAt, 1]} />
         <instancedBufferAttribute attach="attributes-aTime" args={[instances.times, 1]} />
       </planeGeometry>
       <shaderMaterial

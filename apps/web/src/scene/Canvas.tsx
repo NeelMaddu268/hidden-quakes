@@ -25,24 +25,12 @@ import {
 } from "./events/instances";
 import type { EventUniforms } from "./events/material";
 import { sceneFx } from "./fx";
+import { depthFogPerSceneUnit, LOOK } from "./look";
 import { Post } from "./post/Post";
 import { RevealDriver } from "./reveal/RevealDriver";
 import type { BundleState } from "./types";
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
-
-// Glyph sizes (scene km) and on-screen minimums (CSS px). Public points read slightly larger so the
-// sparse public catalog is legible on its own before the reveal.
-const CANDIDATE_SIZE_KM = 0.06;
-const CANDIDATE_MIN_PX = 1.8;
-const PUBLIC_SIZE_KM = 0.08;
-const PUBLIC_MIN_PX = 2.6;
-/** Event cores are drawn this far above 1.0 so bloom (threshold in scene/post) catches only events. */
-const EVENT_GLOW = 1.6;
-/** Depth fog density per km below the site surface: deeper events read slightly dimmer. */
-const DEPTH_FOG_PER_KM = 0.07;
-/** No glyph grows past this on-screen radius (CSS px), however close the camera gets. */
-const MAX_GLYPH_PX = 18;
 
 /** Candidate (amber) layer: follows the reveal and the filter. Reads the store without re-rendering. */
 function driveCandidates(u: EventUniforms): void {
@@ -91,26 +79,26 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         name="public-events"
         instances={publicEvents}
         color={colors.public}
-        size={PUBLIC_SIZE_KM}
-        minPx={PUBLIC_MIN_PX}
-        maxPx={MAX_GLYPH_PX}
+        size={LOOK.publicCatalog.sizeKm}
+        minPx={LOOK.publicCatalog.minPx}
+        maxPx={LOOK.maxGlyphPx}
         drive={drivePublic}
-        glow={EVENT_GLOW}
+        glow={LOOK.publicCatalog.glow}
         surfaceY={surfaceY}
-        depthFog={DEPTH_FOG_PER_KM}
+        depthFog={depthFogPerSceneUnit(ve)}
         renderOrder={2}
       />
       <EventsLayer
         name="candidate-events"
         instances={candidates}
         color={colors.recovered}
-        size={CANDIDATE_SIZE_KM}
-        minPx={CANDIDATE_MIN_PX}
-        maxPx={MAX_GLYPH_PX}
+        size={LOOK.candidates.sizeKm}
+        minPx={LOOK.candidates.minPx}
+        maxPx={LOOK.maxGlyphPx}
         drive={driveCandidates}
-        glow={EVENT_GLOW}
+        glow={LOOK.candidates.glow}
         surfaceY={surfaceY}
-        depthFog={DEPTH_FOG_PER_KM}
+        depthFog={depthFogPerSceneUnit(ve)}
         renderOrder={1}
       />
       <CameraRig bounds={bounds} />

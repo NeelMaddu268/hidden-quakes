@@ -19,8 +19,9 @@ describe("TIMELINE matches the lane doc table", () => {
     expect(TIMELINE.endS).toBe(7.0);
   });
 
-  it("is frozen", () => {
+  it("is frozen all the way down (nothing can retime the reveal at runtime)", () => {
     expect(Object.isFrozen(TIMELINE)).toBe(true);
+    for (const v of Object.values(TIMELINE)) if (typeof v === "object") expect(Object.isFrozen(v)).toBe(true);
   });
 });
 
@@ -32,6 +33,11 @@ describe("terrainOpacityAt", () => {
     expect(terrainOpacityAt(99)).toBeCloseTo(0.12, 12);
     expect(terrainOpacityAt(0.6)).toBeLessThan(1);
     expect(terrainOpacityAt(0.6)).toBeGreaterThan(0.12);
+  });
+
+  it("starts from the current opacity when a reveal begins mid-fade (no jump)", () => {
+    expect(terrainOpacityAt(0, 0.5)).toBe(0.5);
+    expect(terrainOpacityAt(1.2, 0.5)).toBeCloseTo(0.12, 12);
   });
 });
 

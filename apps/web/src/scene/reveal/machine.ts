@@ -6,6 +6,7 @@ import { easeOutCubic, motion } from "@hq/visualization";
 import { finishReveal, setRevealProgress, type DemoPhase } from "../../state/demo";
 import { INITIAL_SCENE_FX, sceneFx } from "../fx";
 import {
+  appearTimeOf,
   bloomBoostAt,
   isRevealDone,
   revealProgressAt,
@@ -25,7 +26,12 @@ export interface RevealMachine {
   readonly mode: Mode;
   /** Seconds on the reveal clock (0 when idle). */
   readonly elapsedS: number;
-  /** Call on every store phase change (and once on mount with prev = next = current phase). */
+  /**
+   * Call once on mount with the store's current phase and progress. Mounting mid-reveal resumes the
+   * clock where the counter is (appearTimeOf is the exact inverse), so the counter never runs backwards.
+   */
+  sync(phase: DemoPhase, revealProgress: number): void;
+  /** Call on every store phase change. */
   onPhase(prev: DemoPhase, next: DemoPhase): void;
   /** Advance by one frame. Never allocates. */
   step(deltaS: number): void;
@@ -36,11 +42,20 @@ export function createRevealMachine(): RevealMachine {
   let elapsed = 0;
   let resetT = 0;
   let resetFrom = 1;
+  /** Terrain opacity when this reveal started (1 from a settled start frame; less if reset was mid-fade). */
+  let revealFrom = 1;
 
   const applyRevealAt = (t: number) => {
     sceneFx.revealElapsedS = t;
-    sceneFx.terrainOpacity = terrainOpacityAt(t);
+    sceneFx.terrainOpacity = terrainOpacityAt(t, revealFrom);
     sceneFx.bloomBoost = bloomBoostAt(t);
+  };
+
+  const startRevealAt = (t: number) => {
+    mode = "revealing";
+    elapsed = t;
+    revealFrom = t > 0 ? INITIAL_SCENE_FX.terrainOpacity : sceneFx.terrainOpacity;
+    applyRevealAt(t);
   };
 
   const settleRevealed = () => {
@@ -66,11 +81,15 @@ export function createRevealMachine(): RevealMachine {
       return elapsed;
     },
 
+    sync(phase, revealProgress) {
+      if (phase === "revealing") startRevealAt(revealProgress > 0 ? appearTimeOf(revealProgress) : 0);
+      else if (phase === "revealed") settleRevealed();
+      else settleIdle();
+    },
+
     onPhase(prev, next) {
       if (next === "revealing" && (prev !== "revealing" || mode !== "revealing")) {
-        mode = "revealing";
-        elapsed = 0;
-        applyRevealAt(0);
+        startRevealAt(0);
         return;
       }
       if (next === "revealed" && mode !== "revealed") {
@@ -78,7 +97,8 @@ export function createRevealMachine(): RevealMachine {
         return;
       }
       if (next === "public" && prev !== "public") {
-        // reset(): fade the terrain back up over motion.state, then hold the exact start values.
+        // reset(): fade the terrain back up alongside the camera's return (motion.scene), then hold
+        // the exact start values.
         mode = "resetting";
         elapsed = 0;
         resetT = 0;
@@ -102,7 +122,7 @@ export function createRevealMachine(): RevealMachine {
         }
       } else if (mode === "resetting") {
         resetT += dt;
-        const k = easeOutCubic(resetT / (motion.state / 1000));
+        const k = easeOutCubic(resetT / (motion.scene / 1000));
         sceneFx.terrainOpacity = resetFrom + (INITIAL_SCENE_FX.terrainOpacity - resetFrom) * k;
         if (k >= 1) settleIdle();
       }

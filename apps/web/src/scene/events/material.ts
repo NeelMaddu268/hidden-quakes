@@ -17,19 +17,16 @@ export interface EventUniforms {
   /** Drawing-buffer height in device pixels (set on resize). */
   uViewportHeight: IUniform<number>;
   /**
-   * Seconds since reveal() on the reveal clock. An instance with slot s ≥ 0 appears at
-   * uEventsStart + uEventsDuration × s^(1/uEventsExponent) (scene/reveal/timeline.ts → appearTimeOf).
-   * Negative hides every candidate; public-catalog instances (slot −1) always show.
+   * Seconds since reveal() on the reveal clock. Each instance appears when this passes its
+   * `aAppearAt` (computed on the CPU with scene/reveal/timeline.ts → appearTimeOf, so the pops and the
+   * shell's counter can never disagree). −1 hides every candidate.
    */
   uRevealElapsed: IUniform<number>;
-  uEventsStart: IUniform<number>;
-  uEventsDuration: IUniform<number>;
-  uEventsExponent: IUniform<number>;
   /** Seconds each instance's pop (scale 2 → 1, brightness spike, settle) lasts after it appears. */
   uPopS: IUniform<number>;
   /** Scene y of the site surface; fog increases with depth below it. */
   uSurfaceY: IUniform<number>;
-  /** Exponential depth-fog density per km below the surface (0 disables). */
+  /** Exponential depth-fog density per scene unit below the surface (per km ÷ vertical exaggeration). */
   uDepthFog: IUniform<number>;
   /** Opacity for tiers A, B, C (the filter drives B and C). */
   uTierOpacity: IUniform<Vector3>;
@@ -43,22 +40,21 @@ export interface EventUniforms {
 export const GLYPH_FLOOR_PX = 1.25;
 /** A popping instance starts at this multiple of its size and settles to 1. */
 export const POP_SCALE = 2.0;
-/** Extra brightness at the start of a pop (1.5 = 2.5× the settled intensity), decaying to 0. */
-export const POP_FLASH = 1.5;
+/** Extra brightness at the start of a pop (0.8 = 1.8× the settled intensity), decaying to 0. */
+export const POP_FLASH = 0.8;
+/** How far toward white a pop starts (a white-hot spark that settles into the token color). */
+export const POP_WHITEN = 0.4;
 
 export const EVENT_VERTEX_SHADER = /* glsl */ `
   attribute float aTier;
   attribute float aScale;
-  attribute float aRevealAt;
+  attribute float aAppearAt;
 
   uniform float uSize;
   uniform float uMinPx;
   uniform float uMaxPx;
   uniform float uViewportHeight;
   uniform float uRevealElapsed;
-  uniform float uEventsStart;
-  uniform float uEventsDuration;
-  uniform float uEventsExponent;
   uniform float uPopS;
   uniform float uSurfaceY;
   uniform float uDepthFog;
@@ -73,11 +69,9 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
     vec4 worldCenter = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
     vec4 mvCenter = viewMatrix * worldCenter;
 
-    bool always = aRevealAt < 0.0;
-    float appearT = uEventsStart + uEventsDuration * pow(clamp(aRevealAt, 0.0, 1.0), 1.0 / uEventsExponent);
-    float age = uRevealElapsed - appearT;
-    float shown = always ? 1.0 : step(0.0, age);
-    float pop = always ? 1.0 : clamp(age / max(uPopS, 1e-6), 0.0, 1.0);
+    float age = uRevealElapsed - aAppearAt;
+    float shown = step(0.0, age);
+    float pop = clamp(age / max(uPopS, 1e-6), 0.0, 1.0);
     float settle = 1.0 - pow(1.0 - pop, 3.0);
     vBoost = (1.0 - settle) * ${POP_FLASH.toFixed(3)};
 
@@ -119,7 +113,8 @@ export const EVENT_FRAGMENT_SHADER = /* glsl */ `
     // Additive blending multiplies rgb by alpha, so the disc profile lives in alpha only: the center of
     // a settled glyph at uGlow = 1 is exactly the token color.
     float shape = min(core + halo, 1.0);
-    gl_FragColor = vec4(uColor * uGlow * (1.0 + vBoost), vAlpha * shape);
+    vec3 color = mix(uColor, vec3(1.0), vBoost * ${(POP_WHITEN / POP_FLASH).toFixed(4)});
+    gl_FragColor = vec4(color * uGlow * (1.0 + vBoost), vAlpha * shape);
     #include <colorspace_fragment>
   }
 `;
@@ -146,9 +141,6 @@ export function createEventUniforms(opts: EventMaterialOptions): EventUniforms {
     uMaxPx: { value: opts.maxPx },
     uViewportHeight: { value: 1 },
     uRevealElapsed: { value: -1 },
-    uEventsStart: { value: TIMELINE.events.startS },
-    uEventsDuration: { value: TIMELINE.events.endS - TIMELINE.events.startS },
-    uEventsExponent: { value: TIMELINE.events.exponent },
     uPopS: { value: TIMELINE.popS },
     uSurfaceY: { value: opts.surfaceY ?? 0 },
     uDepthFog: { value: opts.depthFog ?? 0 },

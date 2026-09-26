@@ -12,9 +12,9 @@
 import { easeOutCubic } from "@hq/visualization";
 
 export const TIMELINE = Object.freeze({
-  terrainFade: { startS: 0.0, endS: 1.2, to: 0.12 },
-  dolly: { startS: 0.4, endS: 2.0 },
-  events: {
+  terrainFade: Object.freeze({ startS: 0.0, endS: 1.2, to: 0.12 }),
+  dolly: Object.freeze({ startS: 0.4, endS: 2.0 }),
+  events: Object.freeze({
     startS: 1.0,
     endS: 6.0,
     /**
@@ -23,9 +23,11 @@ export const TIMELINE = Object.freeze({
      * accelerates as the cloud fills in.
      */
     exponent: 1.6,
-  },
+  }),
   /** How long each event's pop (scale 2 → 1, brightness spike) lasts. */
   popS: 0.45,
+  /** Bloom swells by `amount` over `riseS` once events start popping, and eases back during the settle. */
+  bloomSwell: Object.freeze({ riseS: 0.8, amount: 0.35 }),
   endS: 7.0,
 });
 
@@ -36,10 +38,13 @@ function span(t: number, a: number, b: number): number {
   return clamp01((t - a) / (b - a));
 }
 
-/** Terrain surface opacity at `t` (1 before, 0.12 after the fade, contours unaffected). */
-export function terrainOpacityAt(t: number): number {
+/**
+ * Terrain surface opacity at `t`, fading from `from` (1 from a settled start frame) to 0.12. Contours
+ * are unaffected. Starting from the current opacity means a reveal launched mid-reset never jumps.
+ */
+export function terrainOpacityAt(t: number, from = 1): number {
   const { startS, endS, to } = TIMELINE.terrainFade;
-  return 1 + (to - 1) * easeOutCubic(span(t, startS, endS));
+  return from + (to - from) * easeOutCubic(span(t, startS, endS));
 }
 
 /** Smooth start and stop for the camera move (ease-in-out cubic). */
@@ -78,10 +83,11 @@ export function appearTimeOf(slot: number): number {
 /** Bloom multiplier: a soft swell while events pop, back to 1 by the end of the settle. */
 export function bloomBoostAt(t: number): number {
   const { startS, endS } = TIMELINE.events;
+  const { riseS, amount } = TIMELINE.bloomSwell;
   if (t <= startS || t >= TIMELINE.endS) return 1;
-  const rise = span(t, startS, startS + 0.8);
+  const rise = span(t, startS, startS + riseS);
   const fall = 1 - span(t, endS, TIMELINE.endS);
-  return 1 + 0.35 * Math.min(rise, fall);
+  return 1 + amount * Math.min(rise, fall);
 }
 
 /** True once the whole choreography (including the settle) has played. */
