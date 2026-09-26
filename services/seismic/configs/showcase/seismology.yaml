@@ -86,11 +86,13 @@ grids:
 # <cache_dir>/ttgrids/3d/ keyed by a hash of the model file's SHA-256 and every input below.
 # Receivers outside the 3D model use their 1D tables (grids above); the run record names them.
 grid3d:
-  # The ticket's range is 100-200 m. LOC-07 acceptance (showcase stations, all 3D tables): 200 m
-  # builds in about half a minute and 0.4 GB, 100 m in about five minutes and 3 GB. At the
-  # showcase hypocentres 200 m and 100 m tables differ by tens of ms for S (p95); relocating the
-  # matched events without statics moved their median elevM by about 100 m (the largest move
-  # was over 2 km). Use 100 m if grid3d becomes the showcase method.
+  # The ticket's range is 100-200 m (checked). LOC-07 acceptance (showcase stations,
+  # constantColumns fallback1d): 200 m builds in under half a minute and 0.3 GB, 100 m in about
+  # five minutes and 2.3 GB. At the showcase hypocentres 200 m and 100 m tables differ by about
+  # ten ms for S (p95); relocating the matched events without statics left the median elevM in
+  # place and moved none by more than about half a kilometre. (With asFile the difference was
+  # several times larger, driven by the one-value outcrop columns.) 100 m is the safer choice
+  # if grid3d becomes the showcase method.
   spacingM: 200.0
   # The model's west edge holds no values in a strip (velocity.model3d above); a lattice cell
   # with none fails the build. 2000 m reached it at 100 m spacing on the showcase stations (LOC-07).
@@ -104,13 +106,13 @@ grid3d:
   # file and keep their values (their air already holds that velocity). asFile keeps every value.
   airHandling: topSurfaceVelocity
   # Receivers in those one-value columns (velocity.model3d above: basement 5.8 / 3.392 km/s from
-  # the model's bottom to its top, no ground surface, no basin data; showcase: four Mineral
-  # Mountains outcrop stations and two on the valley floor west of the basin cut). fallback1d:
-  # no 3D table, their 1D tables instead (LOC-01's guidance; the record names them); asFile: a 3D
-  # table from those values. The lattice covers them either way, so switching this rebuilds
-  # nothing. LOC-07 review: without statics, asFile puts the matched events' depths kilometres
-  # above the catalog's and the outcrop stations' columns alone cause it (diagnostics.md and
-  # _runners/LOC-07_acceptance.out give the numbers).
+  # the model's bottom to its top, no ground surface, no basin data; showcase: Mineral Mountains
+  # outcrop stations and valley-floor stations west of the basin cut). fallback1d: no 3D table,
+  # their 1D tables instead (LOC-01's guidance; the record names them); asFile: a 3D table from
+  # those values. The lattice covers them either way, so switching this rebuilds no other table.
+  # LOC-07 review: without statics, asFile puts the matched events' depths kilometres above the
+  # catalog's, and the outcrop stations' columns alone cause it; fallback1d avoids that but its
+  # residuals are larger (the numbers: _runners/LOC-07_acceptance.out, section 3c).
   constantColumns: fallback1d
   # Exact layered times of the receiver's own model column (50 m cells) within this radius (m):
   # the near-surface under the station, which the resampled cells can't hold, enters every
