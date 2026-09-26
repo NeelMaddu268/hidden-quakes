@@ -46,7 +46,8 @@ export function applyKey(key: string, store: DemoState, context: KeyboardContext
   }
 }
 
-function isTextInput(target: EventTarget | null): boolean {
+/** True for targets whose own key handling wins (inputs, textareas, selects, contenteditable). */
+export function isTextInput(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
   const tag = target.tagName;
