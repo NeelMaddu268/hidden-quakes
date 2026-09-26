@@ -328,7 +328,6 @@ def test_seed_error_bound() -> None:
     assert bound == pytest.approx(100.0 * (1.0 / 1500.0 - 1.0 / 2000.0))
 
 
-@pytest.mark.smoke
 def test_table_files_and_cache(world: dict[str, Any], tmp_path: Path) -> None:
     run, acfg = world["run"], world["base"].associator
     stations = world["stations"]
@@ -356,7 +355,6 @@ def test_table_files_and_cache(world: dict[str, Any], tmp_path: Path) -> None:
     assert other.built and other.directory != first.directory
 
 
-@pytest.mark.smoke
 def test_model_top_extended_to_highest_station_and_recorded(world: dict[str, Any]) -> None:
     cfg, run = world["base"], world["run"]
     stations = world["stations"].copy()
@@ -376,7 +374,6 @@ def test_model_top_extended_to_highest_station_and_recorded(world: dict[str, Any
         assert above == expected and "XX.S03" in above
 
 
-@pytest.mark.smoke
 def test_pyocto_stations_sit_at_the_sensor_not_the_wellhead(world: dict[str, Any]) -> None:
     """PyOcto station z is -sensorElevM / 1000 (km below sea level), boreholes included."""
     stations = world["stations"]
@@ -394,7 +391,6 @@ def test_pyocto_stations_sit_at_the_sensor_not_the_wellhead(world: dict[str, Any
 # --- association ----------------------------------------------------------------------------------
 
 
-@pytest.mark.smoke
 def test_synthetic_events_associated_with_the_right_picks(world: dict[str, Any]) -> None:
     result, counts, _ = _associate_toy(world)
     events, truth = world["events"], world["truth"]
@@ -423,7 +419,6 @@ def test_synthetic_events_associated_with_the_right_picks(world: dict[str, Any])
     assert counts["events"] == N_EVENTS and counts["assocPicks"] == len(result.picks)
 
 
-@pytest.mark.smoke
 def test_output_schema_and_deterministic_ids(world: dict[str, Any]) -> None:
     result, _, _ = _associate_toy(world)
     for frame, dtypes in ((result.events, EVENT_DTYPES), (result.picks, PICK_DTYPES)):
@@ -443,7 +438,6 @@ def test_output_schema_and_deterministic_ids(world: dict[str, Any]) -> None:
     pd.testing.assert_frame_equal(again.picks, result.picks)
 
 
-@pytest.mark.smoke
 def test_thread_count_does_not_change_results(world: dict[str, Any]) -> None:
     one, _, _ = _associate_toy(world, cfg=_cfg(world["cfg"], nThreads=1))
     many, _, _ = _associate_toy(world, cfg=_cfg(world["cfg"], nThreads=4))
@@ -451,7 +445,6 @@ def test_thread_count_does_not_change_results(world: dict[str, Any]) -> None:
     pd.testing.assert_frame_equal(one.picks, many.picks)
 
 
-@pytest.mark.smoke
 def test_stalta_labelled_picks_associate_unchanged(world: dict[str, Any]) -> None:
     picks = world["picks"]
     stalta = picks.assign(
@@ -468,7 +461,6 @@ def test_stalta_labelled_picks_associate_unchanged(world: dict[str, Any]) -> Non
     )
 
 
-@pytest.mark.smoke
 def test_zero_picks_give_typed_zero_row_tables(world: dict[str, Any], tmp_path: Path) -> None:
     empty = pd.DataFrame({c: pd.Series([], dtype=d) for c, d in (
         ("id", "string"), ("stationId", "string"), ("phase", "string"), ("t", "float64"),
@@ -490,7 +482,6 @@ def test_zero_picks_give_typed_zero_row_tables(world: dict[str, Any], tmp_path: 
             "assocId": "large_string", "pickId": "large_string"}
 
 
-@pytest.mark.smoke
 def test_public_signature_forge_model_and_cache(world: dict[str, Any]) -> None:
     """``associate(picks, stations, cfg, run)`` on the configured FORGE layer model.
 
@@ -524,7 +515,6 @@ def test_public_signature_forge_model_and_cache(world: dict[str, Any]) -> None:
     assert rec["tables"]["modelTopElevM"] >= stations["sensorElevM"].max()
 
 
-@pytest.mark.smoke
 def test_record_holds_every_pyocto_argument(world: dict[str, Any]) -> None:
     _, _, rec = _associate_toy(world)
     call = rec["pyocto"]["OctoAssociator"]
@@ -656,7 +646,6 @@ def test_shared_pick_stays_with_smallest_residual() -> None:
     assert kept.loc[kept["pickId"] == "A:P:1", "eid"].tolist() == [1]
 
 
-@pytest.mark.smoke
 def test_duplicates_from_pyocto_are_merged_in_finish(world: dict[str, Any]) -> None:
     """A PyOcto event duplicated 0.2 s later with most of its picks becomes one event again."""
     cfg = world["cfg"].associator
@@ -681,7 +670,6 @@ def test_duplicates_from_pyocto_are_merged_in_finish(world: dict[str, Any]) -> N
     pd.testing.assert_frame_equal(merged.picks, clean.picks)
 
 
-@pytest.mark.smoke
 def test_events_outside_the_run_window_are_dropped(world: dict[str, Any]) -> None:
     """In-window picks of an event whose origin precedes windowStart form no candidate event."""
     run = world["run"]
@@ -710,7 +698,6 @@ def test_events_outside_the_run_window_are_dropped(world: dict[str, Any]) -> Non
 # --- input checks and config -------------------------------------------------------------------
 
 
-@pytest.mark.smoke
 def test_inputs_fail_loudly(world: dict[str, Any]) -> None:
     picks, stations = world["picks"], world["stations"]
     with pytest.raises(ValueError, match="missing from the stations table"):
@@ -729,7 +716,6 @@ def test_inputs_fail_loudly(world: dict[str, Any]) -> None:
         _associate_toy(world, cfg=_cfg(world["cfg"], timeBeforeS=1.0))
 
 
-@pytest.mark.smoke
 def test_picks_from_stations_not_used_in_the_run(world: dict[str, Any]) -> None:
     """H1 picks usedInRun-false stations on purpose: dropped and counted, or rejected (config)."""
     stations = world["stations"].copy()
@@ -780,7 +766,6 @@ def _write_inputs(ctx: Any, world: dict[str, Any]) -> None:
     write_models(picks, ctx.path("picks.parquet"), Pick)
 
 
-@pytest.mark.smoke
 def test_stage_writes_tables_record_and_counts_sweep(
     world: dict[str, Any], make_ctx: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -824,7 +809,6 @@ def test_stage_writes_tables_record_and_counts_sweep(
         stage_run(make_ctx(world["run"], _cfg(seis, picksTable="known/picks.parquet")))
 
 
-@pytest.mark.smoke
 def test_sweep_scores_every_point_with_the_evaluator(
     world: dict[str, Any], tmp_path: Path
 ) -> None:

@@ -24,8 +24,6 @@ from hq.locate.locator import (
 )
 from hq.locate.uncertainty import FACES, PdfSummary, chi2_2, summarize_pdf
 
-pytestmark = pytest.mark.smoke
-
 FINE = 25.0
 # docs/02 LocationQuality fields
 QUALITY_FIELDS = {"method", "statics", "nStations", "nP", "nS", "rmsS", "gapDeg", "minEpiDistM",
@@ -85,6 +83,7 @@ def _brute_l1(values: FloatArray, weights: FloatArray) -> float:
     return float(min(np.sum(weights * np.abs(values - v)) for v in values))
 
 
+@pytest.mark.smoke
 def test_weighted_median_matches_brute_force() -> None:
     rng = np.random.default_rng(3)
     for size in (1, 2, 3, 4, 7, 10, 25):
@@ -106,6 +105,7 @@ def test_weighted_median_matches_brute_force() -> None:
         weighted_median([1.0, 2.0], [1.0, 0.0])
 
 
+@pytest.mark.smoke
 def test_l1_misfit_rows_match_one_dimensional() -> None:
     rng = np.random.default_rng(5)
     d = rng.normal(0.0, 0.3, (200, 9))
@@ -116,6 +116,7 @@ def test_l1_misfit_rows_match_one_dimensional() -> None:
         assert misfit[i] == pytest.approx(_brute_l1(d[i], w), rel=1e-12)
 
 
+@pytest.mark.smoke
 def test_azimuthal_gap() -> None:
     assert azimuthal_gap_deg([1.0, 0.0, -1.0, 0.0], [0.0, 1.0, 0.0, -1.0]) == pytest.approx(90.0)
     assert azimuthal_gap_deg([1.0, 1.0], [1.0, 1.001]) == pytest.approx(360.0 - 0.0286, abs=1e-3)
@@ -147,6 +148,7 @@ def _summary(misfit: FloatArray, e: FloatArray, n: FloatArray, z: FloatArray, *,
                          map_face_band_m=band, confidence=0.68, edge_fraction=0.05)
 
 
+@pytest.mark.smoke
 def test_pdf_of_a_gaussian_misfit_gives_the_expected_sigmas() -> None:
     sig = (120.0, 60.0, 200.0)
     misfit, e, n, z = _gaussian_box(sig, (7 * 5, 7 * 3, 7 * 8))
@@ -165,6 +167,7 @@ def test_pdf_of_a_gaussian_misfit_gives_the_expected_sigmas() -> None:
     assert scaled.h_err_m == pytest.approx(math.sqrt(chi2_2(0.68)) * sig[0] / 0.8, rel=1e-6)
 
 
+@pytest.mark.smoke
 def test_pdf_rotated_ellipse_uses_the_largest_eigenvalue() -> None:
     e = n = np.arange(-40, 41) * FINE
     z = np.arange(-10, 11) * FINE
@@ -176,6 +179,7 @@ def test_pdf_rotated_ellipse_uses_the_largest_eigenvalue() -> None:
     assert pdf.cov[0, 1] == pytest.approx(0.5 * (150.0**2 - 50.0**2), rel=0.01)
 
 
+@pytest.mark.smoke
 def test_grid_limited_pdf_is_floored_and_flagged() -> None:
     misfit, e, n, z = _gaussian_box((1.0, 1.0, 1.0), (4, 4, 4))
     pdf = _summary(misfit, e, n, z)
@@ -185,6 +189,7 @@ def test_grid_limited_pdf_is_floored_and_flagged() -> None:
     assert pdf.h_err_floored and pdf.v_err_floored
 
 
+@pytest.mark.smoke
 def test_face_masses_and_depth_on_edge() -> None:
     misfit, e, n, z = _gaussian_box((80.0, 80.0, 60.0), (12, 12, 12))
     cut = 12  # the misfit minimum: a box clipped there has its peak on the top face
@@ -200,6 +205,7 @@ def test_face_masses_and_depth_on_edge() -> None:
     assert not _summary(misfit, e, n, z, top=True, bottom=True).depth_on_edge
 
 
+@pytest.mark.smoke
 def test_broad_pdf_map_boundary_is_separate_from_contracted_face_mass_flag() -> None:
     # Vertical sd 400 m peaked on the top row: the top row holds < 5% of the mass.
     misfit, e, n, z = _gaussian_box((80.0, 80.0, 400.0), (8, 8, 100))
@@ -428,6 +434,7 @@ def test_statics_are_additive_and_validated(loc02: Any, locator: Locator, t0: fl
             locator.locate(picks, statics=bad)  # type: ignore[arg-type]
 
 
+@pytest.mark.smoke
 def test_quality_fields_and_arrivals(loc02: Any, locator: Locator, t0: float) -> None:
     s_on = {"T.S01", "T.S02", "T.B01"}
     loc = locator.locate(loc02.exact_picks(locator, 0.0, 0.0, -2000.0, t0, s_stations=s_on))
@@ -474,6 +481,7 @@ def test_pick_probability_and_profile_sigma_set_the_weights(
         float((arr["weight"] * arr["residualS"].abs())[used].sum()), rel=1e-4)
 
 
+@pytest.mark.smoke
 def test_bad_picks_raise(loc02: Any, locator: Locator, t0: float) -> None:
     picks = loc02.exact_picks(locator, 0.0, 0.0, -2000.0, t0)
     with pytest.raises(ValueError, match="at least"):
@@ -502,6 +510,7 @@ def test_outlier_pass_keeps_min_picks(
     assert kept.arrivals["usedInLocation"].all()
 
 
+@pytest.mark.smoke
 def test_station_out_of_table_reach_raises(
     loc02: Any, loc_setup: LocatorSetup, locator: Locator, loc_run: RunSection
 ) -> None:
@@ -519,6 +528,7 @@ def test_station_out_of_table_reach_raises(
                 ref_surface_elev_m=loc_run.refSurfaceElevM)
 
 
+@pytest.mark.smoke
 def test_volume_top_defaults_to_the_reference_surface(loc_cfg: SeismologyConfig) -> None:
     vol = make_volume(loc_cfg.locator, 1627.7)
     assert vol.top_elev_m == 1625.0 and vol.configured_top_elev_m == 1627.7
