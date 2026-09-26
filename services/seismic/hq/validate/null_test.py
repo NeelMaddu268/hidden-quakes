@@ -10,6 +10,13 @@ number of final events and of Tier A events per rerun are the "chance" counts; `
 carries their mean, the sample standard deviation (``n - 1``) of the event count, and the
 configuration that produced them. Same seed, same numbers.
 
+Tier A is counted against the run's own bars (``thresholds=``, REQ-H2-9): scrambled picks match
+almost no public event, so H2's ``assign_tiers`` could not derive bars from a rerun and never
+invents them. The reruns pass ``arrivals=`` and ``stations=`` too, so the nearest-station rule
+measures focal depth as stage ``tier`` does. What a rerun could not do (no station statics, no
+locate flags for the ``mapOnVolumeTop`` rule) is read back from the tiering record H2 returns
+and written to ``validation_notes.json`` (``hq.validate.notes``).
+
 Pick ids are left as they are: they are the keys ``assoc_picks`` and ``arrivals`` refer to, and
 a shifted pick is still the same pick.
 """
@@ -17,7 +24,8 @@ a shifted pick is still the same pick.
 import logging
 import math
 import time
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -33,9 +41,30 @@ log = logging.getLogger(__name__)
 
 PICK_COLUMNS: tuple[str, ...] = ("id", "stationId", "phase", "t")  # what the shuffle touches
 STATION_ID_COLUMN = "id"
+EVENT_ID_COLUMN = "id"
+MATCH_EVENT_COLUMN = "eventId"
 TIER_COLUMN = "tier"
 STRICT_TIER = "A"
 PHASE_P = "P"
+
+
+@dataclass(frozen=True)
+class Rerun:
+    """What one ``associate -> locate -> match -> assign_tiers`` rerun produced: the final events
+    table ``assign_tiers`` returned, ``match``'s table, and the tiering record H2 returned
+    (``TierResult.tiering``; None when a step yielded no events and the rerun stopped there)."""
+
+    events: pd.DataFrame  # events.parquet schema (empty, with the checked columns, when stopped)
+    matches: pd.DataFrame  # matches.parquet schema
+    tiering: dict[str, Any] | None = None
+
+    @property
+    def n_events(self) -> int:
+        return len(self.events)
+
+    @property
+    def n_strict(self) -> int:
+        return _count_strict(self.events) if len(self.events) else 0
 
 
 @dataclass(frozen=True)
@@ -47,12 +76,22 @@ class ShuffleOutcome:
     n_events: int
     n_strict: int
     runtime_s: float
+    tiering: dict[str, Any] | None = field(default=None, compare=False)  # H2's TierResult.tiering
 
 
 def _require_columns(df: pd.DataFrame, columns: tuple[str, ...], what: str) -> None:
     missing = [c for c in columns if c not in df.columns]
     if missing:
         raise ValidateError(f"{what} lacks columns {missing}; docs/02 §2 lists {list(columns)}")
+
+
+def profile_overrides(
+    profiles: tuple[AssociationProfile, ...] | list[AssociationProfile],
+    overrides: POnlyAssociatorConfig,
+) -> dict[str, dict[str, int]]:
+    """Per profile, the associator fields its reruns override (for the notes): ``p_only``'s
+    values when it is among ``profiles``, nothing for ``full``."""
+    return {"p_only": overrides.model_dump()} if "p_only" in profiles else {}
 
 
 def profile_config(
@@ -122,6 +161,19 @@ def _count_strict(events: pd.DataFrame) -> int:
     return int((events[TIER_COLUMN].astype(str) == STRICT_TIER).sum())
 
 
+def require_thresholds(thresholds: Mapping[str, Any] | None, what: str) -> Mapping[str, Any]:
+    """The run's ``ProcessingRun.tiering`` with its ``thresholds`` record, or a loud error naming
+    H2's tier stage: the reruns tier against the run's own bars and never invent them."""
+    record = thresholds.get("thresholds") if isinstance(thresholds, Mapping) else None
+    if not isinstance(record, Mapping):
+        raise ValidateError(
+            f"{what} needs the run's own tier bars (ProcessingRun.tiering['thresholds'], written "
+            "by H2's 'tier' stage, owner H2 Seismology) to count Tier A with; run stage tier "
+            "first. Bars are never invented for a rerun (REQ-H2-9)"
+        )
+    return thresholds
+
+
 def rerun_pipeline(
     picks: pd.DataFrame,
     stations: pd.DataFrame,
@@ -129,22 +181,44 @@ def rerun_pipeline(
     api: SeismologyApi,
     seismology_cfg: Any,
     run: RunSection,
-) -> tuple[int, int]:
-    """``associate -> locate -> match -> assign_tiers`` on ``picks``; returns (events, Tier A).
+    *,
+    thresholds: Mapping[str, Any],
+) -> Rerun:
+    """``associate -> locate -> match -> assign_tiers`` on ``picks`` (docs/02 §5 calls, plus the
+    REQ-H2-8/9 keywords): ``locate`` as bound by ``real_seismology_api`` and
+    ``assign_tiers(located.events, matched.matches, cfg, thresholds=<the run's tiering>,
+    arrivals=located.arrivals, stations=stations)``, ``stations`` being the table the rerun
+    located with.
 
-    A step that yields no events ends the rerun with (0, 0): there is nothing to locate, match
-    or tier, and the later steps are not asked to handle an empty frame. Any error the API
-    raises propagates unchanged.
+    A step that yields no events ends the rerun with empty tables and no tiering record: there
+    is nothing to locate, match or tier, and the later steps are not asked to handle an empty
+    frame. Any error the API raises propagates unchanged.
     """
+    require_thresholds(thresholds, "rerun_pipeline")
+    empty = Rerun(pd.DataFrame(columns=[EVENT_ID_COLUMN, TIER_COLUMN]),
+                  pd.DataFrame(columns=[MATCH_EVENT_COLUMN]))  # fmt: skip
     assoc = api.associate(picks, stations, seismology_cfg, run)
     if len(assoc.events) == 0:
-        return 0, 0
+        return empty
     located = api.locate(assoc, picks, stations, seismology_cfg, run)
     if len(located.events) == 0:
-        return 0, 0
+        return empty
     matched = api.match(located.events, catalog, seismology_cfg)
-    tiered = api.assign_tiers(located.events, matched.matches, seismology_cfg)
-    return len(tiered.events), _count_strict(tiered.events)
+    tiered = api.assign_tiers(
+        located.events,
+        matched.matches,
+        seismology_cfg,
+        thresholds=thresholds,
+        arrivals=located.arrivals,
+        stations=stations,
+    )
+    tiering = tiered.tiering
+    if not isinstance(tiering, Mapping):
+        raise ValidateError(
+            f"assign_tiers returned tiering of type {type(tiering).__name__}, not the dict "
+            "docs/02 §5 names (owner: H2 Seismology)"
+        )
+    return Rerun(tiered.events, matched.matches, dict(tiering))
 
 
 def null_shuffles(
@@ -156,10 +230,14 @@ def null_shuffles(
     run: RunSection,
     cfg: NullTestConfig,
     p_only: POnlyAssociatorConfig | None = None,
+    *,
+    thresholds: Mapping[str, Any],
 ) -> list[ShuffleOutcome]:
     """Every rerun of the null test, in order, each with its shifts and counts. ``p_only`` holds
     the associator overrides the p_only profile reruns with (``ValidateConfig.pOnlyAssociator``;
-    the config defaults when None)."""
+    the config defaults when None); ``thresholds`` is the run's ``ProcessingRun.tiering`` with
+    the bars every rerun's Tier A is counted against (REQ-H2-9)."""
+    require_thresholds(thresholds, "the null test")
     _require_columns(picks, PICK_COLUMNS, "picks")
     _require_columns(stations, (STATION_ID_COLUMN,), "stations")
     selected = select_profile(picks, cfg.profile)
@@ -187,17 +265,21 @@ def null_shuffles(
         rng = np.random.default_rng([cfg.seed, i])
         shifts = station_shifts(station_ids, rng, cfg.shiftS)
         shifted = shift_picks(selected, shifts)
-        n_events, n_strict = rerun_pipeline(shifted, stations, catalog, api, seismology_cfg, run)
+        rerun = rerun_pipeline(
+            shifted, stations, catalog, api, seismology_cfg, run, thresholds=thresholds
+        )
         runtime_s = time.perf_counter() - started
         log.info(
             "null test: rerun %d/%d: %d chance events, %d Tier A, %.1f s",
             i + 1,
             cfg.nShuffles,
-            n_events,
-            n_strict,
+            rerun.n_events,
+            rerun.n_strict,
             runtime_s,
         )
-        outcomes.append(ShuffleOutcome(i, shifts, n_events, n_strict, runtime_s))
+        outcomes.append(
+            ShuffleOutcome(i, shifts, rerun.n_events, rerun.n_strict, runtime_s, rerun.tiering)
+        )
     return outcomes
 
 
@@ -240,8 +322,15 @@ def run_null_test(
     run: RunSection,
     cfg: NullTestConfig,
     p_only: POnlyAssociatorConfig | None = None,
+    *,
+    thresholds: Mapping[str, Any],
 ) -> NullTest:
-    """The null test end to end: ``nShuffles`` seeded reruns summarized as a ``NullTest``."""
+    """The null test end to end: ``nShuffles`` seeded reruns summarized as a ``NullTest``
+    (the stage calls ``null_shuffles`` and ``summarize`` itself, to keep the reruns' tiering
+    records for the notes)."""
     return summarize(
-        null_shuffles(picks, stations, catalog, api, seismology_cfg, run, cfg, p_only), cfg
+        null_shuffles(
+            picks, stations, catalog, api, seismology_cfg, run, cfg, p_only, thresholds=thresholds
+        ),
+        cfg,
     )

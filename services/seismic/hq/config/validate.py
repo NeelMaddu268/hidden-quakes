@@ -75,8 +75,17 @@ class GRConfig(BaseModel):
     # recovered magnitudes lie above Mc.
     minEvents: int = Field(default=30, ge=2)
     # docs/03 magnitude kill switch: when H2's MagCalibration.looMae exceeds this, G-R is skipped
-    # (with a warning) and only the calibration is embedded.
+    # (with a warning) and only the calibration is embedded. H2's magnitude stage applies its own
+    # gate (seismology.yaml magnitude.maxLooMae, recorded in ProcessingRun.matching["magnitude"]
+    # ["gate"]["maxLooMae"]); when that record exists the stage applies H2's value and warns if
+    # this one differs, so the two gates never disagree on a run (REQ-H2-13).
     maxLooMae: float = Field(default=0.4, gt=0.0)
+    # The one CatalogEvent.magType the public curve (GRCurve.publicCum) is drawn from, so public
+    # magnitudes are never binned across scales next to the candidates' calibrated magnitude
+    # (REQ-H2-13). Used only when ProcessingRun.matching["magnitude"]["calibrationMagType"] is
+    # absent (H2's magnitude stage has not run, or failed); with public magnitudes present and
+    # neither, the stage fails. None: no fallback.
+    publicMagType: str | None = Field(default=None, min_length=1)
 
 
 class POnlyAssociatorConfig(BaseModel):

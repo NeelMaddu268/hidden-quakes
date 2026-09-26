@@ -36,8 +36,10 @@ baseline:
   comparableFraction: 0.2
 
 # Gutenberg-Richter (VAL-01): Aki-Utsu b with Shi-Bolt sigma, Mc by maximum curvature + offset,
-# on the public regional catalog's magnitudes (CatalogEvent.mag) and every candidate event's
-# magnitude (SeismicEvent.magnitude.value) -> Validation.gr. Skipped without magnitudes.
+# on the public regional catalog's magnitudes of ONE type (CatalogEvent.mag where magType is the
+# calibration type, REQ-H2-13) and every candidate event's magnitude (SeismicEvent.magnitude.value)
+# -> Validation.gr. Skipped without magnitudes. The type used and the public magnitudes left out
+# per type are written to validation_notes.json (GRCurve has no label field).
 gr:
   # Width of GRCurve.magBins, magnitude units; also the histogram bin for the maximum-curvature
   # Mc and the binning correction (bin width / 2) in the Aki-Utsu estimator.
@@ -49,8 +51,16 @@ gr:
   # above Mc.
   minEvents: 30
   # docs/03 magnitude kill switch: when H2's magnitude.json reports a leave-one-out MAE above
-  # this, G-R is skipped with a warning and only the calibration is embedded.
+  # this, G-R is skipped with a warning and only the calibration is embedded. Keep it equal to
+  # seismology.yaml magnitude.maxLooMae: when the run records H2's gate
+  # (ProcessingRun.matching.magnitude.gate.maxLooMae) the stage applies that value and warns if
+  # this one differs (REQ-H2-13).
   maxLooMae: 0.4
+  # Fallback for the public curve's magnitude type when ProcessingRun.matching.magnitude
+  # .calibrationMagType is absent (H2's magnitude stage has not run or failed): the one
+  # CatalogEvent.magType publicCum is drawn from. null = no fallback; with public magnitudes and
+  # no calibration record the stage then fails instead of mixing scales (REQ-H2-13).
+  publicMagType: null
 
 # Associator overrides for the p_only profile (REQ-H2-7). run.yaml/seismology.yaml's associator
 # requires S picks (nSPicks, nPAndSPicks); P-only picks through it associate nothing, so every

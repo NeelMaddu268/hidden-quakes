@@ -4,7 +4,11 @@ the run's own ``SeismologyConfig`` (docs/02 §5). One ``BaselineRow`` per picker
 
 Every input is a stored table (``picks.parquet``, ``picks_stalta.parquet``, ``stations.parquet``,
 ``catalog.parquet``) and the stored config; nothing is drawn at random, so the table reproduces
-byte for byte from the same run directory.
+byte for byte from the same run directory. Every rerun tiers against the run's own bars
+(``thresholds=`` from ``ProcessingRun.tiering``, REQ-H2-9; an STA/LTA rerun matches another set
+of public events, so bars derived from it would be on another scale) with ``arrivals=`` and
+``stations=`` so the nearest-station rule runs as stage ``tier`` does; ``baseline_reruns`` keeps
+each rerun's tiering record for ``validation_notes.json``.
 
 Row fields, exactly:
 
@@ -26,6 +30,8 @@ STA/LTA's exceeds ``minGain``. The docs/03 baseline kill switch (STA/LTA within
 
 import logging
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
 import numpy as np
@@ -48,6 +54,8 @@ from hq.validate.null_test import (
     TIER_COLUMN,
     _require_columns,
     profile_config,
+    require_thresholds,
+    rerun_pipeline,
     select_profile,
 )
 
@@ -66,6 +74,15 @@ MATCH_EVENT_COLUMN = "eventId"
 FINAL_EVENT_COLUMNS: tuple[str, ...] = (EVENT_ID_COLUMN, TIER_COLUMN, RMS_COLUMN, STATIONS_COLUMN)
 
 
+@dataclass(frozen=True)
+class BaselineRerun:
+    """One picker x profile rerun: its row and the tiering record H2 returned (None when the
+    rerun found no event to tier)."""
+
+    row: BaselineRow
+    tiering: dict[str, Any] | None
+
+
 def rerun_tables(
     picks: pd.DataFrame,
     stations: pd.DataFrame,
@@ -73,25 +90,24 @@ def rerun_tables(
     api: SeismologyApi,
     seismology_cfg: Any,
     run: RunSection,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """``associate -> locate -> match -> assign_tiers`` on ``picks``; returns the final events
-    table and the matches table. A step that yields no events ends the rerun with two empty
-    frames, as ``null_test.rerun_pipeline`` does. API errors propagate unchanged."""
-    empty = (
-        pd.DataFrame(columns=list(FINAL_EVENT_COLUMNS)),
-        pd.DataFrame(columns=["catalogId", MATCH_EVENT_COLUMN]),
+    *,
+    thresholds: Mapping[str, Any],
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any] | None]:
+    """``null_test.rerun_pipeline`` on ``picks`` (the run's bars in ``thresholds``); returns the
+    final events table, the matches table and H2's tiering record. A step that yields no events
+    ends the rerun with two empty frames and no record. API errors propagate unchanged."""
+    rerun = rerun_pipeline(
+        picks, stations, catalog, api, seismology_cfg, run, thresholds=thresholds
     )
-    assoc = api.associate(picks, stations, seismology_cfg, run)
-    if len(assoc.events) == 0:
-        return empty
-    located = api.locate(assoc, picks, stations, seismology_cfg, run)
-    if len(located.events) == 0:
-        return empty
-    matched = api.match(located.events, catalog, seismology_cfg)
-    tiered = api.assign_tiers(located.events, matched.matches, seismology_cfg)
-    _require_columns(tiered.events, FINAL_EVENT_COLUMNS, "assign_tiers events (docs/02 §2)")
-    _require_columns(matched.matches, (MATCH_EVENT_COLUMN,), "match matches (docs/02 §2)")
-    return tiered.events, matched.matches
+    if rerun.tiering is None:
+        return (
+            pd.DataFrame(columns=list(FINAL_EVENT_COLUMNS)),
+            pd.DataFrame(columns=["catalogId", MATCH_EVENT_COLUMN]),
+            None,
+        )
+    _require_columns(rerun.events, FINAL_EVENT_COLUMNS, "assign_tiers events (docs/02 §2)")
+    _require_columns(rerun.matches, (MATCH_EVENT_COLUMN,), "match matches (docs/02 §2)")
+    return rerun.events, rerun.matches, rerun.tiering
 
 
 def summarize_row(
@@ -132,7 +148,7 @@ def summarize_row(
     )
 
 
-def run_baseline(
+def baseline_reruns(
     picks_phasenet: pd.DataFrame,
     picks_stalta: pd.DataFrame,
     stations: pd.DataFrame,
@@ -142,10 +158,14 @@ def run_baseline(
     run: RunSection,
     cfg: BaselineConfig,
     p_only: POnlyAssociatorConfig | None = None,
-) -> list[BaselineRow]:
-    """The baseline table: for each method (PhaseNet, then STA/LTA) and each profile in
-    ``cfg.profiles`` (in that order), the picks the profile selects go through the pipeline
-    with the profile's config (``p_only`` reruns carry the associator overrides, REQ-H2-7)."""
+    *,
+    thresholds: Mapping[str, Any],
+) -> list[BaselineRerun]:
+    """The baseline table with each rerun's tiering record: for each method (PhaseNet, then
+    STA/LTA) and each profile in ``cfg.profiles`` (in that order), the picks the profile selects
+    go through the pipeline with the profile's config (``p_only`` reruns carry the associator
+    overrides, REQ-H2-7) and the run's bars (``thresholds``, REQ-H2-9)."""
+    require_thresholds(thresholds, "the baseline comparison")
     _require_columns(stations, (STATION_ID_COLUMN,), "stations")
     known = set(stations[STATION_ID_COLUMN].astype(str))
     for name, picks in ((PHASENET, picks_phasenet), (STALTA, picks_stalta)):
@@ -163,15 +183,17 @@ def run_baseline(
         len(catalog),
         list(cfg.profiles),
     )
-    rows: list[BaselineRow] = []
+    reruns: list[BaselineRerun] = []
     for method, picks in ((PHASENET, picks_phasenet), (STALTA, picks_stalta)):
         for profile in cfg.profiles:
             started = time.perf_counter()
             selected = select_profile(picks, profile)
             profile_cfg = profile_config(seismology_cfg, profile, p_only or POnlyAssociatorConfig())
-            events, matches = rerun_tables(selected, stations, catalog, api, profile_cfg, run)
+            events, matches, tiering = rerun_tables(
+                selected, stations, catalog, api, profile_cfg, run, thresholds=thresholds
+            )
             row = summarize_row(method, profile, events, matches)
-            rows.append(row)
+            reruns.append(BaselineRerun(row, tiering))
             log.info(
                 "baseline %s/%s: %d picks -> %d candidate events, %d of %d public recovered, "
                 "tiers A %d / B %d / C %d, median rmsS %.3f s, median stations %.1f, %.1f s",
@@ -188,7 +210,30 @@ def run_baseline(
                 row.medianStations,
                 time.perf_counter() - started,
             )
-    return rows
+    return reruns
+
+
+def run_baseline(
+    picks_phasenet: pd.DataFrame,
+    picks_stalta: pd.DataFrame,
+    stations: pd.DataFrame,
+    catalog: pd.DataFrame,
+    api: SeismologyApi,
+    seismology_cfg: Any,
+    run: RunSection,
+    cfg: BaselineConfig,
+    p_only: POnlyAssociatorConfig | None = None,
+    *,
+    thresholds: Mapping[str, Any],
+) -> list[BaselineRow]:
+    """The baseline table (``baseline_reruns`` without the tiering records)."""
+    return [
+        r.row
+        for r in baseline_reruns(
+            picks_phasenet, picks_stalta, stations, catalog, api, seismology_cfg, run, cfg,
+            p_only, thresholds=thresholds,
+        )
+    ]  # fmt: skip
 
 
 def index_rows(rows: list[BaselineRow]) -> dict[tuple[str, str], BaselineRow]:
