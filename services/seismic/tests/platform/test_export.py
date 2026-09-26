@@ -738,6 +738,66 @@ def test_dropped_traces_are_logged_never_filled(
         assert all(t.stationId not in (GAP_STATION_ID, EMPTY_STATION_ID) for t in ev.traces)
 
 
+class CacheMissSource(SyntheticSource):
+    """Like H1's cache: a station with nothing cached raises instead of returning an empty
+    stream (``hq.ingest.cache.CacheMissError`` is a ``LookupError``)."""
+
+    def read_window(self, station_id: str, t0: float, t1: float, *, cache_dir: Path) -> Stream:
+        if station_id == self.empty_station:
+            self.reads.append((station_id, t0, t1))
+            raise LookupError(f"nothing cached for station {station_id}")
+        return super().read_window(station_id, t0, t1, cache_dir=cache_dir)
+
+
+def write_download_report(ctx: runs.RunContext, run: SyntheticRun, no_data: set[str]) -> Path:
+    rows = [
+        {"stationId": s.id, "channels": s.channels, "componentsPresent": 0 if s.id in no_data else 3,
+         "gapFraction": {}, "maxGapFraction": 0.0, "inBbox": True, "useful": s.id not in no_data,
+         "overlaps": 0}
+        for s in run.stations
+    ]  # fmt: skip
+    path = ctx.path("download_report.json")
+    path.write_text(json.dumps({"stations": rows, "usefulStations": len(rows)}), encoding="utf-8")
+    return path
+
+
+def test_station_the_download_report_says_served_nothing_is_skipped(
+    ctx: runs.RunContext,
+    synthetic_run: SyntheticRun,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """REQ-H3-11: a used station with ``componentsPresent == 0`` in H1's download report has
+    nothing in the cache by design; the evidence build skips it. Any other cache miss is fatal."""
+    caplog.set_level(logging.INFO, logger="hq.export")
+    # Without the report the cache miss propagates: a missing or misplaced cache fails loudly.
+    with pytest.raises(LookupError, match="nothing cached"):
+        do_export(
+            ctx,
+            tmp_path / "miss" / "showcase",
+            CacheMissSource(synthetic_run.stations, synthetic_run.arrivals),
+        )
+    assert not (tmp_path / "miss" / "showcase").exists()
+    # With the report naming the station, it is skipped without a read and the export succeeds.
+    write_download_report(ctx, synthetic_run, {EMPTY_STATION_ID})
+    source = CacheMissSource(synthetic_run.stations, synthetic_run.arrivals)
+    out_dir, result = do_export(ctx, tmp_path / "ok" / "showcase", source)
+    assert all(station != EMPTY_STATION_ID for station, _, _ in source.reads)
+    assert result.counts["evidenceStationsSkippedNoData"] > 0
+    assert result.counts["evidenceFiles"] == len(TIER_PLAN)
+    assert any(
+        EMPTY_STATION_ID in r.getMessage() and "served no data" in r.getMessage()
+        for r in caplog.records
+    )
+    for ev in Bundle(out_dir).evidence.values():
+        assert all(t.stationId != EMPTY_STATION_ID for t in ev.traces)
+    check_bundle(out_dir)
+    # A malformed report is an error, never a silent empty set.
+    ctx.path("download_report.json").write_text('{"stations": [{"stationId": 1}]}')
+    with pytest.raises(ExportError, match="download report"):
+        load_run_tables(ctx.run_dir)
+
+
 # --- validation fallbacks and the baseline gain -------------------------------------------------
 
 

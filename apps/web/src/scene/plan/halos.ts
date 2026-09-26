@@ -16,6 +16,8 @@ export interface PlanHaloInstances {
   /** Horizontal radius in km. The renderer must draw a circle in the east/north plane. */
   radii: Float32Array;
   appearAt: Float32Array;
+  /** The event's origin time, seconds since windowStart (time mode hides a ring with its event). */
+  times: Float32Array;
 }
 
 export function planHaloEligible(event: PlanEvent): boolean {
@@ -25,7 +27,7 @@ export function planHaloEligible(event: PlanEvent): boolean {
 /** Build once per bundle; retain candidate ordering and the renderer's appearance clock. */
 export function buildPlanHaloInstances(
   events: readonly PlanEvent[],
-  candidates: Pick<EventInstances, "count" | "positions" | "appearAt">,
+  candidates: Pick<EventInstances, "count" | "positions" | "appearAt" | "times">,
 ): PlanHaloInstances {
   if (events.length !== candidates.count || candidates.positions.length !== events.length * 3 || candidates.appearAt.length !== events.length) {
     throw new Error("plan halos: events and candidate instance arrays are out of step");
@@ -39,14 +41,16 @@ export function buildPlanHaloInstances(
   const positions = new Float32Array(count * 3);
   const radii = new Float32Array(count);
   const appearAt = new Float32Array(count);
+  const times = new Float32Array(count);
   let j = 0;
   for (let i = 0; i < events.length; i++) {
     if (!planHaloEligible(events[i])) continue;
     eventIndex[j] = i;
     radii[j] = usableErrorKm(events[i].quality.hErrM);
     appearAt[j] = candidates.appearAt[i];
+    times[j] = candidates.times[i];
     for (let axis = 0; axis < 3; axis++) positions[j * 3 + axis] = candidates.positions[i * 3 + axis];
     j++;
   }
-  return { count, tierAWithoutHalo, eventIndex, positions, radii, appearAt };
+  return { count, tierAWithoutHalo, eventIndex, positions, radii, appearAt, times };
 }

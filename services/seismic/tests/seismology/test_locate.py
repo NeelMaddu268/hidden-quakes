@@ -135,7 +135,6 @@ def _want(dtypes: dict[str, str]) -> dict[str, str]:
 # --- locate(): tables ---------------------------------------------------------------------------
 
 
-@pytest.mark.smoke
 def test_events_are_contract_shaped(world: dict[str, Any], located: LocateDetails) -> None:
     ev = located.result.events
     excluded = ("tier", "tierReasons", "catalogMatch", "magnitude")
@@ -161,7 +160,6 @@ def test_events_are_contract_shaped(world: dict[str, Any], located: LocateDetail
     assert [m.id for m in from_frame(full, SeismicEvent)] == list(ev["id"])
 
 
-@pytest.mark.smoke
 def test_pick_ids_outliers_and_mean_prob(world: dict[str, Any], located: LocateDetails) -> None:
     ev = located.result.events
     picks = world["picks"].set_index("id")
@@ -178,7 +176,6 @@ def test_pick_ids_outliers_and_mean_prob(world: dict[str, Any], located: LocateD
     assert located.flags.loc[0, "nDroppedPicks"] == 1
 
 
-@pytest.mark.smoke
 def test_arrivals_and_statics_tables(located: LocateDetails) -> None:
     arr = located.result.arrivals
     assert _dtypes(arr) == _want(ARRIVAL_DTYPES)
@@ -217,7 +214,6 @@ def test_arrivals_and_statics_tables(located: LocateDetails) -> None:
     assert located.velocity_model["name"] and located.record["locate"]["runId"] == RUN_ID
 
 
-@pytest.mark.smoke
 def test_zero_events_give_typed_zero_row_tables(
     world: dict[str, Any], located: LocateDetails
 ) -> None:
@@ -237,7 +233,6 @@ def test_zero_events_give_typed_zero_row_tables(
     assert len(rows) == 7 and all("Can't conclude" in r for r in rows[2:])
 
 
-@pytest.mark.smoke
 def test_stalta_labelled_picks_locate_unchanged(
     world: dict[str, Any], located: LocateDetails, loc02: Any
 ) -> None:
@@ -258,7 +253,6 @@ def test_stalta_labelled_picks_locate_unchanged(
     assert got["id"] == f"hq-{world['run'].name}-000000"  # docs/02 call: run.name stands in
 
 
-@pytest.mark.smoke
 def test_inputs_fail_loudly(world: dict[str, Any]) -> None:
     args = (world["stations"], world["cfg"], world["run"])
     missing = world["picks"][~world["picks"]["id"].isin(world["members"][0][:1])]
@@ -285,7 +279,6 @@ def _stage(world: dict[str, Any], make_ctx: Any) -> Any:
     return ctx
 
 
-@pytest.mark.smoke
 def test_stage_writes_tables_report_and_record(
     world: dict[str, Any], located: LocateDetails, make_ctx: Any
 ) -> None:
@@ -341,7 +334,6 @@ def test_stage_writes_tables_report_and_record(
     assert f"{SYNTHETIC_EVENTS} synthetic events on {n_used} of the {n_used} used stations," in report
 
 
-@pytest.mark.smoke
 def test_bad_borehole_depth_fails_row_one(world: dict[str, Any], located: LocateDetails) -> None:
     from hq.locate.diagnostics import DiagnosticsInputs, row_borehole
 
@@ -352,7 +344,6 @@ def test_bad_borehole_depth_fails_row_one(world: dict[str, Any], located: Locate
     assert row.conclusion.startswith("FAIL") and "T.B01" in row.conclusion
 
 
-@pytest.mark.smoke
 def test_catalog_comparison_and_row_seven_at_catalog_hypocentres(
     world: dict[str, Any], located: LocateDetails
 ) -> None:
@@ -397,7 +388,6 @@ def _catalog(run: Any, shift_e_m: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-@pytest.mark.smoke
 def test_row_seven_sp_ratio_separates_catalog_mislocation_from_structure(
     world: dict[str, Any], located: LocateDetails
 ) -> None:
@@ -435,7 +425,6 @@ def test_row_seven_sp_ratio_separates_catalog_mislocation_from_structure(
     assert "can't exclude" in row.conclusion
 
 
-@pytest.mark.smoke
 def test_row_seven_and_catalog_conclusion_after_statics(
     world: dict[str, Any], located: LocateDetails
 ) -> None:
@@ -477,7 +466,6 @@ def test_row_seven_and_catalog_conclusion_after_statics(
     assert "not independent of the catalog" in text
 
 
-@pytest.mark.smoke
 def test_measured_pick_stats_need_located_events(world: dict[str, Any]) -> None:
     from hq.locate.synthetic import measured_pick_stats, with_pick_stats
 
@@ -532,3 +520,23 @@ def test_synthetic_stations_drop_used_stations_without_picks() -> None:
     assert list(kept["id"]) == ["XX.A", "XX.C"] and dropped == ["XX.B"]
     with pytest.raises(ValueError, match="no used station"):
         synthetic_stations(used, picks.iloc[0:0])
+
+
+def test_locate_applies_a_fixed_statics_table(world: dict[str, Any], located: LocateDetails) -> None:
+    """REQ-H1-5: validation reruns pass the run's statics.parquet; locate() applies it as given."""
+    sid = str(located.stations["id"].iloc[0])
+    table = pd.DataFrame({"stationId": [sid, sid], "phase": ["P", "S"],
+                          "staticS": [0.05, 0.1], "nEvents": [3, 3]})
+    args = (world["assoc"], world["picks"], world["stations"], world["cfg"], world["run"])
+    got = locate(*args, run_id=RUN_ID, cache_dir=world["cache"], statics=table)
+    ref = locate_detailed(*args, run_id=RUN_ID, cache_dir=world["cache"],
+                          statics={(sid, "P"): 0.05, (sid, "S"): 0.1}).result
+    pd.testing.assert_frame_equal(got.events, ref.events)
+    pd.testing.assert_frame_equal(got.arrivals, ref.arrivals)
+    applied = got.statics.set_index(["stationId", "phase"])["staticS"]
+    assert applied.loc[(sid, "P")] == 0.05 and applied.loc[(sid, "S")] == 0.1
+    with pytest.raises(ValueError, match="lacks columns"):
+        locate(*args, run_id=RUN_ID, cache_dir=world["cache"], statics=table.drop(columns="staticS"))
+    with pytest.raises(ValueError, match="null staticS"):
+        locate(*args, run_id=RUN_ID, cache_dir=world["cache"],
+               statics=table.assign(staticS=[0.05, None]))

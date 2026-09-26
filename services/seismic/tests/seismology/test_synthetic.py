@@ -20,8 +20,6 @@ from hq.locate.synthetic import (
     write_synthetic_json,
 )
 
-pytestmark = pytest.mark.smoke
-
 # docs/02 SyntheticTest, written out so a dropped or renamed field fails here.
 DOCS02_SYNTHETIC_FIELDS = ("nEvents", "pickSigmaS", "medianHErrM", "medianVErrM", "p90VErrM",
                            "medianDepthBiasM")
@@ -46,6 +44,7 @@ def smoke_setup(loc02: Any, loc_setup: LocatorSetup) -> LocatorSetup:
     return dataclasses.replace(loc_setup, config=config)
 
 
+@pytest.mark.smoke
 def test_test_geometry_has_boreholes(loc_setup: LocatorSetup) -> None:
     st = loc_setup.stations
     assert len(st) >= 10
@@ -98,6 +97,7 @@ def test_small_synthetic_run(smoke_setup: LocatorSetup, tmp_path: Path) -> None:
     assert not list(path.parent.glob(".*.part"))
 
 
+@pytest.mark.smoke
 def test_null_pick_stats_need_numbers(loc02: Any, loc_setup: LocatorSetup) -> None:
     """seismology.yaml's null sKeepProb / pickProb: only stage locate may fill them."""
     null = dataclasses.replace(loc_setup, config=loc02.test_config(nEvents=N_SMOKE))
@@ -106,6 +106,7 @@ def test_null_pick_stats_need_numbers(loc02: Any, loc_setup: LocatorSetup) -> No
         run_synthetic(null)
 
 
+@pytest.mark.smoke
 def test_geometry_hash_changes_with_the_geometry(loc_setup: LocatorSetup) -> None:
     st = loc_setup.stations
     base = geometry_record(st, None)["sha256"]
@@ -115,10 +116,12 @@ def test_geometry_hash_changes_with_the_geometry(loc_setup: LocatorSetup) -> Non
     assert geometry_record(st.copy(), "other label")["sha256"] == base
 
 
+@pytest.mark.smoke
 def test_synthetic_test_model_matches_docs02() -> None:
     assert tuple(SyntheticTest.model_fields) == DOCS02_SYNTHETIC_FIELDS
 
 
+@pytest.mark.smoke
 def test_synthetic_draws_are_seeded(smoke_setup: LocatorSetup, locator: Locator) -> None:
     def draw() -> tuple[pd.DataFrame, list[pd.DataFrame], list[pd.DataFrame]]:
         rng = np.random.default_rng(smoke_setup.config.synthetic.seed)
@@ -139,6 +142,7 @@ def test_synthetic_draws_are_seeded(smoke_setup: LocatorSetup, locator: Locator)
         assert np.all(np.abs(resid) < 0.3) and np.any(resid != 0.0)
 
 
+@pytest.mark.smoke
 def test_synthetic_noise_uses_the_locator_sigma_per_station(
     smoke_setup: LocatorSetup, locator: Locator
 ) -> None:

@@ -3,9 +3,12 @@ H2's associate -> locate -> match -> assign_tiers reproduces byte for byte from 
 tables, the gain is claimed only when it holds in both profiles, an STA/LTA set that matches
 PhaseNet's strict count gives no gain (and logs the docs/03 kill switch), and the ``validate``
 stage writes ``baseline.json``, ``gr.json``, ``validation_notes.json`` and ``validation.json``
-with counts. The G-R public curve is drawn on one magnitude scale (REQ-H2-13) and H2's gate and
-null model are read from the run record (FYI-H2-7). Offline: the toy seismology API and planted
-picks come from ``test_null_test``."""
+with counts. In the stage every row is located with the run's own ``statics.parquet`` and
+tiered on the run's own bars (REQ-H1-5 option (a)); with ``rerunBars: reference`` the PhaseNet
+``full`` rerun derives the bars first and is reused as its own row, so no rerun is made twice
+(option (b), unit-tested here). The G-R public curve is drawn on one magnitude scale
+(REQ-H2-13) and H2's gate and null model are read from the run record (FYI-H2-7). Offline: the
+toy seismology API and planted picks come from ``test_null_test``."""
 
 import json
 import logging
@@ -40,6 +43,8 @@ from hq.validate import (
 )
 from hq.validate import run as validate_stage
 from hq.validate.baseline import baseline_gain, baseline_reruns, index_rows, run_baseline
+from hq.validate.notes import STATICS_NOTE, THRESHOLDS_SOURCE_RUN
+from hq.validate.reference import reference_rerun
 from hq.validate.sidecars import BASELINE, GR, MAGNITUDE
 from tests.platform.test_null_test import (
     CATALOG_EVENT_INDICES,
@@ -52,6 +57,7 @@ from tests.platform.test_null_test import (
     TIER_A_MIN_STATIONS,
     FakeSeismologyApi,
     SyntheticPicks,
+    assert_located_with_run_statics,
     build_picks,
     read_notes,
     write_h2_validation_inputs,
@@ -300,6 +306,31 @@ def test_rows_reproduce_byte_identically_from_stored_tables(
     with pytest.raises(ValidateError, match="stalta picks name stations missing"):
         stray = stalta[0].model_copy(update={"stationId": "XT.S99"})
         run_rows(synthetic, [stray, *stalta[1:]], ctx)
+    # REQ-H1-5 (b): with a reference rerun the (phasenet, full) row is taken from it (3 reruns,
+    # not 4), every other rerun gets the reference's own bars, and the rows are the same table.
+    api = FakeSeismologyApi()
+    ref = reference_rerun(
+        synthetic.picks_frame, synthetic.stations_frame, synthetic.catalog_frame, api,
+        ctx.config.seismology, ctx.config.run,
+    )  # fmt: skip
+    reused = baseline_reruns(
+        synthetic.picks_frame, to_frame(stalta, m.Pick), synthetic.stations_frame,
+        synthetic.catalog_frame, api, ctx.config.seismology, ctx.config.run,
+        ctx.config.validate.baseline, thresholds=ref.thresholds, reference=ref,
+    )  # fmt: skip
+    assert api.calls == {"associate": 4, "locate": 4, "match": 4, "assign_tiers": 4}  # 1 + 3
+    assert [r.row for r in reused] == rows
+    assert reused[0].tiering is ref.tiering and reused[0].tiering["thresholdSource"] == "derived"
+    assert all(r.tiering is not None and r.tiering["thresholdSource"] == "supplied"
+               for r in reused[1:])  # fmt: skip
+    assert api.tier_kwargs[0]["thresholds"] is None
+    assert all(kw["thresholds"] is ref.thresholds for kw in api.tier_kwargs[1:])
+    with pytest.raises(ValidateError, match="other bars than the ones derived"):
+        baseline_reruns(
+            synthetic.picks_frame, to_frame(stalta, m.Pick), synthetic.stations_frame,
+            synthetic.catalog_frame, FakeSeismologyApi(), ctx.config.seismology, ctx.config.run,
+            ctx.config.validate.baseline, thresholds=RUN_TIERING, reference=ref,
+        )  # fmt: skip
 
 
 def test_gain_only_when_it_holds_in_both_profiles(
@@ -392,6 +423,12 @@ def test_stage_writes_baseline_gr_and_validation_and_reproduces(
     runs.run_stage(ctx, "validate")
 
     assert api.calls["associate"] == NULL_SHUFFLES + 2 * len(cfg.baseline.profiles)
+    # REQ-H1-5 (a): every rerun located with the run's statics and tiered on the run's own
+    # bars, one identical dict for the null test and the four baseline rows.
+    assert_located_with_run_statics(api, ctx)
+    run_bars = api.tier_kwargs[0]["thresholds"]
+    assert run_bars["thresholds"] == ctx.read_run().tiering["thresholds"] and not api.derived
+    assert all(kw["thresholds"] is run_bars for kw in api.tier_kwargs)
     validation = m.Validation.model_validate_json(ctx.path(VALIDATION_JSON).read_text())
     assert validation.synthetic == synthetic_test and validation.sweep == sweep
     assert validation.nullTest == m.NullTest.model_validate_json(
@@ -413,8 +450,13 @@ def test_stage_writes_baseline_gr_and_validation_and_reproduces(
     assert validation.magnitude == calibration(0.2)
     notes = read_notes(ctx)
     assert notes.baseline is not None and notes.baseline.reruns == 4
-    assert notes.baseline.rerunsTiered == 4 and notes.baseline.staticsApplied is False
+    assert notes.baseline.rerunsTiered == 4 and notes.baseline.staticsApplied is True
+    assert STATICS_NOTE in notes.baseline.notes
+    assert notes.baseline.thresholds.source == THRESHOLDS_SOURCE_RUN
     assert notes.baseline.thresholds.nMatched == N_MATCHED
+    assert notes.baseline.thresholds == notes.nullTest.thresholds  # one scale for both
+    assert notes.baseline.tieringRules is not None
+    assert notes.baseline.tieringRules.thresholdSource == "supplied"
     assert notes.baseline.associatorOverrides == {"p_only": {"nSPicks": 0, "nPAndSPicks": 0}}
     assert notes.baseline.tieringRules is not None
     assert notes.baseline.tieringRules.mapOnVolumeTopApplied is False

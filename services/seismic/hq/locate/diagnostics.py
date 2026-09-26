@@ -34,6 +34,17 @@ errors at that sigma, without model error), the synthetic recovery test when the
 the travel-time tables' error against the exact layered times at the located hypocentres (the
 shallow-interface bias LOC-02 recorded per layer), and a comparison with the public regional
 catalog when the run dir holds it.
+
+With ``locator.method`` grid3d (LOC-07) the report adds a 1D vs 3D section: the 3D model's frame
+and air evidence, where each station sits in it (3D table or 1D fallback, and for a basin column
+where the model's ground lies against the station's surfaceElevM), the 3D minus 1D table time
+per station and phase at the final hypocentres, how many events lie above the 3D model's ground,
+and against the same association located in the same stage run with grid1d and the same statics
+(``DiagnosticsInputs.grid1d``): the depth and epicentre shift per event, rmsS, the row 7
+azimuthal residual trend, both sets' offsets from the public regional catalog, the statics above
+the flag and the per-station median residuals. Row 2's synthetic picks then come from the 3D
+tables themselves (so does the synthetic test's forward model: no table error in it, unlike the
+1D test), and the table-error section covers the 1D fallback stations.
 """
 
 import json
@@ -48,7 +59,10 @@ import pandas as pd
 
 from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
+from hq.locate.coords import origin_utm
+from hq.locate.locator import GRID3D
 from hq.locate.tt_grid import PHASES, layered_first_arrival
+from hq.locate.tt_grid3d import ground_elev_m, nearest_columns
 
 if TYPE_CHECKING:
     from hq.locate import LocateDetails
@@ -84,6 +98,16 @@ class Row:
     conclusion: str
 
 
+@dataclass(frozen=True, eq=False)
+class Comparison1d:
+    """grid3d runs: the same association located in the same stage run with grid1d and the same
+    statics (mode, reference events, knobs): the 1D side of the 1D vs 3D section."""
+
+    details: "LocateDetails"
+    statics: "StaticsReport"
+    runtime_s: float
+
+
 @dataclass(frozen=True)
 class DiagnosticsInputs:
     run_id: str
@@ -97,6 +121,7 @@ class DiagnosticsInputs:
     known_ids: tuple[str, ...] | None = None  # known/windows.json ids when present
     synthetic: "SyntheticResult | None" = None  # the stage's synthetic recovery test
     statics: "StaticsReport | None" = None  # the statics pass (LOC-05)
+    grid1d: Comparison1d | None = None  # grid3d runs: the same events located with grid1d
 
 
 def _cell(text: str) -> str:
@@ -219,7 +244,9 @@ def datum_check(inputs: DiagnosticsInputs) -> pd.DataFrame:
         ):
             r = math.hypot(dc.eM - float(se), dc.nM - float(sn))
             for ph in PHASES:
-                tt = float(layered_first_arrival(locator.tables.model, ph, float(zr), r, z))
+                tt = (float(locator.station_times(str(sid), ph, dc.eM, dc.nM, z))
+                      if locator.method == GRID3D else
+                      float(layered_first_arrival(locator.tables.model, ph, float(zr), r, z)))
                 picks.append({"id": f"datum-check:{sid}:{ph}", "stationId": str(sid),
                               "phase": ph, "t": t0 + tt, "prob": 1.0})
         loc = locator.locate(pd.DataFrame(picks))
@@ -258,10 +285,12 @@ def row_datum(inputs: DiagnosticsInputs, comp: pd.DataFrame | None = None) -> Ro
     if inputs.catalog is not None and len(inputs.catalog):
         labels = sorted(set(inputs.catalog["depthDatum"].astype(str)))
         datum = f" Public regional catalog depths were converted to elevM with: {'; '.join(labels)}."
+    source = ("the 3D tables themselves (grid3d)" if inputs.details.locator.method == GRID3D
+              else "the exact 1D layered times")
     result = (
-        f"Noise-free P+S picks at {len(inputs.details.stations)} used stations for synthetic "
-        f"events at (e {dc.eM:g}, n {dc.nM:g}) m: {per}. Largest abs(dz) {worst_z:.0f} m, largest "
-        f"dh {worst_h:.0f} m (passTolM {dc.passTolM:g} m).{datum}"
+        f"Noise-free P+S picks from {source} at {len(inputs.details.stations)} used stations for "
+        f"synthetic events at (e {dc.eM:g}, n {dc.nM:g}) m: {per}. Largest abs(dz) "
+        f"{worst_z:.0f} m, largest dh {worst_h:.0f} m (passTolM {dc.passTolM:g} m).{datum}"
     )
     known = _known_depths(comp)
     if len(known):
@@ -338,10 +367,11 @@ def row_pyocto(inputs: DiagnosticsInputs) -> Row:
         f"{np.median(shift['deM']):+.0f} m, dn {np.median(shift['dnM']):+.0f} m."
     )
     conclusion = (
-        "Not the cause: the final locations are the grid1d relocation on the layered model "
-        f"({inputs.cfg.locator.fineSpacingM:g} m fine grid, PDF errors); PyOcto's locations (same "
-        f"1D model, {inputs.cfg.associator.minNodeSizeLocationKm:g} km location nodes) only seed "
-        "association. The shift above is what keeping PyOcto's positions would have added."
+        f"Not the cause: the final locations are the {inputs.details.locator.method} "
+        f"relocation ({inputs.cfg.locator.fineSpacingM:g} m fine grid, PDF errors); PyOcto's "
+        f"locations (the 1D layer model, {inputs.cfg.associator.minNodeSizeLocationKm:g} km "
+        "location nodes) only seed association. The shift above is what keeping PyOcto's "
+        "positions would have added."
     )
     return Row(3, result, conclusion)
 
@@ -650,9 +680,24 @@ def sp_ratio(inputs: DiagnosticsInputs, cat_az: pd.DataFrame,
     if not {"P", "S"} <= set(amp.index) or not (amp["P"] > 0):
         return math.nan, math.nan, math.nan
     z = float(np.median(at_catalog["evElevM"].to_numpy(dtype=np.float64)))
-    model = inputs.details.locator.tables.model
-    vpvs = float(model.vp_at(z)) / float(model.vs_at(z))
+    t3 = inputs.details.locator.tables3d
+    if t3 is None:
+        model = inputs.details.locator.tables.model
+        vpvs = float(model.vp_at(z)) / float(model.vs_at(z))
+    else:  # the 3D model's Vp/Vs at each compared catalog hypocentre (nearest node), median
+        hyp = at_catalog.drop_duplicates("catalogId")
+        i, j = nearest_columns(t3.source, hyp["evE"], hyp["evN"], origin_utm(inputs.run.origin))
+        vp, vs = t3.source.columns(i, j)
+        k = np.clip(np.rint((hyp["evElevM"].to_numpy(dtype=np.float64) - t3.source.elev_m[0])
+                            / t3.source.spacing_m[2]).astype(np.intp), 0, vp.shape[1] - 1)
+        rows = np.arange(len(hyp))
+        vpvs = float(np.median(vp[rows, k] / vs[rows, k]))
     return float(amp["S"] / amp["P"]), vpvs, z
+
+
+def _model_label(inputs: DiagnosticsInputs) -> str:
+    """The travel-time model this run located with, for the report's wording."""
+    return "the 3D model" if inputs.details.locator.method == GRID3D else "the 1D model"
 
 
 def row_trend(
@@ -667,6 +712,7 @@ def row_trend(
     dcfg = inputs.cfg.diagnostics
     rep = inputs.statics
     after_statics = rep is not None and rep.pass_number == 2
+    grid3d = inputs.details.locator.method == GRID3D
     az = azimuth_fit(ua)
     pos = position_fit(station_medians(inputs, ua), inputs.details.stations)
     if az.empty:
@@ -721,8 +767,8 @@ def row_trend(
         )
         if math.isfinite(ratio) and ratio > vpvs * dcfg.trendSPRatioExcess:
             verdict = (
-                f"Consistent with lateral structure the 1D model can't hold (near-surface or "
-                f"deeper): with the hypocentre at the public regional catalog's, residuals trend "
+                f"Consistent with lateral structure {_model_label(inputs)} can't hold "
+                f"(near-surface or deeper): with the hypocentre at the public regional catalog's, residuals trend "
                 f"with azimuth ({listed}; above trendFlagS {dcfg.trendFlagS:g} s), and the trend "
                 f"is S-heavy: S/P amplitude ratio {ratio:.2f}, while a mislocated catalog "
                 f"epicentre alone would give about the model's Vp/Vs {vpvs:.2f} at the source "
@@ -738,16 +784,19 @@ def row_trend(
                 "the two."
             )
         conclusion = (
-            f"{verdict}{shift} {alternative} Fix: 3D grids (LOC-07), or station terms fixed at "
-            "reference hypocentres (LOC-05)."
+            f"{verdict}{shift} {alternative} Fix: "
+            + ("station terms fixed at reference hypocentres (LOC-05); this run already locates "
+               "with the 3D model (LOC-07)." if grid3d else
+               "3D grids (LOC-07), or station terms fixed at reference hypocentres (LOC-05).")
         )
     elif len(ours):
         listed = ", ".join(f"{r.phase} {r.amplitudeS:.3f} s toward az {r.lateAzDeg:.0f} deg"
                            for r in ours.itertuples(index=False))
         conclusion = (
             f"Residuals trend with azimuth ({listed}, above trendFlagS {dcfg.trendFlagS:g} s): "
-            "either the 1D model misses lateral structure (dipping basement; LOC-07 3D grids) or "
-            "station terms line up with azimuth (LOC-05 statics first, then recheck)."
+            + ("either the 3D model misses lateral structure" if grid3d else
+               "either the 1D model misses lateral structure (dipping basement; LOC-07 3D grids)")
+            + " or station terms line up with azimuth (LOC-05 statics first, then recheck)."
         )
     elif az["n"].max() < dcfg.minGroupSize:
         conclusion = (f"Can't conclude on this data: fewer than minGroupSize {dcfg.minGroupSize} "
@@ -760,14 +809,15 @@ def row_trend(
     else:
         conclusion = (
             f"No azimuthal trend above trendFlagS {dcfg.trendFlagS:g} s (largest "
-            f"{float(az['amplitudeS'].max()):.3f} s): nothing here asks for 3D grids (LOC-07) yet."
+            f"{float(az['amplitudeS'].max()):.3f} s)"
+            + ("." if grid3d else ": nothing here asks for 3D grids (LOC-07) yet.")
         )
     if after_statics:
         by_construction = (
             " The reference terms were fitted at the public regional catalog's hypocentres (each "
             "reference event's from the other reference events at theirs), so a flat trend at "
-            "those hypocentres after statics is expected by construction, not evidence that the "
-            "1D model holds." if rep.reference is not None else "")
+            "those hypocentres after statics is expected by construction, not evidence that "
+            f"{_model_label(inputs)} holds." if rep.reference is not None else "")
         before = ""
         if before_statics is not None and len(before_statics):
             b_az = azimuth_fit(before_statics)
@@ -782,8 +832,8 @@ def row_trend(
             "Residuals here are after statics, which absorb a per-station delay: "
             + conclusion + by_construction + before + " The station terms themselves carry any "
             "lateral structure (Station statics section: each term above the flag is tested "
-            "against its nearest stations), so this row can no longer show it, and 3D grids "
-            "(LOC-07) remain the model-side fix."
+            "against its nearest stations), so this row can no longer show it"
+            + ("." if grid3d else ", and 3D grids (LOC-07) remain the model-side fix.")
         )
     return Row(7, result, conclusion)
 
@@ -807,7 +857,6 @@ def catalog_hypocentre_residuals(
         return pd.DataFrame(columns=columns)
     locator = inputs.details.locator
     outlier = inputs.cfg.locator.outlier
-    grid = locator.tables.grid
     by_event = dict(zip(inputs.details.result.events["id"].astype(str), inputs.details.locations,
                         strict=True))
     cat = inputs.catalog.set_index(inputs.catalog["id"].astype(str))
@@ -816,8 +865,7 @@ def catalog_hypocentre_residuals(
     for r in comp[comp["eventId"].notna()].itertuples(index=False):
         c = cat.loc[r.catalogId]
         e, n, z = float(c["enu_e"]), float(c["enu_n"]), float(c["elevM"])
-        reach = np.hypot(st["enu_e"] - e, st["enu_n"] - n).max()
-        if not (grid.bottom_elev_m <= z <= grid.top_elev_m and reach <= grid.r_max_m):
+        if not locator.covers(e, n, z):
             continue
         a = by_event[str(r.eventId)].arrivals
         tt = locator.travel_times(e, n, z).set_index(["stationId", "phase"])["travelTimeS"]
@@ -906,8 +954,11 @@ def synthetic_section(inputs: DiagnosticsInputs) -> list[str]:
     noisy, clean = params["noisy"], params["noiseFree"]
     lines.append(
         f"{rep.nEvents} synthetic events on {params['nStations']} of the "
-        f"{len(inputs.details.stations)} used stations{_left_out(params)}, exact 1D "
-        f"layered times plus Gaussian noise at pickSigmaS (P {rep.pickSigmaS['P']:g} s, S "
+        f"{len(inputs.details.stations)} used stations{_left_out(params)}, "
+        + ("the locator's own 3D tables (1D tables at 1D-fallback stations; no table error in "
+           "the test, unlike the grid1d test's exact layered times)"
+           if params.get("method") == GRID3D else "exact 1D layered times")
+        + f" plus Gaussian noise at pickSigmaS (P {rep.pickSigmaS['P']:g} s, S "
         f"{rep.pickSigmaS['S']:g} s); every station has a P pick, S kept with probability "
         f"{stats['sKeepProb']:.2f}, every pick at prob {stats['pickProb']:.2f} (source: "
         f"{stats['source']}). True errors (noisy): median h {rep.medianHErrM:.0f} m, median v "
@@ -949,10 +1000,20 @@ def table_errors(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> pd.DataFrame:
 
 def table_error_section(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> list[str]:
     dcfg = inputs.cfg.diagnostics
-    tables = inputs.details.locator.tables
+    locator = inputs.details.locator
+    tables = locator.tables
     by_layer = tables.accuracy_by_layer()
     sigma = inputs.cfg.locator.pickSigmaS
     lines = ["## Shallow-interface bias exposure (travel-time tables vs exact layered times)", ""]
+    if locator.tables3d is not None:
+        fallback = sorted(locator.tables3d.fallback)
+        lines.append(
+            "grid3d: the 3D tables have no exact reference; their accuracy on laterally uniform "
+            "and on analytic laterally varying models is measured by tests/seismology/"
+            "test_tt_grid3d.py (hq.locate.tt_grid3d docstring). The rest of this section covers "
+            "the stations on 1D tables (fallback): " + (", ".join(fallback) or "none") + ".")
+        lines.append("")
+        ua = ua[ua["stationId"].isin(fallback)]
     layer_bits = []
     for phase in PHASES:
         worst = [f"top {row['topElevM']:g} m: {row['maxErrS'] * 1000:.1f} ms"
@@ -1140,7 +1201,8 @@ def catalog_section(
                 f"{have['dnM'].median():+.0f} m). Row 7 tests the cause: with the hypocentre at "
                 "the catalog's, residuals trend with azimuth beyond trendFlagS. Its S/P amplitude "
                 "ratio against the model's Vp/Vs tells whether that trend is S-heavy (consistent "
-                "with lateral structure the 1D model can't hold); the public catalog's own model "
+                f"with lateral structure {_model_label(inputs)} can't hold); the public "
+                "catalog's own model "
                 "and locations remain the alternative the test can't exclude."
             )
         elif outside and inputs.statics is not None and inputs.statics.pass_number == 2:
@@ -1359,7 +1421,8 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
                  "contradicts but nothing here tests further. " if n_far else "")
               + "Each verdict says what the term is consistent with, not a tested cause: "
               f"lateral = the nearest stations within {xcfg.neighbourMaxDistM / 1000:g} km share "
-              "the delay (structure the 1D model can't hold, row 7; the only verdict that draws "
+              f"the delay (structure {_model_label(inputs)} can't hold, row 7; the only verdict "
+              "that draws "
               "on other stations' terms); path = P and S changed in proportion to the model's "
               "Vp/Vs; vpvs = S changed proportionally more than P (near-station rock whose Vp/Vs "
               "differs from the model's, which moves both phases); timing = equal P and S "
@@ -1411,6 +1474,264 @@ def _sigma_lines(rep: "StaticsReport", ratio_flag: float) -> list[str]:
     return lines
 
 
+# --- 1D vs 3D (LOC-07) -----------------------------------------------------------------------------
+
+
+def _residual_frame(events: pd.DataFrame, arrivals: pd.DataFrame,
+                    stations: pd.DataFrame) -> pd.DataFrame:
+    """Used picks' residuals with the event epicentre and station position (row 7's inputs)."""
+    arr = arrivals[arrivals["usedInLocation"].to_numpy(dtype=bool)]
+    ev = events[["id", "enu_e", "enu_n"]].rename(
+        columns={"id": "eventId", "enu_e": "evE", "enu_n": "evN"})
+    st = stations[["id", "enu_e", "enu_n"]].rename(
+        columns={"id": "stationId", "enu_e": "stE", "enu_n": "stN"})
+    out = arr.assign(eventId=arr["eventId"].astype(str), stationId=arr["stationId"].astype(str),
+                     phase=arr["phase"].astype(str))
+    out = out.merge(ev.assign(eventId=ev["eventId"].astype(str)), on="eventId", how="inner")
+    return out.merge(st.assign(stationId=st["stationId"].astype(str)), on="stationId",
+                     how="inner")
+
+
+def model_time_differences(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> pd.DataFrame:
+    """Per station and phase over the used picks: 3D minus 1D table time at the final hypocentres."""
+    locator = inputs.details.locator
+    rows = []
+    for (sid, phase), g in ua.groupby(["stationId", "phase"], sort=True):
+        e, n = g["evE"].to_numpy(dtype=np.float64), g["evN"].to_numpy(dtype=np.float64)
+        z = g["evElevM"].to_numpy(dtype=np.float64)
+        t3 = locator.station_times(str(sid), phase, e, n, z)
+        t1 = locator.tables.table(str(sid), phase).lookup(
+            np.hypot(e - g["stE"].to_numpy(dtype=np.float64),
+                     n - g["stN"].to_numpy(dtype=np.float64)), z)
+        rows.append({"stationId": sid, "phase": phase, "n": len(g),
+                     "medianDiffS": float(np.median(t3 - t1)),
+                     "has3d": bool(locator.tables3d is not None and locator.tables3d.has(str(sid)))})
+    return pd.DataFrame(rows, columns=["stationId", "phase", "n", "medianDiffS", "has3d"])
+
+
+def _pct(values: np.ndarray, q: float) -> str:
+    return _f(_q(values, q), "+.0f")
+
+
+def events_above_ground(inputs: DiagnosticsInputs) -> tuple[int, int, int]:
+    """grid3d: (events above the 3D model's ground at their epicentre, events whose epicentre's
+    model column has no ground surface, events). The ground is ``tt_grid3d.ground_elev_m`` of the
+    nearest model column."""
+    t3 = inputs.details.locator.tables3d
+    ev = inputs.details.result.events
+    if t3 is None or ev.empty:
+        return 0, 0, len(ev)
+    i, j = nearest_columns(t3.source, ev["enu_e"], ev["enu_n"], origin_utm(inputs.run.origin))
+    vp, _ = t3.source.columns(i, j)
+    ground = ground_elev_m(vp, t3.source)
+    z = ev["elevM"].to_numpy(dtype=np.float64)
+    has = np.isfinite(ground)
+    return int(np.sum(has & (z > np.where(has, ground, np.inf)))), int(np.sum(~has)), len(ev)
+
+
+def _verdicts(rep: "StaticsReport | None", flag: float) -> str:
+    if rep is None or not bool((rep.terms["staticS"] != 0.0).any()):
+        return "no statics"
+    ex = rep.explanations
+    counts = ex["verdict"].value_counts()
+    un = ex[ex["verdict"] == "unexplained"]
+    listed = ", ".join(f"{k} {int(v)}" for k, v in counts.items()) or "none"
+    unexplained = ", ".join(f"{r.stationId} {r.phase} {r.staticS:+.3f} s"
+                            for r in un.itertuples(index=False))
+    return (f"{len(ex)} above {flag:g} s ({listed})"
+            + (f": unexplained {unexplained}" if len(un) else ""))
+
+
+def grid3d_section(inputs: DiagnosticsInputs, ua: pd.DataFrame,
+                   comp: pd.DataFrame | None) -> list[str]:
+    """The 1D vs 3D section (grid3d only; one line otherwise)."""
+    d = inputs.details
+    locator = d.locator
+    lines = ["## 1D vs 3D travel times (LOC-07)", ""]
+    t3 = locator.tables3d
+    if t3 is None:
+        lines.append(f"Not run: locator.method is `{locator.method}` (grid3d writes this section).")
+        return lines
+    rec = t3.source.to_record()
+    ev = rec.get("evidence", {})
+    res = dict(t3.resampling)
+    g = t3.grid
+    lines.append(
+        f"Model `{t3.source.name}` (SHA-256 {t3.source.sha256[:12]}...; "
+        f"{rec.get('source', {}).get('citation', 'no citation') if isinstance(rec.get('source'), dict) else 'n/a'}"
+        f"), resampled to {g.spacing_m:g} m cells (mean slowness) on the run's ENU lattice e "
+        f"{g.e0_m:.0f}..{g.e_max_m:.0f}, n {g.n0_m:.0f}..{g.n_max_m:.0f}, elevM {g.z0_m:.0f}.."
+        f"{g.top_elev_m:.0f} m ({g.n_e} x {g.n_n} x {g.n_z} nodes); air handling "
+        f"`{t3.air_handling}` ({res.get('airNodes', 'n/a')} air nodes in "
+        f"{res.get('columnsWithAir', 'n/a')} columns; {res.get('constantColumns', 'n/a')} columns "
+        f"with one value at every elevation); constant columns `{t3.constant_columns}`; seed "
+        f"radius {t3.seed_radius_m:g} m; {t3.n_built} tables built, {t3.n_loaded} loaded from the "
+        f"cache in {t3.build_s:.1f} s."
+    )
+    lines.append("")
+    for label in ("crs", "vertical", "air"):
+        if label in ev:
+            lines.append(f"- {label}: {ev[label]}")
+    lines.append("")
+    st = inputs.stations.set_index(inputs.stations["id"].astype(str))
+    fallback = t3.fallback
+    lines.append(
+        f"Stations on 3D tables: {len(t3.stations_3d)} of {len(d.stations)} used; on 1D tables: "
+        + (", ".join(f"{k} ({v})" for k, v in fallback.items()) or "none") + ".")
+    lines.append("")
+    lines += [("| station | column in the 3D model | tables | model ground between (m ASL) | "
+               "surfaceElevM | sensorElevM | ground check |"),
+              "| --- | --- | --- | --- | --- | --- | --- |"]
+    inside = outside = 0
+    worst = 0.0
+    constant = []
+    for sid in sorted(t3.columns):
+        c = t3.columns[sid]
+        surface = float(st.loc[sid, "surfaceElevM"])
+        sensor = float(st.loc[sid, "sensorElevM"])
+        if c.kind == "basin" and c.ground_low_elev_m is not None:
+            lo, hi = c.ground_low_elev_m, float(c.ground_high_elev_m or math.nan)
+            off = max(lo - surface, surface - hi, 0.0)
+            check = "surfaceElevM inside" if off == 0.0 else f"surfaceElevM {off:.1f} m outside"
+            inside += int(off == 0.0)
+            outside += int(off > 0.0)
+            worst = max(worst, off)
+            span = f"{lo:.0f} .. {hi:.0f}"
+        else:
+            span = "n/a"
+            check = ("no ground surface in the file (one value at every elevation)"
+                     if c.kind == "constant" else
+                     "varies with elevation, no air value on top: no ground surface to check"
+                     if c.kind == "other" else str(c.reason))
+            if c.kind == "constant":
+                constant.append(sid)
+        tables = "3D" if t3.has(sid) else "1D"
+        lines.append(f"| {sid} | {c.kind or 'outside'} | {tables} | {span} | {surface:.1f} | "
+                     f"{sensor:.1f} | {check} |")
+    lines.append("")
+    on_1d = [sid for sid in constant if not t3.has(sid)]
+    lines.append(
+        (f"Ground check: in {inside} of {inside + outside} basin columns the station's "
+         "surfaceElevM (3DEP) lies between the model's last ground node and first air node"
+         + (f"; the others lie within {worst:.1f} m of that bracket" if outside else "")
+         + ". That places the model's ground surface in the run's frame at those stations. "
+         if inside + outside else "Ground check: no station sits in a basin column (the model "
+         "holds no ground surface at any station), so nothing places the model's ground in the "
+         "run's frame here. ") + (
+            f"{len(constant)} station(s) sit in columns with one value at every elevation "
+            f"({', '.join(constant)}): the file holds one velocity there from its bottom to its "
+            "top (basement velocity in the GDR 1800 file) and no ground surface or basin data, "
+            "so it can't tell outcrop from missing data; grid3d.constantColumns "
+            f"`{t3.constant_columns}` "
+            + (f"puts {', '.join(on_1d)} on their 1D tables." if on_1d else
+               "gives them 3D tables from those values (basement rock right up to the sensor).")
+            if constant else ""))
+    lines.append("")
+    n_above, n_no_ground, n_ev = events_above_ground(inputs)
+    lines.append(
+        f"Events above the 3D model's ground at their epicentre (nearest model column; ground "
+        f"midway between its last ground node and first air node): {n_above} of {n_ev}; "
+        f"{n_no_ground} epicentres sit in columns with no ground surface in the file. The locator "
+        "does not mask above-ground nodes (the search volume's top is "
+        f"{locator.volume.top_elev_m:.0f} m ASL everywhere); locate_flags.parquet flags events "
+        "above their nearest used station's surfaceElevM, as for grid1d.")
+    lines.append("")
+
+    diff = model_time_differences(inputs, ua)
+    if len(diff):
+        lines.append("3D minus 1D table time at this run's final hypocentres (median over each "
+                     "station-phase's used picks; negative = the 3D model predicts an earlier "
+                     "arrival; stations on 1D tables show 0):")
+        lines.append("")
+        lines += ["| station | P (s) | S (s) | picks |", "| --- | --- | --- | --- |"]
+        wide = diff.pivot_table(index="stationId", columns="phase", values="medianDiffS")
+        counts = diff.groupby("stationId")["n"].sum()
+        for sid in wide.index:
+            p = wide.loc[sid].get("P", math.nan)
+            s_ = wide.loc[sid].get("S", math.nan)
+            tag = "" if t3.has(str(sid)) else " (1D)"
+            lines.append(f"| {sid}{tag} | {_f(p, '+.3f')} | {_f(s_, '+.3f')} | "
+                         f"{int(counts[sid])} |")
+        lines.append("")
+
+    lines.append(
+        "Synthetic recovery test: with grid3d its forward model is the locator's own 3D tables, "
+        "so its errors hold no table error; the grid1d test uses exact layered times, so its "
+        "errors include the 1D tables' error. The two tests' numbers are not directly comparable "
+        "(synthetic.json has no field for the forward model; run.json's synthetic.forwardModel "
+        "records it).")
+    lines.append("")
+
+    cmp1 = inputs.grid1d
+    if cmp1 is None:
+        lines.append("No grid1d relocation with this report: no per-event 1D vs 3D comparison.")
+        return lines
+    d1 = cmp1.details
+    cur = d.result.events.merge(d.flags[["eventId", "assocId"]], left_on="id", right_on="eventId")
+    old = d1.result.events.merge(d1.flags[["eventId", "assocId"]], left_on="id",
+                                 right_on="eventId")
+    both = cur.merge(old, on="assocId", suffixes=("", "1d"))
+    if both.empty:
+        lines.append("The grid1d relocation located none of these events: no per-event comparison.")
+        return lines
+    dz = (both["elevM"] - both["elevM1d"]).to_numpy(dtype=np.float64)
+    de = (both["enu_e"] - both["enu_e1d"]).to_numpy(dtype=np.float64)
+    dn = (both["enu_n"] - both["enu_n1d"]).to_numpy(dtype=np.float64)
+    dh = np.hypot(de, dn)
+    statics_1d = bool(d1.result.events["quality_statics"].astype(bool).any())
+    statics_3d = bool(d.result.events["quality_statics"].astype(bool).any())
+    rep3 = inputs.statics
+    lines.append(
+        f"Against grid1d locations of the same association, made in this stage run with the same "
+        f"statics configuration ({len(both)} events; statics pass "
+        f"{rep3.pass_number if rep3 is not None else 'n/a'}, applied: 1D "
+        f"{'yes' if statics_1d else 'no'}, 3D {'yes' if statics_3d else 'no'}; the 1D relocation "
+        f"took {cmp1.runtime_s:.0f} s): depth shift 3D minus 1D elevM median {np.median(dz):+.0f} "
+        f"m (p10 {_pct(dz, 0.1)}, p90 {_pct(dz, 0.9)} m; negative = deeper in 3D), median abs "
+        f"{np.median(np.abs(dz)):.0f} m; epicentre shift median {np.median(dh):.0f} m (p90 "
+        f"{_q(dh, 0.9):.0f} m), median de {np.median(de):+.0f} m, dn {np.median(dn):+.0f} m; "
+        f"median rmsS 1D {both['quality_rmsS1d'].median():.3f} s, 3D "
+        f"{both['quality_rmsS'].median():.3f} s.")
+    lines.append("")
+    stations = d.stations
+    r1 = _residual_frame(d1.result.events, d1.result.arrivals, stations)
+    r3 = _residual_frame(d.result.events, d.result.arrivals, stations)
+    a1, a3 = azimuth_fit(r1), azimuth_fit(r3)
+    lines.append("Row 7 residual trend vs azimuth at each method's own locations: 1D "
+                 + (_fit_text(a1) or "n/a") + "; 3D " + (_fit_text(a3) or "n/a") + ".")
+    lines.append("")
+    if comp is not None and inputs.catalog is not None:
+        comp1 = compare_with_catalog(d1.result.events, inputs.catalog, inputs.catalog_errors,
+                                     inputs.cfg, inputs.known_ids)
+        h1, h3 = comp1.dropna(subset=["distM"]), comp.dropna(subset=["distM"])
+        if len(h1) and len(h3):
+            lines.append(
+                "Offsets from the public regional catalog (nearest candidate within matching."
+                f"maxDtS / maxDistM, as in the catalog section): 1D {len(h1)} events, "
+                f"horizontal median {h1['distM'].median():.0f} m (p90 {h1['distM'].quantile(0.9):.0f}"
+                f" m), median de {h1['deM'].median():+.0f}, dn {h1['dnM'].median():+.0f}, dz "
+                f"{h1['dzM'].median():+.0f} m, median abs dz {h1['dzM'].abs().median():.0f} m; 3D "
+                f"{len(h3)} events, horizontal median {h3['distM'].median():.0f} m (p90 "
+                f"{h3['distM'].quantile(0.9):.0f} m), median de {h3['deM'].median():+.0f}, dn "
+                f"{h3['dnM'].median():+.0f}, dz {h3['dzM'].median():+.0f} m, median abs dz "
+                f"{h3['dzM'].abs().median():.0f} m.")
+            lines.append("")
+    flag = inputs.cfg.diagnostics.stationResidualFlagS
+    lines.append(f"Statics above the flag: 1D {_verdicts(cmp1.statics, flag)}; 3D "
+                 f"{_verdicts(rep3, flag)}.")
+    lines.append("")
+    m1 = r1.groupby(["stationId", "phase"])["residualS"].median()
+    m3 = r3.groupby(["stationId", "phase"])["residualS"].median()
+    table = pd.concat({"1d": m1, "3d": m3}, axis=1).reset_index()
+    lines.append("Median residual per station and phase over used picks (tObs - tPred, each at "
+                 "its own locations, statics included as applied):")
+    lines.append("")
+    lines += ["| station | phase | 1D (s) | 3D (s) |", "| --- | --- | --- | --- |"]
+    for r in table.itertuples(index=False):
+        lines.append(f"| {r.stationId} | {r.phase} | {_f(r[2], '+.3f')} | {_f(r[3], '+.3f')} |")
+    return lines
+
+
 # --- report ---------------------------------------------------------------------------------------
 
 
@@ -1442,7 +1763,8 @@ def build_rows(inputs: DiagnosticsInputs) -> tuple[list[Row], dict[str, list[str
                   "tableErrors": table_error_section(inputs, ua),
                   "catalog": catalog_section(inputs, comp, trends(at_catalog),
                                              trends(before_statics)),
-                  "statics": statics_section(inputs)}
+                  "statics": statics_section(inputs),
+                  "grid3d": grid3d_section(inputs, ua, comp)}
 
 
 def build_diagnostics(inputs: DiagnosticsInputs) -> str:
@@ -1461,9 +1783,10 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
         (
             f"Run `{inputs.run_id}`, stage `locate`: {c['events']} of {c['assocEvents']} "
             f"association events located as candidate events on {c['stations']} stations "
-            f"({c['picksUsed']} of {c['picksIn']} associated picks used), method `grid1d` on the "
-            f"`{d.velocity_model.get('name', '?')}` layer model, statics {applied} (Station "
-            f"statics section). depthOnEdge "
+            f"({c['picksUsed']} of {c['picksIn']} associated picks used), method "
+            f"`{d.locator.method}` on the `{d.velocity_model.get('name', '?')}` "
+            f"{'3D model (1D vs 3D section)' if d.locator.method == GRID3D else 'layer model'}, "
+            f"statics {applied} (Station statics section). depthOnEdge "
             f"{c['eventsDepthOnEdge']}, MAP on the volume top {c['eventsMapOnVolumeTop']}, PDF "
             f"truncated {c['eventsPdfTruncated']}."
         ),
@@ -1486,7 +1809,8 @@ def build_diagnostics(inputs: DiagnosticsInputs) -> str:
         test = test.format(k=inputs.cfg.diagnostics.minSForDepth)
         cells = [str(row.number), suspect, test, row.result, row.conclusion, fix]
         lines.append("| " + " | ".join(_cell(x) for x in cells) + " |")
-    lines += ["", *extra["statics"], "", *extra["sigma"], "", *extra["synthetic"], "",
+    lines += ["", *extra["grid3d"], "", *extra["statics"], "", *extra["sigma"], "",
+              *extra["synthetic"], "",
               *extra["tableErrors"], "",
               *extra["catalog"], "",
               "## Appendix A: stations (row 1)", "", *extra["stations"], "",

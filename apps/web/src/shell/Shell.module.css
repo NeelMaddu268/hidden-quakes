@@ -40,11 +40,19 @@
   left: var(--shell-inset);
 }
 
+/* Background-colour halo (the same shape as H3's scene labels, FYI-H3-6): the header stays
+   legible where a glowing reference-feature line runs behind it on real data. */
+.header {
+  --hq-text-halo: 1px 0 0 var(--hq-bg), -1px 0 0 var(--hq-bg), 0 1px 0 var(--hq-bg),
+    0 -1px 0 var(--hq-bg), 0 0 3px var(--hq-bg), 0 0 5px var(--hq-bg);
+}
+
 .title {
   font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  text-shadow: var(--hq-text-halo);
 }
 
 .modeLabel {
@@ -53,6 +61,7 @@
   font-family: var(--hq-font-mono);
   font-size: 0.72rem;
   color: var(--hq-text-dim);
+  text-shadow: var(--hq-text-halo);
 }
 
 /* Counters and, after the reveal, the filter pills, in one right-aligned column. */
