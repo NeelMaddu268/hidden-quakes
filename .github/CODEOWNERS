@@ -1,0 +1,41 @@
+# Hidden Quakes path ownership. bootstrap.sh fills in the real GitHub usernames.
+# Later rules win, so the catch-all comes first.
+
+*                                               @Sririthishpalani-max
+
+# H1 Signal
+/services/seismic/hq/ingest/                    @hueywinn
+/services/seismic/hq/preprocess/                @hueywinn
+/services/seismic/hq/pick/                      @hueywinn
+/services/seismic/hq/baseline/                  @hueywinn
+/services/seismic/hq/config/signal.py           @hueywinn
+/services/seismic/configs/showcase/signal.yaml  @hueywinn
+/services/seismic/tests/signal/                 @hueywinn
+/docs/lanes/H1-signal.md                        @hueywinn
+
+# H2 Seismology
+/services/seismic/hq/associate/                 @NeelMaddu268
+/services/seismic/hq/locate/                    @NeelMaddu268
+/services/seismic/hq/tier/                      @NeelMaddu268
+/services/seismic/hq/match/                     @NeelMaddu268
+/services/seismic/hq/magnitude/                 @NeelMaddu268
+/services/seismic/hq/config/seismology.py       @NeelMaddu268
+/services/seismic/hq/config/run.py              @NeelMaddu268
+/services/seismic/configs/showcase/run.yaml     @NeelMaddu268
+/services/seismic/configs/showcase/seismology.yaml @NeelMaddu268
+/services/seismic/configs/velocity/             @NeelMaddu268
+/services/seismic/tests/seismology/             @NeelMaddu268
+/docs/lanes/H2-seismology.md                    @NeelMaddu268
+
+# H3 Visualization
+/apps/web/src/scene/                            @SN-P946
+/apps/web/src/drawer/                           @SN-P946
+/apps/web/src/state/                            @SN-P946
+/packages/visualization/                        @SN-P946
+/apps/web/public/terrain/                       @SN-P946
+/scripts/bake-dem.py                            @SN-P946
+/docs/lanes/H3-visualization.md                 @SN-P946
+
+# Shared interfaces: frozen at 8:30 PM Friday; changes need every affected lane
+/packages/contracts/                            @Sririthishpalani-max @NeelMaddu268 @SN-P946
+/docs/02-contracts.md                           @Sririthishpalani-max @hueywinn @NeelMaddu268 @SN-P946

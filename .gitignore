@@ -1,0 +1,25 @@
+# Pipeline data (shared between laptops with `make publish-run` / `make fetch-run`, never via git)
+data/showcase/
+data/cache/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.vercel/
+
+# Agent worktrees live beside the repo, but just in case
+.worktrees/
+
+# Local env
+.env
+.env.local
+.DS_Store

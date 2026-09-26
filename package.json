@@ -1,0 +1,7 @@
+{
+  "name": "hidden-quakes",
+  "private": true,
+  "scripts": {
+    "check": "make check"
+  }
+}
