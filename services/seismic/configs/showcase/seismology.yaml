@@ -210,12 +210,14 @@ statics:
   # k = k-fold (folds dealt round-robin in catalog origin-time order). Unmatched candidate events
   # use the terms from every reference event.
   minReferenceEvents: 3
-  # The lateral-structure terms exceed selfConsistent's 0.3 s cap by design (LOC-04 row 7: S up
-  # to about 1 s at the catalog hypocentres), so this cap is set from the data. On the showcase
-  # day (run 20260926-0210-a04c611, 43 reference events) the largest uncapped term is 0.875 s and
-  # every term's MAD over its events is at most 0.083 s: consistent delays, not scatter. 1.0 s
-  # clips none of them and still bounds a term from a station with systematically wrong picks.
-  # diagnostics.md reports, per run, the largest uncapped term and how many terms the cap clips.
+  # The lateral-structure terms exceed selfConsistent's 0.3 s cap by design (LOC-04 row 7: S
+  # delays near 1 s at the catalog hypocentres), so this cap is set from the data: above the
+  # largest consistent term (small MAD over its events), so it clips none of the lateral
+  # structure, and still bounding a term from a station with systematically wrong picks.
+  # diagnostics.md reports, per run, the largest uncapped term, its MAD, the largest MAD of any
+  # term and how many terms the cap clips; recheck the value there when the data change.
+  # Provenance of 1.0 s (LOC-05, full-day run of 2026-09-26): largest uncapped term 0.875 s,
+  # largest term MAD 0.083 s, none clipped.
   referenceCapS: 1.0
   folds: null
   polishIterations: 3
