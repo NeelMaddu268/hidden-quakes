@@ -323,9 +323,10 @@ One YAML file per lane in `services/seismic/configs/showcase/`, one Pydantic con
 | `run.yaml` | H2 | `RunSection` (`hq/config/run.py`) | `name`, `windowStart`, `windowEnd` (ISO UTC), `bbox`, `origin {lat, lon, elevM}`, `refSurfaceElevM` |
 | `signal.yaml` | H1 | `SignalConfig` (`hq/config/signal.py`) | station selection, download, preprocessing profiles, picker weights and thresholds, baseline |
 | `seismology.yaml` | H2 | `SeismologyConfig` (`hq/config/seismology.py`) | catalog query, velocity model, grids, associator, locator, statics, tiering, matching, magnitude |
-| `export.yaml` | H4 | `ExportConfig` (`hq/config/export.py`) | modes, hero rule, evidence window and band, max traces, display rate |
+| `export.yaml` | H4 | `ExportConfig` (`hq/config/export.py`) | modes, hero rule, evidence window and band, max traces, display rate, bundle budget, reference features |
+| `validate.yaml` | H4 | `ValidateConfig` (`hq/config/validate.py`) | null test (shuffles, shift range, seed, profile), baseline profiles, G-R binning |
 
-`hq.config.load_config(dir: Path) -> RunConfig`, where `RunConfig` has fields `run`, `signal`, `seismology`, `export`. Unknown keys are an error, not a warning.
+`hq.config.load_config(dir: Path) -> RunConfig`, where `RunConfig` has fields `run`, `signal`, `seismology`, `export`, `validate`. Unknown keys are an error, not a warning.
 
 ## 4. Stage API (`hq/runs.py`, H4)
 
