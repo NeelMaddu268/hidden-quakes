@@ -243,11 +243,17 @@ picker:
 # P from Z, S from the horizontals after a P. Windows are REAL seconds, so a time-stretched
 # borehole-B trace gets the same physical windows (factor x more model samples).
 baseline:
-  # STA/LTA has no calibrated confidence, so every trigger gets prob 1.0. The swept trigger thresholds
-  # below are the baseline's only tuning dimension: no association probability threshold ever drops a
-  # baseline pick. A baseline event's meanPickProb is therefore always 1.0 and says nothing about
-  # confidence; it is not comparable with a PhaseNet event's.
-  prob: 1.0
+  # STA/LTA has no calibrated confidence, so every trigger gets this one prob. It is not neutral: H2's
+  # locator weights a pick by prob / sigma and its location PDF is a Laplace likelihood with scale
+  # sigma / prob, so this constant sets the width of every baseline event's PDF, hence hErrM and vErrM,
+  # two Tier A bars. 1.0 would give STA/LTA narrower formal errors than PhaseNet at equal residuals.
+  # It is set to a typical PhaseNet pick's prob instead. Source: run 20260926-0210-a04c611, the median
+  # prob of its PhaseNet picks at or above seismology.associator.minPickProb (0.719), which is also
+  # the mean prob of the PhaseNet picks its located events used (0.718; their median is 0.767).
+  # The swept trigger thresholds remain the baseline's only tuning dimension: scoring checks that this
+  # is at least seismology.associator.minPickProb, so association never drops a baseline pick. A
+  # baseline event's meanPickProb is always this constant; it is not comparable with a PhaseNet event's.
+  prob: 0.72
   minSegmentMarginS: 5.0     # a segment shorter than warmupS + 5 s is skipped and counted (its first
                              # warmupS can never trigger)
   maxWorkers: 4              # stations in parallel (threads: the C STA/LTA, filters and mseed reads
@@ -304,10 +310,11 @@ baseline:
                              # Joining both horizontals into one trigger list lost many consistent S picks
   minSMinusPS: 0.15
   maxSMinusPS: 5.0
-  # Thresholds of picks_stalta.parquet; must be a point of the sweep grid. Provisional: the lane doc
-  # asks for the sweep point with the most Tier A events, which needs H2's associate/locate/match/tier
-  # (not merged yet); until then baseline_sweep.parquet holds pick counts only. Once it is scored the
-  # stage logs the best Tier A point and warns while it differs from this one.
+  # Thresholds of picks_stalta.parquet; must be a point of the sweep grid, and the start of the
+  # coordinate search below. Provisional: the lane doc asks for the sweep point with the most Tier A
+  # events. A scored sweep logs its best Tier A point (ties keep this one) and warns while it differs
+  # from this one; copy it here once the scoring run is done (step 2 below). When every scored point
+  # has the same Tier A count the sweep names no best point and warns instead: nothing to copy.
   chosen:
     pOn: 5.0
     pOff: 1.5
@@ -324,7 +331,33 @@ baseline:
     pOn: [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
     sOn: [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
     offLevels: [1.0, 1.5, 2.0]
-    scoreWithH2: true        # score every grid point through H2's associate -> locate -> match ->
-                             # assign_tiers: one full H2 run per point (147 with this grid), logged per
-                             # point. Set false, or shrink the grid, if that is too slow. Until H2's
-                             # modules are merged the stage warns and writes null scores either way
+    # Scoring: a grid point's picks go through H2's associate -> locate -> match -> assign_tiers
+    # exactly as H4's VAL-01 scores its BaselineRow (the run's own tier bars from
+    # ProcessingRun.tiering), and PhaseNet's picks.parquet is scored once the same way, first and
+    # alone, as the reference (baseline_reference.json). Association profile full only: VAL-01 also
+    # needs p_only for its gain claim, and these thresholds are not optimised for it. The run's tier
+    # bars exist only after stage tier, which the pipeline runs after this stage, so a fresh `hq run`
+    # cannot score: scoreMode stays none here (a test pins it), and scoring is a CLI rerun of this
+    # stage on a run that went through tier (the CLI records into that run's run.json unless
+    # --stations, --start or --end pick a subset):
+    #   1. python -m hq.baseline.run --run-dir <run> --config-dir configs/showcase --cache-dir <cache>
+    #        --score-mode coordinate --score-only
+    #      (--score-only needs picks_stalta.parquet to hold the chosen thresholds' picks with this
+    #      prob; if it does not, drop --score-only and the picks are rewritten too)
+    #   2. copy the logged best point into chosen above (not when the objective is flat)
+    #   3. python -m hq.baseline.run --run-dir <run> --config-dir configs/showcase --cache-dir <cache>
+    #        --keep-scores
+    #      (rewrites picks_stalta.parquet at the new chosen and keeps the scored sweep; without
+    #      --keep-scores an unscored run replaces the scores with nulls)
+    # A scoring run on a run without tier bars fails before it picks anything. Cost: one point is a
+    # full H2 run over the window. Measured on the full showcase day, 3 points at once on a laptop:
+    # about 8 min for the PhaseNet reference and 13-51 min per STA/LTA point, longer at low pOn (more
+    # picks). Use coordinate, and budget hours; all (every grid point) takes far longer.
+    scoreMode: none          # all: every grid point; coordinate: coordinate descent from chosen (vary
+                             # pOn at chosen sOn/off, then sOn, then off; repeat passes until one moves
+                             # nowhere; ties keep the incumbent, then grid order); none: pick counts only
+    scoreWorkers: 3          # grid points scored at once, each in its own spawned process; every H2
+                             # locate call inside also spawns seismology.locator.nWorkers processes (the
+                             # product is logged, with a WARNING above the CPU count). 1 scores in this
+                             # process
+    maxPasses: 3             # coordinate mode: at most this many passes over pOn, sOn and off
