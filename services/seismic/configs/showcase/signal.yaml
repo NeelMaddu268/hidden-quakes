@@ -142,6 +142,22 @@ preprocess:
       maxRateHz: 1000.0
       bandpassHz: [5.0, 400.0]   # real Hz; at 1000 Hz input the model sees 0.5-40 Hz
       bandpassCorners: 4
+  # Full-window picking reads the cache one chunk at a time (hq.preprocess.chunks), so PhaseNet
+  # (SEIS-06) and STA/LTA (SEIS-07) see identical preprocessed traces. [t0, t1) is tiled into keep
+  # intervals; each is read with overlapS extra on both sides, preprocessed on its own, and a
+  # picker keeps only the picks inside the keep interval (the rest belong to the neighbour).
+  chunks:
+    lengthS: 3600.0          # keep intervals sit on multiples of this since the epoch (hours),
+                             # clipped to the window, so a sub-window run reproduces the full run's chunks
+    overlapS: 60.0           # real s read before and after every keep interval, then discarded
+    minOverlapS: 30.0        # overlapS may not go below this. Edge effects inside the overlap are:
+                             # taper (maxLengthS 1 s) + zero-phase filter settling (well under 1 s for
+                             # these filters) + half a PhaseNet window (3001 samples = 15 s of model time,
+                             # at most 15 s real) + the STA/LTA warm-up (the LTA window, a few s) = about
+                             # 22 s, rounded up to 30 s
+    edgeProbeS: 1.0          # every read reaches this much further, so data that continues past a chunk
+                             # cut is told apart from a real data edge (gap, or data start/end). Must
+                             # exceed one input sample interval (checked per trace) and stay below overlapS
 
 # --- SEIS-04 / SEIS-06: PhaseNet picking -------------------------------------------------------------
 picker: {}
