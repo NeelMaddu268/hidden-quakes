@@ -80,8 +80,8 @@ export const DRAWER_CSS = `
 .hqd-sta, .hqd-dist {
   align-self: center; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.hqd-sta { color: ${colors.text}; }
-.hqd-dist { color: ${colors.textDim}; text-align: right; padding-right: 10px; }
+.hqd-sta { grid-column: 1; color: ${colors.text}; }
+.hqd-dist { grid-column: 2; color: ${colors.textDim}; text-align: right; padding-right: 10px; }
 .hqd-track { position: relative; grid-column: 3; min-height: 0; }
 .hqd-track svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .hqd-trace { fill: none; stroke: ${colors.text}; stroke-opacity: 0.72; stroke-width: 1; stroke-linejoin: round; }

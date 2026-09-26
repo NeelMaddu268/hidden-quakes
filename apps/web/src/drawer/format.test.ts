@@ -3,6 +3,7 @@ import {
   DASH,
   fmtFixed,
   fmtKmFromM,
+  fmtLength,
   fmtMagnitude,
   fmtPlusMinusM,
   fmtSeconds,
@@ -86,5 +87,14 @@ describe("magnitude", () => {
     expect(fmtMagnitude(null)).toBeNull();
     expect(fmtMagnitude(undefined)).toBeNull();
     expect(fmtMagnitude({ value: NaN, type: "ml" })).toBeNull();
+  });
+});
+
+describe("scale-bar lengths", () => {
+  it("meters below a kilometer, kilometers above", () => {
+    expect(fmtLength(500)).toBe("500 m");
+    expect(fmtLength(2500)).toBe("2.5 km");
+    expect(fmtLength(10000)).toBe("10 km");
+    expect(fmtLength(NaN)).toBe(DASH);
   });
 });

@@ -101,3 +101,9 @@ export function fmtSeconds(s: number, step: number): string {
   const digits = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
   return fmtFixed(s, digits);
 }
+
+/** A scale-bar length: `500 m`, `2.5 km`. */
+export function fmtLength(m: number): string {
+  if (!isNum(m)) return DASH;
+  return m >= 1000 ? `${Number((m / 1000).toFixed(3))} km` : `${Number(m.toFixed(1))} m`;
+}
