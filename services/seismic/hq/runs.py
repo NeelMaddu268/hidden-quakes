@@ -7,6 +7,12 @@ in one module per pipeline step. ``STAGES`` names every module and its owning la
 that isn't merged yet fails with a message that says who ships it.
 
 ``run.json`` is read and written only through the ``ProcessingRun`` model, never as loose dicts.
+
+The reference-statics pass (REQ-H2-14, docs/01 → Pipeline): when the seismology section's
+``statics.mode`` is ``referenceEvents`` and a run selects both ``locate`` and ``match``, the runner
+repeats them once after the first ``match`` (locate → match → locate → match → tier ...), because
+stage ``locate`` takes its station terms from the public events a prior match pass recovered.
+``hq stage <name>`` reruns one stage once, whatever the mode.
 """
 
 import importlib
@@ -103,7 +109,9 @@ STAGES: tuple[StageSpec, ...] = (
     StageSpec("catalog", "hq.match.catalog", "H2 Seismology"),
     StageSpec("download", "hq.ingest.download", "H1 Signal"),
     # H1 and H2 put each stage's ``run(ctx)`` in a ``run`` submodule (their lane docs; REQ-H2-6),
-    # so the registry names the submodule. ``hq.match.catalog`` and H4's stages keep their layout.
+    # so the registry names the submodule; H2's packages also re-export it from ``__init__``
+    # (FYI-H2-4), so either name would resolve. ``hq.match.catalog`` and H4's stages keep their
+    # layout.
     StageSpec("pick", "hq.pick.run", "H1 Signal"),
     StageSpec("baseline", "hq.baseline.run", "H1 Signal"),
     StageSpec("associate", "hq.associate.run", "H2 Seismology"),
@@ -114,6 +122,15 @@ STAGES: tuple[StageSpec, ...] = (
     StageSpec("validate", "hq.validate", "H4 Platform"),
     StageSpec("export", "hq.export", "H4 Platform"),
 )
+
+# The reference-statics pass (REQ-H2-14): with this ``statics.mode`` in the seismology section,
+# ``run_stages`` runs these stages a second time, in this order, right after the first pass of the
+# last of them. Stage ``locate`` runs pass 2 when ``matches.parquet`` exists; stage ``tier``
+# refuses a ``matches.parquet`` written for other located events, so the second ``match`` is not
+# optional.
+REFERENCE_STATICS_MODE = "referenceEvents"
+STATICS_PASS_STAGES: tuple[str, ...] = ("locate", "match")
+STATICS_PASSES = 2
 
 
 class StageMissingError(RunError):
@@ -136,13 +153,21 @@ class UnknownStageError(RunError):
         )
 
 
-class StageRecord(BaseModel):
-    """One entry of ``stages.json``: what ``RunContext.record`` stored for a stage."""
+class PassRecord(BaseModel):
+    """Runtime and counts of one pass of a stage: what ``RunContext.record`` stored."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
     runtimeS: float
     counts: dict[str, int]
+
+
+class StageRecord(PassRecord):
+    """One entry of ``stages.json``. A stage that ``run_stages`` ran more than once (the
+    reference-statics pass) keeps every pass in ``passes``; ``runtimeS`` is then their sum and
+    ``counts`` those of the last pass, the one whose tables are in the run directory."""
+
+    passes: list[PassRecord] | None = None
 
 
 _STAGE_RECORDS = TypeAdapter(dict[str, StageRecord])
@@ -199,7 +224,7 @@ def read_stage_records(run_dir: Path) -> dict[str, StageRecord]:
 
 
 def write_stage_records(run_dir: Path, records: dict[str, StageRecord]) -> None:
-    text = _STAGE_RECORDS.dump_json(records, indent=2).decode()
+    text = _STAGE_RECORDS.dump_json(records, indent=2, exclude_none=True).decode()
     write_text_atomic(Path(run_dir) / STAGES_JSON, text + "\n")
 
 
@@ -486,44 +511,194 @@ def stage_status(spec: StageSpec) -> str:
     return "implemented"
 
 
-def run_stage(ctx: RunContext, name: str, registry: Sequence[StageSpec] = STAGES) -> float:
+@dataclass(frozen=True)
+class StageStep:
+    """One step of a run plan: a stage and which pass of how many it is (``1 of 1`` normally)."""
+
+    spec: StageSpec
+    pass_no: int = 1
+    passes: int = 1
+
+    @property
+    def label(self) -> str:
+        if self.passes == 1:
+            return self.spec.name
+        return f"{self.spec.name} pass {self.pass_no} of {self.passes}"
+
+
+def statics_passes(ctx: RunContext, selected: Sequence[str]) -> int:
+    """How many times ``STATICS_PASS_STAGES`` run in this selection: ``STATICS_PASSES`` when every
+    one of them is selected and the seismology section's ``statics.mode`` is
+    ``REFERENCE_STATICS_MODE``, else 1.
+
+    The seismology section is read only when the whole pass is selected (a ``--stages pick`` run
+    needs no H2 config); missing then, it fails naming its owner. Selecting ``locate`` without
+    ``match`` runs it once and warns when the mode asks for the pass.
+    """
+    chosen = set(selected)
+    if not chosen & set(STATICS_PASS_STAGES):
+        return 1
+    if not set(STATICS_PASS_STAGES) <= chosen:
+        section = ctx.config.seismology  # not loaded: the stage itself reports that
+        mode = getattr(getattr(section, "statics", None), "mode", None)
+        if mode == REFERENCE_STATICS_MODE:
+            log.warning(
+                "statics.mode is %s but only %s of %s selected: running once, without the "
+                "reference-statics pass, which needs %s in the same run (or `hq stage` reruns "
+                "of each in that order)",
+                mode,
+                ", ".join(sorted(chosen & set(STATICS_PASS_STAGES))),
+                ", ".join(STATICS_PASS_STAGES),
+                " -> ".join(STATICS_PASS_STAGES * STATICS_PASSES),
+            )
+        return 1
+    section = ctx.config.section("seismology")  # ConfigError naming H2 Seismology when missing
+    statics = getattr(section, "statics", None)
+    mode = getattr(statics, "mode", None)
+    if not isinstance(mode, str):
+        raise RunError(
+            "seismology config has no statics.mode; the runner needs it to decide the "
+            "reference-statics pass (owner: H2 Seismology)"
+        )
+    if mode == REFERENCE_STATICS_MODE:
+        log.info(
+            "statics.mode is %s: %s run %d passes (%s)",
+            mode,
+            " and ".join(STATICS_PASS_STAGES),
+            STATICS_PASSES,
+            " -> ".join(STATICS_PASS_STAGES * STATICS_PASSES),
+        )
+        return STATICS_PASSES
+    log.info("statics.mode is %s: every stage runs once", mode)
+    return 1
+
+
+def plan_stages(
+    ctx: RunContext, names: Sequence[str] | None = None, registry: Sequence[StageSpec] = STAGES
+) -> tuple[StageStep, ...]:
+    """The steps ``run_stages`` executes: the selected stages in registry order, with the
+    reference-statics stages repeated after the first pass of the last of them when
+    ``statics_passes`` says so."""
+    specs = select_stages(names, registry)
+    passes = statics_passes(ctx, [spec.name for spec in specs])
+    steps: list[StageStep] = []
+    for spec in specs:
+        if spec.name not in STATICS_PASS_STAGES or passes == 1:
+            steps.append(StageStep(spec))
+            continue
+        steps.append(StageStep(spec, 1, passes))
+        if spec.name == STATICS_PASS_STAGES[-1]:
+            for pass_no in range(2, passes + 1):
+                steps.extend(
+                    StageStep(stage_spec(name, registry), pass_no, passes)
+                    for name in STATICS_PASS_STAGES
+                )
+    return tuple(steps)
+
+
+def _take_stage_record(ctx: RunContext, name: str) -> StageRecord | None:
+    """Remove a stage's runtime from ``run.json`` and its ``stages.json`` entry, returning the
+    entry, so a further pass records itself like a first one (``run_stage`` can then still tell
+    a stage that never called ``ctx.record``). ``_merge_pass`` puts them back, merged."""
+    records = read_stage_records(ctx.run_dir)
+    previous = records.pop(name, None)
+    run = ctx.read_run()
+    if name in run.runtimeS:
+        ctx._update(run, {"runtimeS": {k: v for k, v in run.runtimeS.items() if k != name}})
+    write_stage_records(ctx.run_dir, records)
+    return previous
+
+
+def _put_stage_record(ctx: RunContext, name: str, record: StageRecord) -> None:
+    run = ctx.read_run()
+    ctx._update(run, {"runtimeS": {**run.runtimeS, name: record.runtimeS}})
+    records = read_stage_records(ctx.run_dir)
+    records[name] = record
+    write_stage_records(ctx.run_dir, records)
+
+
+def _merge_pass(ctx: RunContext, name: str, previous: StageRecord | None, step: StageStep) -> None:
+    """After pass ``step.pass_no``: ``runtimeS[name]`` in ``run.json`` becomes the sum over the
+    passes; the ``stages.json`` entry keeps the last pass's counts and every pass in ``passes``."""
+    latest = read_stage_records(ctx.run_dir)[name]  # run_stage made sure this pass recorded
+    earlier: list[PassRecord] = []
+    if previous is not None:
+        earlier = list(
+            previous.passes or [PassRecord(runtimeS=previous.runtimeS, counts=previous.counts)]
+        )
+    passes = [*earlier, PassRecord(runtimeS=latest.runtimeS, counts=latest.counts)]
+    total = sum(p.runtimeS for p in passes)
+    _put_stage_record(ctx, name, StageRecord(runtimeS=total, counts=latest.counts, passes=passes))
+    log.info(
+        "stage %s: %d passes, %.1f s total (%s); runtimeS[%r] is the total, stages.json keeps "
+        "each pass",
+        name,
+        len(passes),
+        total,
+        " + ".join(f"{p.runtimeS:.1f} s" for p in passes),
+        name,
+    )
+
+
+def run_stage(
+    ctx: RunContext,
+    name: str,
+    registry: Sequence[StageSpec] = STAGES,
+    *,
+    step: StageStep | None = None,
+) -> float:
     """Run one stage, time it, and return its wall time in seconds.
 
     The stage records its own runtime and counts through ``ctx.record``; if it doesn't, the wall
-    time measured here is recorded with no counts and a warning.
+    time measured here is recorded with no counts and a warning. ``step`` (from ``plan_stages``)
+    marks a further pass of a repeated stage: its earlier record is set aside while it runs and
+    merged back afterwards (``_merge_pass``); on failure the earlier record is restored.
     """
     spec = stage_spec(name, registry)
     fn = resolve_stage(spec)
-    log.info("stage %s: start (%s, owner %s)", name, spec.module, spec.owner)
+    label = spec.name if step is None else step.label
+    further_pass = step is not None and step.pass_no > 1
+    previous = _take_stage_record(ctx, name) if further_pass else None
+    log.info("stage %s: start (%s, owner %s)", label, spec.module, spec.owner)
     t0 = time.perf_counter()
-    fn(ctx)
+    try:
+        fn(ctx)
+    except BaseException:
+        if previous is not None:
+            _put_stage_record(ctx, name, previous)
+        raise
     runtime_s = time.perf_counter() - t0
-    log.info("stage %s: finished in %.1f s", name, runtime_s)
+    log.info("stage %s: finished in %.1f s", label, runtime_s)
     if name not in ctx.read_run().runtimeS:
         log.warning(
             "stage %s did not call ctx.record(); recording %.1f s wall time with no counts",
-            name,
+            label,
             runtime_s,
         )
         ctx.record(name, runtime_s=runtime_s, counts={})
+    if further_pass:
+        assert step is not None
+        _merge_pass(ctx, name, previous, step)
     return runtime_s
 
 
 def run_stages(
     ctx: RunContext, names: Sequence[str] | None = None, registry: Sequence[StageSpec] = STAGES
 ) -> list[str]:
-    """Run stages in registry order, stopping at the first failure. Returns the names that ran."""
-    specs = select_stages(names, registry)
+    """Run the plan (``plan_stages``) in order, stopping at the first failure. Returns the stage
+    names that ran, one per step, so a repeated stage appears twice."""
+    steps = plan_stages(ctx, names, registry)
+    log.info("run %s: %d step(s): %s", ctx.run_id, len(steps), ", ".join(s.label for s in steps))
     done: list[str] = []
-    for spec in specs:
+    for step in steps:
         try:
-            run_stage(ctx, spec.name, registry)
+            run_stage(ctx, step.spec.name, registry, step=step)
         except Exception as exc:  # the CLI logs it once; the note says where and how to rerun
             exc.add_note(
-                f"run {ctx.run_id} failed at stage {spec.name!r} after {len(done)}/{len(specs)} "
-                f"stages; rerun it with: hq stage {spec.name} --run {ctx.run_id}"
+                f"run {ctx.run_id} failed at stage {step.label!r} after {len(done)}/{len(steps)} "
+                f"steps; rerun it with: hq stage {step.spec.name} --run {ctx.run_id}"
             )
             raise
-        done.append(spec.name)
-    log.info("run %s: %d stage(s) finished: %s", ctx.run_id, len(done), ", ".join(done))
+        done.append(step.spec.name)
+    log.info("run %s: %d step(s) finished: %s", ctx.run_id, len(done), ", ".join(done))
     return done

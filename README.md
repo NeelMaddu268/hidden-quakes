@@ -85,7 +85,7 @@ A **candidate event** is a set of picks that agree across multiple stations thro
 
 | Tier | Filter pill | Meaning |
 | --- | --- | --- |
-| A | STRICT | On every location metric, at least as good as three-quarters of the recovered public events; depth not pinned to a grid edge; a station close enough to constrain depth |
+| A | STRICT | Every quality metric within the range reached by three-quarters of the recovered public events (each bar is set per metric; `ProcessingRun.tiering.matchedSet.meetingEveryBar.A` over `matchedSet.n` is the share that meets every bar at once); depth not pinned to a grid edge; a station close enough to constrain depth |
 | B | (ALL) | On every metric, no worse than the worst recovered public event |
 | C | (ALL) | Associated and located, but outside that range |
 
