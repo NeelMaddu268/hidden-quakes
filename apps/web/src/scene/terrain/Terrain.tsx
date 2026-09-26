@@ -1,13 +1,12 @@
 "use client";
 
-import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DoubleSide, type ShaderMaterial } from "three";
 import type { SceneBounds } from "../camera/bounds";
-import { enuToScene, depthKmToSceneY, verticalExaggerationOf } from "../coords";
+import { verticalExaggerationOf } from "../coords";
 import { sceneFx } from "../fx";
-import { LABEL_Z_RANGE, labelStyle } from "../references/labels";
+import { CornerNote } from "../references/CornerNote";
 import type { SceneMeta } from "../types";
 import { buildSlabGrid, buildTerrainGrid, chooseSurface, surfaceExtentM, type TerrainGrid } from "./grid";
 import { urlForcesSlab, useTerrainAsset } from "./load";
@@ -84,15 +83,6 @@ const SLAB_SHADE = new Uint8Array([255, 255, 255, 255]);
 
 function AbstractSlab({ extent, scene }: { extent: EnuBoundsM; scene: SceneMeta }) {
   const grid = useMemo(() => buildSlabGrid(extent, scene), [extent, scene]);
-  const ve = verticalExaggerationOf(scene);
-  // Label at the slab's south-west corner, on the surface.
-  const corner = useMemo(
-    (): [number, number, number] => {
-      const [x, , z] = enuToScene({ e: extent.eMin, n: extent.nMin, u: 0 }, ve);
-      return [x, depthKmToSceneY(0, scene), z];
-    },
-    [extent, scene, ve],
-  );
   return (
     <group name="abstract-slab">
       <SurfaceMesh
@@ -102,11 +92,12 @@ function AbstractSlab({ extent, scene }: { extent: EnuBoundsM; scene: SceneMeta 
         flatShadeValue={255}
         contours={false}
         originElevM={scene.originElevM}
-        verticalExaggeration={ve}
+        verticalExaggeration={verticalExaggerationOf(scene)}
       />
-      <Html position={corner} zIndexRange={LABEL_Z_RANGE} pointerEvents="none">
-        <div style={{ ...labelStyle, transform: "translate(6px, -100%)" }}>{ABSTRACT_SURFACE_LABEL}</div>
-      </Html>
+      {/* Pinned to a canvas corner so it's on screen in every view, above the "Vertical ×N" slot. */}
+      <CornerNote slot={1} testId="abstract-surface-note">
+        {ABSTRACT_SURFACE_LABEL}
+      </CornerNote>
     </group>
   );
 }
