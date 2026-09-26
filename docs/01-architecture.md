@@ -26,12 +26,17 @@ Every stage is a function `run(ctx: RunContext) -> None` that reads and writes f
 | pick | H1 | `hq.pick.run` | cache, stations | `picks.parquet`, `known/` (known-event windows, record sections) |
 | baseline | H1 | `hq.baseline.run` | cache, stations | `picks_stalta.parquet`, `baseline_sweep.parquet` |
 | associate | H2 | `hq.associate.run` | picks, stations | `assoc_events.parquet`, `assoc_picks.parquet` |
-| locate | H2 | `hq.locate.run` | assoc, picks, stations, grids | `events_located.parquet`, `residuals.parquet`, `statics.parquet`, `synthetic.json` |
+| locate | H2 | `hq.locate.run` | assoc, picks, stations, grids (+ `matches.parquet`, `catalog.parquet` on the statics pass) | `events_located.parquet`, `arrivals.parquet`, `statics.parquet`, `synthetic.json`, `locate_flags.parquet` (H2-internal), `diagnostics.md` |
 | match | H2 | `hq.match.run` | located events, catalog | `matches.parquet`, `match_sensitivity.parquet` |
 | tier | H2 | `hq.tier.run` | located events, matches | `events.parquet` (final `SeismicEvent` rows), `sweep.parquet` (association sweep rerun through locate, match and tier) |
 | magnitude | H2 | `hq.magnitude.run` | events, cache | updates `events.parquet`, `magnitude.json` |
-| validate | H4 | `hq.validate` | everything above | `validation.json` |
+| validate | H4 | `hq.validate` | everything above | `validation.json` (+ sidecars `null_test.json`, `baseline.json`, `gr.json`, `validation_notes.json`) |
 | export | H4 | `hq.export` | everything above + cache | `apps/web/public/data/<mode>/` |
+
+Two notes on the runner (`hq/runs.py`):
+
+- **The reference-statics pass.** With `seismology.yaml` `statics.mode: referenceEvents` (the showcase default), stage `locate` takes its station terms from the public events a prior `match` recovered, so `hq run` performs locate → match → locate → match → tier → … whenever both `locate` and `match` are selected: `run_stages` reads `statics.mode` and repeats the two stages once after the first `match`. Any other mode, a selection without one of the two, or `hq stage <name>` runs each stage once (the selection case warns). `run.json` `runtimeS["locate"]` and `["match"]` are the totals over both passes; `stages.json` keeps each pass. Stage `locate` runs pass 2 when `matches.parquet` is in the run dir, and stages `locate` and `tier` refuse a `matches.parquet` written for other located events, so the second `match` is never skipped silently.
+- **Stage modules.** H1 and H2 put each stage's `run(ctx)` in a `run` submodule (`hq.<pkg>.run`, as the table names them); H2's packages also re-export it from `__init__`, so `hq.<pkg>` resolves too. `hq.match.catalog` and H4's stages keep their layout.
 
 Rules that make reruns cheap:
 

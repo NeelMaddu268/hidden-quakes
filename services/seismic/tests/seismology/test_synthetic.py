@@ -40,7 +40,10 @@ def locator(loc_setup: LocatorSetup) -> Locator:
 
 @pytest.fixture(scope="module")
 def smoke_setup(loc02: Any, loc_setup: LocatorSetup) -> LocatorSetup:
-    return dataclasses.replace(loc_setup, config=loc02.test_config(nEvents=N_SMOKE))
+    # seismology.yaml leaves sKeepProb / pickProb null (stage locate measures them from the run);
+    # a direct run_synthetic call needs numbers.
+    config = loc02.test_config(nEvents=N_SMOKE, sKeepProb=0.6, pickProb=1.0)
+    return dataclasses.replace(loc_setup, config=config)
 
 
 def test_test_geometry_has_boreholes(loc_setup: LocatorSetup) -> None:
@@ -69,7 +72,9 @@ def test_small_synthetic_run(smoke_setup: LocatorSetup, tmp_path: Path) -> None:
     assert 0.0 <= noisy["fracHWithinHErrM"] <= 1.0 and 0.0 <= noisy["fracVWithinVErrM"] <= 1.0
     params = result.params
     assert params["depthBiasSign"].startswith("elevM_true - elevM_located")
-    assert "placeholders" in params and "sKeepProb" in params["placeholders"]
+    assert params["pickStats"]["source"] == "seismology.yaml"
+    assert params["pickStats"]["sKeepProb"] == 0.6 and params["pickStats"]["pickProb"] == 1.0
+    assert "P pick" in params["pickStats"]["caveat"]
     geometry = params["stationGeometry"]
     stations = smoke_setup.stations
     assert geometry["label"] == "TEST" and geometry["stationIds"] == stations["id"].tolist()
@@ -91,6 +96,14 @@ def test_small_synthetic_run(smoke_setup: LocatorSetup, tmp_path: Path) -> None:
     assert set(written["pickSigmaS"]) == {"P", "S"}
     assert written["medianVErrM"] == report.medianVErrM
     assert not list(path.parent.glob(".*.part"))
+
+
+def test_null_pick_stats_need_numbers(loc02: Any, loc_setup: LocatorSetup) -> None:
+    """seismology.yaml's null sKeepProb / pickProb: only stage locate may fill them."""
+    null = dataclasses.replace(loc_setup, config=loc02.test_config(nEvents=N_SMOKE))
+    assert null.config.synthetic.sKeepProb is None and null.config.synthetic.pickProb is None
+    with pytest.raises(ValueError, match="measures them from the run"):
+        run_synthetic(null)
 
 
 def test_geometry_hash_changes_with_the_geometry(loc_setup: LocatorSetup) -> None:

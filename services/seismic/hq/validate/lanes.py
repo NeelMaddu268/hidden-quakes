@@ -6,12 +6,26 @@ H2 provides ``hq.associate.associate``, ``hq.locate.locate``, ``hq.match.match``
 its tests run) before H2's modules are merged, and a missing one fails with a message naming H2.
 Tests inject a ``SeismologyApi`` built from a toy associator instead (mirrors
 ``hq.export.waveforms``).
+
+Beyond the docs/02 §5 positional shapes, the reruns use two keyword extensions H2 asked for:
+
+- REQ-H2-8: ``hq.locate.locate(..., cache_dir=, run_id=)``. ``real_seismology_api`` binds both
+  with ``functools.partial`` so every rerun's travel-time tables come from
+  ``<cache_dir>/ttgrids/`` (without it each validate process builds them once in a temporary
+  directory) and rerun events carry ``hq-<runId>-NNNNNN`` ids. The ``SeismologyApi.locate``
+  signature stays the 5-positional docs/02 call.
+- REQ-H2-9: ``hq.tier.assign_tiers(..., thresholds=, arrivals=, stations=)``, passed at call
+  time by ``hq.validate.null_test.rerun_pipeline``: the run's own bars (a rerun's matched set is
+  too small to derive bars from, and H2 never invents them) and the tables the nearest-station
+  rule measures focal depth with.
 """
 
+import functools
 import importlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
@@ -82,7 +96,14 @@ class SeismologyApi(Protocol):
     ) -> MatchResult: ...
 
     def assign_tiers(
-        self, events_located: pd.DataFrame, matches: pd.DataFrame, cfg: Any
+        self,
+        events_located: pd.DataFrame,
+        matches: pd.DataFrame,
+        cfg: Any,
+        *,
+        thresholds: Mapping[str, Any],  # a run's ProcessingRun.tiering (REQ-H2-9)
+        arrivals: pd.DataFrame,  # LocateResult.arrivals of the same rerun
+        stations: pd.DataFrame,  # the stations table the rerun located with
     ) -> TierResult: ...
 
 
@@ -116,20 +137,36 @@ def _resolve(module: str, name: str) -> Callable[..., Any]:
     return fn
 
 
-def real_seismology_api() -> LaneSeismologyApi:
-    """H2's four pipeline functions, imported now; a clear error names H2 if any is absent."""
+def real_seismology_api(
+    *, cache_dir: Path | None = None, run_id: str | None = None
+) -> LaneSeismologyApi:
+    """H2's four pipeline functions, imported now; a clear error names H2 if any is absent.
+
+    ``cache_dir`` and ``run_id`` are bound into ``locate`` as keywords (REQ-H2-8), so callers
+    keep the docs/02 §5 five-positional call and every rerun reads the run's travel-time table
+    cache (``<cache_dir>/ttgrids/``); either left None is not passed, so H2's own defaults apply.
+    """
+    locate = _resolve(LOCATE_MODULE, LOCATE_NAME)
+    bound: dict[str, Any] = {}
+    if cache_dir is not None:
+        bound["cache_dir"] = Path(cache_dir)
+    if run_id is not None:
+        bound["run_id"] = run_id
+    if bound:
+        locate = functools.partial(locate, **bound)
     api = LaneSeismologyApi(
         associate=_resolve(ASSOCIATE_MODULE, ASSOCIATE_NAME),
-        locate=_resolve(LOCATE_MODULE, LOCATE_NAME),
+        locate=locate,
         match=_resolve(MATCH_MODULE, MATCH_NAME),
         assign_tiers=_resolve(TIER_MODULE, TIER_NAME),
     )
     log.info(
-        "validate: reruns use %s.%s, %s.%s, %s.%s and %s.%s",
+        "validate: reruns use %s.%s, %s.%s (bound %s), %s.%s and %s.%s",
         ASSOCIATE_MODULE,
         ASSOCIATE_NAME,
         LOCATE_MODULE,
         LOCATE_NAME,
+        {k: str(v) for k, v in bound.items()} or "nothing",
         MATCH_MODULE,
         MATCH_NAME,
         TIER_MODULE,
