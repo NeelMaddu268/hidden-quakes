@@ -17,6 +17,7 @@ exists. Without it the bundle's validation is assembled from the sidecars that d
 missing, and the log names the validate stage.
 """
 
+import json
 import logging
 import math
 from collections.abc import Iterable
@@ -95,6 +96,9 @@ class RunTables:
     picks: dict[str, Pick]  # every pick an event or an arrival names, by id
     validation: Validation | None
     validation_source: str  # where ``validation`` came from, for the log
+    # Stations H1's download report lists with no component served at all (REQ-H3-11): the cache
+    # holds nothing for them by design, so the evidence build skips them instead of failing.
+    stations_without_data: frozenset[str] = frozenset()
 
 
 def _listed(ids: Iterable[str]) -> str:
@@ -294,6 +298,36 @@ def _load_validation(run_dir: Path, gr_cfg: GRConfig | None) -> tuple[Validation
     return validation, " + ".join(sources)
 
 
+DOWNLOAD_REPORT = "download_report.json"
+
+
+def load_stations_without_data(run_dir: Path) -> frozenset[str]:
+    """Station ids that H1's ``download_report.json`` lists with ``componentsPresent == 0``
+    (the data centre served nothing): the waveform cache holds no file for them, so the
+    evidence build skips them (REQ-H3-11). An absent report means an empty set (logged); a
+    malformed one is an error, never a silent empty set."""
+    path = run_dir / DOWNLOAD_REPORT
+    if not path.exists():
+        log.info("export: no %s in %s; every used station is expected in the cache", DOWNLOAD_REPORT, run_dir)
+        return frozenset()
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        rows = doc["stations"]
+        empty = frozenset(
+            str(r["stationId"]) for r in rows if int(r["componentsPresent"]) == 0
+        )
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ExportError(f"{path} is not a download report with a 'stations' list: {exc}") from exc
+    if empty:
+        log.warning(
+            "export: %d station(s) served no data per %s and are skipped for evidence: %s",
+            len(empty),
+            DOWNLOAD_REPORT,
+            _listed(empty),
+        )
+    return empty
+
+
 def load_run_tables(run_dir: Path, *, gr_cfg: GRConfig | None = None) -> RunTables:
     """Read and cross-check every exporter input in ``run_dir``. ``gr_cfg`` (the run's
     ``validate.yaml`` G-R section) re-applies the magnitude kill switch to a sidecar
@@ -359,4 +393,5 @@ def load_run_tables(run_dir: Path, *, gr_cfg: GRConfig | None = None) -> RunTabl
         picks=picks,
         validation=validation,
         validation_source=validation_source,
+        stations_without_data=load_stations_without_data(run_dir),
     )
