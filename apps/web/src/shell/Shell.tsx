@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useBundle, useMode } from "@/providers";
 import { useDemo } from "@/state/demo";
 import { Counters } from "./Counters";
+import { DownloadButton } from "./download/DownloadButton";
 import { FilterPills, ModePills } from "./Pills";
 import { RevealButton } from "./RevealButton";
 import { RunDetailsButton, RunDetailsPanel, useRunDetailsKey } from "./run-details/RunDetailsPanel";
+import { useShareLink } from "./share";
 import styles from "./Shell.module.css";
 import { useKeyboard } from "./useKeyboard";
 import { ValidationPanel } from "./validation/ValidationPanel";
@@ -26,6 +28,10 @@ export function Shell() {
   // DEMO-02: the Run details overlay, toggled by its button under the mode label or by D.
   const [detailsOpen, setDetailsOpen] = useState(false);
   useRunDetailsKey(setDetailsOpen, ready);
+  // Share links: `?event=<id>` opens that drawer after the reveal; the address bar follows selection.
+  const events = ready ? bundle.events : null;
+  const eventIds = useMemo(() => (events ? new Set(events.map((e) => e.id)) : null), [events]);
+  useShareLink(eventIds);
 
   const synthetic = ready && bundle.info.isSynthetic;
 
@@ -41,6 +47,7 @@ export function Shell() {
           {bundle.status === "error" && mode}
         </p>
         {ready && <RunDetailsButton open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)} />}
+        <DownloadButton />
       </header>
 
       <div className={styles.topRight}>

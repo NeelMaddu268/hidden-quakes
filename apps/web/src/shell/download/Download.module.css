@@ -1,0 +1,20 @@
+/* Download candidate catalog: a label and two pills under the Run details button. Tokens only. */
+
+.group {
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  pointer-events: auto;
+}
+
+.label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--hq-text-dim);
+  text-shadow: var(--hq-text-halo);
+  margin-right: 0.2rem;
+}

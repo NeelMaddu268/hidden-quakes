@@ -97,7 +97,7 @@ Only two switches end Hidden Quakes, and both fire before 4 AM. Everything else 
 | Baseline | STA/LTA within ~20% of PhaseNet's strict count at comparable rms | 2 PM Sat | Drop the neural-advantage claim; keep the table as context |
 | Magnitude | Leave-one-out MAE above ~0.4 | 2 PM Sat | Cut magnitude sizing and G-R |
 | Ridgecrest | Not started by the pipeline freeze | ~6:45 PM Sat (freeze called early) | Cut |
-| Live | Unstable, or latency over ~10 min | 10 PM Sat | Cut the LIVE pill |
+| Live | Unstable, or latency over ~10 min | Decided 6:45 PM Sat (ahead of the 10 PM slot): **cut**. No real-window snapshot is committed, the worker needs a laptop online through the demo, and nobody has run the failover drill on real data | The LIVE pill stays off (`NEXT_PUBLIC_LIVE_ENABLED` unset on Vercel, `docs/deploy.md`); the pitch and shot list keep their "only if LIVE is up" lines, which now read as omitted |
 | Evidence drawer | Too slow or heavy | Any time | Drop to 8 traces per event |
 | Terrain | DEM work slows integration | 12 AM Sat | Clean abstract slab, labeled as such |
 | UI numbers | Any number not from provider data | Always | Bug; fix before the pipeline freeze |
