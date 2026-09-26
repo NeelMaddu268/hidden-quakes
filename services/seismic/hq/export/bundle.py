@@ -160,6 +160,7 @@ def _write_evidence(
         "evidenceTracesDropped": 0,
         "evidenceTracesOverBudget": 0,
         "evidenceTraces": 0,
+        "evidenceStationsSkippedNoData": 0,
     }
     for event in ordered:
         arrivals = by_event.get(event.id)
@@ -168,7 +169,15 @@ def _write_evidence(
             log.info("evidence %s: no arrivals; no file", event.id)
             continue
         built = build_evidence(
-            event, arrivals, stations, tables.picks, cfg.evidence, cfg.rounding, source, cache_dir
+            event,
+            arrivals,
+            stations,
+            tables.picks,
+            cfg.evidence,
+            cfg.rounding,
+            source,
+            cache_dir,
+            no_data_stations=tables.stations_without_data,
         )
         if built is None:
             counts["evidenceNoData"] += 1
@@ -181,6 +190,7 @@ def _write_evidence(
         counts["evidenceTraces"] += len(evidence.traces)
         counts["evidenceTracesDropped"] += trace_counts["dropped"]
         counts["evidenceTracesOverBudget"] += trace_counts["overBudget"]
+        counts["evidenceStationsSkippedNoData"] += trace_counts.get("skippedNoData", 0)
         if event.id == hero_id and len(evidence.traces) < cfg.evidence.maxTraces:
             log.info(
                 "evidence %s (hero): %d trace(s), fewer than maxTraces %d",

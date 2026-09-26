@@ -19,6 +19,17 @@ from pydantic import BaseModel, ConfigDict, Field
 AssociationProfile = Literal["full", "p_only"]
 ASSOCIATION_PROFILES: tuple[AssociationProfile, ...] = ("full", "p_only")
 
+# Where the bars every rerun's Tier A is counted against come from (REQ-H1-5):
+# - "run" (default, option (a) per H2): the run's own ``ProcessingRun.tiering["thresholds"]``
+#   (stage ``tier``). Every rerun locates with the run's own ``statics.parquet`` (H2's
+#   ``locate(..., statics=)``), so rerun events are on the run's scale and its bars apply;
+# - "reference" (option (b), H1's alternative): H2's ``assign_tiers`` derives them (no
+#   ``thresholds=``) from the PhaseNet ``full``-profile rerun through the very path every other
+#   rerun takes, and that rerun doubles as the baseline's (phasenet, full) row.
+RerunBars = Literal["run", "reference"]
+RERUN_BARS_RUN: RerunBars = "run"
+RERUN_BARS_REFERENCE: RerunBars = "reference"
+
 
 class NullTestConfig(BaseModel):
     """Null test (VAL-02): rerun associate -> locate -> match -> assign_tiers on picks whose
@@ -110,3 +121,8 @@ class ValidateConfig(BaseModel):
     # Associator overrides for every p_only rerun (null test and baseline); the ``full`` profile
     # always uses the run's ``SeismologyConfig`` unchanged.
     pOnlyAssociator: POnlyAssociatorConfig = Field(default_factory=POnlyAssociatorConfig)
+    # The bars every rerun (null test and baseline) is tiered against; see ``RerunBars``. With
+    # ``run`` the stage fails naming stage ``tier`` when ``run.json`` holds no bars; with
+    # ``reference`` the PhaseNet ``full`` rerun is made first and doubles as the baseline table's
+    # (phasenet, full) row. Bars are never invented in either mode.
+    rerunBars: RerunBars = RERUN_BARS_RUN

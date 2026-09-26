@@ -14,10 +14,17 @@ Beyond the docs/02 §5 positional shapes, the reruns use two keyword extensions 
   ``<cache_dir>/ttgrids/`` (without it each validate process builds them once in a temporary
   directory) and rerun events carry ``hq-<runId>-NNNNNN`` ids. The ``SeismologyApi.locate``
   signature stays the 5-positional docs/02 call.
+- REQ-H1-5 (option (a), H2's PR #94): ``hq.locate.locate(..., statics=<statics.parquet rows>)``.
+  ``real_seismology_api`` binds the run's own station terms the same way (``with_statics`` does
+  it for an injected API), so every rerun's events are located WITH the statics the run's
+  events carry and the run's tier bars apply to them on one scale; without it ``locate`` has no
+  match pass and locates without statics (FYI-H2-8).
 - REQ-H2-9: ``hq.tier.assign_tiers(..., thresholds=, arrivals=, stations=)``, passed at call
-  time by ``hq.validate.null_test.rerun_pipeline``: the run's own bars (a rerun's matched set is
-  too small to derive bars from, and H2 never invents them) and the tables the nearest-station
-  rule measures focal depth with.
+  time by ``hq.validate.null_test.rerun_pipeline``: the bars to apply (a shuffle's or an
+  STA/LTA rerun's matched set is too small to derive bars from, and H2 never invents them) and
+  the tables the nearest-station rule measures focal depth with. One call leaves ``thresholds=``
+  out: the reference rerun (``hq.validate.reference``, REQ-H1-5 option (b)), whose matched set
+  is the run's recovered public events, so H2 derives the bars every other rerun then receives.
 """
 
 import functools
@@ -101,7 +108,9 @@ class SeismologyApi(Protocol):
         matches: pd.DataFrame,
         cfg: Any,
         *,
-        thresholds: Mapping[str, Any],  # a run's ProcessingRun.tiering (REQ-H2-9)
+        # A ProcessingRun.tiering-shaped dict with the bars to apply (REQ-H2-9); left out by the
+        # reference rerun only, so H2 derives them (or raises its TierError below minMatched).
+        thresholds: Mapping[str, Any] = ...,
         arrivals: pd.DataFrame,  # LocateResult.arrivals of the same rerun
         stations: pd.DataFrame,  # the stations table the rerun located with
     ) -> TierResult: ...
@@ -137,14 +146,30 @@ def _resolve(module: str, name: str) -> Callable[..., Any]:
     return fn
 
 
+def with_statics(api: SeismologyApi, statics: pd.DataFrame) -> LaneSeismologyApi:
+    """``api`` with the run's ``statics.parquet`` rows bound into every ``locate`` call as
+    ``statics=`` (REQ-H1-5 a), the other three calls untouched."""
+    return LaneSeismologyApi(
+        associate=api.associate,
+        locate=functools.partial(api.locate, statics=statics),
+        match=api.match,
+        assign_tiers=api.assign_tiers,
+    )
+
+
 def real_seismology_api(
-    *, cache_dir: Path | None = None, run_id: str | None = None
+    *,
+    cache_dir: Path | None = None,
+    run_id: str | None = None,
+    statics: pd.DataFrame | None = None,
 ) -> LaneSeismologyApi:
     """H2's four pipeline functions, imported now; a clear error names H2 if any is absent.
 
-    ``cache_dir`` and ``run_id`` are bound into ``locate`` as keywords (REQ-H2-8), so callers
-    keep the docs/02 §5 five-positional call and every rerun reads the run's travel-time table
-    cache (``<cache_dir>/ttgrids/``); either left None is not passed, so H2's own defaults apply.
+    ``cache_dir`` and ``run_id`` (REQ-H2-8) and ``statics`` (the run's ``statics.parquet``
+    rows, REQ-H1-5 a) are bound into ``locate`` as keywords, so callers keep the docs/02 §5
+    five-positional call, every rerun reads the run's travel-time table cache
+    (``<cache_dir>/ttgrids/``) and locates with the run's station terms; any left None is not
+    passed, so H2's own defaults apply (no statics: FYI-H2-8).
     """
     locate = _resolve(LOCATE_MODULE, LOCATE_NAME)
     bound: dict[str, Any] = {}
@@ -152,6 +177,8 @@ def real_seismology_api(
         bound["cache_dir"] = Path(cache_dir)
     if run_id is not None:
         bound["run_id"] = run_id
+    if statics is not None:
+        bound["statics"] = statics
     if bound:
         locate = functools.partial(locate, **bound)
     api = LaneSeismologyApi(
@@ -166,7 +193,8 @@ def real_seismology_api(
         ASSOCIATE_NAME,
         LOCATE_MODULE,
         LOCATE_NAME,
-        {k: str(v) for k, v in bound.items()} or "nothing",
+        {k: (f"{len(v)} statics rows" if k == "statics" else str(v)) for k, v in bound.items()}
+        or "nothing",
         MATCH_MODULE,
         MATCH_NAME,
         TIER_MODULE,

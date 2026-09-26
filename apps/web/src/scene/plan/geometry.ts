@@ -96,30 +96,61 @@ export interface SectionFit {
   maxDepth: number;
 }
 
-/** True-scale full-population projection, including errors and both ends of boreholes; no trimming. */
-export function sectionFit(
-  layers: readonly SectionPoints[],
-  stations: readonly Float64Array[],
+/** Margin around the framed structure, as a fraction of its larger span (and at least this many km). */
+export const SECTION_FRAME_MARGIN = 0.12;
+export const MIN_SECTION_MARGIN_KM = 0.25;
+
+function quantile(sorted: Float64Array, q: number): number {
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+/**
+ * True-scale fit framed on the structure (WEB-08), the way the plan camera frames it: the given points
+ * (Tier A and B candidates), trimmed by `trim` per axis at each end like the camera's framing, always
+ * reaching up to the site surface (depth 0), plus a margin. Equal scale on both axes, so one axis
+ * shows more than the structure's extent. Events outside the resulting frame are clipped by the
+ * drawing and counted (sectionOutside), never silently dropped. With no points it falls back to
+ * `fallback` (every event), then to a MIN_SECTION_SPAN_KM square under the origin.
+ */
+export function sectionStructureFit(
+  framed: Float64Array,
+  fallback: Float64Array,
   width: number,
   height: number,
   pad: number,
+  trim: number,
 ): SectionFit {
   if (![width, height, pad].every(Number.isFinite) || pad < 0 || width <= 2 * pad || height <= 2 * pad) {
-    throw new Error("sectionFit: viewport must have a positive drawing area");
+    throw new Error("sectionStructureFit: viewport must have a positive drawing area");
   }
-  let minEast = Infinity, maxEast = -Infinity, minDepth = 0, maxDepth = 0;
-  const include = (xy: Float64Array, errors?: Float64Array) => {
-    if (xy.length % 2 || (errors && errors.length !== xy.length)) throw new Error("sectionFit: unpaired coordinates");
-    for (let i = 0; i < xy.length; i += 2) {
-      const e = xy[i], d = xy[i + 1], h = errors?.[i] ?? 0, v = errors?.[i + 1] ?? 0;
-      if (![e, d, h, v].every(Number.isFinite) || h < 0 || v < 0) throw new Error("sectionFit: invalid extent");
-      minEast = Math.min(minEast, e - h); maxEast = Math.max(maxEast, e + h);
-      minDepth = Math.min(minDepth, d - v); maxDepth = Math.max(maxDepth, d + v);
+  const xy = framed.length >= 2 ? framed : fallback;
+  if (xy.length % 2) throw new Error("sectionStructureFit: unpaired coordinates");
+  const n = xy.length / 2;
+  let minEast = -MIN_SECTION_SPAN_KM / 2, maxEast = MIN_SECTION_SPAN_KM / 2, minDepth = 0, maxDepth = MIN_SECTION_SPAN_KM;
+  if (n > 0) {
+    const east = new Float64Array(n);
+    const depth = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      east[i] = xy[i * 2];
+      depth[i] = xy[i * 2 + 1];
+      if (!Number.isFinite(east[i]) || !Number.isFinite(depth[i])) throw new Error("sectionStructureFit: invalid point");
     }
-  };
-  for (const l of layers) include(l.xy, l.errors);
-  for (const s of stations) include(s);
-  if (!Number.isFinite(minEast)) { minEast = -MIN_SECTION_SPAN_KM / 2; maxEast = MIN_SECTION_SPAN_KM / 2; }
+    east.sort();
+    depth.sort();
+    const q = n >= 1 / Math.max(trim, 1e-9) ? trim : 0;
+    minEast = quantile(east, q);
+    maxEast = quantile(east, 1 - q);
+    minDepth = Math.min(0, quantile(depth, q)); // the site surface is always in frame
+    maxDepth = quantile(depth, 1 - q);
+  }
+  const margin = Math.max(MIN_SECTION_MARGIN_KM, SECTION_FRAME_MARGIN * Math.max(maxEast - minEast, maxDepth - minDepth));
+  minEast -= margin;
+  maxEast += margin;
+  minDepth -= margin / 2; // room above the surface for station glyphs
+  maxDepth += margin;
   const spanE = Math.max(MIN_SECTION_SPAN_KM, maxEast - minEast);
   const spanD = Math.max(MIN_SECTION_SPAN_KM, maxDepth - minDepth);
   const pxPerKm = Math.min((width - 2 * pad) / spanE, (height - 2 * pad) / spanD);

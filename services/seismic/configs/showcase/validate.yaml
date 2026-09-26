@@ -70,3 +70,20 @@ gr:
 pOnlyAssociator:
   nSPicks: 0
   nPAndSPicks: 0
+
+# Which bars every rerun's Tier A is counted against (REQ-H1-5). Every rerun locates with the
+# run's own station statics (statics.parquet, passed to H2's locate as statics=; the stage fails
+# naming H2's locate stage without the file), so rerun events sit on the run's scale. Bars are
+# never invented for a rerun in either mode.
+#   run (default, option (a) per H2): the run's own ProcessingRun.tiering.thresholds (stage
+#     tier); the stage fails naming stage tier when run.json has none. PhaseNet, STA/LTA and the
+#     null test are all graded by the bars the run's events were graded by.
+#   reference (option (b), H1's alternative): H2's assign_tiers derives the bars, without
+#     thresholds=, from the PhaseNet "full"-profile rerun made first through the very same path
+#     every other rerun takes; the same bars then go as thresholds= to the PhaseNet p_only, both
+#     STA/LTA and every null-test rerun, and that rerun doubles as the baseline table's
+#     (phasenet, full) row. Nothing fitted to PhaseNet's picks enters the bars, but they are not
+#     the bars in run.json. The stage fails, naming H2's minMatched rule, when the reference
+#     rerun matches too few public events to derive bars from.
+# validation_notes.json records the source, the matched count, the bars used and staticsApplied.
+rerunBars: run

@@ -42,8 +42,6 @@ evidence:
   maxTraces: 16
   # Sample rate of the display copy, Hz. WaveformSnippet.dt = 1 / displayRateHz.
   displayRateHz: 100.0
-  # Evidence files the web app fetches up front: the hero plus the first N in reveal order.
-  preloadCount: 20
   # Extra seconds read on both sides of the window before filtering, so the display copy's
   # detrend/taper and the resampler never touch the samples that end up in the snippet.
   padS: 1.0
