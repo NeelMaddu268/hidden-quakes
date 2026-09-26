@@ -138,6 +138,11 @@ export function parseTerrainMeta(json: unknown): TerrainMeta {
   return meta;
 }
 
+/** Projection labels compare case- and whitespace-insensitively ("EPSG:32612  minus origin" ≡ …). */
+export function normalizeProjection(projection: string): string {
+  return projection.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 /**
  * Why this terrain can't sit under this bundle, or null if it can. The terrain's ENU grid is relative
  * to its own origin, so it only lines up with the bundle's ENU records when the origins match.
@@ -148,7 +153,7 @@ export function terrainMismatch(
   scene: Pick<SceneMeta, "originLat" | "originLon" | "projection">,
 ): string | null {
   const TOL_DEG = 1e-6; // ~0.1 m
-  if (meta.projection !== scene.projection) {
+  if (normalizeProjection(meta.projection) !== normalizeProjection(scene.projection)) {
     return `terrain projection "${meta.projection}" differs from the bundle's "${scene.projection}"`;
   }
   if (Math.abs(meta.origin.lat - scene.originLat) > TOL_DEG || Math.abs(meta.origin.lon - scene.originLon) > TOL_DEG) {

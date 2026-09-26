@@ -6,6 +6,7 @@ import {
   decodeHillshade,
   decodeIssues,
   decodeRg16,
+  normalizeProjection,
   parseTerrainMeta,
   RG16_MAX,
   terrainMismatch,
@@ -176,6 +177,11 @@ describe("terrainMismatch", () => {
   it("accepts the same origin and projection (a different origin elevation is fine)", () => {
     expect(terrainMismatch(meta, scene)).toBeNull();
     expect(terrainMismatch({ ...meta, origin: { ...meta.origin, elevM: 1500 } }, scene)).toBeNull();
+  });
+
+  it("compares projections ignoring case and whitespace", () => {
+    expect(normalizeProjection("  EPSG:32612   Minus\tOrigin ")).toBe("epsg:32612 minus origin");
+    expect(terrainMismatch(meta, { ...scene, projection: "epsg:32612  MINUS origin " })).toBeNull();
   });
 
   it("rejects a different origin or projection", () => {

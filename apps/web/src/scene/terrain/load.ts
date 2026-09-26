@@ -7,6 +7,8 @@
 import { useEffect, useState } from "react";
 import { decodeHillshade, decodeIssues, decodeRg16, parseTerrainMeta, type TerrainMeta } from "./meta";
 
+// Mirrors H4's `DATA_BASE_URL = "/data"` convention (apps/web/src/providers/config.ts on H4's API-01
+// branch): both are root-relative public paths, so under a Next.js basePath they change together.
 export const TERRAIN_BASE_URL = "/terrain";
 
 export type TerrainAsset =
