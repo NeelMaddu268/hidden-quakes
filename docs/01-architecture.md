@@ -125,6 +125,7 @@ apps/web/public/data/<mode>/        mode = mock | showcase | snapshot
   features.json          GeoFeature[] (wells/facilities, each with a SourceRef)
   validation.json        Validation
   evidence/{eventId}.json   EventEvidence (20–60 KB each)
+                            place each trace by its own t0 (x = t0 + i·dt − event.t); windows need not share an origin
 
 apps/web/public/terrain/            region-wide, same for every mode (H3)
   height.png  hillshade.png  meta.json
