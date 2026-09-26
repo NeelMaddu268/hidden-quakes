@@ -12,6 +12,8 @@ export interface EventUniforms {
   uSize: IUniform<number>;
   /** Minimum on-screen radius in device pixels, so distant events never vanish. */
   uMinPx: IUniform<number>;
+  /** Maximum on-screen radius in device pixels, so a close-up never fills the screen with quads. */
+  uMaxPx: IUniform<number>;
   /** Drawing-buffer height in device pixels (set on resize). */
   uViewportHeight: IUniform<number>;
   /**
@@ -33,9 +35,14 @@ export interface EventUniforms {
   uTierOpacity: IUniform<Vector3>;
   /** Whole-layer opacity (the PUBLIC filter fades the candidate layer out). */
   uLayerOpacity: IUniform<number>;
-  /** Intensity multiplier; values above 1 push cores past the bloom threshold. */
+  /** Core intensity: 1 draws the token color exactly; above 1 renders HDR cores for bloom to catch. */
   uGlow: IUniform<number>;
 }
+
+/** A popping instance starts at this multiple of its size and settles to 1. */
+export const POP_SCALE = 2.0;
+/** Extra brightness at the start of a pop (1.5 = 2.5× the settled intensity), decaying to 0. */
+export const POP_FLASH = 1.5;
 
 export const EVENT_VERTEX_SHADER = /* glsl */ `
   attribute float aTier;
@@ -44,6 +51,7 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
 
   uniform float uSize;
   uniform float uMinPx;
+  uniform float uMaxPx;
   uniform float uViewportHeight;
   uniform float uRevealElapsed;
   uniform float uEventsStart;
@@ -69,7 +77,7 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
     float shown = always ? 1.0 : step(0.0, age);
     float pop = always ? 1.0 : clamp(age / max(uPopS, 1e-6), 0.0, 1.0);
     float settle = 1.0 - pow(1.0 - pop, 3.0);
-    vBoost = (1.0 - settle) * 1.5;
+    vBoost = (1.0 - settle) * ${POP_FLASH.toFixed(3)};
 
     float tierOpacity = aTier < 0.5 ? uTierOpacity.x : (aTier < 1.5 ? uTierOpacity.y : uTierOpacity.z);
     float fog = exp(-uDepthFog * max(0.0, uSurfaceY - worldCenter.y));
@@ -78,9 +86,11 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
     // Pixels per scene unit at this depth; perspective when projectionMatrix[2][3] == -1.
     float pxPerUnit = projectionMatrix[1][1] * uViewportHeight * 0.5;
     if (projectionMatrix[2][3] < -0.5) pxPerUnit /= max(-mvCenter.z, 1e-4);
-    float radius = max(uSize * aScale, uMinPx / pxPerUnit);
+    // Clamp the base size to [uMinPx, uMaxPx] on screen first, then scale by tier, so tier still reads
+    // as size at every zoom.
+    float radius = clamp(uSize, uMinPx / pxPerUnit, uMaxPx / pxPerUnit) * aScale;
     // Hidden instances collapse to a point: no fragments, no overdraw.
-    radius *= mix(2.0, 1.0, settle) * step(0.001, vAlpha);
+    radius *= mix(${POP_SCALE.toFixed(3)}, 1.0, settle) * step(0.001, vAlpha);
 
     mvCenter.xy += position.xy * 2.0 * radius;
     gl_Position = projectionMatrix * mvCenter;
@@ -103,8 +113,10 @@ export const EVENT_FRAGMENT_SHADER = /* glsl */ `
     float core = 1.0 - smoothstep(0.0, 0.3, r2);
     float falloff = 1.0 - r2;
     float halo = falloff * falloff * 0.35;
-    float shape = core + halo;
-    gl_FragColor = vec4(uColor * shape * uGlow * (1.0 + vBoost), vAlpha * min(shape, 1.0));
+    // Additive blending multiplies rgb by alpha, so the disc profile lives in alpha only: the center of
+    // a settled glyph at uGlow = 1 is exactly the token color.
+    float shape = min(core + halo, 1.0);
+    gl_FragColor = vec4(uColor * uGlow * (1.0 + vBoost), vAlpha * shape);
     #include <colorspace_fragment>
   }
 `;
@@ -113,6 +125,7 @@ export interface EventMaterialOptions {
   color: string;
   size: number;
   minPx: number;
+  maxPx: number;
   glow?: number;
   depthFog?: number;
   surfaceY?: number;
@@ -124,6 +137,7 @@ export function createEventUniforms(opts: EventMaterialOptions): EventUniforms {
     uColor: { value: new Color(opts.color) }, // sRGB hex → linear working space
     uSize: { value: opts.size },
     uMinPx: { value: opts.minPx },
+    uMaxPx: { value: opts.maxPx },
     uViewportHeight: { value: 1 },
     uRevealElapsed: { value: -1 },
     uEventsStart: { value: TIMELINE.events.startS },

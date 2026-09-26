@@ -134,6 +134,14 @@ export interface AnalysisSummary {
   strictAdditionalCount: number;
   medianStations: number;
   medianRmsS: number;
+  baseline?: BaselineGain | null;
+}
+
+export interface BaselineGain {
+  associationProfile: "full" | "p_only";
+  strictPhasenet: number;
+  strictStalta: number;
+  gain: number;
 }
 
 export type DataMode = "mock" | "showcase" | "live" | "snapshot";
@@ -142,7 +150,14 @@ export interface BundleMeta {
   schemaVersion?: string;
   mode: DataMode;
   scene: SceneMeta;
-  run: { id: string; windowStart: number; windowEnd: number; windowLabel: string; isSynthetic?: boolean };
+  run: {
+    id: string;
+    createdAt: string;
+    windowStart: number;
+    windowEnd: number;
+    windowLabel: string;
+    isSynthetic?: boolean;
+  };
   summary: AnalysisSummary;
 }
 
