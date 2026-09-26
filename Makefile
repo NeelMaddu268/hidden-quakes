@@ -1,12 +1,14 @@
 SHELL := /bin/bash
 RUN ?=
 
-.PHONY: help check check-py check-web contracts check-contracts publish-run fetch-run runs
+.PHONY: help check check-py check-web contracts check-contracts dev build publish-run fetch-run runs
 
 help:
 	@echo "make check                  typecheck + lint + smoke tests (run before every PR)"
 	@echo "make contracts              regenerate TS from the Python contracts"
 	@echo "make check-contracts        regenerate and fail if the committed TS/schema differ"
+	@echo "make dev                    run the web app locally (next dev)"
+	@echo "make build                  production build of the web app (next build)"
 	@echo "make publish-run RUN=<id>   share a run's tables with the team (GitHub release)"
 	@echo "make fetch-run RUN=<id>     download a teammate's run tables"
 	@echo "make runs                   list shared runs"
@@ -25,6 +27,12 @@ contracts:
 
 check-contracts: contracts
 	@git diff --exit-code -- packages/contracts && echo "contracts up to date"
+
+dev:
+	pnpm --filter web dev
+
+build:
+	pnpm --filter web build
 
 publish-run:
 	@set -e; \
