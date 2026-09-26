@@ -534,7 +534,8 @@ def test_seismology_config(cfg: SeismologyConfig) -> None:
     assert cfg.velocity.layer_path().is_file()
     assert cfg.velocity.model3d.url.endswith(cfg.velocity.model3d.cacheFile)
     raw = yaml.safe_load((SHOWCASE / "seismology.yaml").read_text(encoding="utf-8"))
-    for rooted in ("/abs/forge_1d.csv", "\\abs\\forge_1d.csv", "C:\\abs\\forge_1d.csv", "C:forge_1d.csv"):
+    rooted_paths = ("/abs/forge_1d.csv", "\\abs\\forge_1d.csv", "C:\\abs\\forge_1d.csv", "C:forge_1d.csv")
+    for rooted in rooted_paths:
         with pytest.raises(pydantic.ValidationError, match="layerFile must be relative"):
             VelocityConfig.model_validate({**raw["velocity"], "layerFile": rooted})
     with pytest.raises(pydantic.ValidationError, match="plausibleVsMPerS"):

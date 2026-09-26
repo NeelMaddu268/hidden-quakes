@@ -47,7 +47,8 @@ class VelocityConfig(BaseModel):
     @field_validator("layerFile")
     @classmethod
     def _relative(cls, value: Path) -> Path:
-        # Rooted on either OS ("/x", "\\x", "C:\\x", "C:x"): Path.is_absolute() alone misses "/x" on Windows.
+        # Rooted on either OS ("/x", "\\x", "C:\\x", "C:x"). Path.is_absolute() alone misses "/x"
+        # on Windows (no drive), so check the POSIX and Windows forms explicitly.
         if PurePosixPath(value).is_absolute() or PureWindowsPath(value).anchor:
             raise ValueError(f"layerFile must be relative to services/seismic, got {value}")
         return value
