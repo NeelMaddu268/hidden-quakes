@@ -339,7 +339,8 @@ associator:
     maxSeedErrorS: 0.05
   # Sweep (docs/lanes/H2 -> Association): every combination of these values, all other knobs as
   # above. sweep.parquet (SweepPoint: located candidates, recoveredPublic, tierA) is written by
-  # LOC-06's tier stage, which runs the sweep with its locate/match/tier evaluator. enabled: true
+  # LOC-06's tier stage when tiering.sweep.enabled, which runs the sweep with its locate/match/tier
+  # evaluator. This enabled: true
   # also runs it in stage associate, only to log and record associated counts per point: one
   # PyOcto run per (minPickProb, nSPicks) pair beyond the configured one, several minutes on a
   # full day at the permissive points, so it is off by default.
@@ -400,3 +401,55 @@ matching:
     # Picks inside these windows pin the origin to within about a window width (a few s) plus the
     # travel-time change of a mislocation, so 10 s only drops candidates that cannot be this event.
     maxCandidateDtS: 10.0
+
+# Quality tiers (stage "tier", hq.tier, LOC-06). Thresholds are never set here: they are quantiles
+# of the matched set M (located candidate events with a public regional catalog match in
+# matches.parquet), recomputed on every run and stored with their source quantile and the size of
+# M in ProcessingRun.tiering. Metrics: nStations, nP, nS (higher is better); rmsS, hErrM, vErrM,
+# gapDeg (lower is better), all from SeismicEvent.quality.
+# Fixed by design and recorded with the thresholds, not knobs:
+# - A bar is an actual matched event's value: sort the events of M with a value on the metric from
+#   best to worst and take the ceil((1 - q) * n)-th, n their count (numpy's inverted_cdf on the
+#   lower-is-better side), so at least (1 - q) of them meets or beats the bar. Boundary equality
+#   passes. matchedSet.meetingEveryBar records how many matched events meet every bar at once.
+# - A null hErrM or vErrM (truncated PDF) fails A and B on that metric. Bars on those metrics come
+#   from the matched events with a value (nUsed, nNull recorded), so a null never loosens a bar.
+# - Focal depth for the nearest-station rule is the event's depth below the sensor of its
+#   epicentrally nearest station with a pick used in the final location (sensorElevM - elevM, a
+#   borehole's depth included; an event at or above that sensor fails the rule), from
+#   arrivals.parquet and stations.parquet. A caller without them (the docs/02 3-argument call)
+#   falls back to depthKm * 1000 = run.refSurfaceElevM - elevM; tiering.rules records which.
+# Caveat recorded with every run: public regional catalog events are the larger ones, so bars
+# drawn from them are conservative for small events.
+tiering:
+  # Per tier, the share q of M allowed on the worse side of each bar: the bar is p(100q) for
+  # higher-is-better metrics and p(100(1 - q)) for lower-is-better ones. A: 0.25 is "at least as
+  # good as the 25th-percentile-worst matched event" (>= p25, <= p75), so each Strict bar is met
+  # by at least three-quarters of the recovered public events with a value on that metric (each
+  # metric separately; fewer meet all of them). B: 0.0 is the worst matched event.
+  # B must not exceed A (checked), so every Tier A event also meets the B bars.
+  quantiles:
+    A: 0.25
+    B: 0.0
+  # Tier A also needs its nearest station with a pick used in the final location within this
+  # many focal depths, epicentral: quality.minEpiDistM <= factor * focal depth (above; the lane
+  # doc's depth-gate fallback, "a station within about 1-2x the focal depth"). Tier A also needs
+  # depthOnEdge false and, when locate_flags.parquet exists, mapOnVolumeTop false (z = 0 collapse).
+  strictNearestStationFactor: 2.0
+  # Deriving bars from fewer matched events than this (or, on hErrM/vErrM, fewer with a value)
+  # fails the stage instead of inventing bars: at 10 the p75 bar is the 8th-best matched event,
+  # so at most two matched events lie beyond it.
+  minMatched: 10
+  # Stored vs recomputed geometry must agree within this (m) or the stage fails: every event's
+  # depthKm vs (run.refSurfaceElevM - elevM) / 1000, and quality.minEpiDistM vs the distance to the
+  # nearest used station recomputed from stations.parquet. Far above float round-off, far below
+  # any distance that changes a tier; a table from another run section or frame is off by metres.
+  consistencyTolM: 0.001
+  # Association sweep over associator.sweep's grid (associate -> locate -> match -> tiers at every
+  # point, Tier A counted with the bars derived from the configured run so points compare), written
+  # to sweep.parquet (SweepPoint). One PyOcto run per (minPickProb, nSPicks) pair and one full
+  # location per point, so hours on a full day: off by default; the stage logs each point's
+  # runtime and an ETA. Disabled, the stage removes a sweep.parquet left by an earlier tier run
+  # (its Tier A counts used that run's bars), as stage associate does.
+  sweep:
+    enabled: false
