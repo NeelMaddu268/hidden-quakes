@@ -273,7 +273,8 @@ def _params(
         "(scipy.optimize.linear_sum_assignment)",
         "dtSign": "located t minus public t",
         "distance": "horizontal ENU (EPSG:32612 minus run origin); grid scale factor negligible",
-        "nearest": "the located event with the lowest cost",
+        "lowestCost": "in unmatched reasons, the located event (or associated candidate) with the "
+        "lowest cost; it can be far from the public event in time or space",
         "sensitivityRule": "each pair reruns the assignment as both limit and cost scale",
         "sensitivity": [
             {"dtS": float(s.dtS), "distM": float(s.distM), "recovered": int(s.recovered)}

@@ -495,7 +495,9 @@ def test_admissibility_edges(seismology_config: SeismologyConfig, sign: float) -
     assert abs(matches.at["edge", "dtS"]) == 2.0 and matches.at["edge", "distM"] == 5000.0
     for cid in ("late", "far"):
         assert pd.isna(matches.at[cid, "eventId"])
-        assert matches.at[cid, "reason"].startswith("no candidate within 2 s / 5 km (nearest: ")
+        assert matches.at[cid, "reason"].startswith(
+            "no candidate within 2 s / 5 km (lowest-cost located event: "
+        )
 
 
 def test_magnitude_is_ignored(seismology_config: SeismologyConfig) -> None:
@@ -695,13 +697,15 @@ def test_reason_outside_window_and_bbox(
     assert explained.codes == {"early": "outsideWindow", "east": "outsideBbox"}
 
 
-def test_reason_no_evidence_keeps_nearest_candidate(
+def test_reason_no_evidence_keeps_lowest_cost_candidate(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
     pub = public([("a", T0, 0, 0)])
     loc = located([("x", T0 + 3.4, 7900.0, 0.0), ("y", T0 + 500.0, 0.0, 0.0)])
     reasons, explained = _explain(loc, pub, seismology_config, None)
-    assert reasons == {"a": "no candidate within 2 s / 5 km (nearest: dt +3.40 s, 7.90 km)"}
+    assert reasons == {
+        "a": "no candidate within 2 s / 5 km (lowest-cost located event: dt +3.40 s, 7.90 km)"
+    }
     assert explained.checks_run == ["window", "bbox", "oneToOne", "tolerance"]
     assert explained.checks_skipped == {
         "arrivalWindows": "missing stations",
@@ -904,7 +908,7 @@ def test_reason_associated_not_located_and_candidate_time_limit(
     loc = located([("near", T0 + 5.0, 0.0, 0.0)], {"near": ids})
     reasons, _ = _explain(loc, pub, seismology_config, arrivals, evidence)
     assert reasons["a"] == (
-        "located out of tolerance 2 s / 5 km (nearest associated candidate near: dt +5.00 s, "
+        "located out of tolerance 2 s / 5 km (lowest-cost associated candidate near: dt +5.00 s, "
         "0.00 km; picks in the expected arrival windows from 5 stations)"
     )
 
@@ -929,13 +933,13 @@ def test_reason_located_out_of_tolerance(
     )
     reasons, explained = _explain(loc, pub, seismology_config, arrivals, evidence)
     assert reasons == {
-        "a": "located out of tolerance 2 s / 5 km (nearest associated candidate carrier-far: "
+        "a": "located out of tolerance 2 s / 5 km (lowest-cost associated candidate carrier-far: "
         "dt +0.30 s, 7.00 km; picks in the expected arrival windows from 5 stations)"
     }
     # Without assoc_picks the chain goes picks -> location and still finds the carrier.
     evidence = Evidence(stations=sta, picks=picks_frame(picks))
     reasons, explained = _explain(loc, pub, seismology_config, arrivals, evidence)
-    assert reasons["a"].startswith("located out of tolerance 2 s / 5 km (nearest associated ")
+    assert reasons["a"].startswith("located out of tolerance 2 s / 5 km (lowest-cost associated ")
     assert explained.checks_skipped == {
         "waveformData": "missing gaps",
         "association": "missing assoc_picks",
@@ -1092,7 +1096,8 @@ def test_stage_writes_tables_fills_matched_ids_and_records(
     # Picks exist on 6 stations, but no assoc_picks: no located event carries them, and without
     # the association check "associated, not located" cannot be claimed, so the base reason stays.
     assert (
-        matches.at[2, "reason"] == "no candidate within 2 s / 5 km (nearest: dt -99.00 s, 1.41 km)"
+        matches.at[2, "reason"]
+        == "no candidate within 2 s / 5 km (lowest-cost located event: dt -99.00 s, 1.41 km)"
     )
     sens = read_table(ctx.path("match_sensitivity.parquet"))
     assert sens["recovered"].tolist() == [2, 2, 2]
