@@ -44,7 +44,7 @@ export interface EventsLayerProps {
   glow?: number;
   /** Scene y of the site surface, for depth fog. */
   surfaceY?: number;
-  /** Depth fog density per km below the surface (0 = off). */
+  /** Depth fog density per scene unit below the surface (look.ts → depthFogPerSceneUnit; 0 = off). */
   depthFog?: number;
   /** Called every frame with this layer's uniforms; must not allocate. */
   drive: (uniforms: EventUniforms, deltaS: number) => void;
