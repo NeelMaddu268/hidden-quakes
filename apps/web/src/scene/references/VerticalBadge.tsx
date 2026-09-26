@@ -5,7 +5,7 @@ import { verticalBadgeText } from "./badge";
 import { CornerNote } from "./CornerNote";
 
 /**
- * Permanent "Vertical ×N" badge in the canvas's bottom-left corner whenever the scene is vertically
+ * Permanent "Vertical ×N" badge in the canvas's bottom-right corner whenever the scene is vertically
  * exaggerated (docs/01). Nothing at all when the exaggeration is 1.
  */
 export function VerticalBadge({ scene }: { scene: SceneMeta }) {
