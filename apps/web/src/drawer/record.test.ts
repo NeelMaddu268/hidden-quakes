@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { WaveformSnippet } from "../scene/types";
 import {
+  evidenceUnavailable,
+  pickedTraceCount,
   markPercent,
   niceStep,
   normalizationGain,
@@ -148,3 +150,18 @@ describe("pick stagger", () => {
    expect(prepared.traces).toHaveLength(0);
    expect(prepared.skipped[0]).toContain("non-finite waveform sample");
  });
+
+describe("evidence notices", () => {
+  it("a 404 is an expected, neutral note; other failures are errors; neither repeats the URL or status", () => {
+    const miss = evidenceUnavailable("/data/showcase/evidence/hq-x.json: HTTP 404");
+    expect(miss).toEqual({ text: "No waveform evidence was exported for this event.", expected: true });
+    const fail = evidenceUnavailable("/data/showcase/evidence/hq-x.json: HTTP 500");
+    expect(fail.expected).toBe(false);
+    for (const t of [miss.text, fail.text, evidenceUnavailable(undefined).text]) expect(t).not.toMatch(/\d|http|\/|json/i);
+  });
+
+  it("counts traces with a P or S pick", () => {
+    expect(pickedTraceCount([{ pickP: 1 }, { pickS: 2 }, { pickP: null, pickS: null }, {}])).toBe(2);
+    expect(pickedTraceCount([])).toBe(0);
+  });
+});

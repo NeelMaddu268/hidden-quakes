@@ -23,6 +23,24 @@ export function traceProblem(tr: WaveformSnippet): string | null {
   return null;
 }
 
+/**
+ * What the drawer says when an event's evidence can't be shown: never the raw provider message (a URL
+ * and status code). A 404 is expected (the exporter writes evidence for the first `maxEvents` events in
+ * reveal order only), so it reads as a neutral note; anything else is a real load failure.
+ */
+export function evidenceUnavailable(message: string | undefined): { text: string; expected: boolean } {
+  return /\bHTTP 404\b/.test(message ?? "")
+    ? { text: "No waveform evidence was exported for this event.", expected: true }
+    : { text: "Waveform evidence could not be loaded.", expected: false };
+}
+
+/** How many traces carry a P or S pick (the rest are the closest stations' records without one). */
+export function pickedTraceCount(traces: readonly { pickP?: number | null; pickS?: number | null }[]): number {
+  let n = 0;
+  for (const t of traces) if (t.pickP != null || t.pickS != null) n++;
+  return n;
+}
+
 export interface PreparedTraces {
   /** Drawable traces, sorted by epicentral distance (stable), as the contract orders them. */
   traces: WaveformSnippet[];

@@ -2,14 +2,16 @@ import { useEffect, useMemo } from "react";
 import type { EventEvidence, WaveformSnippet } from "../scene/types";
 import { fmtFixed, fmtKmFromM, fmtSeconds, isNum } from "./format";
 import {
+  evidenceUnavailable,
   markPercent,
   pickDelayMs,
+  pickedTraceCount,
   prepareTraces,
   recordDomain,
   timeTicks,
+  tracePoints,
   TRACK_H,
   TRACK_W,
-  tracePoints,
   type TimeDomain,
 } from "./record";
 
@@ -101,6 +103,15 @@ export function RecordSection({ status, evidence, message, originT }: RecordSect
   );
   const axis = useMemo(() => (domain ? timeTicks(domain) : null), [domain]);
 
+  // The drawer never shows the provider's raw message (a URL and status code); it goes to the console:
+  // a 404 is expected (evidence is capped at the exporter's maxEvents), anything else is a real failure.
+  const unavailable = status === "error" ? evidenceUnavailable(message) : null;
+  useEffect(() => {
+    if (status !== "error") return;
+    if (evidenceUnavailable(message).expected) console.info(`[drawer] no evidence file: ${message}`);
+    else console.error(`[drawer] evidence failed to load: ${message}`);
+  }, [status, message]);
+
   useEffect(() => {
     if (prepared?.skipped.length) {
       console.error(`[drawer] ${evidence?.eventId}: skipped ${prepared.skipped.length} trace(s): ${prepared.skipped.join("; ")}`);
@@ -108,6 +119,7 @@ export function RecordSection({ status, evidence, message, originT }: RecordSect
   }, [prepared, evidence]);
 
   const n = prepared?.traces.length ?? 0;
+  const picked = evidence ? pickedTraceCount(evidence.traces) : 0;
   const [lo, hi] = evidence?.filterHz ?? [NaN, NaN];
   const band = isNum(lo) && isNum(hi) ? ` · ${fmtFixed(lo, lo < 1 ? 1 : 0)}–${fmtFixed(hi, hi < 1 ? 1 : 0)} Hz bandpass` : "";
 
@@ -120,17 +132,18 @@ export function RecordSection({ status, evidence, message, originT }: RecordSect
       <div className="hqd-caption">
         {status === "ready" && evidence ? (
           <>
-            <span className="hqd-num">{n}</span> {n === 1 ? "trace" : "traces"}
-            {band} · sorted by epicentral distance · normalized per trace
+            <span className="hqd-num">{n}</span> {n === 1 ? "trace" : "traces"} from the closest stations,{" "}
+            <span className="hqd-num">{picked}</span> with a pick{band} · sorted by epicentral distance · normalized
+            per trace
           </>
         ) : (
-          "Waveforms from the stations that picked this event"
+          "Waveforms from the stations closest to this event"
         )}
       </div>
 
-      {status === "error" ? (
-        <div className="hqd-error" role="status">
-          <b>Evidence unavailable.</b> {message}
+      {unavailable ? (
+        <div className={unavailable.expected ? "hqd-note" : "hqd-error"} role="status" data-testid="evidence-unavailable">
+          {unavailable.text}
         </div>
       ) : status !== "ready" || !prepared ? (
         <ol className="hqd-record" data-status="loading" aria-busy="true">

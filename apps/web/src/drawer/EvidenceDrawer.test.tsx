@@ -250,7 +250,7 @@ describe("opening (select / E → hero)", () => {
     render(<EvidenceDrawer />);
     select("hq-test-000002");
     expect(rows()).toHaveLength(4);
-    expect(screen.getByText(/traces/).textContent).toMatch(/4\s*traces · 2–20 Hz bandpass/);
+    expect(screen.getByText(/traces/).textContent).toMatch(/4\s*traces from the closest stations, \d+ with a pick · 2–20 Hz bandpass/);
     expect(document.querySelectorAll(".hqd-trace")).toHaveLength(4);
     select(HERO);
     expect(rows()).toHaveLength(16);
@@ -416,14 +416,36 @@ describe("loading and errors", () => {
     expectNoBadValues();
   });
 
-  it("evidence error: the message, no traces", () => {
+  it("no evidence file (404): a plain note with no URL or digits; figures from the picking stations", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const ids = STATIONS.slice(0, 3).map((s, i) => `phasenet:instance:${s.id}:P:${1789000000 + i}.5`);
+    data.bundle = { ...readyBundle(), events: [event(HERO, { pickIds: [...ids, `phasenet:instance:${STATIONS[0].id}:S:1789000001.5`] })] } as BundleState;
     data.evidence[HERO] = { status: "error", message: "/data/mock/evidence/x.json: HTTP 404" };
     render(<EvidenceDrawer />);
     select(HERO);
-    expect(screen.getByText(/HTTP 404/)).toBeTruthy();
+    const note = screen.getByTestId("evidence-unavailable");
+    expect(note.textContent).toBe("No waveform evidence was exported for this event.");
+    expect(note.className).toBe("hqd-note"); // neutral, not the alert style
+    expect(document.querySelector(".hqd")!.textContent).not.toMatch(/HTTP|\/data\/|\.json/);
     expect(rows()).toHaveLength(0);
-    // No figure placeholders that would read as a load that never finishes.
-    expect(document.querySelector('[aria-label="Station geometry"]')).toBeNull();
+    // The event's location and errors are known: the figures show, with lines to the 3 picking stations.
+    expect(screen.getByRole("img", { name: /3 stations/ })).toBeTruthy();
+    expect(screen.getByText(/picking station → epicenter lines/)).toBeTruthy();
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/HTTP 404/));
+    info.mockRestore();
+    expectNoBadValues();
+  });
+
+  it("evidence failing to load for another reason: a plain error without the URL, logged loudly", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    data.evidence[HERO] = { status: "error", message: "/data/mock/evidence/x.json: HTTP 500" };
+    render(<EvidenceDrawer />);
+    select(HERO);
+    const note = screen.getByTestId("evidence-unavailable");
+    expect(note.textContent).toBe("Waveform evidence could not be loaded.");
+    expect(note.className).toBe("hqd-error");
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/HTTP 500/));
+    error.mockRestore();
   });
 
   it("bundle still loading: the id and a loading line", () => {
