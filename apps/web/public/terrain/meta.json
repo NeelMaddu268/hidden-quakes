@@ -1,0 +1,73 @@
+{
+  "checksums": {
+    "heightSumV": 3439640277,
+    "hillshadeSum": 48587991
+  },
+  "demElevAtOriginM": 1628.15,
+  "elevMaxM": 2527.03,
+  "elevMinM": 1489.02,
+  "encoding": "rg16",
+  "encodingNote": "height.png is 8-bit RGB: v = R*256 + G (B = 0), elevM = elevMinM + v / 65535 * (elevMaxM - elevMinM). A true 16-bit PNG would be truncated to 8 bits by browsers.",
+  "enuBounds": {
+    "at": "pixelCenters",
+    "eMax": 8000.0,
+    "eMin": -8000.0,
+    "nMax": 8000.0,
+    "nMin": -8000.0
+  },
+  "files": {
+    "height": "height.png",
+    "hillshade": "hillshade.png"
+  },
+  "generator": "scripts/bake-dem.py",
+  "hillshade": {
+    "altitudeDeg": 45.0,
+    "azimuthDeg": 315.0,
+    "flatValue": 180,
+    "method": "Horn (1981) gradient, ESRI hillshade formula",
+    "zFactor": 1.0
+  },
+  "origin": {
+    "elevM": 1627.7,
+    "lat": 38.51,
+    "lon": -112.9
+  },
+  "originUtm": {
+    "crs": "EPSG:32612",
+    "easting": 334340.058,
+    "northing": 4264113.66
+  },
+  "projection": "EPSG:32612 minus origin",
+  "refSurfaceElevM": 1627.7,
+  "rowOrder": "row 0 = nMax (north), column 0 = eMin (west)",
+  "runYaml": "services/seismic/configs/showcase/run.yaml",
+  "sizePx": [
+    513,
+    513
+  ],
+  "source": {
+    "attribution": "Terrain Tiles by Mapzen, hosted on the AWS Open Data Registry. In the contiguous US the elevation data are 3DEP (formerly NED), courtesy of the U.S. Geological Survey; other sources include SRTM, GMTED2010 and ETOPO1. Full attribution: https://github.com/tilezen/joerd/blob/master/docs/attribution.md",
+    "docs": "https://registry.opendata.aws/terrain-tiles/",
+    "metresPerPx": 29.906,
+    "name": "AWS Terrain Tiles (Terrarium encoding)",
+    "resampling": "bilinear at pixel centres, ENU grid -> lon/lat via pyproj",
+    "tiles": [
+      "12/762/1571",
+      "12/763/1571",
+      "12/764/1571",
+      "12/762/1572",
+      "12/763/1572",
+      "12/764/1572",
+      "12/762/1573",
+      "12/763/1573",
+      "12/764/1573"
+    ],
+    "url": "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png",
+    "zoom": 12
+  },
+  "spacingM": [
+    31.25,
+    31.25
+  ],
+  "version": 1
+}

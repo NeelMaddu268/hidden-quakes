@@ -11,6 +11,27 @@ Flattening rule
     ``SweepPoint.params``) are stored as one JSON text column, because parquet structs can't
     hold a row-dependent key set.
 
+Column dtypes
+    ``to_frame`` sets every column's pandas dtype from the model field annotation, so a
+    zero-row or all-null column has the same dtype (and the same Arrow type in parquet) as a
+    populated one. A leaf is *nullable* when its own field is optional or it sits inside an
+    optional nested model.
+
+    ======================================  ================  ==================  =============
+    annotation                              required          nullable            Arrow
+    ======================================  ================  ==================  =============
+    ``float``                               ``float64``       ``float64`` (NaN)   ``double``
+    ``int``                                 ``int64``         ``Int64``           ``int64``
+    ``bool``                                ``bool``          ``boolean``         ``bool``
+    ``str`` / ``Literal[...]`` / str enum   ``string``        ``string``          ``string``
+    ``dict`` (JSON text)                    ``string``        ``string``          ``string``
+    ``list`` / ``tuple`` / anything else    ``object``        ``object``          inferred
+    ======================================  ================  ==================  =============
+
+    ``from_frame`` turns ``pd.NA``, NaN and ``None`` into ``None`` for optional fields, and
+    hands ``string`` / ``Int64`` / ``boolean`` cells to pydantic as plain ``str`` / ``int`` /
+    ``bool``.
+
 Parquet files carry ``schemaVersion`` and ``model`` in their file metadata; ``read_table``
 returns them in ``DataFrame.attrs``.
 """
@@ -19,7 +40,7 @@ import json
 import math
 import types
 import typing
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -28,6 +49,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pydantic import BaseModel
+from typing_extensions import TypeAliasType
 
 from hq_contracts.models import SCHEMA_VERSION
 
@@ -46,13 +68,20 @@ class TableSchemaError(ValueError):
 
 
 def _strip_optional(annotation: Any) -> tuple[Any, bool]:
-    """Return (inner annotation, is_optional) for ``X | None`` / ``Optional[X]``; else (ann, False)."""
-    origin = typing.get_origin(annotation)
-    if origin is typing.Union or origin is types.UnionType:
-        args = [a for a in typing.get_args(annotation) if a is not type(None)]
-        if len(args) == 1 and len(typing.get_args(annotation)) == 2:
-            return args[0], True
-    return annotation, False
+    """Return (inner annotation, is_optional) for ``X | None`` / ``Optional[X]``; else (ann, False).
+
+    Named aliases (``Tier = TypeAliasType("Tier", Literal[...])``) are unwrapped to their value.
+    """
+    optional = False
+    for _ in range(2):  # alias of an optional, or optional of an alias
+        origin = typing.get_origin(annotation)
+        if origin is typing.Union or origin is types.UnionType:
+            args = [a for a in typing.get_args(annotation) if a is not type(None)]
+            if len(args) == 1 and len(typing.get_args(annotation)) == 2:
+                annotation, optional = args[0], True
+        if isinstance(annotation, TypeAliasType):
+            annotation = annotation.__value__
+    return annotation, optional
 
 
 def _nested_model(annotation: Any) -> type[BaseModel] | None:
@@ -67,17 +96,49 @@ def _is_dict_field(annotation: Any) -> bool:
     return inner is dict or typing.get_origin(inner) is dict
 
 
-def columns_for(model: type[BaseModel], prefix: str = "") -> list[str]:
-    """Flattened column names of ``model``, in field order."""
-    cols: list[str] = []
+def _leaves(
+    model: type[BaseModel], prefix: str = "", nullable: bool = False
+) -> Iterator[tuple[str, Any, bool]]:
+    """Yield ``(column, annotation, nullable)`` for every flattened leaf of ``model``, in field order.
+
+    ``nullable`` is True when the leaf's own field is optional or any enclosing nested model is.
+    """
     for name, field in model.model_fields.items():
         key = f"{prefix}{name}"
+        _, optional = _strip_optional(field.annotation)
         nested = _nested_model(field.annotation)
         if nested is not None:
-            cols.extend(columns_for(nested, f"{key}{SEP}"))
+            yield from _leaves(nested, f"{key}{SEP}", nullable or optional)
         else:
-            cols.append(key)
-    return cols
+            yield key, field.annotation, nullable or optional
+
+
+def _dtype_for(annotation: Any, nullable: bool) -> str:
+    """pandas dtype name for a leaf column (see the module docstring's table)."""
+    inner, _ = _strip_optional(annotation)
+    if inner is float:
+        return "float64"
+    if inner is bool:
+        return "boolean" if nullable else "bool"
+    if inner is int:
+        return "Int64" if nullable else "int64"
+    if typing.get_origin(inner) is typing.Literal:
+        return "string"
+    if isinstance(inner, type) and issubclass(inner, str):  # str and str-valued enums
+        return "string"
+    if _is_dict_field(inner):
+        return "string"  # JSON text
+    return "object"  # list, tuple, ...
+
+
+def columns_for(model: type[BaseModel], prefix: str = "") -> list[str]:
+    """Flattened column names of ``model``, in field order."""
+    return [key for key, _, _ in _leaves(model, prefix)]
+
+
+def dtypes_for(model: type[BaseModel]) -> dict[str, str]:
+    """pandas dtype name of every flattened column of ``model``, in ``columns_for`` order."""
+    return {key: _dtype_for(annotation, nullable) for key, annotation, nullable in _leaves(model)}
 
 
 # --- model -> row ---------------------------------------------------------------------------
@@ -106,7 +167,11 @@ def _flatten(
 
 
 def to_frame(models: Sequence[BaseModel], model: type[BaseModel] | None = None) -> pd.DataFrame:
-    """Flatten model instances into one row each. Pass ``model`` to shape an empty frame."""
+    """Flatten model instances into one row each. Pass ``model`` to shape an empty frame.
+
+    Column dtypes come from the model annotations (``dtypes_for``), not from the values, so an
+    empty or all-null column has the same dtype as a populated one.
+    """
     if model is None:
         if not models:
             raise ValueError(
@@ -120,7 +185,8 @@ def to_frame(models: Sequence[BaseModel], model: type[BaseModel] | None = None) 
         row: dict[str, Any] = {}
         _flatten(m, model, "", row)
         rows.append(row)
-    return pd.DataFrame.from_records(rows, columns=columns_for(model))
+    df = pd.DataFrame.from_records(rows, columns=columns_for(model))
+    return df.astype(dtypes_for(model))
 
 
 # --- row -> model ---------------------------------------------------------------------------
