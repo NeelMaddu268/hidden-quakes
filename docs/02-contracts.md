@@ -31,7 +31,7 @@ class Station(BaseModel):
     location: str = ""
     latitude: float
     longitude: float
-    surfaceElevM: float           # StationXML station elevation (wellhead for boreholes)
+    surfaceElevM: float           # site ground surface at the sensor (DEM-checked; wellhead for boreholes)
     sensorDepthM: float           # StationXML channel depth; 0 for surface sensors
     sensorElevM: float            # surfaceElevM - sensorDepthM
     kind: Literal["surface", "borehole", "strong_motion"]
@@ -291,6 +291,7 @@ Every lane reads and writes run tables only through these helpers, so a column r
 | File in `runs/<runId>/` | Writer | Rows | Columns |
 | --- | --- | --- | --- |
 | `stations.parquet` | H1 | `Station` | model fields |
+| `inventory_report.json` | H1 | one entry per station considered | per-station elevation decision with its numbers, coverage, dropped triplets, skipped sites, flags; diagnostic, never read by another stage |
 | `gaps.parquet` | H1 | one per gap | `stationId, channel, gapStart, gapEnd` |
 | `picks.parquet` | H1 | `Pick` (PhaseNet) | model fields; `eventId` null |
 | `picks_stalta.parquet` | H1 | `Pick` (`picker="stalta"`) | model fields |
