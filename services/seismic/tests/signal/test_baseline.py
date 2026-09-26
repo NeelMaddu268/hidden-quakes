@@ -40,6 +40,14 @@ LENGTH_S = 100.0  # short chunks keep the tests fast; the logic is the same as f
 OVERLAP_S = 40.0
 TOL_S = 0.05  # "a few samples" at 100 Hz
 PICK_FIELDS = ["id", "stationId", "phase", "t", "prob", "picker", "eventId", "residualS", "weight"]
+# Test-owned: the shipped chosen/grid are checked only by bl.check_config(signal_cfg), so setting a
+# new baseline.chosen (or grid) in signal.yaml never breaks a test that is about something else.
+TEST_CHOSEN = {"pOn": 5.0, "pOff": 1.5, "sOn": 5.0, "sOff": 1.5}
+TEST_GRID = {
+    "pOn": [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0],
+    "sOn": [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0],
+    "offLevels": [1.0, 1.5, 2.0],
+}
 
 
 # --- synthetic data -----------------------------------------------------------------------------
@@ -124,6 +132,9 @@ class FakeCache:
 def small_cfg(raw_signal_yaml: dict[str, Any], **baseline: Any) -> SignalConfig:
     raw = copy.deepcopy(raw_signal_yaml)
     raw["preprocess"]["chunks"].update({"lengthS": LENGTH_S, "overlapS": OVERLAP_S})
+    # The test-owned thresholds and grid first, so ``baseline`` overrides still win.
+    raw["baseline"]["chosen"] = dict(TEST_CHOSEN)
+    raw["baseline"]["sweep"].update(copy.deepcopy(TEST_GRID))
     raw["baseline"].update({"maxWorkers": 1, **baseline})
     return SignalConfig.model_validate(raw)
 
@@ -557,7 +568,12 @@ def test_config_is_validated_and_cross_checked(
     def with_baseline(**over: Any) -> SignalConfig:
         return small_cfg(raw_signal_yaml, **over)
 
-    b = raw_signal_yaml["baseline"]
+    # The bad cases start from the test-owned chosen/grid, so they stay invalid whatever ships.
+    b = {
+        **raw_signal_yaml["baseline"],
+        "chosen": TEST_CHOSEN,
+        "sweep": {**raw_signal_yaml["baseline"]["sweep"], **TEST_GRID},
+    }
     bad: list[dict[str, Any]] = [
         {"p": {**b["p"], "staS": 3.0}},  # STA not below LTA
         {"s": {**b["s"], "warmupS": 1.0}},  # warm-up shorter than the LTA
@@ -745,7 +761,7 @@ def missing_h2(monkeypatch: pytest.MonkeyPatch) -> None:
 def scoring_cfg(
     raw_signal_yaml: dict[str, Any], mode: str = "all", **baseline: Any
 ) -> SignalConfig:
-    raw = copy.deepcopy(raw_signal_yaml["baseline"]["sweep"])
+    raw = {**copy.deepcopy(raw_signal_yaml["baseline"]["sweep"]), **copy.deepcopy(TEST_GRID)}
     return small_cfg(raw_signal_yaml, sweep={**raw, "scoreMode": mode}, **baseline)
 
 
