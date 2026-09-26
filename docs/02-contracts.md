@@ -310,7 +310,8 @@ Every lane reads and writes run tables only through these helpers, so a column r
 | `synthetic.json` | H2 | `SyntheticTest` | JSON |
 | `diagnostics.md` | H2 | depth diagnostics table + conclusions | Markdown, human-readable |
 | `magnitude.json` | H2 | `MagCalibration` | JSON (P1) |
-| `validation.json` | H4 | `Validation` | JSON |
+| `null_test.json` | H4 | `NullTest` | JSON sidecar; always written by `validate`, also embedded in `validation.json` |
+| `validation.json` | H4 | `Validation` | JSON; written once H2's `synthetic.json` exists |
 | `run.json` | every stage via `ctx.record` | `ProcessingRun` | JSON |
 | `stages.json` | every stage via `ctx.record` | `{stage: {runtimeS, counts}}` | JSON sidecar; `ProcessingRun` has no counts field |
 

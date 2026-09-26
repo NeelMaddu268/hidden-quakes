@@ -61,7 +61,8 @@ def select_profile(picks: pd.DataFrame, profile: AssociationProfile) -> pd.DataF
     if profile == "full":
         return picks
     if profile == "p_only":
-        return picks[picks["phase"].astype(str) == PHASE_P]
+        # A fresh RangeIndex, so H2's code sees the same frame shape a real picks table has.
+        return picks[picks["phase"].astype(str) == PHASE_P].reset_index(drop=True)
     raise ValidateError(f"unknown association profile {profile!r}")  # unreachable via config
 
 
@@ -139,10 +140,11 @@ def null_shuffles(
     if unknown:
         raise ValidateError(f"picks name stations missing from stations table: {unknown}")
     log.info(
-        "null test: %d reruns, shifts uniform(±%g s) per station, profile %s: %d of %d picks "
-        "on %d stations, %d catalog events",
+        "null test: %d reruns, shifts uniform(±%g s) per station, seed %d, profile %s: "
+        "%d of %d picks on %d stations, %d catalog events",
         cfg.nShuffles,
         cfg.shiftS,
+        cfg.seed,
         cfg.profile,
         len(selected),
         len(picks),
