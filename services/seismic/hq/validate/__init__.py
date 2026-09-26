@@ -17,10 +17,27 @@ through ``hq.validate.lanes`` and writes (``hq.validate.sidecars``):
   ``synthetic.json``.
 
 The reruns call H2 as ``locate(assoc, picks, stations, cfg, run, cache_dir=ctx.cache_dir,
-run_id=ctx.run_id)`` (bound in ``real_seismology_api``, REQ-H2-8) and ``assign_tiers(events,
-matches, cfg, thresholds=<the run's ProcessingRun.tiering>, arrivals=located.arrivals,
-stations=<the stations table>)`` (REQ-H2-9): the bars come from the run's own tier stage and
-are never invented, so the stage fails naming H2's tier stage when ``run.json`` has none.
+run_id=ctx.run_id, statics=<the run's statics.parquet rows>)`` (bound in
+``real_seismology_api``; REQ-H2-8 and REQ-H1-5 option (a): rerun events are located WITH the
+station terms the run's events carry, so they sit on the run's scale; the stage fails naming
+H2's locate stage when ``statics.parquet`` is absent) and ``assign_tiers(events, matches, cfg,
+thresholds=<tiering dict>, arrivals=located.arrivals, stations=<the stations table>)``
+(REQ-H2-9). Where the bars come from is ``validate.yaml`` ``rerunBars``:
+
+- ``run`` (default): the run's own ``ProcessingRun.tiering`` (stage ``tier``); the stage fails
+  naming H2's tier stage when ``run.json`` has none.
+- ``reference`` (REQ-H1-5 option (b), H1's alternative): before any other rerun, the PhaseNet
+  ``full`` profile rerun is made through the same path with ``assign_tiers(events, matches,
+  cfg, arrivals=..., stations=...)``, no ``thresholds=``, so H2 derives the bars from that
+  rerun's matched set (the run's recovered public events); H2's ``TierError`` for too few
+  matched events fails the stage naming ``tiering.minMatched``. Its ``tiering["thresholds"]``
+  is then passed as ``thresholds=`` to every other rerun (PhaseNet ``p_only``, STA/LTA ``full``
+  and ``p_only``, every null-test shuffle), and the rerun itself is the baseline table's
+  ``(phasenet, full)`` row.
+
+Bars are never invented in either mode; ``validation_notes.json`` records the source, the
+matched count, the bars and ``staticsApplied: true`` under ``nullTest.thresholds`` and
+``baseline.thresholds``.
 
 ``Validation.synthetic`` is required by the contract and only H2's locate stage produces it, so
 when ``synthetic.json`` is absent the stage keeps ``hq run`` going: it writes the sidecars, skips
@@ -73,14 +90,32 @@ from hq_contracts.models import (
 )
 from pydantic import BaseModel
 
-from hq.config.validate import GRConfig, ValidateConfig
+from hq.config.run import RunSection
+from hq.config.validate import (
+    RERUN_BARS_REFERENCE,
+    RERUN_BARS_RUN,
+    GRConfig,
+    ValidateConfig,
+)
 from hq.runs import write_text_atomic
 from hq.validate import sidecars
 from hq.validate.baseline import baseline_gain, baseline_reruns, run_baseline
 from hq.validate.errors import ValidateError
 from hq.validate.gr import as_magnitudes, gr_allowed, gr_curve
-from hq.validate.lanes import LaneSeismologyApi, SeismologyApi, real_seismology_api
-from hq.validate.notes import GRNotes, RerunNotes, ValidationNotes, rerun_notes
+from hq.validate.lanes import (
+    LaneSeismologyApi,
+    SeismologyApi,
+    real_seismology_api,
+    with_statics,
+)
+from hq.validate.notes import (
+    THRESHOLDS_SOURCE_REFERENCE,
+    THRESHOLDS_SOURCE_RUN,
+    GRNotes,
+    RerunNotes,
+    ValidationNotes,
+    rerun_notes,
+)
 from hq.validate.null_test import (
     null_shuffles,
     profile_overrides,
@@ -88,6 +123,7 @@ from hq.validate.null_test import (
     run_null_test,
     summarize,
 )
+from hq.validate.reference import ReferenceRerun, reference_rerun
 from hq.validate.sidecars import (
     BASELINE_JSON,
     GR_JSON,
@@ -111,6 +147,8 @@ PICKS_STALTA_TABLE = "picks_stalta.parquet"
 STATIONS_TABLE = "stations.parquet"
 CATALOG_TABLE = "catalog.parquet"
 EVENTS_TABLE = "events.parquet"
+STATICS_TABLE = "statics.parquet"  # the run's station terms, into every rerun locate (REQ-H1-5 a)
+STATICS_COLUMNS: tuple[str, ...] = ("stationId", "phase", "staticS")  # what H2's locate reads
 SWEEP_TABLE = "sweep.parquet"
 CATALOG_MAG_COLUMN = "mag"  # CatalogEvent.mag
 CATALOG_MAG_TYPE_COLUMN = "magType"
@@ -144,6 +182,7 @@ TABLE_WRITERS: dict[str, tuple[str, str]] = {
     STATIONS_TABLE: ("inventory", H1),
     CATALOG_TABLE: ("catalog", H2),
     EVENTS_TABLE: ("tier", H2),
+    STATICS_TABLE: ("locate", H2),
     SWEEP_TABLE: ("tier", H2),  # FYI-H2-3: the sweep needs locate/match/tier, so tier writes it
     SYNTHETIC_JSON: ("locate", H2),
     MAGNITUDE_JSON: ("magnitude", H2),
@@ -164,6 +203,21 @@ class ValidateOutcome:
     recovered_magnitudes: int
     validation: Validation | None
     notes: ValidationNotes
+    reference: ReferenceRerun | None = None  # the rerun the bars came from (rerunBars reference)
+    statics_rows: int = 0  # rows of statics.parquet bound into every rerun's locate (REQ-H1-5 a)
+
+
+@dataclass(frozen=True)
+class RerunBars:
+    """The bars every validation rerun is tiered against, resolved from ``rerunBars``."""
+
+    tiering: Mapping[str, Any]  # what every rerun gets as thresholds= (a tiering-shaped dict)
+    source: str  # THRESHOLDS_SOURCE_REFERENCE or THRESHOLDS_SOURCE_RUN (the notes)
+    reference: ReferenceRerun | None  # the PhaseNet full rerun, when it derived the bars
+
+    @property
+    def record(self) -> Mapping[str, Any]:
+        return self.tiering["thresholds"]
 
 
 @dataclass(frozen=True)
@@ -194,6 +248,27 @@ def read_model_table(run_dir: Path, name: str, model: type[BaseModel]) -> pd.Dat
     if df.attrs["model"] != model.__name__:
         raise ValidateError(f"{path} holds {df.attrs['model']} rows, not {model.__name__}")
     return df
+
+
+def read_statics(run_dir: Path) -> pd.DataFrame:
+    """The run's ``statics.parquet`` (docs/02 §2: ``stationId, phase, staticS, nEvents``), the
+    station terms every rerun's ``locate`` applies (REQ-H1-5 a). Absent: a loud error naming
+    H2's locate stage, since reruns without it are not on the run's scale."""
+    path = _require(run_dir, STATICS_TABLE)
+    statics = read_table(path)
+    missing = [c for c in STATICS_COLUMNS if c not in statics.columns]
+    if missing:
+        raise ValidateError(
+            f"{path} lacks columns {missing}; docs/02 §2 lists {list(STATICS_COLUMNS)} (written "
+            f"by the 'locate' stage, owner {H2})"
+        )
+    log.info(
+        "validate: %s: %d station terms (%d stations) go into every rerun's locate as statics=",
+        STATICS_TABLE,
+        len(statics),
+        statics["stationId"].nunique(),
+    )
+    return statics
 
 
 def read_optional_table(run_dir: Path, name: str, model: type[BaseModel]) -> pd.DataFrame | None:
@@ -276,6 +351,42 @@ def run_thresholds(run: ProcessingRun) -> Mapping[str, Any]:
     """The run's ``ProcessingRun.tiering`` with the bars H2's tier stage derived (REQ-H2-9), as
     ``assign_tiers(thresholds=...)`` takes it; a loud error naming H2's tier stage without."""
     return require_thresholds(run.tiering, f"run {run.id}: the validation reruns")
+
+
+def resolve_rerun_bars(
+    cfg: ValidateConfig,
+    run_record: ProcessingRun,
+    picks: pd.DataFrame,
+    stations: pd.DataFrame,
+    catalog: pd.DataFrame,
+    api: SeismologyApi,
+    seismology_cfg: Any,
+    run: RunSection,
+) -> RerunBars:
+    """The bars for every rerun per ``validate.yaml`` ``rerunBars`` (module docstring): the
+    reference rerun's, derived now by H2 (``reference``), or the run's own (``run``)."""
+    if cfg.rerunBars == RERUN_BARS_RUN:
+        tiering = run_thresholds(run_record)  # REQ-H2-9: the run's own bars, or a loud error
+        log.info(
+            "validate: rerunBars 'run': every rerun is tiered against the run's own bars "
+            "(ProcessingRun.tiering.thresholds, %s matched events) and located with the run's "
+            "statics (REQ-H1-5 a)",
+            tiering["thresholds"].get("nMatched"),
+        )
+        return RerunBars(tiering, THRESHOLDS_SOURCE_RUN, None)
+    if cfg.rerunBars != RERUN_BARS_REFERENCE:  # unreachable through the Literal
+        raise ValidateError(f"unknown validate.yaml rerunBars {cfg.rerunBars!r}")
+    reference = reference_rerun(picks, stations, catalog, api, seismology_cfg, run)
+    own = run_record.tiering.get("thresholds") if isinstance(run_record.tiering, Mapping) else None
+    if isinstance(own, Mapping):
+        log.info(
+            "validate: rerunBars 'reference': the run's own bars (%s matched events) are "
+            "recorded in run.json but not applied to the reruns; the reference rerun's bars "
+            "(%d matched events) are (REQ-H1-5 b)",
+            own.get("nMatched"),
+            reference.n_matched,
+        )
+    return RerunBars(reference.thresholds, THRESHOLDS_SOURCE_REFERENCE, reference)
 
 
 def magnitude_record(run: ProcessingRun) -> Mapping[str, Any] | None:
@@ -526,11 +637,18 @@ def validate_run(ctx: "RunContext", api: SeismologyApi | None = None) -> Validat
         len(stations),
         len(catalog),
     )
+    statics = read_statics(ctx.run_dir)  # REQ-H1-5 (a): or a loud error naming H2's locate
     run_record = ctx.read_run()
-    thresholds = run_thresholds(run_record)  # REQ-H2-9: the run's own bars, or a loud error
-    thresholds_record = thresholds["thresholds"]
-    if api is None:
-        api = real_seismology_api(cache_dir=ctx.cache_dir, run_id=ctx.run_id)  # REQ-H2-8
+    if api is None:  # REQ-H2-8 + REQ-H1-5 (a): cache dir, run id and statics bound into locate
+        api = real_seismology_api(cache_dir=ctx.cache_dir, run_id=ctx.run_id, statics=statics)
+    else:
+        api = with_statics(api, statics)
+    # The run's own bars (rerunBars: run), or the reference rerun first so every rerun below
+    # tiers on its scale (rerunBars: reference). The same dict object goes to every rerun.
+    bars = resolve_rerun_bars(
+        cfg, run_record, picks, stations, catalog, api, seismology_cfg, ctx.config.run
+    )
+    thresholds, thresholds_record = bars.tiering, bars.record
 
     # VAL-02: chance associations.
     outcomes = null_shuffles(
@@ -551,6 +669,8 @@ def validate_run(ctx: "RunContext", api: SeismologyApi | None = None) -> Validat
         thresholds_record,
         profile_overrides((cfg.nullTest.profile,), cfg.pOnlyAssociator),
         "null test",
+        source=bars.source,
+        statics_applied=True,
     )
 
     # VAL-01: the baseline table, when H1's STA/LTA picks exist.
@@ -576,6 +696,7 @@ def validate_run(ctx: "RunContext", api: SeismologyApi | None = None) -> Validat
             cfg.baseline,
             cfg.pOnlyAssociator,
             thresholds=thresholds,
+            reference=bars.reference,  # the (phasenet, full) row, not rerun twice
         )
         baseline = [r.row for r in reruns]
         baseline_notes = rerun_notes(
@@ -583,6 +704,8 @@ def validate_run(ctx: "RunContext", api: SeismologyApi | None = None) -> Validat
             thresholds_record,
             profile_overrides(cfg.baseline.profiles, cfg.pOnlyAssociator),
             "baseline",
+            source=bars.source,
+            statics_applied=True,
         )
     sidecars.BASELINE.write(ctx.run_dir, baseline)
     gain = baseline_gain(baseline, cfg.baseline)
@@ -664,6 +787,8 @@ def validate_run(ctx: "RunContext", api: SeismologyApi | None = None) -> Validat
         recovered_magnitudes=len(sets.recovered),
         validation=validation,
         notes=notes,
+        reference=bars.reference,
+        statics_rows=len(statics),
     )
 
 
@@ -679,6 +804,11 @@ def run(ctx: "RunContext") -> None:
         "nullChanceEvents": round(null_test.meanChanceEvents * null_test.nShuffles),
         "nullChanceStrict": round(null_test.meanChanceStrict * null_test.nShuffles),
         "nullRerunsTiered": out.notes.nullTest.rerunsTiered,
+        # REQ-H1-5: the statics rows every rerun located with; 1 when the PhaseNet full rerun
+        # derived the bars (rerunBars reference), and its matched count.
+        "staticsRows": out.statics_rows,
+        "referenceRerun": int(out.reference is not None),
+        "referenceMatched": 0 if out.reference is None else out.reference.n_matched,
         "sweepPoints": len(validation.sweep) if validation is not None else 0,
         "baselineRows": len(out.baseline),
         "baselineGain": int(out.gain is not None),
@@ -701,6 +831,8 @@ __all__ = [
     "VALIDATION_JSON",
     "LaneSeismologyApi",
     "MagnitudeSets",
+    "ReferenceRerun",
+    "RerunBars",
     "SeismologyApi",
     "ValidateError",
     "ValidateOutcome",
@@ -715,12 +847,16 @@ __all__ = [
     "public_mag_type",
     "read_magnitude",
     "read_model_table",
+    "read_statics",
     "read_sweep",
     "read_synthetic",
     "real_seismology_api",
+    "reference_rerun",
+    "resolve_rerun_bars",
     "run",
     "run_baseline",
     "run_null_test",
     "run_thresholds",
     "validate_run",
+    "with_statics",
 ]

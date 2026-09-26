@@ -59,6 +59,7 @@ describe("validation panel", () => {
       "Median stations",
       "Median residual",
       "Depth resolution",
+      "Strict events, PhaseNet vs STA/LTA",
       "PhaseNet vs STA/LTA gain",
       "Chance associations",
     ]);
@@ -67,6 +68,9 @@ describe("validation panel", () => {
     expect(rowText("stations")).toBe(formatNumber(summary.medianStations, 1));
     expect(rowText("residual")).toBe(`${formatNumber(summary.medianRmsS, 3)} s`);
     expect(rowText("depth")).toBe(`±${formatNumber(validation.synthetic.medianVErrM, 0)} m`);
+    const full = (method: "phasenet" | "stalta") =>
+      validation.baseline.find((r) => r.method === method && r.associationProfile === "full")!.tiers.A;
+    expect(rowText("strictCompare")).toBe(`${formatNumber(full("phasenet"), 0)} vs ${formatNumber(full("stalta"), 0)}`);
     expect(rowText("gain")).toBe(`${formatNumber(summary.baseline!.gain, 2)}×`);
     expect(rowText("chance")).toBe(formatNumber(validation.nullTest!.meanChanceEvents, 1));
   });

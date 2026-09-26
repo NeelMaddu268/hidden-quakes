@@ -57,7 +57,7 @@ Four humans, one lane each (signal, seismology, visualization, platform), each r
 
 ## Validation
 
-Numbers below are copied from the Validation card of the deployed page, which reads them from the exported run.
+Numbers below are read from the exported run's `meta.json` and `validation.json` (the same fields the deployed page's Validation card renders).
 
 - Public-catalog recall: `<from meta.json: summary.recoveredCatalogCount>` of `<from meta.json: summary.publicCatalogCount>`; every miss is listed in the run.
 - Candidate events: `<from meta.json: summary.candidateCount>`, of which `<from meta.json: summary.additionalCount>` are not in the public catalog; `<from meta.json: summary.strictAdditionalCount>` of those pass the strict tier.
