@@ -210,11 +210,20 @@ def test_arrivals_and_statics_tables(located: LocateDetails) -> None:
 def test_zero_events_give_typed_zero_row_tables(
     world: dict[str, Any], located: LocateDetails
 ) -> None:
+    from hq.locate.diagnostics import DiagnosticsInputs, build_diagnostics
+
+    none = locate_detailed(empty_result(), world["picks"], world["stations"], world["cfg"],
+                           world["run"], run_id=RUN_ID, cache_dir=world["cache"])
     out = locate(empty_result(), world["picks"], world["stations"], world["cfg"], world["run"],
                  cache_dir=world["cache"])
     for name in ("events", "arrivals", "statics"):
         frame, full = getattr(out, name), getattr(located.result, name)
         assert len(frame) == 0 and _dtypes(frame) == _dtypes(full), name
+    assert len(none.flags) == 0 and _dtypes(none.flags) == _dtypes(located.flags)
+    report = build_diagnostics(DiagnosticsInputs(RUN_ID, world["run"], world["cfg"],
+                                                 world["stations"], none, empty_result().events))
+    rows = [line for line in report.splitlines() if line[:4] in {f"| {k} " for k in range(1, 8)}]
+    assert len(rows) == 7 and all("Can't conclude" in r for r in rows[2:])
 
 
 @pytest.mark.smoke

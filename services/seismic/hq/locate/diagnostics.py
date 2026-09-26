@@ -229,7 +229,7 @@ def row_datum(inputs: DiagnosticsInputs) -> Row:
     worst_h = float(check["dhM"].max())
     per = "; ".join(
         f"{r.trueElevM:g} m ASL -> {r.elevM:.0f} m (dz {r.dzM:+.0f} m, dh {r.dhM:.0f} m, dt "
-        f"{r.dtS * 1000:+.0f} ms; depthKm {r.depthKm:.3f} vs {r.trueDepthKm:.3f})"
+        f"{r.dtS * 1000:+.1f} ms; depthKm {r.depthKm:.3f} vs {r.trueDepthKm:.3f})"
         for r in check.itertuples(index=False)
     )
     datum = ""
@@ -238,7 +238,7 @@ def row_datum(inputs: DiagnosticsInputs) -> Row:
         datum = f" Public regional catalog depths were converted to elevM with: {'; '.join(labels)}."
     result = (
         f"Noise-free P+S picks at {len(inputs.details.stations)} used stations for synthetic "
-        f"events at (e {dc.eM:g}, n {dc.nM:g}) m: {per}. Largest |dz| {worst_z:.0f} m, largest "
+        f"events at (e {dc.eM:g}, n {dc.nM:g}) m: {per}. Largest abs(dz) {worst_z:.0f} m, largest "
         f"dh {worst_h:.0f} m (passTolM {dc.passTolM:g} m).{datum}"
     )
     if worst_z <= dc.passTolM and worst_h <= dc.passTolM:
@@ -295,7 +295,7 @@ def row_pyocto(inputs: DiagnosticsInputs) -> Row:
     dh = np.hypot(shift["deM"], shift["dnM"]).to_numpy()
     result = (
         f"{n} events: relocated minus PyOcto elevM median {np.median(dz):+.0f} m (p10 "
-        f"{_q(dz, 0.1):+.0f}, p90 {_q(dz, 0.9):+.0f} m), median |dz| {np.median(np.abs(dz)):.0f} m; "
+        f"{_q(dz, 0.1):+.0f}, p90 {_q(dz, 0.9):+.0f} m), median abs(dz) {np.median(np.abs(dz)):.0f} m; "
         f"epicentre shift median {np.median(dh):.0f} m (p90 {_q(dh, 0.9):.0f} m), median de "
         f"{np.median(shift['deM']):+.0f} m, dn {np.median(shift['dnM']):+.0f} m."
     )
@@ -448,9 +448,9 @@ def row_stations(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> tuple[Row, list
                        for r in flagged.itertuples(index=False))
     result = (
         f"{len(ok)} of {total} station-phases have >= {dcfg.minGroupSize} used picks; "
-        f"|median| > {dcfg.stationResidualFlagS:g} s at {len(flagged)}"
+        f"abs(median) > {dcfg.stationResidualFlagS:g} s at {len(flagged)}"
         + (f": {listed}" if listed else "")
-        + f". Largest |median| {worst['medianS']:+.3f} s at {worst['stationId']} {worst['phase']}; "
+        + f". Largest abs(median) {worst['medianS']:+.3f} s at {worst['stationId']} {worst['phase']}; "
         f"P medians span {_f(ok.loc[ok.phase == 'P', 'medianS'].min(), '+.3f')} to "
         f"{_f(ok.loc[ok.phase == 'P', 'medianS'].max(), '+.3f')} s, S "
         f"{_f(ok.loc[ok.phase == 'S', 'medianS'].min(), '+.3f')} to "
