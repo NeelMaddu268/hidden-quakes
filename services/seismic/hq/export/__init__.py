@@ -72,7 +72,14 @@ def run(ctx: "RunContext") -> None:
     counts: dict[str, int] = {}
     for mode in cfg.modes:
         result = export_bundle(
-            tables, cfg, ctx.config.run, mode, source, cache_dir=ctx.cache_dir, out_dir=root / mode
+            tables,
+            cfg,
+            ctx.config.run,
+            mode,
+            source,
+            cache_dir=ctx.cache_dir,
+            out_dir=root / mode,
+            baseline_cfg=ctx.config.validate.baseline,
         )
         if not counts:
             counts = dict(result.counts)

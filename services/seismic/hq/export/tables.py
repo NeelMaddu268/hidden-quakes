@@ -5,12 +5,13 @@ the cross-references the exporter relies on (event ids unique and belonging to t
 pick an event or an arrival names present in ``picks.parquet``). Tables that are not model rows
 (``arrivals.parquet``, ``matches.parquet``) are checked column by column against docs/02.
 
-``validation.json`` is written by VAL-01 and is optional until then: without it the bundle's
-validation carries only what H2's stages already produced (``synthetic.json``,
-``sweep.parquet``), or nothing at all, and the log names VAL-01.
+``validation.json`` is written by the validate stage (VAL-01) once H2's ``synthetic.json``
+exists. Without it the bundle's validation is assembled from the sidecars that do exist
+(``synthetic.json``, ``sweep.parquet``, ``null_test.json``, ``baseline.json``, ``gr.json``,
+``magnitude.json``; ``hq.validate.sidecars``), or is omitted when even ``synthetic.json`` is
+missing, and the log names the validate stage.
 """
 
-import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -19,19 +20,30 @@ from pathlib import Path
 import pandas as pd
 from hq_contracts.io import from_frame, read_models, read_table
 from hq_contracts.models import (
+    BaselineRow,
     CatalogEvent,
+    GRCurve,
+    MagCalibration,
+    NullTest,
     Pick,
     ProcessingRun,
     SeismicEvent,
     Station,
     SweepPoint,
-    SyntheticTest,
     Validation,
 )
-from pydantic import ValidationError
 
 from hq.export.errors import ExportError
 from hq.runs import read_run_json
+from hq.validate import sidecars
+from hq.validate.sidecars import (
+    BASELINE_JSON,
+    GR_JSON,
+    MAGNITUDE_JSON,
+    NULL_TEST_JSON,
+    SYNTHETIC_JSON,
+    VALIDATION_JSON,
+)
 
 log = logging.getLogger(__name__)
 
@@ -42,8 +54,6 @@ MATCHES_TABLE = "matches.parquet"
 PICKS_TABLE = "picks.parquet"
 ARRIVALS_TABLE = "arrivals.parquet"
 SWEEP_TABLE = "sweep.parquet"
-SYNTHETIC_JSON = "synthetic.json"
-VALIDATION_JSON = "validation.json"
 
 # docs/02 §2 column lists of the two non-model tables the exporter reads.
 ARRIVAL_COLUMNS: tuple[str, ...] = (
@@ -123,44 +133,67 @@ def select_picks(df: pd.DataFrame, ids: set[str], path: Path) -> dict[str, Pick]
 
 
 def _load_validation(run_dir: Path) -> tuple[Validation | None, str]:
-    path = run_dir / VALIDATION_JSON
-    if path.is_file():
-        try:
-            return Validation.model_validate_json(path.read_text(encoding="utf-8")), path.name
-        except ValidationError as exc:
-            raise ExportError(f"{path} is not a valid Validation:\n{exc}") from exc
-    synthetic_path = run_dir / SYNTHETIC_JSON
-    if not synthetic_path.is_file():
+    """``validation.json`` when the validate stage wrote it; otherwise the ``Validation`` the
+    sidecars can make (``synthetic.json`` is required, the rest fill what exists), or ``None``
+    when even H2's synthetic test is missing. The second value names the sources for the log."""
+    validation = sidecars.VALIDATION.read(run_dir, ExportError)
+    if validation is not None:
+        return validation, VALIDATION_JSON
+    synthetic = sidecars.SYNTHETIC.read(run_dir, ExportError)
+    if synthetic is None:
         log.warning(
-            "export: neither %s (VAL-01, H4 Platform) nor %s (locate, H2 Seismology) exists in "
-            "%s; the bundle gets no validation.json",
+            "export: neither %s (validate, VAL-01, H4 Platform) nor %s (locate, H2 Seismology) "
+            "exists in %s; the bundle gets no validation.json",
             VALIDATION_JSON,
             SYNTHETIC_JSON,
             run_dir,
         )
         return None, "none"
-    try:
-        synthetic = SyntheticTest.model_validate(
-            json.loads(synthetic_path.read_text(encoding="utf-8"))
-        )
-    except (ValidationError, json.JSONDecodeError) as exc:
-        raise ExportError(f"{synthetic_path} is not a valid SyntheticTest:\n{exc}") from exc
-    sweep: list[SweepPoint] = []
     sources = [SYNTHETIC_JSON]
+    sweep: list[SweepPoint] = []
     sweep_path = run_dir / SWEEP_TABLE
     if sweep_path.is_file():
         sweep = read_models(sweep_path, SweepPoint)
         sources.append(SWEEP_TABLE)
+    null_test: NullTest | None = sidecars.NULL_TEST.read(run_dir, ExportError)
+    baseline: list[BaselineRow] = sidecars.BASELINE.read(run_dir, ExportError) or []
+    gr: GRCurve | None = sidecars.GR.read(run_dir, ExportError)
+    magnitude: MagCalibration | None = sidecars.MAGNITUDE.read(run_dir, ExportError)
+    for present, name in (
+        (null_test is not None, NULL_TEST_JSON),
+        (bool(baseline), BASELINE_JSON),
+        (gr is not None, GR_JSON),
+        (magnitude is not None, MAGNITUDE_JSON),
+    ):
+        if present:
+            sources.append(name)
+    empty = [
+        name
+        for present, name in (
+            (bool(sweep), "sweep"),
+            (bool(baseline), "baseline"),
+            (null_test is not None, "nullTest"),
+            (gr is not None, "gr"),
+            (magnitude is not None, "magnitude"),
+        )
+        if not present
+    ]
     log.warning(
-        "export: %s not found in %s (VAL-01, H4 Platform, has not run); validation.json carries "
-        "only %s, with baseline%s, nullTest, gr and magnitude empty",
+        "export: %s not found in %s (the validate stage, VAL-01, H4 Platform, has not run since "
+        "%s appeared); validation.json is assembled from %s%s",
         VALIDATION_JSON,
         run_dir,
+        SYNTHETIC_JSON,
         " + ".join(sources),
-        "" if sweep else ", sweep",
+        f", with {', '.join(empty)} empty" if empty else "",
     )
     validation = Validation(
-        baseline=[], sweep=sweep, nullTest=None, gr=None, magnitude=None, synthetic=synthetic
+        baseline=baseline,
+        sweep=sweep,
+        nullTest=null_test,
+        gr=gr,
+        magnitude=magnitude,
+        synthetic=synthetic,
     )
     return validation, " + ".join(sources)
 

@@ -498,6 +498,7 @@ def do_export(
         source,
         cache_dir=ctx.cache_dir,
         out_dir=out_dir,
+        baseline_cfg=ctx.config.validate.baseline,
         features_loader=fake_features,
     )
     return result.out_dir, result
@@ -797,10 +798,11 @@ def full_validation(gain_p_only: bool) -> m.Validation:
 def test_baseline_gain_only_when_it_holds_in_both_profiles(
     ctx: runs.RunContext, synthetic_run: SyntheticRun, tmp_path: Path
 ) -> None:
-    rounding = ctx.config.export.rounding
-    assert baseline_gain(None, rounding) is None
-    assert baseline_gain(full_validation(gain_p_only=False), rounding) is None
-    gain = baseline_gain(full_validation(gain_p_only=True), rounding)
+    rounding, baseline_cfg = ctx.config.export.rounding, ctx.config.validate.baseline
+    assert baseline_gain(None, rounding, baseline_cfg) is None
+    assert baseline_gain(full_validation(gain_p_only=False), rounding, baseline_cfg) is None
+    assert baseline_gain(full_validation(gain_p_only=True), rounding, None) is None  # no config
+    gain = baseline_gain(full_validation(gain_p_only=True), rounding, baseline_cfg)
     assert gain is not None and (gain.strictPhasenet, gain.strictStalta, gain.gain) == (8, 4, 2.0)
     assert gain.associationProfile == "full"
 
@@ -810,6 +812,55 @@ def test_baseline_gain_only_when_it_holds_in_both_profiles(
     assert bundle.meta.summary.baseline == gain
     assert bundle.validation is not None and len(bundle.validation.baseline) == 4
     check_bundle(out_dir)
+
+
+def test_validation_assembled_from_sidecars_when_validation_json_is_absent(
+    ctx: runs.RunContext,
+    synthetic_run: SyntheticRun,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The validate stage may have run before H2's synthetic.json existed: its sidecars still
+    carry the results, and the exporter assembles the Validation from them."""
+    caplog.set_level(logging.WARNING, logger="hq.export")
+    full = full_validation(gain_p_only=True)
+    ctx.path("synthetic.json").write_text(full.synthetic.model_dump_json())
+    null_test = m.NullTest(
+        nShuffles=4, shiftRangeS=30.0, meanChanceEvents=1.5, meanChanceStrict=0.25,
+        stdChanceEvents=0.5,
+    )  # fmt: skip
+    gr = m.GRCurve(magBins=[0.5, 0.6, 0.7], publicCum=[3, 2, 1], recoveredCum=[9, 5, 2],
+                   mcPublic=None, mcRecovered=0.7, bValue=1.05, bSigma=0.2)  # fmt: skip
+    calibration = m.MagCalibration(n=6, looMae=0.3, coefficients={"a": 1.0, "b": -1.5})
+    ctx.path("null_test.json").write_text(null_test.model_dump_json())
+    ctx.path("baseline.json").write_text(
+        json.dumps([row.model_dump(mode="json") for row in full.baseline])
+    )
+    ctx.path("gr.json").write_text(gr.model_dump_json())
+    ctx.path("magnitude.json").write_text(calibration.model_dump_json())
+
+    out_dir, _ = do_export(ctx, tmp_path / "b" / "showcase", run=synthetic_run)
+    bundle = Bundle(out_dir)
+    assert bundle.validation is not None
+    assert bundle.validation.synthetic == full.synthetic
+    assert bundle.validation.nullTest == null_test
+    assert bundle.validation.baseline == full.baseline
+    assert bundle.validation.gr == gr and bundle.validation.magnitude == calibration
+    assert bundle.validation.sweep == []
+    expected_gain = baseline_gain(full, ctx.config.export.rounding, ctx.config.validate.baseline)
+    assert bundle.meta.summary.baseline == expected_gain and expected_gain is not None
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assembled = [w for w in warnings if "validation.json not found" in w]
+    assert len(assembled) == 1 and "VAL-01" in assembled[0]
+    for name in ("null_test.json", "baseline.json", "gr.json", "magnitude.json"):
+        assert name in assembled[0]
+    assert "with sweep empty" in assembled[0]
+    check_bundle(out_dir)
+
+    # A corrupt sidecar fails loudly, naming the model it should hold.
+    ctx.path("baseline.json").write_text("[{}]")
+    with pytest.raises(ExportError, match="not a valid list of BaselineRow"):
+        load_run_tables(ctx.run_dir)
 
 
 # --- determinism, atomicity, caps ----------------------------------------------------------------
@@ -983,6 +1034,7 @@ def test_export_refuses_a_synthetic_run(
             SyntheticSource(synthetic_run.stations, synthetic_run.arrivals),
             cache_dir=ctx.cache_dir,
             out_dir=tmp_path / "x",
+            baseline_cfg=ctx.config.validate.baseline,
             features_loader=fake_features,
         )
     assert not (tmp_path / "x").exists()

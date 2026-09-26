@@ -164,7 +164,8 @@ def _check_summary(
     problems: list[str],
 ) -> None:
     got = meta.summary
-    want = analysis_summary(meta.run.id, events, catalog, validation, rounding)
+    # No run config here: the claimed gain is checked against its own numbers below instead.
+    want = analysis_summary(meta.run.id, events, catalog, validation, rounding, None)
     if got.runId != meta.run.id or meta.scene.runId != meta.run.id:
         problems.append("meta.json: runId differs between run, scene and summary")
     exact = (
