@@ -27,6 +27,7 @@
 | Waveform cache + `read_window` / `read_inventory` / `display_copy` | H2 (magnitude), H4 (evidence) | `data/cache/mseed/`, `hq.ingest.cache`, `hq.preprocess` | 10:30 PM |
 | Full-window PhaseNet picks | H2 | `runs/<id>/picks.parquet` | 12:30 AM |
 | STA/LTA picks + threshold sweep | H4 (VAL-01) | `runs/<id>/picks_stalta.parquet`, `baseline_sweep.parquet`, `baseline_reference.json` (scored reruns only) | 4:00 AM |
+| Audio clips + manifests (SEIS-09) | H3, through the lead | `hidden-quakes-busiest-hour.*`, `hidden-quakes-hero.*` (`.ogg`, `.mp3`, `.json`) in an output folder, never `apps/` | features freeze, Sat night |
 
 ## Tickets, in order
 
@@ -93,6 +94,17 @@
 
 - **Goal:** a fresh reviewer agent audits the whole lane against "Definition of done" below and fixes what it finds.
 - **Accept:** every item in the checklist is true, with evidence pasted in the PR.
+
+### SEIS-09 · P1 · Saturday night — Sonification (issue #102)
+
+- **Goal:** sped-up audio renderings of the cached public waveforms for the web app: the busiest clock hour of candidate events at the borehole station with the most picks in it, and optionally a short window around the hero event at the nearest borehole station with data. Vertical channel only.
+- **Files:** `hq/preprocess/sonify.py` (pure functions + CLI), `hq/config/signal.py` (`SonifyConfig`), `configs/showcase/signal.yaml` (`sonify:`), `tests/signal/test_sonify.py`
+- **In → out:** the run's `stations.parquet` and `picks.parquet`, the committed bundle's `events.json` and `meta.json`, and the waveform cache (all read only) → `<fileStem>.ogg`, `.mp3` and `.json` (manifest) in an output folder. H1 never writes `apps/`: the lead hands the files to H3 for `apps/web/public/audio/`.
+- **Run:** `uv run --with soundfile python -m hq.preprocess.sonify --run-dir <run> --bundle-dir <bundle> --config-dir configs/showcase --cache-dir <cache> --out-dir <dir> [--clip hour|hero|all]`. python-soundfile (libsndfile, which writes OGG Vorbis and MP3) is not a project dependency; without it the CLI stops at once and names this command.
+- **Selection:** busiest bin of `sonify.busiestHour.binS` seconds on epoch multiples (UTC clock hours) by candidate events, ties to the earliest; then the `usedInRun` station of `sonify.stationKind` with the most picks of any phase in that bin, ties in id order. Hero: `meta.json` `scene.heroEventId`, origin time from `events.json`; the nearest such station by epicentral ENU distance (ties in id order) whose vertical channel covers at least `sonify.hero.minCoverageFraction` of the window.
+- **As built:** each gap-separated segment is detrended, tapered, zero-phase bandpassed (`bandHz`, real Hz) and resampled with `resample_poly` to `audioRateHz / speed`, then placed at its true time on a zero timeline, so gaps and missing data at the window ends are exact digital silence (never interpolated or bridged). Level: a percentile of `|x|` over samples with data; a soft-knee compressor on a look-ahead envelope lifts small events relative to large ones; raised-cosine fades at every segment edge; peak normalization to `peakDbfs`. The render raises if a sample passes the peak target, a no-data sample is not exactly zero, or the duration differs from `window / speed` by more than one audio sample. Encoding: the Ogg stream serial is fixed (`oggStreamSerial`; libsndfile draws a random one), MP3 frame headers are checked for the configured constant bitrate, both files are decoded back and checked for clipping and `maxBytes`. The manifest carries `stationId`, `channel`, `startUtc`, `endUtc`, `speed`, `sampleRateHz`, `filterHz`, `source: "EarthScope public waveforms"`, plus provenance (run, selection rule and its numbers, processing, file sizes and hashes).
+- **Not a stage:** it changes no station, pick, gap or bundle file, and no stage records the `sonify` block (inventory, download, pick and baseline record only their own sub-sections). Copy: a sped-up rendering of recorded ground motion, never "the sound of" an event.
+- **Accept:** `tests/signal/test_sonify.py` (the encoding round trip runs only under `uv run --with soundfile pytest`, otherwise it is skipped); both clips rendered from the frozen run with their manifests.
 
 ## Domain notes (give these to your agent)
 
