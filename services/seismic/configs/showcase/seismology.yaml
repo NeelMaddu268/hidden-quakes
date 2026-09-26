@@ -96,17 +96,36 @@ matching:
   maxDtS: 2.0
   maxDistM: 5000.0
   # Tolerance pairs for match_sensitivity.parquet. Each pair reruns the full assignment with that
-  # pair as both the admissibility limit and the cost scale.
+  # pair as both the admissibility limit and the cost scale. Must include (maxDtS, maxDistM).
   sensitivity:
     - {dtS: 1.0, distM: 3000.0}
     - {dtS: 2.0, distM: 5000.0}
     - {dtS: 3.0, distM: 8000.0}
+  # The stage recomputes ENU from latitude/longitude/elevation (hq.locate.coords.to_enu, run origin)
+  # for the catalog, the located events and the stations, and fails if any stored e/n/u differs by
+  # more than this (m): a table in another frame or origin. Far above round-off, far below any
+  # distance that changes a match.
+  enuConsistencyM: 1.0
   # Reasons for unmatched public events (hq.match.reasons), from the evidence files in the run dir.
   reasons:
-    # A public event whose expected arrival windows have waveform data, picks, or associated picks
-    # on fewer than this many used stations gets that reason. 4 is the smallest station count in
-    # the association sweep (lane doc), so no swept associator setting can form an event below it.
+    # A public event whose expected arrival windows have waveform data, picks, or picks of one
+    # associated event on fewer than this many used stations gets that reason. 4 is the smallest
+    # station count in the association sweep (lane doc), so no swept associator setting can form an
+    # event below it. Known gap: not read from the associator's own minStations until LOC-03 merges.
     minStations: 4
-    # Each expected arrival window [R / vMax, R / vMin] after the public origin time is widened by
-    # this much on both sides (s), for public origin-time and location error and pick error.
+    # Picks at or above this probability count for "too few picks"; picks below it (stored down to
+    # 0.1) only turn that into "picks below threshold". 0.3 is LOC-03's working associator threshold
+    # and the top of the lane doc's sweep {0.1, 0.2, 0.3}. Known gap: keep equal to the associator's
+    # minPickProb by hand until LOC-03 merges, then read it from there.
+    minPickProb: 0.3
+    # Each expected window [R / vMax, straight-ray time] after the public origin (hq.match.reasons)
+    # is widened by this much on both sides (s). Budget: the public regional catalog's stated errors
+    # for the showcase day (QuakeML, checked 2026-09-25: horizontal <= 420 m, depth <= 770 m, so at
+    # most ~0.9 km of hypocentral distance, <= 0.35 s of S time; rms <= 0.18 s), plus station delays
+    # up to the 0.3 s statics cap (LOC-05) and pick error. That sums to under 0.9 s.
     arrivalPadS: 1.0
+    # A located event carrying this event's in-window picks counts as its "located out of
+    # tolerance" candidate only if its origin is within this many seconds of the public origin.
+    # Picks inside these windows pin the origin to within about a window width (a few s) plus the
+    # travel-time change of a mislocation, so 10 s only drops candidates that cannot be this event.
+    maxCandidateDtS: 10.0
