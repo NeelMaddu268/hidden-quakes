@@ -895,6 +895,34 @@ def test_window_edges_and_pad(seismology_config: SeismologyConfig, arrivals: Arr
 
 
 @pytest.mark.smoke
+def test_windows_move_by_each_station_static(
+    seismology_config: SeismologyConfig, arrivals: ArrivalModel
+) -> None:
+    """A late station (large S term, as referenceEvents statics give) keeps its S picks in its
+    window: statics.parquet moves each station-phase's window by its term."""
+    pub = public([("a", T0, 0, 0)])
+    sta = stations()
+    used = _used(sta)
+    ids = used["id"].tolist()
+    enu = used[["enu_e", "enu_n", "enu_u"]].to_numpy(dtype=np.float64)
+    pad = seismology_config.matching.reasons.arrivalPadS
+    s_hi = expected_windows(T0, np.array(HYPO), enu, RUN.origin.elevM, arrivals, pad)["S"][1]
+    late = 0.8
+    picks = [pick(sid, "S", float(s_hi[k]) + late) for k, sid in enumerate(ids)]
+    terms = pd.DataFrame({"stationId": ids, "phase": "S", "staticS": late + 0.1, "nEvents": 5})
+
+    def reason(statics: pd.DataFrame | None) -> str:
+        evidence = Evidence(stations=sta, picks=picks_frame(picks), statics=statics)
+        return _explain(located([]), pub, seismology_config, arrivals, evidence)[0]["a"]
+
+    assert reason(None).startswith("too few picks (picks in the expected arrival windows on 0 of")
+    assert reason(terms).startswith("no candidate within")
+    assert reason(terms.assign(phase="P")).startswith("too few picks (")  # S picks, P terms
+    with pytest.raises(ValueError, match="appears twice"):
+        reason(pd.concat([terms, terms]))
+
+
+@pytest.mark.smoke
 def test_reason_picks_not_associated_counts_one_associated_event(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
