@@ -48,6 +48,7 @@ The layout split: **you own the canvas, the drawer and the time scrubber.** H4's
 - **Files:** `scripts/bake-dem.py`, `apps/web/public/terrain/*`, `scene/terrain/`, `scene/references/`
 - **In → out:** DEM tiles + `run.yaml` origin + stations + features → terrain and reference layers
 - **Accept:** the ruler label reads `SceneMeta.depthLabel`; borehole markers sit at `sensorElevM`; unverified features render dashed with "approximate" or not at all.
+- **As built:** the "16-bit `height.png`" is **rg16**: an 8-bit RGB PNG with v = R·256 + G (B = 0) spanning `elevMinM..elevMaxM`, because browsers truncate 16-bit PNGs to 8 bits in canvas and WebGL. `meta.json` documents the encoding, bounds (pixel centres, row 0 = north), source and attribution, plus checksums the browser checks so a lossy decode falls back loudly. Rebake with `uv run scripts/bake-dem.py` (`--self-test`, `--half-width-km`, `--size`, `--offline`). The "Terrain" kill switch (docs/03) is `FORCE_ABSTRACT_SLAB` in `scene/terrain/surface.ts`; `?terrain=slab` previews it.
 
 ### WEB-03 · P0 · Start ~9:00 PM — The reveal
 
@@ -138,6 +139,9 @@ The app was scaffolded with the latest create-next-app, which ships `apps/web/AG
 ### Strict, time, drawer
 
 - **STRICT:** B and C fade to 0.05 over 600 ms; halos appear on Tier A.
+  - *As built (WEB-04):* "shown" means drawn above the 0.05 background weight, so STRICT shows exactly `strictQualityCount` (Tier A) instances; B and C stay faintly on screen as context and aren't counted. The selector is derived from the renderer's own look table (`scene/filters/fade.ts`), so the count and the pixels can't drift.
+  - The public regional catalog steps back to 0.4 weight under STRICT (after the reveal only); a STRICT pressed before the reveal changes nothing on the start frame and applies when the reveal starts.
+  - Halos are ellipsoids with semi-axes hErrM (horizontal, drawn as a circle: the contract has no orientation) and vErrM × VE, drawn as a soft rim in `strictHalo`. Overlapping halos combine with MAX blending, so a dense cluster is never brighter than one rim, and the rim stays below the bloom threshold: halos never glow and never outshine their events. Tier A events without a 68% error get no halo (count logged).
 - **TIME:** events with `t ≤ tNow` visible; recent ones glow and decay. Show only what the data supports; never add a narrative the data doesn't show.
 - **Drawer:** normalized traces, P ticks in `pickP` blue, S ticks in `pickS` orange on a 150 ms stagger, faint predicted-arrival lines. Header: "{nStations} stations agreed", tier, rms, ±h / ±v error, matched public id if any. All numbers from the data.
 
