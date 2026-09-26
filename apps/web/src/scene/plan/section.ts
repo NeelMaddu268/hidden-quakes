@@ -1,6 +1,7 @@
 // The plan view's depth section (WEB-07): every event projected onto grid east versus depth below the
 // site surface, drawn with Canvas2D. Model arrays are built once per bundle; drawing reads the shared
-// reveal clock, eased filter look and selection each frame and allocates nothing of its own. Depth is
+// reveal clock, time-mode "now" (WEB-06), eased filter look and selection each frame and allocates
+// nothing of its own. Depth is
 // always (refSurfaceElevM − elevM) / 1000 (sectionPoints); published catalog depths are never read.
 
 import { tierStyle } from "@hq/visualization";
@@ -9,6 +10,7 @@ import { candidateRevealUniform } from "../events/driver";
 import { buildCandidateInstances, TIER_INDEX } from "../events/instances";
 import type { FilterLook } from "../filters/fade";
 import { candidatePickable, publicSelectTargets } from "../picking/selection";
+import { shownAt, TIME_ALL } from "../time/clock";
 import type { CatalogEvent, SceneMeta, SeismicEvent, Station } from "../types";
 import { sectionFit, sectionPoints, type SectionFit, type SectionPoints } from "./geometry";
 
@@ -22,6 +24,9 @@ export interface SectionModel {
   candidateIds: readonly string[];
   candidateTier: Float32Array;
   candidateAppearAt: Float32Array;
+  /** Origin times, seconds since windowStart (time mode), for candidates and public events. */
+  candidateTime: Float32Array;
+  publicTime: Float32Array;
   /** For each public event, the candidate id clicking it selects (its matched event), or null. */
   publicTargets: readonly (string | null)[];
   indexById: ReadonlyMap<string, number>;
@@ -37,6 +42,8 @@ export function buildSectionModel(
 ): SectionModel {
   const points = sectionPoints(events, catalog, stations, scene);
   const inst = buildCandidateInstances(events, 1, windowStart);
+  const publicTime = new Float32Array(catalog.length);
+  for (let i = 0; i < catalog.length; i++) publicTime[i] = catalog[i].t - windowStart;
   const borehole = new Uint8Array(stations.length);
   for (let i = 0; i < stations.length; i++) borehole[i] = stations[i].kind === "borehole" ? 1 : 0;
   return {
@@ -48,6 +55,8 @@ export function buildSectionModel(
     candidateIds: inst.ids,
     candidateTier: inst.tiers,
     candidateAppearAt: inst.appearAt,
+    candidateTime: inst.times,
+    publicTime,
     publicTargets: publicSelectTargets(catalog, inst.indexById),
     indexById: inst.indexById,
   };
@@ -140,6 +149,8 @@ export interface SectionState {
   phase: DemoPhase;
   filter: EventFilter;
   revealElapsedS: number;
+  /** Time mode "now", seconds since windowStart (scene/time/clock → timeNowRel); TIME_ALL when off. */
+  timeNowRel: number;
   look: Readonly<FilterLook>;
   selectedIndex: number;
 }
@@ -250,13 +261,16 @@ export function drawSection(
     }
   }
 
-  // Public regional catalog: visible from the first frame at the layer's eased weight.
+  // Public regional catalog: visible from the first frame at the layer's eased weight (in time mode,
+  // once tNow reaches each event).
   const pub = model.publicEvents.xy;
+  const now = state.timeNowRel;
   if (state.look.publicLayer > 0.001) {
     ctx.globalAlpha = state.look.publicLayer;
     ctx.fillStyle = style.publicDot;
     ctx.beginPath();
     for (let i = 0; i < pub.length; i += 2) {
+      if (!shownAt(model.publicTime[i >> 1], now)) continue;
       const x = ox + pub[i] * k;
       const y = oy + pub[i + 1] * k;
       ctx.moveTo(x + SECTION_GLYPH.publicPx, y);
@@ -279,6 +293,7 @@ export function drawSection(
       ctx.beginPath();
       for (let i = 0; i < count; i++) {
         if (model.candidateTier[i] !== tier || model.candidateAppearAt[i] > clock) continue;
+        if (!shownAt(model.candidateTime[i], now)) continue;
         const x = ox + cand[i * 2] * k;
         const y = oy + cand[i * 2 + 1] * k;
         ctx.moveTo(x + r, y);
@@ -295,6 +310,7 @@ export function drawSection(
       ctx.beginPath();
       for (let i = 0; i < count; i++) {
         if (model.candidateTier[i] !== TIER_INDEX.A || model.candidateAppearAt[i] > clock) continue;
+        if (!shownAt(model.candidateTime[i], now)) continue;
         const x = ox + cand[i * 2] * k;
         const y = oy + cand[i * 2 + 1] * k;
         const hPx = err[i * 2] * k;
@@ -314,7 +330,7 @@ export function drawSection(
 
   // Selection ring (the drawer's event), shown whenever the event itself is drawn.
   const s = state.selectedIndex;
-  if (s >= 0 && s < count && state.phase !== "public" && model.candidateAppearAt[s] <= clock) {
+  if (s >= 0 && s < count && state.phase !== "public" && model.candidateAppearAt[s] <= clock && shownAt(model.candidateTime[s], now)) {
     ctx.globalAlpha = 1;
     ctx.strokeStyle = style.halo;
     ctx.lineWidth = 1.5;
@@ -337,17 +353,19 @@ export function drawSection(
 export function sectionHit(
   model: SectionModel,
   plot: SectionPlot,
-  state: Pick<SectionState, "phase" | "filter" | "revealElapsedS">,
+  state: Pick<SectionState, "phase" | "filter" | "revealElapsedS"> & Partial<Pick<SectionState, "timeNowRel">>,
   x: number,
   y: number,
   thresholdPx: number,
 ): string | null {
   const { ox, oy, k } = plot;
+  const now = state.timeNowRel ?? TIME_ALL;
   let best: string | null = null;
   let bestD = thresholdPx * thresholdPx;
   const cand = model.candidates.xy;
   for (let i = 0; i < model.candidateIds.length; i++) {
     if (!candidatePickable(state.phase, state.filter, state.revealElapsedS, model.candidateTier[i], model.candidateAppearAt[i])) continue;
+    if (!shownAt(model.candidateTime[i], now)) continue;
     const dx = ox + cand[i * 2] * k - x;
     const dy = oy + cand[i * 2 + 1] * k - y;
     const d = dx * dx + dy * dy;
@@ -359,7 +377,7 @@ export function sectionHit(
   const pub = model.publicEvents.xy;
   for (let i = 0; i < model.publicTargets.length; i++) {
     const target = model.publicTargets[i];
-    if (!target) continue;
+    if (!target || !shownAt(model.publicTime[i], now)) continue;
     const dx = ox + pub[i * 2] * k - x;
     const dy = oy + pub[i * 2 + 1] * k - y;
     const d = dx * dx + dy * dy;

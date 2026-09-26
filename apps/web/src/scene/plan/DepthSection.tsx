@@ -88,10 +88,11 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
       phase: "public",
       filter: "public",
       revealElapsedS: 0,
+      timeNowRel: sceneFx.timeNowRel,
       look: { ...sceneFx.filterLook },
       selectedIndex: -1,
     };
-    const last = { phase: "", filter: "", clock: NaN, a: NaN, b: NaN, c: NaN, cand: NaN, pub: NaN, halos: NaN, sel: NaN };
+    const last = { phase: "", filter: "", clock: NaN, now: NaN, a: NaN, b: NaN, c: NaN, cand: NaN, pub: NaN, halos: NaN, sel: NaN };
     let raf = 0;
     const frame = () => {
       raf = requestAnimationFrame(frame);
@@ -101,15 +102,18 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
       const clock = sceneFx.revealElapsedS;
       if (
         s.phase === last.phase && s.filter === last.filter && clock === last.clock && sel === last.sel &&
+        sceneFx.timeNowRel === last.now &&
         look.tierA === last.a && look.tierB === last.b && look.tierC === last.c &&
         look.candidates === last.cand && look.publicLayer === last.pub && look.halos === last.halos
       ) return;
       last.phase = s.phase; last.filter = s.filter; last.clock = clock; last.sel = sel;
+      last.now = sceneFx.timeNowRel;
       last.a = look.tierA; last.b = look.tierB; last.c = look.tierC;
       last.cand = look.candidates; last.pub = look.publicLayer; last.halos = look.halos;
       state.phase = s.phase;
       state.filter = s.filter;
       state.revealElapsedS = clock;
+      state.timeNowRel = sceneFx.timeNowRel;
       state.selectedIndex = sel;
       Object.assign(state.look, look);
       drawSection(ctx, model, plot, state, style, cssW, cssH);
@@ -126,7 +130,7 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
     const id = sectionHit(
       model,
       plot,
-      { phase: s.phase, filter: s.filter, revealElapsedS: sceneFx.revealElapsedS },
+      { phase: s.phase, filter: s.filter, revealElapsedS: sceneFx.revealElapsedS, timeNowRel: sceneFx.timeNowRel },
       e.clientX - box.left,
       e.clientY - box.top,
       HIT_PX,

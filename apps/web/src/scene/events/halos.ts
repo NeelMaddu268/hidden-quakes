@@ -16,6 +16,8 @@ export interface HaloInstances {
   matrices: Float32Array;
   /** The event's appearance time on the reveal clock, so a halo never shows before its event. */
   appearAt: Float32Array;
+  /** The event's origin time, seconds since windowStart (time mode hides a halo with its event). */
+  times: Float32Array;
 }
 
 /** Tier A events with both 68% errors present and positive. */
@@ -38,7 +40,7 @@ export function haloEligible(ev: Pick<SeismicEvent, "tier" | "quality">): boolea
  */
 export function buildHaloInstances(
   events: readonly Pick<SeismicEvent, "tier" | "quality">[],
-  candidates: Pick<EventInstances, "positions" | "appearAt" | "count">,
+  candidates: Pick<EventInstances, "positions" | "appearAt" | "times" | "count">,
   verticalExaggeration: number,
 ): HaloInstances {
   if (events.length !== candidates.count) {
@@ -53,6 +55,7 @@ export function buildHaloInstances(
   const eventIndex = new Int32Array(count);
   const matrices = new Float32Array(count * 16);
   const appearAt = new Float32Array(count);
+  const times = new Float32Array(count);
   let j = 0;
   for (let i = 0; i < events.length; i++) {
     const ev = events[i];
@@ -69,7 +72,8 @@ export function buildHaloInstances(
     matrices[m + 14] = candidates.positions[i * 3 + 2];
     eventIndex[j] = i;
     appearAt[j] = candidates.appearAt[i];
+    times[j] = candidates.times[i];
     j++;
   }
-  return { count, tierAWithoutHalo: tierA - count, eventIndex, matrices, appearAt };
+  return { count, tierAWithoutHalo: tierA - count, eventIndex, matrices, appearAt, times };
 }
