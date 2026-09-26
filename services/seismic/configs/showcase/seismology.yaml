@@ -294,15 +294,17 @@ statics:
     farStationM: 15000.0
   sigmaFlagRatio: 1.5
 
-# Pick harvest (LOC-10, hq.locate.harvest). Off: the showcase run of record was made without it.
-# On, every locate that applies station statics (stage locate pass 2, locate(statics=...) as the
-# validation reruns call it, the tier sweep) adds picks that are in no association event and lie
+# Pick harvest (LOC-10, hq.locate.harvest). Off: the showcase run of record was made without it,
+# and the lead did not adopt it for the showcase (docs/lanes/H2-seismology.md, LOC-10).
+# On, every locate that applies station statics (stage locate pass 2, selfConsistent's last
+# iteration, locate(statics=...) as the validation reruns call it, the tier sweep, and the grid1d
+# comparison when locator.method is grid3d) adds picks that are in no association event and lie
 # within windowS (s, per phase) of an event's predicted arrival at a station-phase the event has
 # no pick for, then relocates the events that gained picks once. A pick near the predicted
 # arrivals of two events, a slot with two candidates, and events with an untrusted location
 # (depthOnEdge, MAP on a volume face, truncated PDF) are skipped. The station terms never see
-# harvested picks. windowS must not exceed locator.outlier.floorS and minProb must not be below
-# associator.minPickProb (checked).
+# harvested picks. When enabled, windowS must not exceed locator.outlier.floorS and minProb must
+# not be below associator.minPickProb or any associator.sweep.minPickProb (checked).
 harvest:
   enabled: false
   windowS: {P: 0.10, S: 0.15}

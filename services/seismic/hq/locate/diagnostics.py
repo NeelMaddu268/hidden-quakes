@@ -1799,8 +1799,9 @@ def harvest_section(inputs: DiagnosticsInputs) -> list[str]:
          f"relocated once (`hq.locate.harvest`): {c['picks']} picks added, {c['picksUsed']} "
          f"used after the relocation. Skipped: {c['ambiguousPicks']} picks within the window "
          "of two or more "
-         f"events' predicted arrivals, {c['skippedUntrustedSlots']} slots of events whose "
-         "location is not trusted (depthOnEdge, MAP on a volume face, truncated PDF) and "
+         f"events' predicted arrivals, {c['skippedUntrustedSlots']} slots with a candidate in "
+         "events whose location is not trusted (depthOnEdge, MAP on a volume face, truncated "
+         "PDF) and "
          f"{c['skippedMultiCandidateSlots']} slots with two or more candidates. The station "
          "terms never use harvested picks."),
         "",
@@ -1848,9 +1849,10 @@ def harvest_section(inputs: DiagnosticsInputs) -> list[str]:
             f"{_f(np.median(sh[:, 1]))} m, p90 {_f(_q(sh[:, 1], 0.9))} m; median rmsS "
             f"{_f(np.median(sh[:, 2]), '.3f')} s before, {_f(np.median(sh[:, 3]), '.3f')} s "
             "after."), ""]
-    ref = inputs.statics.reference if inputs.statics is not None else None
-    if ref is not None and "afterNoHarvestHM" in ref.columns and len(ref):
-        summary = inputs.statics.offsets_summary() if inputs.statics is not None else {}
+    st = inputs.statics
+    ref = st.reference if st is not None else None
+    if st is not None and ref is not None and "afterNoHarvestHM" in ref.columns and len(ref):
+        summary = st.offsets_summary()
         gained = int(ref["assocId"].astype(str).isin(set(rep.before)).sum())
         lines += [
             (f"Held-out offsets of the {len(ref)} reference events from the public regional "
