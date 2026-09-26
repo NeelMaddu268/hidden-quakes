@@ -693,6 +693,16 @@ def test_stage_writes_tables_record_and_counts_sweep(
     assert points[0].candidates >= points[1].candidates  # minStations 4 keeps at least minStations 8
 
 
+@pytest.mark.smoke
+def test_stage_resolves_from_the_package_and_the_module() -> None:
+    """The stage registry imports ``hq.associate`` and calls its ``run(ctx)`` (docs/01)."""
+    import importlib
+
+    assert importlib.import_module("hq.associate").run is stage_run
+    assert importlib.import_module("hq.associate.run").run is stage_run
+    assert list(inspect.signature(stage_run).parameters) == ["ctx", "evaluate"]
+
+
 # --- throughput (not smoke: about a minute) ------------------------------------------------------
 
 

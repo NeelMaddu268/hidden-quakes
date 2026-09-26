@@ -3,7 +3,9 @@
 ``associate`` runs PyOcto 0.2.0 on the same 1D layer model as the locator and returns the
 ``assoc_events`` / ``assoc_picks`` frames. How: ``hq.associate.core`` (steps), ``tables`` (PyOcto's
 travel-time tables), ``frame`` (elevM/ENU <-> PyOcto's km frame), ``sweep``, and the stage in
-``hq.associate.run``.
+``hq.associate.run``. The stage function is also this package's ``run``, because the stage
+registry (docs/01, H4's ``hq.runs.STAGES``) resolves stage ``associate`` as ``hq.associate.run``
+the attribute; ``importlib.import_module("hq.associate.run").run`` is the same function.
 """
 
 from pathlib import Path
@@ -52,4 +54,7 @@ def associate(
     return result
 
 
-__all__ = ["AssocResult", "associate", "associate_detailed"]
+# Last, so the package attribute ``run`` is the stage function, not the submodule.
+from hq.associate.run import run
+
+__all__ = ["AssocResult", "associate", "associate_detailed", "run"]
