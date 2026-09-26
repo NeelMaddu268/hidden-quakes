@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FILTER_LOOK, type FilterLook } from "../filters/fade";
 import { appearTimeOf, TIMELINE } from "../reveal/timeline";
+import { TIME_ALL } from "../time/clock";
 import type { CatalogEvent, SeismicEvent, Station } from "../types";
 import {
   buildSectionModel,
@@ -67,7 +68,7 @@ const W = 480, H = 260;
 const plot = sectionPlot(model, W, H);
 
 function state(over: Partial<SectionState> = {}, look: FilterLook = { ...FILTER_LOOK.all }): SectionState {
-  return { phase: "revealed", filter: "all", revealElapsedS: TIMELINE.endS, look, selectedIndex: -1, ...over };
+  return { phase: "revealed", filter: "all", revealElapsedS: TIMELINE.endS, timeNowRel: TIME_ALL, look, selectedIndex: -1, ...over };
 }
 function draw(s: SectionState) {
   const ctx = new RecordingCtx();
