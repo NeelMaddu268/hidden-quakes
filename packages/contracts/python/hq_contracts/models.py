@@ -43,7 +43,7 @@ class Station(Model):
     location: str = ""
     latitude: float
     longitude: float
-    surfaceElevM: float  # StationXML station elevation (wellhead for boreholes)
+    surfaceElevM: float  # site ground surface at the sensor (DEM-checked; wellhead for boreholes)
     sensorDepthM: float  # StationXML channel depth; 0 for surface sensors
     sensorElevM: float  # surfaceElevM - sensorDepthM
     kind: Literal["surface", "borehole", "strong_motion"]

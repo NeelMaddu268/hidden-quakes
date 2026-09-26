@@ -31,7 +31,7 @@ class Station(BaseModel):
     location: str = ""
     latitude: float
     longitude: float
-    surfaceElevM: float           # StationXML station elevation (wellhead for boreholes)
+    surfaceElevM: float           # site ground surface at the sensor (DEM-checked; wellhead for boreholes)
     sensorDepthM: float           # StationXML channel depth; 0 for surface sensors
     sensorElevM: float            # surfaceElevM - sensorDepthM
     kind: Literal["surface", "borehole", "strong_motion"]
@@ -284,12 +284,14 @@ CONTRACT-01 also ships `packages/contracts/python/hq_contracts/io.py`:
 - `to_frame(models: list[BaseModel]) -> pd.DataFrame` and `from_frame(df, Model) -> list[Model]`
 - `write_table(df, path, model_name)` / `read_table(path) -> pd.DataFrame`: parquet with `schemaVersion` and `model` in the file metadata
 - **Flattening rule:** nested models become prefixed columns joined by `_` (`enu_e`, `quality_nStations`, `catalogMatch_dtS`). Lists stay list columns. `None` stays null. Times stay float64 epoch seconds. `dict`-typed fields (`Station.staticsS`, `SweepPoint.params`) are one JSON-text column, because a parquet struct can't hold a row-dependent key set; build frames with `to_frame` and read them with `from_frame` and you never see it.
+- **Dtype rule (CONTRACT-02, REQ-H2-3):** `to_frame` sets every column's dtype from the model annotation, so an empty table or an all-null column has the same type as a full one: `float` → `float64` (NaN for null), `int` → `int64` (`Int64` when optional or inside an optional nested model), `bool` → `bool` (`boolean` when optional), `str` / `Literal` / dict-as-JSON → `string`, lists → `object`. `dtypes_for(Model)` returns the map. Parquet then carries real Arrow types (`double`, `int64`, `bool`, `large_string`), never `null`. `Model` also sets `allow_inf_nan=False`, so a NaN in a required float fails at write time, not in the exporter.
 
 Every lane reads and writes run tables only through these helpers, so a column rename can't silently break a neighbor.
 
 | File in `runs/<runId>/` | Writer | Rows | Columns |
 | --- | --- | --- | --- |
 | `stations.parquet` | H1 | `Station` | model fields |
+| `inventory_report.json` | H1 | one entry per station considered | per-station elevation decision with its numbers, coverage, dropped triplets, skipped sites, flags; diagnostic, never read by another stage |
 | `gaps.parquet` | H1 | one per gap | `stationId, channel, gapStart, gapEnd` |
 | `picks.parquet` | H1 | `Pick` (PhaseNet) | model fields; `eventId` null |
 | `picks_stalta.parquet` | H1 | `Pick` (`picker="stalta"`) | model fields |
