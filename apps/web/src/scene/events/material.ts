@@ -9,7 +9,7 @@ export interface EventUniforms {
   uColor: IUniform<Color>;
   /** Base glyph radius in scene units (km) before tier scaling. */
   uSize: IUniform<number>;
-  /** Minimum on-screen radius in device pixels, so distant events never vanish. */
+  /** Minimum on-screen base radius in device pixels (before tier scaling; see GLYPH_FLOOR_PX). */
   uMinPx: IUniform<number>;
   /** Maximum on-screen radius in device pixels, so a close-up never fills the screen with quads. */
   uMaxPx: IUniform<number>;
@@ -27,6 +27,8 @@ export interface EventUniforms {
   uGlow: IUniform<number>;
 }
 
+/** Absolute smallest glyph radius in device pixels after tier scaling, so Tier C never shimmers out. */
+export const GLYPH_FLOOR_PX = 1.25;
 /** A popping instance starts at this multiple of its size and settles to 1. */
 export const POP_SCALE = 2.0;
 /** Extra brightness at the start of a pop (1.5 = 2.5× the settled intensity), decaying to 0. */
@@ -68,6 +70,7 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
     // Clamp the base size to [uMinPx, uMaxPx] on screen first, then scale by tier, so tier still reads
     // as size at every zoom.
     float radius = clamp(uSize, uMinPx / pxPerUnit, uMaxPx / pxPerUnit) * aScale;
+    radius = max(radius, ${GLYPH_FLOOR_PX.toFixed(3)} / pxPerUnit);
     // Hidden instances collapse to a point: no fragments, no overdraw.
     radius *= mix(${POP_SCALE.toFixed(3)}, 1.0, settle) * step(0.001, vAlpha);
 
@@ -110,6 +113,9 @@ export interface EventMaterialOptions {
 
 /** Fresh uniforms for one layer. The layer's ShaderMaterial keeps this object; frames write `.value`s. */
 export function createEventUniforms(opts: EventMaterialOptions): EventUniforms {
+  if (!(opts.minPx > 0 && opts.minPx <= opts.maxPx)) {
+    throw new Error(`event glyph pixel clamp needs 0 < minPx <= maxPx, got ${opts.minPx}..${opts.maxPx}`);
+  }
   return {
     uColor: { value: new Color(opts.color) }, // sRGB hex → linear working space
     uSize: { value: opts.size },

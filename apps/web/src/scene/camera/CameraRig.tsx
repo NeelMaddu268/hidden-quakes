@@ -41,6 +41,11 @@ export function CameraRig({ bounds }: { bounds: SceneBounds }) {
     aspect.current = aspectOf(width, height);
   }, [width, height]);
 
+  // A different default camera (e.g. an orthographic plan camera) must be framed afresh.
+  useLayoutEffect(() => {
+    framed.current = null;
+  }, [camera]);
+
   // New framing: snap to the current view's preset, but only when the framing really changed and the
   // demo is at its start (a refetch returning equal data never yanks the camera mid-orbit or mid-reveal).
   useLayoutEffect(() => {
