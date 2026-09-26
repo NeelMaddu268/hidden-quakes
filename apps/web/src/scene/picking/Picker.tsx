@@ -9,6 +9,7 @@ import { POP_SCALE } from "../events/material";
 import { LOOK } from "../look";
 import { sceneFx } from "../fx";
 import type { CatalogEvent } from "../types";
+import { shownAt } from "../time/clock";
 import { betterHit, isClick, pickNearest, PICK_THRESHOLD_PX, type PickHit, type PickQuery } from "./pick";
 import { candidatePickable, publicSelectTargets } from "./selection";
 
@@ -63,15 +64,18 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
       };
       const { phase, filter } = useDemo.getState();
       const elapsed = sceneFx.revealElapsedS;
+      const now = sceneFx.timeNowRel; // time mode: only events already shown at tNow (WEB-06)
       const cand = pickNearest(candidates.positions, {
         ...base,
         radius: (i) => sizeKm.candidate * candidates.scales[i],
-        visible: (i) => candidatePickable(phase, filter, elapsed, candidates.tiers[i], candidates.appearAt[i]),
+        visible: (i) =>
+          candidatePickable(phase, filter, elapsed, candidates.tiers[i], candidates.appearAt[i]) &&
+          shownAt(candidates.times[i], now),
       });
       const pub = pickNearest(publicEvents.positions, {
         ...base,
         radius: (i) => sizeKm.public * publicEvents.scales[i],
-        visible: (i) => publicTargets[i] !== null,
+        visible: (i) => publicTargets[i] !== null && shownAt(publicEvents.times[i], now),
       });
       const best: PickHit | null = pub && betterHit(pub, cand) ? pub : cand;
       if (!best) return null;

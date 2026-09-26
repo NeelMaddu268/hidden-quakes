@@ -38,18 +38,22 @@ import { Post } from "./post/Post";
 import { RevealDriver } from "./reveal/RevealDriver";
 import { References } from "./references";
 import { Terrain } from "./terrain";
+import { TimeDriver } from "./time/TimeDriver";
 import type { BundleState } from "./types";
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 
-/** Candidate (amber) layer: follows the reveal clock and the eased filter look (scene/filters). */
+/**
+ * Candidate (amber) layer: follows the reveal clock, the eased filter look (scene/filters) and time
+ * mode's "now" (scene/time).
+ */
 function driveCandidates(u: EventUniforms, indexById: ReadonlyMap<string, number>): void {
   const look = sceneFx.filterLook;
   u.uSelected.value = selectedInstanceIndex(useDemo.getState().selectedEventId, indexById);
   u.uRevealElapsed.value = candidateRevealUniform(useDemo.getState().phase, sceneFx.revealElapsedS);
   u.uTierOpacity.value.set(look.tierA, look.tierB, look.tierC);
   u.uLayerOpacity.value = look.candidates;
-
+  u.uTimeNow.value = sceneFx.timeNowRel;
 }
 
 /** Public-catalog (cool white) layer: on screen from the first frame; steps back under STRICT. */
@@ -57,6 +61,7 @@ function drivePublic(u: EventUniforms): void {
   u.uRevealElapsed.value = REVEALED_ELAPSED_S;
   u.uTierOpacity.value.set(1, 1, 1);
   u.uLayerOpacity.value = sceneFx.filterLook.publicLayer;
+  u.uTimeNow.value = sceneFx.timeNowRel;
 }
 
 /** Tier A ellipsoid halos: appear with their events, visible only under STRICT, and only in 3D views. */
@@ -64,12 +69,14 @@ function driveHalos(u: HaloUniforms): void {
   const s = useDemo.getState();
   u.uRevealElapsed.value = candidateRevealUniform(s.phase, sceneFx.revealElapsedS);
   u.uOpacity.value = s.view === "plan" ? 0 : sceneFx.filterLook.halos;
+  u.uTimeNow.value = sceneFx.timeNowRel;
 }
 
-/** Plan-view horizontal uncertainty rings: same reveal and STRICT rules as the 3D halos. */
+/** Plan-view horizontal uncertainty rings: same reveal, STRICT and time rules as the 3D halos. */
 function driveRings(u: RingUniforms): void {
   u.uRevealElapsed.value = candidateRevealUniform(useDemo.getState().phase, sceneFx.revealElapsedS);
   u.uOpacity.value = sceneFx.filterLook.halos;
+  u.uTimeNow.value = sceneFx.timeNowRel;
 }
 
 function BundleScene({ bundle }: { bundle: ReadyBundle }) {
@@ -124,6 +131,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
 
   return (
     <>
+      <TimeDriver windowStart={windowStart} windowEnd={meta.run.windowEnd} />
       <Terrain scene={meta.scene} bounds={bounds} />
       <References bundle={bundle} bounds={bounds} planView={view === "plan"} />
       <EventsLayer
