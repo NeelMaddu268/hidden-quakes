@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drawerWidthPx } from "../plan/layout";
+import { drawerWidthPx, sectionPanelRect } from "../plan/layout";
 import { SCRUBBER_LAYOUT, scrubberRect } from "./layout";
 
 type Rect = { left: number; top: number; width: number; height: number };
@@ -46,6 +46,16 @@ describe("scrubberRect", () => {
       for (const [name, region] of Object.entries(reserved(W, H))) expect(overlaps(rect, region), `overlaps ${name}`).toBe(false);
     });
   }
+
+  it("never overlaps the plan view's depth-section panel (both can be up at once)", () => {
+    for (const [W, H] of [[1280, 720], [1440, 900], [1920, 1080], [2560, 1440], [3840, 2160]]) {
+      const panel = sectionPanelRect(W, H);
+      for (const drawerOpen of [false, true]) {
+        const rect = scrubberRect(W, H, drawerOpen);
+        if (panel && rect) expect(overlaps(rect, panel), `${W}×${H} drawer ${drawerOpen}`).toBe(false);
+      }
+    }
+  });
 
   it("is centered on the viewport when the band allows", () => {
     const rect = scrubberRect(1920, 1080, false)!;
