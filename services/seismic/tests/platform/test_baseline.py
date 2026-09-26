@@ -235,7 +235,8 @@ def test_gain_only_when_it_holds_in_both_profiles(
     synthetic: SyntheticPicks, ctx: runs.RunContext
 ) -> None:
     cfg = ctx.config.validate.baseline
-    rows = run_rows(synthetic, stalta_picks(synthetic), ctx)
+    api = FakeSeismologyApi()
+    rows = run_rows(synthetic, stalta_picks(synthetic), ctx, api=api)
     gain = baseline_gain(rows, cfg)
     assert gain == m.BaselineGain(
         associationProfile="full", strictPhasenet=N_KEEP, strictStalta=N_KEEP // 2, gain=2.0
@@ -262,6 +263,10 @@ def test_gain_only_when_it_holds_in_both_profiles(
     assert baseline_gain(rows, cfg.model_copy(update={"comparableFraction": 1.0})) == gain
     # p_only for PhaseNet feeds P picks only; the toy associator sees the same events.
     assert by_key[("phasenet", "p_only")].candidates == by_key[("phasenet", "full")].candidates
+    # REQ-H2-7: the two p_only reruns used the associator overrides, the two full ones did not.
+    overridden = [c for c in api.cfgs_seen if c is not ctx.config.seismology]
+    assert len(api.cfgs_seen) == 4 and len(overridden) == 2
+    assert {(c.associator.nSPicks, c.associator.nPAndSPicks) for c in overridden} == {(0, 0)}
 
 
 def test_matching_strict_counts_give_no_gain_and_log_the_kill_switch(
