@@ -96,6 +96,11 @@ def _flatten(
             out[key] = None if value is None else json.dumps(value, sort_keys=True)
         elif isinstance(value, tuple):
             out[key] = list(value)
+        elif isinstance(value, list) and any(isinstance(v, BaseModel) for v in value):
+            raise TypeError(
+                f"{model.__name__}.{name}: lists of models can't be stored as a table column; "
+                "this model is JSON-only (docs/02 §2)"
+            )
         else:
             out[key] = value
 

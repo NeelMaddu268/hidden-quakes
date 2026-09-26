@@ -55,18 +55,19 @@
         }
       },
       "required": [
-        "runId",
-        "publicCatalogCount",
-        "recoveredCatalogCount",
-        "recall",
-        "unmatchedPublicIds",
-        "candidateCount",
-        "additionalCount",
         "additional",
-        "strictQualityCount",
-        "strictAdditionalCount",
+        "additionalCount",
+        "baseline",
+        "candidateCount",
+        "medianRmsS",
         "medianStations",
-        "medianRmsS"
+        "publicCatalogCount",
+        "recall",
+        "recoveredCatalogCount",
+        "runId",
+        "strictAdditionalCount",
+        "strictQualityCount",
+        "unmatchedPublicIds"
       ],
       "title": "AnalysisSummary",
       "type": "object"
@@ -93,9 +94,9 @@
       },
       "required": [
         "associationProfile",
+        "gain",
         "strictPhasenet",
-        "strictStalta",
-        "gain"
+        "strictStalta"
       ],
       "title": "BaselineGain",
       "type": "object"
@@ -134,13 +135,13 @@
         }
       },
       "required": [
-        "method",
         "associationProfile",
         "candidates",
-        "recoveredPublic",
-        "tiers",
         "medianRmsS",
-        "medianStations"
+        "medianStations",
+        "method",
+        "recoveredPublic",
+        "tiers"
       ],
       "title": "BaselineRow",
       "type": "object"
@@ -167,8 +168,9 @@
       },
       "required": [
         "mode",
-        "scene",
         "run",
+        "scene",
+        "schemaVersion",
         "summary"
       ],
       "title": "BundleMeta",
@@ -239,15 +241,18 @@
         }
       },
       "required": [
+        "depthDatum",
+        "depthKm",
+        "elevM",
+        "enu",
         "id",
-        "source",
-        "t",
         "latitude",
         "longitude",
-        "depthKm",
-        "depthDatum",
-        "elevM",
-        "enu"
+        "mag",
+        "magType",
+        "matchedEventId",
+        "source",
+        "t"
       ],
       "title": "CatalogEvent",
       "type": "object"
@@ -267,8 +272,8 @@
       },
       "required": [
         "catalogId",
-        "dtS",
-        "distM"
+        "distM",
+        "dtS"
       ],
       "title": "CatalogMatch",
       "type": "object"
@@ -407,7 +412,11 @@
         }
       },
       "required": [
+        "bSigma",
+        "bValue",
         "magBins",
+        "mcPublic",
+        "mcRecovered",
         "publicCum",
         "recoveredCum"
       ],
@@ -474,11 +483,11 @@
         }
       },
       "required": [
-        "updatedAt",
-        "windowS",
+        "events",
         "latencyS",
         "stationsOnline",
-        "events"
+        "updatedAt",
+        "windowS"
       ],
       "title": "LiveStatus",
       "type": "object"
@@ -541,17 +550,17 @@
         }
       },
       "required": [
+        "depthOnEdge",
+        "gapDeg",
+        "hErrM",
         "method",
-        "statics",
-        "nStations",
+        "minEpiDistM",
         "nP",
         "nS",
+        "nStations",
         "rmsS",
-        "gapDeg",
-        "minEpiDistM",
-        "hErrM",
-        "vErrM",
-        "depthOnEdge"
+        "statics",
+        "vErrM"
       ],
       "title": "LocationQuality",
       "type": "object"
@@ -573,9 +582,9 @@
         }
       },
       "required": [
-        "n",
+        "coefficients",
         "looMae",
-        "coefficients"
+        "n"
       ],
       "title": "MagCalibration",
       "type": "object"
@@ -602,8 +611,9 @@
         }
       },
       "required": [
-        "value",
-        "type"
+        "sigma",
+        "type",
+        "value"
       ],
       "title": "Magnitude",
       "type": "object"
@@ -628,10 +638,10 @@
         }
       },
       "required": [
-        "nShuffles",
-        "shiftRangeS",
         "meanChanceEvents",
         "meanChanceStrict",
+        "nShuffles",
+        "shiftRangeS",
         "stdChanceEvents"
       ],
       "title": "NullTest",
@@ -701,12 +711,15 @@
         }
       },
       "required": [
+        "eventId",
         "id",
-        "stationId",
         "phase",
-        "t",
+        "picker",
         "prob",
-        "picker"
+        "residualS",
+        "stationId",
+        "t",
+        "weight"
       ],
       "title": "Pick",
       "type": "object"
@@ -809,25 +822,26 @@
         }
       },
       "required": [
-        "id",
-        "mode",
+        "associator",
+        "bbox",
         "createdAt",
         "gitSha",
-        "windowStart",
-        "windowEnd",
-        "windowLabel",
-        "bbox",
-        "stationIds",
+        "id",
+        "isSynthetic",
+        "locator",
+        "matching",
+        "mode",
+        "picker",
         "pickerModel",
         "pickerWeights",
-        "softwareVersions",
         "runtimeS",
-        "picker",
-        "associator",
-        "velocityModel",
-        "locator",
+        "softwareVersions",
+        "stationIds",
         "tiering",
-        "matching"
+        "velocityModel",
+        "windowEnd",
+        "windowLabel",
+        "windowStart"
       ],
       "title": "ProcessingRun",
       "type": "object"
@@ -877,13 +891,16 @@
         }
       },
       "required": [
-        "runId",
+        "depthLabel",
+        "heroEventId",
+        "isSynthetic",
+        "originElevM",
         "originLat",
         "originLon",
-        "originElevM",
-        "refSurfaceElevM",
         "projection",
-        "depthLabel"
+        "refSurfaceElevM",
+        "runId",
+        "verticalExaggeration"
       ],
       "title": "SceneMeta",
       "type": "object"
@@ -967,20 +984,23 @@
         }
       },
       "required": [
+        "catalogMatch",
+        "depthKm",
+        "elevM",
+        "enu",
         "id",
-        "runId",
-        "t",
         "latitude",
         "longitude",
-        "elevM",
-        "depthKm",
-        "enu",
-        "quality",
-        "tier",
-        "tierReasons",
+        "magnitude",
         "meanPickProb",
+        "pickIds",
+        "quality",
         "revealOrder",
-        "pickIds"
+        "runId",
+        "source",
+        "t",
+        "tier",
+        "tierReasons"
       ],
       "title": "SeismicEvent",
       "type": "object"
@@ -1074,19 +1094,21 @@
         }
       },
       "required": [
+        "channels",
+        "enu",
         "id",
-        "network",
-        "station",
+        "kind",
         "latitude",
+        "location",
         "longitude",
-        "surfaceElevM",
+        "network",
+        "preprocessProfile",
+        "sampleRateHz",
         "sensorDepthM",
         "sensorElevM",
-        "kind",
-        "channels",
-        "sampleRateHz",
-        "enu",
-        "preprocessProfile",
+        "staticsS",
+        "station",
+        "surfaceElevM",
         "usedInRun"
       ],
       "title": "Station",
@@ -1110,8 +1132,8 @@
         }
       },
       "required": [
-        "params",
         "candidates",
+        "params",
         "recoveredPublic",
         "tierA"
       ],
@@ -1147,12 +1169,12 @@
         }
       },
       "required": [
-        "nEvents",
-        "pickSigmaS",
+        "medianDepthBiasM",
         "medianHErrM",
         "medianVErrM",
+        "nEvents",
         "p90VErrM",
-        "medianDepthBiasM"
+        "pickSigmaS"
       ],
       "title": "SyntheticTest",
       "type": "object"
@@ -1241,6 +1263,9 @@
       },
       "required": [
         "baseline",
+        "gr",
+        "magnitude",
+        "nullTest",
         "sweep",
         "synthetic"
       ],
@@ -1339,18 +1364,24 @@
         }
       },
       "required": [
-        "stationId",
         "channel",
-        "epiDistM",
-        "t0",
         "dt",
-        "samples"
+        "epiDistM",
+        "pickP",
+        "pickS",
+        "predP",
+        "predS",
+        "probP",
+        "probS",
+        "samples",
+        "stationId",
+        "t0"
       ],
       "title": "WaveformSnippet",
       "type": "object"
     }
   },
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "description": "Hidden Quakes contracts, schemaVersion 1.0",
   "properties": {
@@ -1392,14 +1423,14 @@
     }
   },
   "required": [
-    "meta",
-    "stations",
     "catalog",
     "events",
-    "features",
-    "validation",
     "evidence",
-    "live"
+    "features",
+    "live",
+    "meta",
+    "stations",
+    "validation"
   ],
   "title": "Bundle",
   "type": "object"
