@@ -1,6 +1,6 @@
 """Seismology lane config (``configs/showcase/seismology.yaml``). Unknown keys are an error."""
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Annotated
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -25,7 +25,7 @@ class Velocity3dConfig(BaseModel):
     @field_validator("cacheFile")
     @classmethod
     def _bare_file_name(cls, value: str) -> str:
-        if Path(value).name != value:
+        if PurePosixPath(value).name != value or PureWindowsPath(value).name != value:
             raise ValueError(f"cacheFile must be a bare file name, got {value!r}")
         return value
 
@@ -47,7 +47,9 @@ class VelocityConfig(BaseModel):
     @field_validator("layerFile")
     @classmethod
     def _relative(cls, value: Path) -> Path:
-        if value.is_absolute():
+        # Rooted on either OS ("/x", "\\x", "C:\\x", "C:x"). Path.is_absolute() alone misses "/x"
+        # on Windows (no drive), so check the POSIX and Windows forms explicitly.
+        if PurePosixPath(value).is_absolute() or PureWindowsPath(value).anchor:
             raise ValueError(f"layerFile must be relative to services/seismic, got {value}")
         return value
 
