@@ -247,6 +247,12 @@ def test_check_same_association_ignores_harvested_picks_but_not_a_regrouping() -
     check_same_association(pairs, links)
     with pytest.raises(ValueError, match="another association"):
         check_same_association(pairs, links.assign(assocId=["x0", "x1", "x1"]))  # p1 moved
+    # None of an event's located picks in any association event: not passed as all harvested.
+    regrouped = pd.DataFrame({"assocId": ["x0", "x0", "x1"], "pickId": ["q0", "q1", "p2"]})
+    with pytest.raises(ValueError, match="another association"):
+        check_same_association(pairs, regrouped)  # x0 now names other picks
+    with pytest.raises(ValueError, match="another association"):
+        check_same_association(pairs.assign(assocId=["x9", "x1"]), regrouped)  # x9 is gone
 
 
 # --- locating the LOC-02 test geometry with withheld picks (not smoke) --------------------------
