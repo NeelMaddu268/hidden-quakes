@@ -47,6 +47,7 @@ class SweepRow:
     candidates: int  # associated events at this point (before location)
     counts: dict[str, int]
     score: SweepScore | None  # None when no evaluator is wired
+    runtime_s: float = 0.0  # this point's wall time: PyOcto (when not cached), finish, evaluator
 
 
 def point_config(acfg: AssociatorConfig, params: dict[str, Any]) -> AssociatorConfig:
@@ -83,7 +84,9 @@ def run_sweep(
     if reuse is not None:
         raw_cache[(acfg.minPickProb, acfg.nSPicks)] = reuse
     runs = 0
-    for params in grid(acfg):
+    points = grid(acfg)
+    for i, params in enumerate(points, start=1):
+        point_started = time.perf_counter()
         cfg = point_config(acfg, params)
         key = (cfg.minPickProb, cfg.nSPicks)  # everything PyOcto sees that the sweep varies
         if key not in raw_cache:
@@ -91,14 +94,18 @@ def run_sweep(
             runs += 1
         result, counts = finish(raw_cache[key], cfg, setup)
         score = evaluate(result) if evaluate is not None else None
+        point_s = time.perf_counter() - point_started
         rows.append(SweepRow(params=params, candidates=len(result.events), counts=counts,
-                             score=score))
+                             score=score, runtime_s=point_s))
+        elapsed = time.perf_counter() - started
         log.info(
-            "associate sweep: minPickProb %s, nSPicks %d, minStations %d -> %d associated%s",
-            cfg.minPickProb, cfg.nSPicks, cfg.minStations, len(result.events),
+            "associate sweep %d/%d: minPickProb %s, nSPicks %d, minStations %d -> %d "
+            "associated%s; %.1f s, ETA %.0f s",
+            i, len(points), cfg.minPickProb, cfg.nSPicks, cfg.minStations, len(result.events),
             "" if score is None
             else f", {score.candidates} located candidate events, {score.recovered_public} "
             f"public recovered, {score.tier_a} Tier A",
+            point_s, elapsed / i * (len(points) - i),
         )
     log.info(
         "associate sweep: %d points, %d PyOcto runs in %.1f s",
