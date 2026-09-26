@@ -534,12 +534,14 @@ def test_seismology_config(cfg: SeismologyConfig) -> None:
     assert cfg.velocity.layer_path().is_file()
     assert cfg.velocity.model3d.url.endswith(cfg.velocity.model3d.cacheFile)
     raw = yaml.safe_load((SHOWCASE / "seismology.yaml").read_text(encoding="utf-8"))
-    with pytest.raises(pydantic.ValidationError, match="layerFile must be relative"):
-        VelocityConfig.model_validate({**raw["velocity"], "layerFile": "/abs/forge_1d.csv"})
+    for rooted in ("/abs/forge_1d.csv", "\\abs\\forge_1d.csv", "C:\\abs\\forge_1d.csv", "C:forge_1d.csv"):
+        with pytest.raises(pydantic.ValidationError, match="layerFile must be relative"):
+            VelocityConfig.model_validate({**raw["velocity"], "layerFile": rooted})
     with pytest.raises(pydantic.ValidationError, match="plausibleVsMPerS"):
         VelocityConfig.model_validate({**raw["velocity"], "plausibleVsMPerS": [5000.0, 100.0]})
-    with pytest.raises(pydantic.ValidationError, match="cacheFile must be a bare file name"):
-        Velocity3dConfig.model_validate({**raw["velocity"]["model3d"], "cacheFile": "a/b.nc"})
+    for nested in ("a/b.nc", "a\\b.nc"):
+        with pytest.raises(pydantic.ValidationError, match="cacheFile must be a bare file name"):
+            Velocity3dConfig.model_validate({**raw["velocity"]["model3d"], "cacheFile": nested})
     with pytest.raises(pydantic.ValidationError):
         cfg.velocity.layerFile = Path("other.csv")  # type: ignore[misc]
 
