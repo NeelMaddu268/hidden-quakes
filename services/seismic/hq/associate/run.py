@@ -6,8 +6,13 @@ Reads ``associator.picksTable`` (``known/picks.parquet`` or ``picks.parquet``) a
 candidate count of each (the configured point's PyOcto run is reused). ``sweep.parquet`` needs
 public recall and Tier A from locate, match and tier, so LOC-06's tier stage writes it with
 ``hq.associate.sweep.run_sweep`` and ``sweep_points``; this stage only removes a ``sweep.parquet``
-left by an earlier run, since it would describe another association. Outputs are written under
-``.part`` names and moved into place together.
+left by an earlier run, since it would describe another association. For the same reason it
+removes a ``matches.parquet`` and ``match_sensitivity.parquet`` left by an earlier match: they
+name events located from the old association, and stage locate takes a ``matches.parquet`` as
+the signal for its reference-statics pass 2 (LOC-05), which then refuses the new association.
+Without them the next locate runs pass 1, as a fresh run does. Every removal is logged and
+recorded (``removedStale``). Outputs are written under ``.part`` names and moved into place
+together.
 
 The package attribute ``hq.associate.run`` is this module's ``run`` function (the stage registry
 resolves it there), so ``import hq.associate.run as m`` binds the function, not this module; reach
@@ -26,6 +31,7 @@ from hq_contracts.io import read_table, write_table
 from hq.associate.core import finish, prepared, record, run_pyocto
 from hq.associate.result import EVENTS_MODEL, PICKS_MODEL
 from hq.associate.sweep import grid, run_sweep
+from hq.locate.provenance import stage_provenance
 
 if TYPE_CHECKING:
     from hq.runs import RunContext
@@ -37,6 +43,8 @@ STATIONS_TABLE = "stations.parquet"
 EVENTS_TABLE = "assoc_events.parquet"
 PICKS_TABLE = "assoc_picks.parquet"
 SWEEP_TABLE = "sweep.parquet"
+# Outputs of stage match on events located from an earlier association (see the docstring).
+MATCH_TABLES = ("matches.parquet", "match_sensitivity.parquet")
 PART_SUFFIX = ".part"
 INPUT_MODELS = {"picks": "Pick", "stations": "Station"}  # docs/02 §2 model names
 
@@ -82,13 +90,18 @@ def run(ctx: "RunContext") -> None:
     finally:
         for path in outputs:
             _part(path).unlink(missing_ok=True)
-    sweep_path = ctx.path(SWEEP_TABLE)
-    if sweep_path.exists():
-        sweep_path.unlink()
-        log.warning("associate: removed %s from an earlier association (LOC-06 rewrites it)",
-                    sweep_path)
+    removed = []
+    for name in (SWEEP_TABLE, *MATCH_TABLES):
+        path = ctx.path(name)
+        if path.exists():
+            path.unlink()
+            removed.append(name)
+            log.warning("associate: removed %s from an earlier association (%s rewrites it)",
+                        path, "LOC-06's stage tier" if name == SWEEP_TABLE else "stage match")
 
     params["input"] = {"picksTable": acfg.picksTable, "stationsTable": STATIONS_TABLE}
+    params["provenance"] = stage_provenance()
+    params["removedStale"] = removed
     params["sweep"] = {
         "enabled": acfg.sweep.enabled,
         "grid": grid(acfg) if acfg.sweep.enabled else [],

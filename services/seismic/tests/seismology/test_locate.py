@@ -233,6 +233,7 @@ def test_zero_events_give_typed_zero_row_tables(
     assert len(rows) == 7 and all("Can't conclude" in r for r in rows[2:])
 
 
+@pytest.mark.smoke  # DoD 6 in CI: docs/02 locate() on STA/LTA-labelled picks
 def test_stalta_labelled_picks_locate_unchanged(
     world: dict[str, Any], located: LocateDetails, loc02: Any
 ) -> None:
@@ -267,9 +268,11 @@ def test_inputs_fail_loudly(world: dict[str, Any]) -> None:
 # --- stage and diagnostics ----------------------------------------------------------------------
 
 
-def _stage(world: dict[str, Any], make_ctx: Any) -> Any:
+def _stage(world: dict[str, Any], make_ctx: Any,
+           earlier: list[dict[str, Any]] | None = None) -> Any:
     # The session's LOC-02 table cache, so the stage loads the tables instead of solving them.
     ctx = dataclasses.replace(make_ctx(world["run"], world["cfg"]), cache_dir=world["cache"])
+    ctx.records.extend(earlier or [])  # records an earlier stage run left in run.json
     picks = world["picks"]
     write_table(picks, ctx.path(world["cfg"].associator.picksTable), "Pick")
     write_table(world["stations"], ctx.path("stations.parquet"), "Station")
@@ -279,10 +282,16 @@ def _stage(world: dict[str, Any], make_ctx: Any) -> Any:
     return ctx
 
 
+@pytest.mark.smoke  # DoD 1-2 in CI: the stage's synthetic test, synthetic.json, every row
 def test_stage_writes_tables_report_and_record(
     world: dict[str, Any], located: LocateDetails, make_ctx: Any
 ) -> None:
-    ctx = _stage(world, make_ctx)
+    # A grid3d locate ran in this run dir before: its 3D-only keys must not survive in run.json.
+    earlier = [{"stage": "locate", "runtime_s": 1.0, "counts": {}, "field": "velocityModel",
+                "params": {"name": "3D model", "crs": "EPSG:32612", "fallback1d": {}}},
+               {"stage": "locate", "runtime_s": 1.0, "counts": {}, "field": None,
+                "params": {"method": "grid3d", "tables3d": {"stations3d": []}, "old": 1}}]
+    ctx = _stage(world, make_ctx, earlier)
     models = {"events_located.parquet": "LocatedEvent", "arrivals.parquet": "Arrival",
               "statics.parquet": "StationStatic", "locate_flags.parquet": "LocateFlags"}
     for name, model in models.items():
@@ -291,11 +300,21 @@ def test_stage_writes_tables_report_and_record(
     ev = read_table(ctx.path("events_located.parquet"))
     pd.testing.assert_series_equal(ev["elevM"], located.result.events["elevM"])
     assert not list(ctx.run_dir.glob("*.part"))
-    assert [r["field"] for r in ctx.records] == ["velocityModel", None]
-    velocity, locator = ctx.records
+    assert [r["field"] for r in ctx.records] == ["velocityModel", None] * 2
+    velocity, locator = ctx.records[2:]
     assert velocity["params"]["name"] == located.velocity_model["name"]
+    # The earlier record's keys this one lacks become None (a method switch leaves none stale).
+    assert velocity["params"]["crs"] is None and velocity["params"]["fallback1d"] is None
+    assert locator["params"]["old"] is None and locator["params"]["tables3d"] is None
+    assert ctx.read_run().velocityModel["layers"] == located.velocity_model["layers"]
     assert locator["counts"]["events"] == len(EVENTS)
     assert locator["params"]["method"] == "grid1d" and "diagnostics" in locator["params"]
+    cfg = world["cfg"]
+    assert locator["params"]["tableConfig"] == {  # every table / model knob, verbatim
+        "velocity": cfg.velocity.model_dump(mode="json"),
+        "grids": cfg.grids.model_dump(mode="json"),
+        "grid3d": cfg.grid3d.model_dump(mode="json"),
+    }
 
     # synthetic.json: the docs/02 SyntheticTest, from the run's used stations and pick stats.
     synthetic = SyntheticTest.model_validate_json(ctx.path("synthetic.json").read_text("utf-8"))
@@ -326,6 +345,7 @@ def test_stage_writes_tables_report_and_record(
     assert rows[1][4].startswith("Not the cause")  # boreholes carry their depths
     assert rows[2][4].startswith("Not the cause")  # the datum check recovers the event
     assert "No known public event was compared" in rows[2][4]
+    assert "known/windows.json (H1's known-event windows) is not in the run dir" in rows[2][4]
     # Row 5 counts every associated pick: the planted P outlier sits in the 'surface' profile.
     assert "P surface: " in rows[5][3] and "dropped by the outlier pass" in rows[5][3]
     assert "catalog.parquet is not in the run dir" in report
@@ -371,6 +391,7 @@ def test_catalog_comparison_and_row_seven_at_catalog_hypocentres(
     assert "every compared event with a stated horizontal uncertainty (2 of 2) lies within" in report
     row2 = next(line for line in report.splitlines() if line.startswith("| 2 |"))
     assert "Independent check" in row2 and "2 of 2 within the catalog's stated depth" in row2
+    assert "2 of 2 within the catalog's stated horizontal error" in row2
     row7 = next(line for line in report.splitlines() if line.startswith("| 7 |"))
     assert "hypocentre fixed at the public regional catalog's for the 2 compared" in row7
     assert "Lateral structure" not in row7  # truth hypocentres: noise-level residuals only
@@ -540,3 +561,17 @@ def test_locate_applies_a_fixed_statics_table(world: dict[str, Any], located: Lo
     with pytest.raises(ValueError, match="null staticS"):
         locate(*args, run_id=RUN_ID, cache_dir=world["cache"],
                statics=table.assign(staticS=[0.05, None]))
+
+
+@pytest.mark.smoke
+def test_catalog_uncertainties_read_the_preferred_origins(comcat_quakeml: Path) -> None:
+    """The stated errors diagnostics.md compares offsets with (LOC-04 'within catalog
+    uncertainty'): preferred origin's horizontal and depth uncertainty, in metres."""
+    from hq.locate.diagnostics import catalog_uncertainties
+
+    got = catalog_uncertainties(comcat_quakeml).set_index("id")
+    assert got.to_dict("index") == {
+        "uu80155936": {"horizontalErrorM": 240.0, "depthErrorM": 250.0},
+        "uu80155911": {"horizontalErrorM": 290.0, "depthErrorM": 440.0},
+        "uu80155571": {"horizontalErrorM": 290.0, "depthErrorM": 240.0},
+    }

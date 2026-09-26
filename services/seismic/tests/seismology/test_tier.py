@@ -560,7 +560,7 @@ def catalog_for(events: pd.DataFrame, matches: pd.DataFrame) -> tuple[pd.DataFra
     return catalog, out
 
 
-def write_run(ctx: Any, *, flags: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+def write_run(ctx: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
     events, matches, _ = seeded_world()
     catalog, matches = catalog_for(events, matches)
     final = assign_tiers(events, matches, ctx.config.seismology).events
@@ -571,10 +571,15 @@ def write_run(ctx: Any, *, flags: bool = True) -> tuple[pd.DataFrame, pd.DataFra
     write_table(catalog, ctx.path("catalog.parquet"), "CatalogEvent")
     write_table(arrivals, ctx.path("arrivals.parquet"), "Arrival")
     write_table(picks, ctx.path(ctx.config.seismology.associator.picksTable), "Pick")
-    if flags:
-        write_table(pd.DataFrame({"eventId": events["id"], "mapOnVolumeTop": False}),
-                    ctx.path("locate_flags.parquet"), "LocateFlags")
+    write_table(pd.DataFrame({"eventId": events["id"], "mapOnVolumeTop": False}),
+                ctx.path("locate_flags.parquet"), "LocateFlags")
     return events, matches
+
+
+def tier_record(ctx: Any) -> dict[str, Any]:
+    """The stage's ProcessingRun.tiering record (it also records the magnitude status)."""
+    (rec,) = [r for r in ctx.records if r["field"] is None]
+    return rec
 
 
 @pytest.mark.smoke
@@ -585,15 +590,22 @@ def test_stage_writes_final_tables_and_record(
     ctx = make_ctx(run, cfg)
     events, _ = write_run(ctx)
     ctx.path("sweep.parquet").write_bytes(b"from an earlier tier run")
+    ctx.path("magnitude.json").write_text('{"n": 23}', encoding="utf-8")  # an earlier MAG-01 run
     stage.run(ctx)
     final = read_models(ctx.path("events.parquet"), SeismicEvent)
     assert [e.id for e in final] == list(events["id"])
+    assert all(e.magnitude is None for e in final)
     picks = read_models(ctx.path("event_picks.parquet"), Pick)
     assert len(picks) == sum(len(e.pickIds) for e in final)
     assert not ctx.path("sweep.parquet").exists()
+    # No calibration outlives the magnitudes it wrote; its run record is replaced too.
+    assert not ctx.path("magnitude.json").exists()
+    (mag,) = [r for r in ctx.records if r["field"] == "matching"]
+    assert mag["stage"] == "tier" and mag["params"]["magnitude"]["removedMagnitudeJson"]
+    assert "stage magnitude" in mag["params"]["magnitude"]["status"]
     assert not list(ctx.run_dir.glob("*.part"))
-    (rec,) = ctx.records
-    assert rec["stage"] == "tier"
+    rec = tier_record(ctx)
+    assert rec["stage"] == "tier" and rec["params"]["removedMagnitudeJson"]
     counts, params = rec["counts"], rec["params"]
     assert counts["events"] == len(events) == counts["tierA"] + counts["tierB"] + counts["tierC"]
     assert counts["additional"] == N_UNMATCHED and counts["matched"] == N_MATCHED
@@ -605,6 +617,18 @@ def test_stage_writes_final_tables_and_record(
     assert params["input"]["stations"] == "stations.parquet"
     assert params["sweep"] == {"enabled": False, "removedEarlierSweep": True}
     assert params["config"]["quantiles"] == {"A": 0.25, "B": 0.0}
+    assert params["input"]["flags"] == "locate_flags.parquet"
+    # The code this stage ran with (run.json's gitSha / softwareVersions date from run creation).
+    prov = params["provenance"]
+    assert prov["gitSha"] and prov["softwareVersions"]["python"] and "pandas" in prov[
+        "softwareVersions"]
+    # Stage locate writes locate_flags.parquet with events_located: without it the stage fails
+    # (assign_tiers keeps the no-flags fallback for the docs/02 three-argument call only).
+    ctx.path("locate_flags.parquet").unlink()
+    ctx.path("events.parquet").unlink()
+    with pytest.raises(TierError, match="locate_flags.parquet is absent"):
+        stage.run(ctx)
+    assert not ctx.path("events.parquet").exists()
 
 
 def test_stage_checks_depth_against_the_run_section(
@@ -613,10 +637,10 @@ def test_stage_checks_depth_against_the_run_section(
     stage = importlib.import_module("hq.tier.run")
     tol_m = cfg.tiering.consistencyTolM
     close = make_ctx(run.model_copy(update={"refSurfaceElevM": REF + 0.5 * tol_m}), cfg)
-    write_run(close, flags=False)
+    write_run(close)
     stage.run(close)  # within tiering.consistencyTolM: round-off from another writer passes
     other = make_ctx(run.model_copy(update={"refSurfaceElevM": REF + 10.0}), cfg)
-    write_run(other, flags=False)
+    write_run(other)
     with pytest.raises(TierError, match="depthKm"):
         stage.run(other)
 
@@ -627,7 +651,7 @@ def test_stage_refuses_matches_written_for_other_locations(
 ) -> None:
     stage = importlib.import_module("hq.tier.run")
     ctx = make_ctx(run, cfg)
-    events, matches = write_run(ctx, flags=False)
+    events, matches = write_run(ctx)
     catalog = read_table(ctx.path("catalog.parquet"))
     tol_m = cfg.tiering.consistencyTolM
     stage.check_matches_current(events, matches, catalog, tol_m)  # as matched: passes
@@ -712,18 +736,6 @@ def test_sweep_counts_tier_a_with_the_configured_runs_bars(
     assert from_frame(frame, SweepPoint) == points
 
 
-@pytest.mark.smoke
-def test_sweep_without_loc04_names_it() -> None:
-    locate_pkg = importlib.import_module("hq.locate")
-    if hasattr(locate_pkg, "locate_detailed"):
-        pytest.skip("LOC-04 is merged: the real sweep driver is importable")
-    from hq.tier.sweep import real_pipeline
-
-    with pytest.raises(TierError, match="LOC-04"):
-        real_pipeline(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None,  # type: ignore[arg-type]
-                      None, run_id="x", cache_dir=Path("."), statics={})  # type: ignore[arg-type]
-
-
 def test_stage_writes_sweep_parquet_when_enabled(
     make_ctx: Any, run: RunSection, cfg: SeismologyConfig,
     monkeypatch: pytest.MonkeyPatch,
@@ -754,7 +766,7 @@ def test_stage_writes_sweep_parquet_when_enabled(
     monkeypatch.setattr("hq.tier.sweep.score_sweep", fake_score)
     stage.run(ctx)
     assert read_models(ctx.path("sweep.parquet"), SweepPoint)[0].tierA == 1
-    (rec,) = ctx.records
+    rec = tier_record(ctx)
     assert rec["counts"]["sweepPoints"] == 1 and rec["params"]["sweep"]["enabled"]
     assert seen[0].to_record() == rec["params"]["thresholds"]
     # Sweep points are located with the run's statics.parquet.
