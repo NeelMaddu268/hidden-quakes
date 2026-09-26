@@ -382,7 +382,7 @@ def test_broken_import_inside_a_stage_is_a_real_error(
     real_import = runs.importlib.import_module
 
     def broken_import(name: str, package: str | None = None) -> types.ModuleType:
-        if name == "hq.pick":  # as if hq/pick/__init__.py itself did `import torch_xyz`
+        if name in ("hq.pick", "hq.pick.run"):  # as if hq/pick/run.py did `import torch_xyz`
             raise ModuleNotFoundError("No module named 'torch_xyz'", name="torch_xyz")
         return real_import(name, package)
 
@@ -523,7 +523,7 @@ def test_cli_run_and_stage_with_a_fake_pick(
         calls.append(ctx.run_id)
         ctx.record("pick", runtime_s=0.1, counts={"picks": 1})
 
-    install_module(monkeypatch, "hq.pick", run=fake_pick)
+    install_module(monkeypatch, "hq.pick.run", run=fake_pick)
     data = tmp_path / "data-ok"
     assert cli.main(["run", str(config_dir), "--data-dir", str(data), "--stages", "pick"]) == 0
     run_id = capsys.readouterr().out.strip()

@@ -122,6 +122,11 @@ class AvailabilityCheck(_Section):
     # some channels. "used": usedInRun stays true with coverage null, and SEIS-05's measured gaps
     # decide. "unused": the station leaves the run. "error": the stage stops.
     onMissing: Literal["error", "unused", "used"]
+    # Refines onMissing="used" for a station whose rate probes (stations.rateCheck) also got no
+    # data at any offset. "unused": it leaves the run, so it can't inflate geometry-dependent work
+    # such as H2's synthetic depth test. "used": SEIS-05's download decides. Use "used" for short
+    # windows (Live's last 2 h fits one probe, so one 5 s gap would decide).
+    onMissingNoProbeData: Literal["unused", "used"]
 
 
 class RateCheck(_Section):
@@ -280,6 +285,33 @@ PreprocessProfile = Annotated[
 ]
 
 
+class ChunkConfig(_Section):
+    """Hour-scale tiling of a picking window (``hq.preprocess.chunks``), shared by both pickers.
+
+    ``[t0, t1)`` is cut into keep intervals on multiples of ``lengthS`` since the epoch. Each
+    is read with ``overlapS`` extra real seconds on both sides and preprocessed on its own, and
+    a picker keeps only the picks inside its keep interval. ``edgeProbeS`` extends every read a
+    little further so a real data edge can be told apart from the chunk's own cut.
+    """
+
+    lengthS: float = Field(gt=0.0)  # keep interval length, real seconds
+    overlapS: float = Field(gt=0.0)  # extra real seconds read before and after each keep interval
+    minOverlapS: float = Field(gt=0.0)  # floor for overlapS (edge effects must stay outside keep)
+    edgeProbeS: float = Field(gt=0.0)  # must exceed one input sample interval (checked per trace)
+
+    @model_validator(mode="after")
+    def _check(self) -> "ChunkConfig":
+        if self.overlapS < self.minOverlapS:
+            raise ValueError(
+                f"chunks.overlapS {self.overlapS} is below chunks.minOverlapS {self.minOverlapS}"
+            )
+        if self.edgeProbeS >= self.overlapS:
+            raise ValueError(
+                f"chunks.edgeProbeS {self.edgeProbeS} must be below overlapS {self.overlapS}"
+            )
+        return self
+
+
 class PreprocessConfig(_Section):
     """Per-sensor-type preprocessing profiles that turn raw counts into 100 Hz model input."""
 
@@ -294,6 +326,7 @@ class PreprocessConfig(_Section):
     componentRename: dict[str, str]
     modelComponents: str = Field(min_length=1)
     profiles: dict[str, PreprocessProfile] = Field(min_length=1)
+    chunks: ChunkConfig
 
     @model_validator(mode="after")
     def _check(self) -> "PreprocessConfig":
@@ -412,6 +445,24 @@ class PickerABConfig(_Section):
     checkB: CheckBConfig
 
 
+class PickerRunConfig(_Section):
+    """Full-window picking (``hq.pick.run``, SEIS-06): how the station tasks are executed.
+
+    The picks depend on the chunking (``preprocess.chunks``), the weights and the thresholds.
+    ``workers`` and the finish order do not change them (results are assembled in station order);
+    ``torchThreadsPerWorker`` gave identical picks at 1, 3 and 12 threads when checked, which torch
+    does not guarantee in general. ``onCacheMiss`` decides whether a station with nothing cached stops the
+    stage or is reported with zero picks.
+    """
+
+    workers: int = Field(ge=1)  # station-parallel worker processes (spawned); 1 runs in-process
+    torchThreadsPerWorker: int = Field(ge=1)  # torch intra-op threads in each worker
+    # A usedInRun station with no cached file at all (manifest-only "nodata" stations count as
+    # cached). "error": the stage stops before any picking and names every such station.
+    # "report": the station gets zero picks and says why in pick_report.json.
+    onCacheMiss: Literal["error", "report"]
+
+
 class PickerConfig(_Section):
     """PhaseNet weights, thresholds and gap-edge handling."""
 
@@ -424,12 +475,15 @@ class PickerConfig(_Section):
     weightsByProfile: dict[str, str]
     pThreshold: float = Field(gt=0.0, le=1.0)
     sThreshold: float = Field(gt=0.0, le=1.0)
-    gapEdgeS: float = Field(ge=0.0)  # real s; picks this close to a block edge are dropped
+    # Real s. The A/B drops picks this close to a block edge; the full-window run (hq.pick.run)
+    # drops picks this close to a raw data edge (a gap, or where the cached data stops).
+    gapEdgeS: float = Field(ge=0.0)
     batchSize: int = Field(ge=1)
     torchThreads: int = Field(ge=1)
     seed: int
     seisbench: SeisbenchArgs
     ab: PickerABConfig
+    run: PickerRunConfig
 
     @model_validator(mode="after")
     def _check(self) -> "PickerConfig":
@@ -450,8 +504,117 @@ class PickerConfig(_Section):
 # --- SEIS-07: STA/LTA baseline ----------------------------------------------------------------------
 
 
+def _strictly_increasing(name: str, values: tuple[float, ...]) -> None:
+    if list(values) != sorted(set(values)):
+        raise ValueError(f"{name} must be strictly increasing, got {values}")
+
+
+class BaselinePhase(_Section):
+    """Recursive STA/LTA windows for one phase, in REAL seconds (also for time-stretched input)."""
+
+    components: str = Field(min_length=1)  # model component letters, e.g. "Z" or "NE"
+    staS: float = Field(gt=0.0)
+    ltaS: float = Field(gt=0.0)
+    warmupS: float = Field(gt=0.0)  # CF is zeroed this long after every segment start
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselinePhase":
+        if len(set(self.components)) != len(self.components):
+            raise ValueError(f"components has duplicates: {self.components!r}")
+        if self.staS >= self.ltaS:
+            raise ValueError(f"staS {self.staS} must be below ltaS {self.ltaS}")
+        if self.warmupS < self.ltaS:
+            raise ValueError(f"warmupS {self.warmupS} must be at least ltaS {self.ltaS}")
+        return self
+
+
+class BaselineBandpass(_Section):
+    """Causal Butterworth bandpass applied before the STA/LTA, in real Hz."""
+
+    lowHz: float = Field(gt=0.0)
+    highHz: float = Field(gt=0.0)
+    corners: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselineBandpass":
+        if self.lowHz >= self.highHz:
+            raise ValueError(f"lowHz {self.lowHz} must be below highHz {self.highHz}")
+        return self
+
+
+class BaselineThresholds(_Section):
+    """STA/LTA trigger on/off levels (``trigger_onset`` thres1/thres2) for P and S."""
+
+    pOn: float = Field(gt=0.0)
+    pOff: float = Field(gt=0.0)
+    sOn: float = Field(gt=0.0)
+    sOff: float = Field(gt=0.0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselineThresholds":
+        if self.pOff >= self.pOn or self.sOff >= self.sOn:
+            raise ValueError(f"off thresholds must be below on thresholds: {self}")
+        return self
+
+
+class BaselineSweep(_Section):
+    """Grid pOn x sOn x offLevels; each off level is used for both phases at that grid point."""
+
+    pOn: tuple[float, ...] = Field(min_length=1)
+    sOn: tuple[float, ...] = Field(min_length=1)
+    offLevels: tuple[float, ...] = Field(min_length=1)
+    scoreWithH2: bool  # score every grid point through H2's associate..assign_tiers, once merged
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselineSweep":
+        for name in ("pOn", "sOn", "offLevels"):
+            _strictly_increasing(f"sweep.{name}", getattr(self, name))
+        if self.offLevels[0] <= 0.0:
+            raise ValueError(f"sweep.offLevels must be positive, got {self.offLevels}")
+        if self.offLevels[-1] >= min(self.pOn[0], self.sOn[0]):
+            raise ValueError("every sweep.offLevels value must be below every sweep on level")
+        return self
+
+
 class BaselineConfig(_Section):
-    """Classical recursive STA/LTA picker and its threshold sweep."""
+    """Classical recursive STA/LTA picker and its threshold sweep (``hq.baseline``).
+
+    The gap-edge distance is not here: the baseline uses ``picker.gapEdgeS``, the same number
+    PhaseNet's full-window stage passes to ``hq.preprocess.chunks.pick_is_kept``.
+    """
+
+    prob: float = Field(ge=0.0, le=1.0)  # Pick.prob of every trigger; see signal.yaml
+    minSegmentMarginS: float = Field(ge=0.0)  # segments shorter than warmupS + this are skipped
+    maxWorkers: int = Field(ge=1)  # stations processed in parallel (threads); 1 = inline
+    settleLtaMultiple: float = Field(gt=0.0)  # overlapS must hold this many ltaS before a keep
+    prefilter: dict[str, BaselineBandpass] = Field(min_length=1)  # per preprocess profile
+    p: BaselinePhase
+    s: BaselinePhase
+    pHorizontalTolS: float = Field(ge=0.0)  # per horizontal: a trigger on this near a P is the P
+    minSMinusPS: float = Field(ge=0.0)  # S is the first horizontal trigger in
+    maxSMinusPS: float = Field(gt=0.0)  # [tP + minSMinusPS, tP + maxSMinusPS]
+    chosen: BaselineThresholds  # thresholds of picks_stalta.parquet; must be a sweep grid point
+    sweep: BaselineSweep
+
+    @model_validator(mode="after")
+    def _check(self) -> "BaselineConfig":
+        if self.minSMinusPS >= self.maxSMinusPS:
+            raise ValueError(
+                f"minSMinusPS {self.minSMinusPS} must be below maxSMinusPS {self.maxSMinusPS}"
+            )
+        shared = set(self.p.components) & set(self.s.components)
+        if shared:
+            raise ValueError(f"p and s components overlap: {sorted(shared)}")
+        c, sw = self.chosen, self.sweep
+        on_grid = (
+            c.pOff == c.sOff and c.pOn in sw.pOn and c.sOn in sw.sOn and c.pOff in sw.offLevels
+        )
+        if not on_grid:
+            raise ValueError(
+                f"chosen {c.model_dump()} is not a sweep grid point: needs pOn in sweep.pOn, "
+                "sOn in sweep.sOn and pOff == sOff in sweep.offLevels"
+            )
+        return self
 
 
 class SignalConfig(_Section):
