@@ -4,6 +4,13 @@
 
 import { colors, fonts, motion } from "@hq/visualization";
 
+/** Record-section columns: station + channel, distance, trace track. */
+const RECORD_COLUMNS = "90px 58px minmax(0, 1fr)";
+
+/** SVG viewBox of the two figures (plan view, depth section). */
+export const FIGURE_W = 260;
+export const FIGURE_H = 150;
+
 /** Drawer width: 40% of the viewport, kept readable on small and very large screens. */
 export const DRAWER_WIDTH_CSS = "clamp(420px, 40vw, 720px)";
 
@@ -27,9 +34,9 @@ export const DRAWER_CSS = `
 .hqd-label {
   color: ${colors.textDim}; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
 }
-.hqd-section { padding: 14px 20px; border-top: 1px solid ${colors.contour}; }
+.hqd-section { padding: 12px 20px; border-top: 1px solid ${colors.contour}; }
 
-.hqd-head { padding: 16px 20px 14px; }
+.hqd-head { padding: 12px 20px 12px; }
 .hqd-topline { display: flex; align-items: center; gap: 10px; min-height: 28px; }
 .hqd-id { color: ${colors.textDim}; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hqd-synth {
@@ -44,7 +51,7 @@ export const DRAWER_CSS = `
 }
 .hqd-close:hover { color: ${colors.text}; border-color: ${colors.contour}; }
 .hqd-close:focus-visible { outline: 1px solid ${colors.textDim}; outline-offset: 1px; }
-.hqd-title { margin: 6px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.hqd-title { margin: 4px 0 0; font-size: 21px; font-weight: 600; letter-spacing: -0.01em; }
 .hqd-tierline { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
 .hqd-tier {
   font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 3px;
@@ -53,13 +60,13 @@ export const DRAWER_CSS = `
 .hqd-tier[data-tier="A"] { border-color: ${colors.strictHalo}; color: ${colors.strictHalo}; }
 .hqd-reasons { color: ${colors.textDim}; font-size: 11px; }
 .hqd-reasons span + span::before { content: " · "; }
-.hqd-origin { display: grid; grid-template-columns: 76px 1fr; gap: 2px 8px; margin-top: 12px; font-size: 12.5px; }
+.hqd-origin { display: grid; grid-template-columns: 76px 1fr; gap: 1px 8px; margin-top: 10px; font-size: 12.5px; }
 .hqd-stats {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); gap: 10px 12px;
-  margin-top: 12px; padding-top: 12px; border-top: 1px solid ${colors.contour};
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); gap: 8px 10px;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid ${colors.contour};
 }
 .hqd-stat { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.hqd-stat-value { font-size: 13.5px; white-space: nowrap; }
+.hqd-stat-value { font-size: 12.5px; white-space: nowrap; }
 .hqd-extra { display: grid; grid-template-columns: 76px 1fr; gap: 4px 8px; margin-top: 10px; font-size: 12.5px; }
 .hqd-note { margin-top: 8px; color: ${colors.textDim}; font-size: 11.5px; }
 
@@ -72,16 +79,15 @@ export const DRAWER_CSS = `
 .hqd-legend i.pred { width: 0; border-left: 1px dashed ${colors.textDim}; }
 
 .hqd-record {
-  --hqd-cols: 92px 50px minmax(0, 1fr);
-  display: grid; grid-template-columns: var(--hqd-cols); grid-auto-rows: minmax(16px, 1fr);
-  height: clamp(180px, 36vh, 420px); margin: 10px 0 0; padding: 0; list-style: none; position: relative;
+  display: grid; grid-template-columns: ${RECORD_COLUMNS}; grid-auto-rows: minmax(12px, 1fr);
+  height: clamp(160px, 29vh, 420px); margin: 8px 0 0; padding: 0; list-style: none; position: relative;
 }
 .hqd-row { display: contents; }
 .hqd-sta, .hqd-dist {
   align-self: center; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .hqd-sta { grid-column: 1; color: ${colors.text}; }
-.hqd-dist { grid-column: 2; color: ${colors.textDim}; text-align: right; padding-right: 10px; }
+.hqd-dist { grid-column: 2; color: ${colors.textDim}; text-align: right; padding-right: 8px; }
 .hqd-track { position: relative; grid-column: 3; min-height: 0; }
 .hqd-track svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .hqd-trace { fill: none; stroke: ${colors.text}; stroke-opacity: 0.72; stroke-width: 1; stroke-linejoin: round; }
@@ -97,19 +103,19 @@ export const DRAWER_CSS = `
 .hqd-pick.p { background: ${colors.pickP}; }
 .hqd-pick.s { background: ${colors.pickS}; }
 @keyframes hqd-pick-in { from { opacity: 0; transform: scaleY(0.15); } to { opacity: 1; transform: none; } }
-.hqd-axis { display: grid; grid-template-columns: 92px 50px minmax(0, 1fr); height: 18px; margin-top: 4px; }
+.hqd-axis { display: grid; grid-template-columns: ${RECORD_COLUMNS}; height: 16px; margin-top: 3px; }
 .hqd-axis-track { grid-column: 3; position: relative; font-size: 10.5px; color: ${colors.textDim}; }
 .hqd-axis-track span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap; }
-.hqd-axis-title { text-align: right; color: ${colors.textDim}; font-size: 11px; margin-top: 2px; }
+.hqd-axis-title { text-align: right; color: ${colors.textDim}; font-size: 10.5px; margin-top: 1px; }
 .hqd-placeholder { grid-column: 1 / -1; border-top: 1px solid ${colors.contour}; opacity: 0.6; }
 .hqd-status { grid-column: 1 / -1; align-self: center; justify-self: center; color: ${colors.textDim}; font-size: 12px; }
 .hqd-error { color: ${colors.textDim}; font-size: 12px; margin-top: 10px; }
 .hqd-error b { color: ${colors.alert}; font-weight: 600; }
 
 .hqd-figs { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.hqd-fig svg { display: block; width: 100%; height: auto; margin-top: 6px; overflow: visible; }
+.hqd-fig svg { display: block; width: 100%; height: auto; margin-top: 4px; overflow: visible; }
 .hqd-fig-caption { color: ${colors.textDim}; font-size: 10.5px; margin-top: 4px; }
-.hqd-fig-empty { aspect-ratio: 260 / 190; margin-top: 6px; border: 1px dashed ${colors.contour}; border-radius: 3px; }
+.hqd-fig-empty { aspect-ratio: ${FIGURE_W} / ${FIGURE_H}; margin-top: 4px; border: 1px dashed ${colors.contour}; border-radius: 3px; }
 .hqd-svg-text { font-family: ${fonts.mono}; font-variant-numeric: tabular-nums; font-size: 10px; fill: ${colors.textDim}; }
 
 @media (prefers-reduced-motion: reduce) {

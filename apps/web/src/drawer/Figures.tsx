@@ -3,11 +3,12 @@ import { useMemo } from "react";
 import type { BundleMeta, SeismicEvent, Station } from "../scene/types";
 import { fmtFixed, fmtLength, isNum } from "./format";
 import { depthGeometry, depthKmOfElev, eventDepthPoint, mapGeometry, type Box } from "./geometry";
+import { FIGURE_H, FIGURE_W } from "./styles";
 
-const MAP_BOX: Box = { width: 260, height: 190, pad: 18 };
+const MAP_BOX: Box = { width: FIGURE_W, height: FIGURE_H, pad: 16 };
 /** The depth section leaves room on the left for depth labels. */
 const DEPTH_LABEL_W = 26;
-const DEPTH_BOX: Box = { width: 260 - DEPTH_LABEL_W, height: 190, pad: 14 };
+const DEPTH_BOX: Box = { width: FIGURE_W - DEPTH_LABEL_W, height: FIGURE_H, pad: 12 };
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
 
@@ -37,12 +38,12 @@ export function Figures({ event, meta, stations, missing }: FiguresProps) {
         <div className="hqd-fig">
           <span className="hqd-label">Plan view</span>
           {stations ? <MiniMap event={event} stations={stations} /> : <div className="hqd-fig-empty" />}
-          <div className="hqd-fig-caption">North up · lines join each station to the epicenter</div>
+          <div className="hqd-fig-caption">North up · station → epicenter lines</div>
         </div>
         <div className="hqd-fig">
-          <span className="hqd-label">Depth section</span>
+          <span className="hqd-label">Depth section · looking north</span>
           {stations ? <DepthSection event={event} meta={meta} stations={stations} /> : <div className="hqd-fig-empty" />}
-          <div className="hqd-fig-caption">{meta.scene.depthLabel} · looking north</div>
+          <div className="hqd-fig-caption">{meta.scene.depthLabel}</div>
         </div>
       </div>
       {missing.length > 0 && (

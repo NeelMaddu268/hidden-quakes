@@ -144,7 +144,7 @@ export function RecordSection({ status, evidence, message, originT }: RecordSect
         </div>
       ) : (
         <>
-          <ol className="hqd-record" data-status="ready" style={{ gridTemplateRows: `repeat(${n}, minmax(16px, 1fr))` }}>
+          <ol className="hqd-record" data-status="ready" style={{ gridTemplateRows: `repeat(${n}, minmax(0, 1fr))` }}>
             <li className="hqd-grid" aria-hidden="true">
               {axis.ticks.map((t) => (
                 <span key={t} className={t === 0 ? "zero" : undefined} style={{ left: `${markPercent(originT + t, originT, domain) ?? 0}%` }} />

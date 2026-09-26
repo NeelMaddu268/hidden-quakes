@@ -44,12 +44,8 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
     const onCancel = () => {
       down = null;
     };
-    const onUp = (e: PointerEvent) => {
-      const start = down;
-      down = null;
-      if (!start || e.pointerId !== start.id) return;
-      if (!isClick(start, { x: e.clientX, y: e.clientY, t: e.timeStamp })) return;
-
+    /** The candidate event a pointer at (clientX, clientY) would select, or null for empty space. */
+    const pickAt = (clientX: number, clientY: number): string | null => {
       const rect = el.getBoundingClientRect();
       camera.updateMatrixWorld();
       viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -57,12 +53,12 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
         viewProj: viewProj.elements,
         width: rect.width,
         height: rect.height,
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
+        x: clientX - rect.left,
+        y: clientY - rect.top,
         thresholdPx: PICK_THRESHOLD_PX,
         focalPx: (camera.projectionMatrix.elements[5] * rect.height) / 2,
       };
-      const { phase, filter, select } = useDemo.getState();
+      const { phase, filter } = useDemo.getState();
       const elapsed = sceneFx.revealElapsedS;
       const cand = pickNearest(candidates.positions, {
         ...base,
@@ -75,18 +71,51 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
         visible: (i) => publicTargets[i] !== null,
       });
       const best: PickHit | null = pub && betterHit(pub, cand) ? pub : cand;
-      if (!best) return; // empty space: keep the current selection
-      const id = best === pub ? publicTargets[best.index] : candidates.ids[best.index];
-      if (id) select(id);
+      if (!best) return null;
+      return best === pub ? publicTargets[best.index] : candidates.ids[best.index];
+    };
+
+    const onUp = (e: PointerEvent) => {
+      const start = down;
+      down = null;
+      if (!start || e.pointerId !== start.id) return;
+      if (!isClick(start, { x: e.clientX, y: e.clientY, t: e.timeStamp })) return;
+      const id = pickAt(e.clientX, e.clientY);
+      if (id) useDemo.getState().select(id); // empty space keeps the current selection
+    };
+
+    // Hover affordance: a pointer cursor over anything a click would select. At most one pick per
+    // animation frame, only while the pointer moves with no button held (orbiting keeps its cursor).
+    let hoverRaf = 0;
+    let hoverX = 0;
+    let hoverY = 0;
+    const onMove = (e: PointerEvent) => {
+      if (e.buttons !== 0 || e.pointerType === "touch") return;
+      hoverX = e.clientX;
+      hoverY = e.clientY;
+      if (hoverRaf) return;
+      hoverRaf = requestAnimationFrame(() => {
+        hoverRaf = 0;
+        el.style.cursor = pickAt(hoverX, hoverY) ? "pointer" : "";
+      });
+    };
+    const onLeave = () => {
+      el.style.cursor = "";
     };
 
     el.addEventListener("pointerdown", onDown);
     el.addEventListener("pointerup", onUp);
     el.addEventListener("pointercancel", onCancel);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerleave", onLeave);
     return () => {
+      cancelAnimationFrame(hoverRaf);
+      el.style.cursor = "";
       el.removeEventListener("pointerdown", onDown);
       el.removeEventListener("pointerup", onUp);
       el.removeEventListener("pointercancel", onCancel);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerleave", onLeave);
     };
   }, [gl, camera, candidates, publicEvents, publicTargets, sizeKm.candidate, sizeKm.public]);
 
