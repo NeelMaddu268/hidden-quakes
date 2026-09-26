@@ -163,6 +163,9 @@ Do the resampling yourself, before the model. Don't let a library default decide
 - A run whose inventory predates `stations.availability.onMissingNoProbeData` can differ from a rerun in `usedInRun` for a station that served no data, and in that station's `gaps.parquet` rows. Picks don't change.
 - Counts live in `stages.json`, because `ProcessingRun` has no counts field (`hq/runs.py`, `RunContext.record`); runtimes and params are in `run.json`.
 - The known-event sub-steps are not registered stages: each writes `known/<step>.record.json` instead of `run.json`.
+- **Known limitation:** a clean `hq run configs/showcase` does not rerun the known-event sub-steps (`known_windows` and `pick_known` aren't in the `hq.runs.STAGES` registry). The pipeline of record gets `known/` only when these are run by hand on the run after `catalog`, `download` and `pick`: `uv run python -m hq.ingest.windows --run-dir <run> --config-dir configs/showcase --cache-dir <cache>`, then `uv run python -m hq.pick.ab --run-dir <run> --config-dir configs/showcase --cache-dir <cache>`. Nothing downstream reads `known/`: it is Check B and weight-A/B evidence only.
+- The inventory stage sets `ProcessingRun.stationIds` (sorted `usedInRun` ids) through `RunContext.update_run`. Runs made before SEIS-08, including `20260926-0210-a04c611`, have `stationIds: []`.
+- STA/LTA thresholds (SEIS-07, final): scored on the showcase run's statics scale (REQ-H1-5 option (a): H2's `locate(statics=)`, the run's own tier bars) on the busiest 6 h block. Tier A is 0 at all 15 coordinate-search points (pOn 3–12, sOn 3–12, off 1.0–2.0), so `baseline.chosen` stays at pOn 5 / sOn 5 / off 1.5. H4's full-day validate on the same scale agrees (STA/LTA 0 Tier A).
 - The smoke budget is measured on an idle machine. Under heavy load the torch and seisbench imports of the one real-seisbench test dominate the suite's time.
 
 ## Kickoff prompt
