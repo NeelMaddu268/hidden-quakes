@@ -12,7 +12,8 @@ import type { FilterLook } from "../filters/fade";
 import { candidatePickable, publicSelectTargets } from "../picking/selection";
 import { shownAt, TIME_ALL } from "../time/clock";
 import type { CatalogEvent, SceneMeta, SeismicEvent, Station } from "../types";
-import { sectionFit, sectionPoints, type SectionFit, type SectionPoints } from "./geometry";
+import { FRAME_TRIM } from "../camera/bounds";
+import { sectionPoints, sectionStructureFit, type SectionFit, type SectionPoints } from "./geometry";
 
 export interface SectionModel {
   candidates: SectionPoints;
@@ -85,32 +86,95 @@ export interface SectionPlot {
   /** Axis ticks, computed once per layout (labels are derived numbers, never copy). */
   depthTicks: readonly Tick[];
   eastTicks: readonly Tick[];
+  /** What the frame is fitted to: Tier A and B candidates, or every event when there are none. */
+  framedOn: "structure" | "all";
 }
 
 const fmtKm = (v: number) => `${+v.toFixed(3)}`;
 
-/** True-scale fit of the whole population (no trimming) into the plot area of a `width × height` canvas. */
+/** Tier A and B candidates' section points: what the plan camera frames (Canvas → framingPositions). */
+function framedPoints(model: SectionModel): Float64Array {
+  const xy = model.candidates.xy;
+  let n = 0;
+  for (let i = 0; i < model.candidateTier.length; i++) if (model.candidateTier[i] <= TIER_INDEX.B) n++;
+  const out = new Float64Array(n * 2);
+  let j = 0;
+  for (let i = 0; i < model.candidateTier.length; i++) {
+    if (model.candidateTier[i] > TIER_INDEX.B) continue;
+    out[j++] = xy[i * 2];
+    out[j++] = xy[i * 2 + 1];
+  }
+  return out;
+}
+
+/** Every candidate and public event's section point, for the fallback frame. */
+function allPoints(model: SectionModel): Float64Array {
+  const a = model.candidates.xy;
+  const b = model.publicEvents.xy;
+  const out = new Float64Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+/**
+ * True-scale layout of a `width × height` canvas framed on the structure (Tier A and B, as the plan
+ * camera frames it), from the site surface down (sectionStructureFit). Events outside the frame are
+ * clipped by drawSection and counted by sectionOutside. Ticks cover the whole visible plot area.
+ */
 export function sectionPlot(model: SectionModel, width: number, height: number): SectionPlot {
   const P = SECTION_PAD;
   const w = width - P.left - P.right;
   const h = height - P.top - P.bottom;
-  const fit = sectionFit([model.candidates, model.publicEvents], [model.sensors, model.wellheads], w, h, P.inner);
+  const framed = framedPoints(model);
+  const fit = sectionStructureFit(framed, allPoints(model), w, h, P.inner, FRAME_TRIM);
   const ox = P.left + fit.offsetX;
   const oy = P.top + fit.offsetY;
   const k = fit.pxPerKm;
+  const d0 = (P.top - oy) / k;
+  const d1 = (P.top + h - oy) / k;
+  const e0 = (P.left - ox) / k;
+  const e1 = (P.left + w - ox) / k;
   const depthTicks: Tick[] = [];
-  const dStep = niceStep(fit.maxDepth - fit.minDepth || 1, 5);
-  for (let d = Math.ceil(fit.minDepth / dStep) * dStep; d <= fit.maxDepth + 1e-9; d += dStep) {
-    const at = oy + d * k;
-    if (at >= P.top - 0.5 && at <= P.top + h + 0.5) depthTicks.push({ at, label: fmtKm(d) });
+  const dStep = niceStep(d1 - d0 || 1, 5);
+  for (let d = Math.ceil(d0 / dStep) * dStep; d <= d1 + 1e-9; d += dStep) {
+    depthTicks.push({ at: oy + d * k, label: fmtKm(Math.abs(d) < 1e-9 ? 0 : d) });
   }
   const eastTicks: Tick[] = [];
-  const eStep = niceStep(fit.maxEast - fit.minEast || 1, 6);
-  for (let e = Math.ceil(fit.minEast / eStep) * eStep; e <= fit.maxEast + 1e-9; e += eStep) {
-    const at = ox + e * k;
-    if (at >= P.left - 0.5 && at <= P.left + w + 0.5) eastTicks.push({ at, label: fmtKm(e) });
+  const eStep = niceStep(e1 - e0 || 1, 6);
+  for (let e = Math.ceil(e0 / eStep) * eStep; e <= e1 + 1e-9; e += eStep) {
+    eastTicks.push({ at: ox + e * k, label: fmtKm(Math.abs(e) < 1e-9 ? 0 : e) });
   }
-  return { fit, x0: P.left, y0: P.top, w, h, ox, oy, k, depthTicks, eastTicks };
+  return { fit, x0: P.left, y0: P.top, w, h, ox, oy, k, depthTicks, eastTicks, framedOn: framed.length >= 2 ? "structure" : "all" };
+}
+
+/**
+ * How many events fall outside the plot area (their centers), per layer: the panel states this count,
+ * so framing on the structure never hides events without saying so.
+ */
+export function sectionOutside(model: SectionModel, plot: SectionPlot): { candidates: number; publicEvents: number } {
+  const count = (xy: Float64Array) => {
+    let n = 0;
+    for (let i = 0; i < xy.length; i += 2) {
+      const x = plot.ox + xy[i] * plot.k;
+      const y = plot.oy + xy[i + 1] * plot.k;
+      if (x < plot.x0 || x > plot.x0 + plot.w || y < plot.y0 || y > plot.y0 + plot.h) n++;
+    }
+    return n;
+  };
+  return { candidates: count(model.candidates.xy), publicEvents: count(model.publicEvents.xy) };
+}
+
+/** The header's accounting line: events whose centers fall outside the framed plot (counted, never hidden). */
+export function outsideText(outside: { candidates: number; publicEvents: number } | null): string {
+  if (!outside) return "";
+  const { candidates, publicEvents } = outside;
+  if (candidates === 0 && publicEvents === 0) return "Every event is inside this frame";
+  const parts: string[] = [];
+  if (candidates > 0) parts.push(`${candidates.toLocaleString("en-US")} candidate`);
+  if (publicEvents > 0) parts.push(`${publicEvents.toLocaleString("en-US")} public`);
+  const n = candidates + publicEvents;
+  return `${parts.join(" and ")} event${n === 1 ? "" : "s"} outside this frame`;
 }
 
 /** A "nice" tick step (1, 2 or 5 × 10^n km) giving about `target` ticks over `span` km. */
@@ -143,6 +207,10 @@ export interface Ctx2D {
   stroke(): void;
   fillText(text: string, x: number, y: number): void;
   setLineDash(segments: number[]): void;
+  save(): void;
+  restore(): void;
+  rect(x: number, y: number, w: number, h: number): void;
+  clip(): void;
 }
 
 export interface SectionState {
@@ -219,6 +287,13 @@ export function drawSection(
     const t = plot.eastTicks[i];
     ctx.fillText(t.label, t.at, y0 + h + 6);
   }
+
+  // Everything below is data: clip it to the plot area (events outside the structure frame are counted
+  // by sectionOutside and stated in the panel, not drawn over the axes).
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y0, w, h);
+  ctx.clip();
 
   // Site surface (depth 0), dashed.
   ctx.setLineDash(DASH);
@@ -342,6 +417,7 @@ export function drawSection(
     ctx.stroke();
     ctx.lineWidth = 1;
   }
+  ctx.restore();
   ctx.globalAlpha = 1;
 }
 
