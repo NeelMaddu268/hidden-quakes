@@ -125,7 +125,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
   return (
     <>
       <Terrain scene={meta.scene} bounds={bounds} />
-      <References bundle={bundle} bounds={bounds} />
+      <References bundle={bundle} bounds={bounds} planView={view === "plan"} />
       <EventsLayer
         name="public-events"
         instances={publicEvents}
