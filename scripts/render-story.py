@@ -11,6 +11,8 @@ writes three files under ``--out`` (default ``data/story/``, gitignored):
     numbers.md          placeholder -> value -> source field, one row per placeholder
     pitch-filled.md     docs/demo/pitch-and-qa.md with the placeholders substituted
     devpost-filled.md   docs/demo/devpost.md with the placeholders substituted
+    video-shot-list-filled.md
+                        docs/demo/video-shot-list.md (the pitch's placeholders) substituted
 
 It never edits the docs in the repo. Substituted text is one of:
 
@@ -36,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -50,12 +53,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_DEMO = REPO_ROOT / "docs" / "demo"
 PITCH_DOC = DOCS_DEMO / "pitch-and-qa.md"
 DEVPOST_DOC = DOCS_DEMO / "devpost.md"
+SHOTS_DOC = DOCS_DEMO / "video-shot-list.md"  # the pitch's placeholders, spoken over the video
 DEFAULT_OUT = REPO_ROOT / "data" / "story"
+DEPLOY_DOC = REPO_ROOT / "docs" / "deploy.md"
+PUBLIC_LINK_RE = re.compile(r"\*\*Public link: <(https://[^>\s]+)>\*\*")
 
 NUMBERS_MD = "numbers.md"
 PITCH_FILLED_MD = "pitch-filled.md"
 DEVPOST_FILLED_MD = "devpost-filled.md"
-OUTPUT_FILES = (NUMBERS_MD, PITCH_FILLED_MD, DEVPOST_FILLED_MD)
+SHOTS_FILLED_MD = "video-shot-list-filled.md"
+OUTPUT_FILES = (NUMBERS_MD, PITCH_FILLED_MD, DEVPOST_FILLED_MD, SHOTS_FILLED_MD)
 
 SYNTHETIC_BANNER = (
     "# SYNTHETIC BUNDLE, NOT FOR SUBMISSION\n"
@@ -173,14 +180,17 @@ class Resolved:
 Resolver = Callable[[Bundle], Resolved]
 
 
-def fmt(value: Any) -> str:
+def fmt(value: Any, decimals: int | None = None) -> str:
     """Deterministic, human-readable number formatting: integers plain, floats to at most four
-    decimals with trailing zeros dropped."""
+    decimals with trailing zeros dropped, or to exactly ``decimals`` when a doc quotes a field
+    rounded (the magnitude errors, approved at two decimals)."""
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
+        if decimals is not None:
+            return f"{value:.{decimals}f}"
         if value.is_integer():
             return str(int(value))
         return f"{value:.4f}".rstrip("0").rstrip(".")
@@ -220,22 +230,49 @@ def _condition_not_met(source: str, gate: str) -> Resolved:
     )
 
 
-def meta_field(path: str) -> Resolver:
+def meta_field(path: str, *, decimals: int | None = None) -> Resolver:
     def resolve(bundle: Bundle) -> Resolved:
         value, source = _lookup(bundle, META_JSON, path)
         if value is None:
             return _not_available(bundle, META_JSON, source)
-        return Resolved(fmt(value), source, STATUS_VALUE)
+        return Resolved(fmt(value, decimals), source, STATUS_VALUE)
 
     return resolve
 
 
-def validation_field(path: str) -> Resolver:
+def validation_field(path: str, *, decimals: int | None = None) -> Resolver:
     def resolve(bundle: Bundle) -> Resolved:
         value, source = _lookup(bundle, VALIDATION_JSON, path)
         if value is None:
             return _not_available(bundle, VALIDATION_JSON, source)
-        return Resolved(fmt(value), source, STATUS_VALUE)
+        return Resolved(fmt(value, decimals), source, STATUS_VALUE)
+
+    return resolve
+
+
+def none_strict_scrambles() -> Resolver:
+    """The null test's shuffle count, for the clause "none of the chance events reached the
+    strict tier in any of the N scrambles". The clause is true only when ``meanChanceStrict``
+    is exactly zero (a mean of zero over N shuffles means every shuffle had zero), so any other
+    value marks the clause for omission; a missing null test omits it like the sentence."""
+
+    source = f"{VALIDATION_JSON} → nullTest.nShuffles"
+    gate = f"{VALIDATION_JSON} → nullTest.meanChanceStrict == 0"
+    note = f" (only with {gate}: the none-at-the-strict-tier clause)"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        strict, strict_source = _lookup(bundle, VALIDATION_JSON, "nullTest.meanChanceStrict")
+        n, _ = _lookup(bundle, VALIDATION_JSON, "nullTest.nShuffles")
+        if strict is None or n is None:
+            r = _condition_not_met(source, f"{VALIDATION_JSON} → nullTest")
+            return Resolved(r.text, source + note, r.status)
+        if strict != 0:
+            return Resolved(
+                f"[condition not met: {strict_source} is not zero; omit this clause]",
+                source + note,
+                STATUS_CONDITION,
+            )
+        return Resolved(fmt(n), source + note, STATUS_VALUE)
 
     return resolve
 
@@ -257,6 +294,48 @@ def gated(gate_file: str, gate_path: str, inner: Resolver, *, sentence: str) -> 
     return resolve
 
 
+def deployed_url() -> Resolver:
+    """The public link, read from ``docs/deploy.md`` ("Public link: <https://...>") so the
+    Devpost carries the one URL the deploy doc names and never a team-internal alias."""
+
+    def resolve(bundle: Bundle) -> Resolved:
+        source = "docs/deploy.md → Public link"
+        text = DEPLOY_DOC.read_text(encoding="utf-8") if DEPLOY_DOC.is_file() else ""
+        match = PUBLIC_LINK_RE.search(text)
+        if match is None:
+            return Resolved(
+                "[not available: docs/deploy.md names no public link]", source, STATUS_NOT_AVAILABLE
+            )
+        return Resolved(match.group(1), source, STATUS_VALUE)
+
+    return resolve
+
+
+def repo_url() -> Resolver:
+    """The GitHub repository URL from this checkout's ``origin`` remote (https form, no
+    ``.git``); read by hand when there is no remote."""
+
+    def resolve(bundle: Bundle) -> Resolved:
+        source = "git remote origin (https form)"
+        try:
+            raw = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "config", "--get", "remote.origin.url"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+        except OSError:
+            raw = ""
+        if not raw:
+            return Resolved("[manual: the GitHub repository URL]", source, STATUS_MANUAL)
+        url = re.sub(r"^git@github\.com:", "https://github.com/", raw)
+        url = re.sub(r"^ssh://git@github\.com/", "https://github.com/", url)
+        url = url.removesuffix(".git")
+        return Resolved(url, source, STATUS_VALUE)
+
+    return resolve
+
+
 def manual(where: str) -> Resolver:
     def resolve(bundle: Bundle) -> Resolved:
         return Resolved(f"[manual: {where}]", where, STATUS_MANUAL)
@@ -273,11 +352,11 @@ def literal(what: str) -> Resolver:
     return resolve
 
 
-def baseline_strict(method: str) -> Resolver:
+def baseline_field(method: str, path: str, *, decimals: int | None = None) -> Resolver:
     """``validation.baseline`` row with this method and ``associationProfile: "full"`` →
-    ``tiers.A``; only when both ``full`` rows exist (the Validation card's "Strict events,
-    PhaseNet vs STA/LTA" row)."""
-    source = f"{VALIDATION_JSON} → baseline[method={method}, associationProfile=full].tiers.A"
+    ``path``; only when both ``full`` rows exist (the Validation card's "Strict events,
+    PhaseNet vs STA/LTA" row), so the two methods are only ever quoted together."""
+    source = f"{VALIDATION_JSON} → baseline[method={method}, associationProfile=full].{path}"
     gate = f"{VALIDATION_JSON} → baseline[] full rows for both phasenet and stalta"
 
     def resolve(bundle: Bundle) -> Resolved:
@@ -290,9 +369,58 @@ def baseline_strict(method: str) -> Resolver:
         }
         if "phasenet" not in rows or "stalta" not in rows:
             return _condition_not_met(source, gate)
-        return Resolved(
-            fmt(rows[method]["tiers"]["A"]), f"{source} (only with {gate})", STATUS_VALUE
-        )
+        node: Any = rows[method]
+        for key in path.split("."):
+            node = node.get(key) if isinstance(node, dict) else None
+        if node is None:
+            return _not_available(bundle, VALIDATION_JSON, source)
+        return Resolved(fmt(node, decimals), f"{source} (only with {gate})", STATUS_VALUE)
+
+    return resolve
+
+
+def baseline_strict(method: str) -> Resolver:
+    """The strict (Tier A) count of that method's ``full`` baseline row."""
+    return baseline_field(method, "tiers.A")
+
+
+def matched_min_stations() -> Resolver:
+    """The fewest stations any recovered public event was located on: the Tier B
+    ``nStations`` bar, which is the worst matched event's value only while
+    ``tiering.thresholds.quantiles.B`` is 0 ("worst of matched"); any other quantile omits
+    the clause."""
+    source = f"{META_JSON} → run.tiering.thresholds.B.nStations.value"
+    gate = f"{META_JSON} → run.tiering.thresholds.quantiles.B == 0"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        value, _ = _lookup(bundle, META_JSON, "run.tiering.thresholds.B.nStations.value")
+        quantile, _ = _lookup(bundle, META_JSON, "run.tiering.thresholds.quantiles.B")
+        if value is None or quantile is None:
+            return _not_available(bundle, META_JSON, source)
+        if quantile != 0:
+            return Resolved(
+                f"[condition not met: {gate} is false; omit this clause]", source, STATUS_CONDITION
+            )
+        return Resolved(fmt(value, 0), f"{source} (only with {gate})", STATUS_VALUE)
+
+    return resolve
+
+
+def baseline_candidates(method: str) -> Resolver:
+    """``validation.baseline`` row with this method and ``associationProfile: "full"`` →
+    ``candidates`` (the card's "A of N candidates" denominator)."""
+    source = f"{VALIDATION_JSON} → baseline[method={method}, associationProfile=full].candidates"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        if bundle.validation is None:
+            return _not_available(bundle, VALIDATION_JSON, source)
+        for row in bundle.validation.get("baseline") or []:
+            if row.get("method") == method and row.get("associationProfile") == "full":
+                value = row.get("candidates")
+                if value is None:
+                    return _not_available(bundle, VALIDATION_JSON, source)
+                return Resolved(fmt(value), source, STATUS_VALUE)
+        return _not_available(bundle, VALIDATION_JSON, source)
 
     return resolve
 
@@ -380,7 +508,8 @@ PITCH_SPECS: tuple[Spec, ...] = (
     Spec("{strictAdditionalCount}", meta_field("summary.strictAdditionalCount")),
     Spec("{N}", meta_field("summary.publicCatalogCount"), label="{N} (PUBLIC counter)"),
     Spec("{nStations}", hero_station_count()),
-    Spec("{medianVErrM}", validation_field("synthetic.medianVErrM")),
+    # Metres, whole: the Validation card rounds this row the same way (rows.ts DECIMALS.depth).
+    Spec("{medianVErrM}", validation_field("synthetic.medianVErrM", decimals=0)),
     Spec(
         "{gain}",
         gated(
@@ -392,6 +521,19 @@ PITCH_SPECS: tuple[Spec, ...] = (
     ),
     Spec("{strictPhasenet}", baseline_strict("phasenet")),
     Spec("{strictStalta}", baseline_strict("stalta")),
+    Spec("{staltaCandidates}", baseline_candidates("stalta")),
+    Spec("{staltaRecoveredPublic}", baseline_field("stalta", "recoveredPublic")),
+    Spec("{phasenetMedianRmsS}", baseline_field("phasenet", "medianRmsS", decimals=3)),
+    Spec("{staltaMedianRmsS}", baseline_field("stalta", "medianRmsS", decimals=3)),
+    Spec("{phasenetMedianStations}", baseline_field("phasenet", "medianStations")),
+    Spec("{staltaMedianStations}", baseline_field("stalta", "medianStations")),
+    Spec("{strictMatchedCount}", meta_field("run.tiering.counts.matched.A")),
+    Spec("{medianStations}", meta_field("summary.medianStations")),
+    Spec("{minMatchedStations}", matched_min_stations()),
+    Spec(
+        "{heldOutMedianAbsDzM}",
+        meta_field("run.locator.statics.crossValidatedOffsets.after.medianAbsDzM", decimals=0),
+    ),
     Spec(
         "{meanChanceEvents}",
         gated(
@@ -401,11 +543,12 @@ PITCH_SPECS: tuple[Spec, ...] = (
             sentence="the null test",
         ),
     ),
+    Spec("{nShuffles}", none_strict_scrambles()),
     Spec(
         "{n}",
         gated(*MAG_GATE, validation_field("magnitude.n"), sentence=MAG_SENTENCE),
-        label="{n} (matched events, Q27)",
-        context=r"matched",
+        label="{n} (calibration events, Q27)",
+        context=r"calibration events",
     ),
     Spec(
         "{n}",
@@ -415,10 +558,10 @@ PITCH_SPECS: tuple[Spec, ...] = (
     ),
     Spec(
         "{looMae}",
-        gated(*MAG_GATE, validation_field("magnitude.looMae"), sentence=MAG_SENTENCE),
+        gated(*MAG_GATE, validation_field("magnitude.looMae", decimals=2), sentence=MAG_SENTENCE),
         companion=(
             "{nullModelMae}",
-            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae"),
+            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae", decimals=2),
         ),
     ),
     Spec(
@@ -433,7 +576,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
         "{nullModelMae}",
         gated(
             *MAG_GATE,
-            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae"),
+            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae", decimals=2),
             sentence=MAG_SENTENCE,
         ),
     ),
@@ -471,6 +614,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
         manual("/api/live/status → latencyS and /health → served.latencyS; only if measured"),
     ),
     Spec("{windowLabel}", meta_field("run.windowLabel")),
+    Spec("{runId}", meta_field("run.id")),
     Spec("{value}", literal("describes the placeholder form; not a placeholder")),
 )
 
@@ -511,7 +655,8 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
     Spec("<from meta.json: run.pickerWeights>", meta_field("run.pickerWeights")),
     Spec("<from meta.json: run.velocityModel.name>", velocity_model_name()),
     Spec(
-        "<from validation.json: synthetic.medianVErrM>", validation_field("synthetic.medianVErrM")
+        "<from validation.json: synthetic.medianVErrM>",
+        validation_field("synthetic.medianVErrM", decimals=0),
     ),
     Spec(
         "<from validation.json: nullTest.meanChanceEvents>",
@@ -522,16 +667,17 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
             sentence="the null-test sentence",
         ),
     ),
+    Spec("<from validation.json: nullTest.nShuffles>", none_strict_scrambles()),
     Spec(
         "<from validation.json: magnitude.n>",
         gated(*MAG_GATE, validation_field("magnitude.n"), sentence=MAG_SENTENCE),
     ),
     Spec(
         "<from validation.json: magnitude.looMae>",
-        gated(*MAG_GATE, validation_field("magnitude.looMae"), sentence=MAG_SENTENCE),
+        gated(*MAG_GATE, validation_field("magnitude.looMae", decimals=2), sentence=MAG_SENTENCE),
         companion=(
             "<from meta.json: run.matching.magnitude.leaveOneEventOut.nullModelMae>",
-            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae"),
+            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae", decimals=2),
         ),
     ),
     Spec(
@@ -546,7 +692,7 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
         "<from meta.json: run.matching.magnitude.leaveOneEventOut.nullModelMae>",
         gated(
             *MAG_GATE,
-            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae"),
+            meta_field("run.matching.magnitude.leaveOneEventOut.nullModelMae", decimals=2),
             sentence=MAG_SENTENCE,
         ),
     ),
@@ -569,8 +715,8 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
     Spec("<from evidence/<heroEventId>.json: traces.length>", hero_station_count()),
     Spec("<heroEventId>", meta_field("scene.heroEventId")),
     Spec("<scene.heroEventId>", meta_field("scene.heroEventId")),
-    Spec("<deployed URL>", manual("the production URL (docs/deploy.md)")),
-    Spec("<repo URL>", manual("the GitHub repository URL")),
+    Spec("<deployed URL>", deployed_url()),
+    Spec("<repo URL>", repo_url()),
     Spec("<video URL>", manual("the uploaded video URL")),
     Spec("<from FILE: field>", literal("describes the placeholder form; not a placeholder")),
 )
@@ -578,6 +724,7 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
 DOCS: tuple[tuple[str, Path, tuple[Spec, ...], str], ...] = (
     ("pitch", PITCH_DOC, PITCH_SPECS, PITCH_FILLED_MD),
     ("devpost", DEVPOST_DOC, DEVPOST_SPECS, DEVPOST_FILLED_MD),
+    ("pitch", SHOTS_DOC, PITCH_SPECS, SHOTS_FILLED_MD),
 )
 
 
@@ -653,7 +800,7 @@ class _Filler:
             ):
                 # looMae is quoted only next to the null-model error (FYI-H2-7).
                 partner = spec.companion[1](self.bundle)
-                text = f"{text} (null-model error ±{partner.text})"
+                text = f"{text} (versus {partner.text} for a no-skill baseline)"
             # A placeholder wrapped in its own backticks loses them; a backtick that opens or
             # closes a longer code span (`{a} PUBLIC → {b} RECOVERED`) stays where it was.
             lead, trail = raw.startswith("`"), raw.endswith("`")
@@ -746,12 +893,14 @@ def render(
     *,
     pitch_doc: Path = PITCH_DOC,
     devpost_doc: Path = DEVPOST_DOC,
+    shots_doc: Path = SHOTS_DOC,
 ) -> tuple[list[Row], str]:
-    """Render the three output files; returns the rows and the stdout report."""
+    """Render the output files; returns the rows and the stdout report."""
     bundle = load_bundle(bundle_dir)
     docs = (
         ("pitch", pitch_doc, PITCH_SPECS, PITCH_FILLED_MD),
         ("devpost", devpost_doc, DEVPOST_SPECS, DEVPOST_FILLED_MD),
+        ("pitch", shots_doc, PITCH_SPECS, SHOTS_FILLED_MD),
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     rows: list[Row] = []
