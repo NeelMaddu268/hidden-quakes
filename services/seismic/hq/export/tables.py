@@ -5,6 +5,11 @@ the cross-references the exporter relies on (event ids unique and belonging to t
 pick an event or an arrival names present in ``picks.parquet``). Tables that are not model rows
 (``arrivals.parquet``, ``matches.parquet``) are checked column by column against docs/02.
 
+``statics.parquet`` (stage locate, LOC-05) is optional: when it exists, its station-phase terms
+fill ``Station.staticsS`` for the stations it names (H1's ``stations.parquet`` leaves the field
+empty); without it the H1 value stays. Null cells of ``string`` columns are ``pd.NA`` (docs/02 §2
+dtype rule), so every null test here goes through ``is_null``.
+
 ``validation.json`` is written by the validate stage (VAL-01) once H2's ``synthetic.json``
 exists. Without it the bundle's validation is assembled from the sidecars that do exist
 (``synthetic.json``, ``sweep.parquet``, ``null_test.json``, ``baseline.json``, ``gr.json``,
@@ -13,6 +18,7 @@ missing, and the log names the validate stage.
 """
 
 import logging
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +62,7 @@ MATCHES_TABLE = "matches.parquet"
 PICKS_TABLE = "picks.parquet"
 ARRIVALS_TABLE = "arrivals.parquet"
 SWEEP_TABLE = "sweep.parquet"
+STATICS_TABLE = "statics.parquet"
 
 # docs/02 §2 column lists of the two non-model tables the exporter reads.
 ARRIVAL_COLUMNS: tuple[str, ...] = (
@@ -69,6 +76,8 @@ ARRIVAL_COLUMNS: tuple[str, ...] = (
     "usedInLocation",
 )
 MATCH_COLUMNS: tuple[str, ...] = ("catalogId", "eventId", "dtS", "distM", "reason")
+STATIC_COLUMNS: tuple[str, ...] = ("stationId", "phase", "staticS", "nEvents")
+PHASES = ("P", "S")
 
 MAX_LISTED_IDS = 5  # ids quoted in an error message before "..."
 
@@ -78,7 +87,7 @@ class RunTables:
     """Everything the exporter reads from ``runs/<runId>/``."""
 
     run: ProcessingRun
-    stations: list[Station]
+    stations: list[Station]  # staticsS from statics.parquet where that table names them
     catalog: list[CatalogEvent]
     events: list[SeismicEvent]
     matches: pd.DataFrame  # MATCH_COLUMNS, one row per public event
@@ -109,11 +118,25 @@ def _read_columns(path: Path, columns: tuple[str, ...]) -> pd.DataFrame:
     return df
 
 
+def is_null(value: object) -> bool:
+    """True for every null a table cell can hold: ``None``, float NaN, ``pd.NA`` (a null in a
+    ``string`` / ``Int64`` / ``boolean`` column, docs/02 §2) or ``pd.NaT``. A list cell is a
+    value, never null."""
+    return value is None or (pd.api.types.is_scalar(value) and bool(pd.isna(value)))
+
+
 def str_or_none(value: object) -> str | None:
-    """A string cell, or None for null (pandas reads a null string as None or NaN)."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return None
-    return str(value)
+    """A string cell, or None for null (``is_null``): never ``'<NA>'`` or ``'nan'``."""
+    return None if is_null(value) else str(value)
+
+
+def column_strings(df: pd.DataFrame, column: str, path: Path) -> set[str]:
+    """The distinct values of a required string column; a null cell is an error, never
+    ``'<NA>'`` or ``'nan'``."""
+    values = {str_or_none(v) for v in df[column]}
+    if None in values:
+        raise ExportError(f"{path}: column {column!r} has null cells; docs/02 §2 requires it")
+    return {v for v in values if v is not None}
 
 
 def select_picks(df: pd.DataFrame, ids: set[str], path: Path) -> dict[str, Pick]:
@@ -132,6 +155,64 @@ def select_picks(df: pd.DataFrame, ids: set[str], path: Path) -> dict[str, Pick]
             f"{_listed(missing)}"
         )
     return picks
+
+
+def apply_statics(stations: list[Station], statics: pd.DataFrame, path: Path) -> list[Station]:
+    """``stations`` with ``Station.staticsS`` replaced by the terms ``statics`` (docs/02 §2
+    ``statics.parquet``: ``stationId, phase, staticS, nEvents``) holds for each station it names,
+    keyed ``P`` / ``S``. A station the table does not name keeps its value (H1's). A row naming
+    an unknown station or phase, a null or non-finite ``staticS``, or two rows for one
+    station-phase is an error."""
+    by_id = {s.id for s in stations}
+    terms: dict[str, dict[str, float]] = {}
+    for row in statics.to_dict("records"):
+        station_id, phase = str_or_none(row["stationId"]), str_or_none(row["phase"])
+        if station_id is None or station_id not in by_id:
+            raise ExportError(
+                f"{path} names a station missing from {STATIONS_TABLE}: {station_id!r}"
+            )
+        if phase not in PHASES:
+            raise ExportError(f"{path}: phase must be P or S, got {phase!r} at {station_id}")
+        value = row["staticS"]
+        if is_null(value) or not math.isfinite(float(value)):
+            raise ExportError(f"{path}: {station_id} {phase} has no finite staticS ({value!r})")
+        per_station = terms.setdefault(station_id, {})
+        if phase in per_station:
+            raise ExportError(f"{path} has several {phase} rows for station {station_id}")
+        per_station[phase] = float(value)
+    out = [
+        s.model_copy(update={"staticsS": dict(terms[s.id])}) if s.id in terms else s
+        for s in stations
+    ]
+    n_terms = sum(len(t) for t in terms.values())
+    n_nonzero = sum(1 for t in terms.values() for v in t.values() if v != 0.0)
+    log.info(
+        "export: %s: %d static term(s) for %d station(s) (%d non-zero, %d event use(s)); "
+        "%d station(s) not in the table keep %s's staticsS",
+        path.name,
+        n_terms,
+        len(terms),
+        n_nonzero,
+        int(statics["nEvents"].sum()) if len(statics) else 0,
+        len(stations) - len(terms),
+        STATIONS_TABLE,
+    )
+    return out
+
+
+def _load_statics(run_dir: Path, stations: list[Station]) -> list[Station]:
+    """``apply_statics`` with ``statics.parquet`` when the locate stage wrote it; otherwise the
+    stations as H1 wrote them (logged)."""
+    path = run_dir / STATICS_TABLE
+    if not path.is_file():
+        log.info(
+            "export: no %s in %s (stage locate, H2 Seismology); Station.staticsS stays as %s says",
+            STATICS_TABLE,
+            run_dir,
+            STATIONS_TABLE,
+        )
+        return stations
+    return apply_statics(stations, _read_columns(path, STATIC_COLUMNS), path)
 
 
 def _load_validation(run_dir: Path, gr_cfg: GRConfig | None) -> tuple[Validation | None, str]:
@@ -240,15 +321,17 @@ def load_run_tables(run_dir: Path, *, gr_cfg: GRConfig | None = None) -> RunTabl
             f"{run_dir / EVENTS_TABLE}: events with runId != {run.id!r}: {_listed(foreign)}"
         )
     station_ids = {s.id for s in stations}
-    unknown_stations = set(arrivals["stationId"].astype(str)) - station_ids
+    arrivals_path = run_dir / ARRIVALS_TABLE
+    unknown_stations = column_strings(arrivals, "stationId", arrivals_path) - station_ids
     if unknown_stations:
         raise ExportError(
-            f"{run_dir / ARRIVALS_TABLE} names stations missing from {STATIONS_TABLE}: "
+            f"{arrivals_path} names stations missing from {STATIONS_TABLE}: "
             f"{_listed(unknown_stations)}"
         )
-    bad_phase = set(arrivals["phase"].astype(str)) - {"P", "S"}
+    bad_phase = column_strings(arrivals, "phase", arrivals_path) - set(PHASES)
     if bad_phase:
-        raise ExportError(f"{run_dir / ARRIVALS_TABLE}: phase must be P or S, got {bad_phase}")
+        raise ExportError(f"{arrivals_path}: phase must be P or S, got {sorted(bad_phase)}")
+    stations = _load_statics(run_dir, stations)
 
     pick_ids = {pid for e in events for pid in e.pickIds}
     pick_ids |= {p for p in (str_or_none(v) for v in arrivals["pickId"]) if p is not None}

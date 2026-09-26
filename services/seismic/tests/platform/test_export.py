@@ -38,7 +38,9 @@ from hq.export import (
 )
 from hq.export.bundle import load_features_lazily
 from hq.export.summary import baseline_gain, reveal_key
+from hq.export.tables import is_null, str_or_none
 from hq.locate.coords import from_enu
+from hq.locate.result import ARRIVAL_DTYPES, ARRIVALS_MODEL, STATIC_DTYPES, STATICS_MODEL
 
 pytestmark = pytest.mark.smoke
 
@@ -1194,3 +1196,136 @@ def test_load_config_accepts_the_new_knobs(config_dir: Path) -> None:
         EvidenceConfig(channelPriority=["ZZ"])
     with pytest.raises(ValueError, match="channelPriority"):
         EvidenceConfig(channelPriority=["Z", "Z"])
+
+
+# --- tables as stage locate writes them: `string` columns hold pd.NA (docs/02 §2) -----------------
+
+MATCH_DTYPES = {
+    "catalogId": "string",
+    "eventId": "string",
+    "dtS": "float64",
+    "distM": "float64",
+    "reason": "string",
+}
+
+
+def test_str_or_none_treats_every_table_null_as_none() -> None:
+    """REQ-H2-10: a null in a ``string`` column reads back as ``pd.NA``; it must never become
+    the id ``'<NA>'`` (nor ``'nan'`` / ``'None'``)."""
+    for null in (None, float("nan"), np.nan, pd.NA, pd.NaT, np.float64("nan")):
+        assert is_null(null)
+        assert str_or_none(null) is None
+    for value in ("phasenet:test:XT.R01:P:1.000", "", 0, 1.5, np.str_("x"), [], ["a"]):
+        assert not is_null(value)
+    assert str_or_none("XT.R01") == "XT.R01"
+    assert str_or_none(np.str_("P")) == "P"
+    assert str_or_none([]) == "[]"  # a list cell is a value, never null
+
+
+def test_string_dtype_nulls_in_arrivals_matches_and_statics(
+    ctx: runs.RunContext, synthetic_run: SyntheticRun, tmp_path: Path
+) -> None:
+    """REQ-H2-10 + FYI-H2-8: the run tables typed as stage locate / match write them (H2's
+    ``ARRIVAL_DTYPES`` / ``STATIC_DTYPES``; ``matches`` with ``string`` ids): ``pickId`` is
+    ``pd.NA`` on predicted-only arrival rows and ``eventId`` on the unmatched public event. The
+    export succeeds, those traces carry no pick, the public event stays unmatched, and
+    ``Station.staticsS`` comes from ``statics.parquet``."""
+    arrivals = synthetic_run.arrivals[list(ARRIVAL_DTYPES)].astype(ARRIVAL_DTYPES)
+    assert str(arrivals["pickId"].dtype) == "string"
+    predicted_only = arrivals["pickId"].isna()
+    assert predicted_only.sum() == 3  # two rows of the extra station, one blanked S row
+    assert all(v is pd.NA for v in arrivals.loc[predicted_only, "pickId"])
+    write_table(arrivals, ctx.path("arrivals.parquet"), ARRIVALS_MODEL)
+    matches = synthetic_run.matches[list(MATCH_DTYPES)].astype(MATCH_DTYPES)
+    assert matches["eventId"].isna().sum() == 1
+    write_table(matches, ctx.path("matches.parquet"), "Match")
+    statics = pd.DataFrame.from_records(
+        [
+            {"stationId": "XT.R01", "phase": "P", "staticS": -0.012, "nEvents": 4},
+            {"stationId": "XT.R01", "phase": "S", "staticS": 0.03, "nEvents": 3},
+            {"stationId": "XT.B01", "phase": "P", "staticS": 0.0, "nEvents": 0},
+        ],
+        columns=list(STATIC_DTYPES),
+    ).astype(STATIC_DTYPES)
+    write_table(statics, ctx.path("statics.parquet"), STATICS_MODEL)
+
+    tables = load_run_tables(ctx.run_dir)
+    assert set(tables.picks) == {p.id for p in synthetic_run.picks}
+    assert not {"<NA>", "nan", "None"} & set(tables.picks)
+    assert [s.id for s in tables.stations] == [s.id for s in synthetic_run.stations]
+
+    out_dir, _ = do_export(ctx, tmp_path / "bundles" / "showcase", run=synthetic_run)
+    bundle = Bundle(out_dir)
+    ev = bundle.evidence[synthetic_run.events[NO_PICK_STATION_EVENT_INDEX].id]
+    no_pick = [t for t in ev.traces if t.pickP is None]
+    assert len(no_pick) == 1
+    assert no_pick[0].predP is not None and no_pick[0].predS is not None
+    assert no_pick[0].pickS is None and no_pick[0].probP is None and no_pick[0].probS is None
+    blank_event = synthetic_run.events[BLANK_PICK_ID_EVENT_INDEX]
+    blank_station = str(
+        arrivals.loc[(arrivals["eventId"] == blank_event.id) & predicted_only, "stationId"].iloc[0]
+    )
+    blank = next(t for t in bundle.evidence[blank_event.id].traces if t.stationId == blank_station)
+    assert blank.pickP is not None and blank.pickS is None and blank.predS is not None
+    matched = {c.id: c.matchedEventId for c in bundle.catalog if c.matchedEventId is not None}
+    assert len(matched) == len(MATCHED_EVENT_INDICES)
+    unmatched_id = str(matches.loc[matches["eventId"].isna(), "catalogId"].iloc[0])
+    assert unmatched_id not in matched
+    assert next(c for c in bundle.catalog if c.id == unmatched_id).matchedEventId is None
+    statics_by_station = {s.id: s.staticsS for s in bundle.stations}
+    assert statics_by_station["XT.R01"] == {"P": -0.012, "S": 0.03}
+    assert statics_by_station["XT.B01"] == {"P": 0.0}  # the table's term replaces H1's value
+    assert statics_by_station["XT.R02"] == {}  # not in the table: stations.parquet's value
+
+
+def test_statics_table_fills_station_statics(
+    ctx: runs.RunContext, synthetic_run: SyntheticRun, caplog: pytest.LogCaptureFixture
+) -> None:
+    """FYI-H2-8: ``Station.staticsS`` is filled from ``statics.parquet`` when it exists (keys
+    P/S), stations the table does not name keep H1's value, counts are logged, and a row naming
+    an unknown station or phase, a duplicate station-phase or a non-finite term fails loudly."""
+    h1 = {s.id: s.staticsS for s in synthetic_run.stations}
+    assert h1["XT.B01"] == {"P": 0.01} and h1["XT.R01"] == {}
+    with caplog.at_level(logging.INFO, logger="hq.export.tables"):
+        assert {s.id: s.staticsS for s in load_run_tables(ctx.run_dir).stations} == h1
+    assert "no statics.parquet" in caplog.text
+
+    rows = [
+        {"stationId": "XT.R01", "phase": "P", "staticS": -0.012, "nEvents": 4},
+        {"stationId": "XT.R01", "phase": "S", "staticS": 0.03, "nEvents": 3},
+        {"stationId": "XT.B01", "phase": "P", "staticS": 0.0, "nEvents": 0},
+    ]
+    path = ctx.path("statics.parquet")
+
+    def write_statics(extra: dict[str, object] | None = None) -> None:
+        frame = pd.DataFrame.from_records(
+            [*rows, *([extra] if extra else [])], columns=list(STATIC_DTYPES)
+        ).astype(STATIC_DTYPES)
+        write_table(frame, path, STATICS_MODEL)
+
+    write_statics()
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="hq.export.tables"):
+        stations = {s.id: s.staticsS for s in load_run_tables(ctx.run_dir).stations}
+    assert stations == {**h1, "XT.R01": {"P": -0.012, "S": 0.03}, "XT.B01": {"P": 0.0}}
+    assert "3 static term(s) for 2 station(s) (2 non-zero, 7 event use(s))" in caplog.text
+    assert f"{len(h1) - 2} station(s) not in the table keep stations.parquet" in caplog.text
+
+    for extra, match in (
+        (
+            {"stationId": "XT.NOPE", "phase": "P", "staticS": 0.0, "nEvents": 1},
+            "missing from stations.parquet",
+        ),
+        ({"stationId": "XT.R02", "phase": "X", "staticS": 0.0, "nEvents": 1}, "phase must be"),
+        ({"stationId": "XT.R01", "phase": "P", "staticS": 0.0, "nEvents": 1}, "several P rows"),
+        (
+            {"stationId": "XT.R02", "phase": "P", "staticS": float("nan"), "nEvents": 1},
+            "no finite staticS",
+        ),
+    ):
+        write_statics(extra)
+        with pytest.raises(ExportError, match=match):
+            load_run_tables(ctx.run_dir)
+    write_table(pd.DataFrame({"stationId": ["XT.R01"]}), path, STATICS_MODEL)
+    with pytest.raises(ExportError, match="lacks columns"):
+        load_run_tables(ctx.run_dir)
