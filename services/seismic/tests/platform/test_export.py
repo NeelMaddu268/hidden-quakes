@@ -955,8 +955,9 @@ def test_missing_lane_modules_name_their_owner(
 
     monkeypatch.setitem(sys.modules, "hq.export.features", None)
     caplog.set_level(logging.WARNING, logger="hq.export")
-    assert not ctx.config.export.features
-    assert load_features_lazily(ctx.config.export, ctx.config.run) == []
+    # The showcase config lists FEAT-01's features; the fallback is for an empty list only.
+    empty = ctx.config.export.model_copy(update={"features": []})
+    assert load_features_lazily(empty, ctx.config.run) == []
     assert any("FEAT-01" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
     listed = ctx.config.export.model_copy(update={"features": [{"id": "well-1"}]})
     with pytest.raises(ExportError, match="lists features.*FEAT-01"):
