@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AnalysisSummary, BaselineRow, Validation } from "@/providers";
-import { baselineRan, rows, strictComparison, type RowId, type SummaryInput, type ValidationInput } from "./rows";
+import { baselineRan, chanceNote, DEPTH_NOTE, rows, STRICT_COMPARE_NOTE, strictComparison, type RowId, type SummaryInput, type ValidationInput } from "./rows";
 
 const SUMMARY: AnalysisSummary = {
   runId: "t",
@@ -187,6 +187,47 @@ describe("rows()", () => {
 
     it("labels are words only", () => {
       expect(rows(SUMMARY, VALIDATION).find((r) => r.id === "strictCompare")!.label).not.toMatch(/\d/);
+    });
+
+    it("carries the statics note, in words; only it and the depth row carry a note", () => {
+      const list = rows(SUMMARY, VALIDATION);
+      const row = list.find((r) => r.id === "strictCompare")!;
+      expect(row.note).toBe(STRICT_COMPARE_NOTE);
+      expect(row.note).toMatch(/statics/);
+      expect(row.note).not.toMatch(/\d/);
+      const depth = list.find((r) => r.id === "depth")!;
+      expect(depth.note).toBe(DEPTH_NOTE);
+      expect(depth.note).toMatch(/every station/);
+      expect(depth.note).not.toMatch(/\d/);
+      for (const other of list) {
+        if (!["strictCompare", "depth", "chance"].includes(other.id)) expect(other.note).toBeUndefined();
+      }
+    });
+  });
+
+  describe("the chance-associations note: every number from validation.nullTest", () => {
+    const note = (nullTest: ValidationInput extends infer V ? (V extends { nullTest?: infer T } ? T : never) : never) =>
+      rows(SUMMARY, { ...VALIDATION, nullTest }).find((r) => r.id === "chance")?.note;
+
+    it("names the shuffle count and says none reached the strict tier when the strict mean is zero", () => {
+      expect(note({ ...VALIDATION.nullTest!, meanChanceStrict: 0 })).toBe("Mean of 20 timing scrambles; none reached the strict tier");
+      expect(chanceNote({ nShuffles: 20, meanChanceStrict: 0 })).toBe("Mean of 20 timing scrambles; none reached the strict tier");
+    });
+
+    it("reports a non-zero strict mean instead of claiming none", () => {
+      expect(note({ ...VALIDATION.nullTest!, meanChanceStrict: 0.1 })).toBe("Mean of 20 timing scrambles; about 0.1 per scramble reached the strict tier");
+    });
+
+    it("drops a clause whose field is missing rather than guessing", () => {
+      expect(chanceNote({ nShuffles: null, meanChanceStrict: 0 })).toBe("Mean over timing scrambles; none reached the strict tier");
+      expect(chanceNote({ nShuffles: 20, meanChanceStrict: null })).toBe("Mean of 20 timing scrambles");
+      expect(chanceNote({ nShuffles: Number.NaN, meanChanceStrict: Number.NaN })).toBe("Mean over timing scrambles");
+      expect(chanceNote(null)).toBe("Mean over timing scrambles");
+    });
+
+    it("has no digit that did not come from the data", () => {
+      expect(chanceNote({ nShuffles: null, meanChanceStrict: null })).not.toMatch(/\d/);
+      expect(chanceNote({ nShuffles: null, meanChanceStrict: 0 })).not.toMatch(/\d/);
     });
   });
 });

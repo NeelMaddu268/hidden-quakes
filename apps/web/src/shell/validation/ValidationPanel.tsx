@@ -33,6 +33,11 @@ export function ValidationPanel() {
             <dd className={styles.value} style={valueStyle}>
               {row.value}
             </dd>
+            {row.note ? (
+              <dd className={styles.note} data-testid={`validation-note-${row.id}`}>
+                {row.note}
+              </dd>
+            ) : null}
           </div>
         ))}
       </dl>
