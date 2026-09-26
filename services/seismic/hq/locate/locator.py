@@ -1,4 +1,11 @@
-"""Grid-search hypocentre locator on per-station 1D travel-time tables (L1, origin time removed).
+"""Grid-search hypocentre locator on per-station travel-time tables (L1, origin time removed).
+
+Travel times come from a ``TravelTimeProvider`` chosen by ``locator.method``: ``grid1d``
+(``Grid1dProvider``: the per-station 2D (r, elevM) tables of the 1D layer file, ``hq.locate
+.tt_grid``) or ``grid3d`` (``hq.locate.tt_grid3d.Grid3dProvider``: per-station 3D tables of the
+3D model, trilinear, with the 1D tables for stations outside the 3D model). Everything below is
+the same for both; ``LocationQuality.method`` says which one located the event. The 1D tables
+are built for every station either way (fallback, and the 1D reference the diagnostics use).
 
 Search volume (ENU metres around the run origin, elevM): ``e`` and ``n`` in
 ``[-halfWidthM, +halfWidthM]`` and elevM from ``volume.bottomElevM`` up to ``volume.topElevM``
@@ -58,9 +65,9 @@ import multiprocessing
 import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import numpy as np
 import pandas as pd
@@ -68,13 +75,25 @@ from numpy.typing import ArrayLike, NDArray
 
 from hq.config.run import RunSection
 from hq.config.seismology import LocatorConfig, SeismologyConfig
+from hq.locate.coords import origin_utm
 from hq.locate.tt_grid import PHASES, Phase, StationTables, build_station_tables
+from hq.locate.tt_grid3d import (
+    Grid3dProvider,
+    Model3dSource,
+    StationTables3d,
+    VolumeBox,
+    build_station_tables3d,
+    model3d_path,
+    open_model3d,
+)
 from hq.locate.uncertainty import PdfSummary, conventions, summarize_pdf
 from hq.locate.velocity import LayerModel
 
 log = logging.getLogger(__name__)
 
-METHOD = "grid1d"  # LocationQuality.method
+GRID1D = "grid1d"  # LocationQuality.method values
+GRID3D = "grid3d"
+METHOD = GRID1D  # the 1D locator's method (kept for callers of the grid1d path)
 PICK_COLUMNS = ("id", "stationId", "phase", "t", "prob")
 STATION_COLUMNS = ("id", "enu_e", "enu_n", "enu_u", "sensorElevM")
 
@@ -128,6 +147,76 @@ def azimuthal_gap_deg(de: ArrayLike, dn: ArrayLike) -> float:
     return float(gaps.max())
 
 
+class TravelTimeProvider(Protocol):
+    """Table travel times (s) from a hypocentre (ENU e, n in m; elevM) to one station."""
+
+    @property
+    def method(self) -> str:
+        """LocationQuality.method of locations made with these times."""
+        ...
+
+    def times(self, station_id: str, phase: Phase, e_m: ArrayLike, n_m: ArrayLike,
+              elev_m: ArrayLike) -> FloatArray:
+        """Times at broadcastable points; raises for a point outside the tables."""
+        ...
+
+    def times_box(self, station_id: str, phase: Phase, e_m: FloatArray, n_m: FloatArray,
+                  elev_m: FloatArray) -> FloatArray:
+        """Times on the tensor-product box of 1D axes, shape (len(elev_m), len(n_m), len(e_m))."""
+        ...
+
+    def covers(self, e_m: float, n_m: float, elev_m: float) -> bool:
+        """Whether every station's times reach the point."""
+        ...
+
+    def to_record(self) -> dict[str, Any]:
+        ...
+
+
+@dataclass(frozen=True, eq=False)
+class Grid1dProvider:
+    """Times from the per-station 2D (r, elevM) tables of the 1D model (``locator.method``
+    grid1d; the fallback of grid3d). ``positions``: station id -> (e, n)."""
+
+    tables: StationTables
+    positions: Mapping[str, tuple[float, float]]
+    method: str = field(default=GRID1D)
+    # Per station, the last (e axis, n axis, r plane) of times_box: the locator evaluates one box
+    # in elevM chunks, so the plane of epicentral distances is computed once per box and station.
+    _planes: dict[str, tuple[FloatArray, FloatArray, FloatArray]] = field(
+        default_factory=dict, repr=False)
+
+    def times(self, station_id: str, phase: Phase, e_m: ArrayLike, n_m: ArrayLike,
+              elev_m: ArrayLike) -> FloatArray:
+        se, sn = self.positions[station_id]
+        if np.ndim(e_m) == 0 and np.ndim(n_m) == 0:
+            r: ArrayLike = math.hypot(float(e_m) - se, float(n_m) - sn)  # type: ignore[arg-type]
+        else:
+            r = np.hypot(np.asarray(e_m, dtype=np.float64) - se,
+                         np.asarray(n_m, dtype=np.float64) - sn)
+        return self.tables.table(station_id, phase).lookup(r, elev_m)
+
+    def times_box(self, station_id: str, phase: Phase, e_m: FloatArray, n_m: FloatArray,
+                  elev_m: FloatArray) -> FloatArray:
+        last = self._planes.get(station_id)
+        if last is not None and np.array_equal(last[0], e_m) and np.array_equal(last[1], n_m):
+            r = last[2]
+        else:
+            se, sn = self.positions[station_id]
+            r = np.hypot(e_m[None, :] - se, n_m[:, None] - sn)
+            self._planes[station_id] = (np.array(e_m), np.array(n_m), r)
+        return self.tables.table(station_id, phase).lookup(r[None, :, :], elev_m[:, None, None])
+
+    def covers(self, e_m: float, n_m: float, elev_m: float) -> bool:
+        g = self.tables.grid
+        if not g.bottom_elev_m <= elev_m <= g.top_elev_m:
+            return False
+        return all(math.hypot(e_m - se, n_m - sn) <= g.r_max_m for se, sn in self.positions.values())
+
+    def to_record(self) -> dict[str, Any]:
+        return self.tables.to_record()
+
+
 @dataclass(frozen=True)
 class SearchVolume:
     """The fine lattice of the search volume; coarse nodes are every ``coarse_stride``-th node."""
@@ -172,6 +261,10 @@ class SearchVolume:
         """Fine indices of the coarse nodes along e, n and z."""
         s = self.coarse_stride
         return np.arange(0, self.n_e, s), np.arange(0, self.n_n, s), np.arange(0, self.n_z, s)
+
+    def box(self) -> VolumeBox:
+        return VolumeBox(self.e_min_m, self.e_max_m, self.n_min_m, self.n_max_m,
+                         self.bottom_elev_m, self.top_elev_m)
 
     def to_record(self) -> dict[str, Any]:
         return {
@@ -279,10 +372,11 @@ class EventLocation:
     relocated: bool
     outlier_note: str | None  # set when the outlier pass was skipped
     search: dict[str, Any]  # evaluated region, faces, truncation, node counts
+    method: str  # LocationQuality.method: the travel times this location used
 
     def quality(self) -> dict[str, Any]:
         return {
-            "method": METHOD,
+            "method": self.method,
             "statics": self.statics_applied,
             "nStations": self.n_stations,
             "nP": self.n_p,
@@ -316,6 +410,8 @@ class Locator:
 
     ``stations`` must hold only the stations in use (``usedInRun``), with columns id, enu_e,
     enu_n, enu_u, sensorElevM (and preprocessProfile when ``profilePickSigmaS`` is set).
+    ``tables`` are the stations' 1D tables; with ``tables3d`` (grid3d) the stations that have a
+    3D table use it and the others their 1D tables.
     """
 
     def __init__(
@@ -326,6 +422,7 @@ class Locator:
         *,
         origin_elev_m: float,
         ref_surface_elev_m: float,
+        tables3d: StationTables3d | None = None,
     ) -> None:
         missing = [c for c in STATION_COLUMNS if c not in stations.columns]
         if missing:
@@ -355,6 +452,14 @@ class Locator:
         self._index = {sid: i for i, sid in enumerate(ids)}
         self._e = e
         self._n = n
+        grid1d = Grid1dProvider(
+            tables, {sid: (float(e[i]), float(n[i])) for i, sid in enumerate(ids)}
+        )
+        self.tables3d = tables3d
+        self.provider: TravelTimeProvider = (
+            grid1d if tables3d is None else self._grid3d(tables3d, grid1d, ids, e, n, elev)
+        )
+        self.method = self.provider.method
         self._profile = (
             stations["preprocessProfile"].astype(str).tolist()
             if "preprocessProfile" in stations.columns
@@ -373,11 +478,35 @@ class Locator:
         self._coarse_axes = (ce, cn, cz)
         self._n_coarse = ce.size * cn.size * cz.size
         log.info(
-            "locator: %d stations, volume e/n %.0f..%.0f m, elevM %.1f..%.1f m ASL, %d coarse "
-            "nodes at %.0f m, fine %.0f m",
-            len(ids), vol.e_min_m, vol.e_max_m, vol.bottom_elev_m, vol.top_elev_m,
+            "locator (%s): %d stations, volume e/n %.0f..%.0f m, elevM %.1f..%.1f m ASL, %d "
+            "coarse nodes at %.0f m, fine %.0f m",
+            self.method, len(ids), vol.e_min_m, vol.e_max_m, vol.bottom_elev_m, vol.top_elev_m,
             self._n_coarse, vol.fine_m * vol.coarse_stride, vol.fine_m,
         )
+
+    def _grid3d(
+        self, tables3d: StationTables3d, grid1d: Grid1dProvider, ids: list[str], e: FloatArray,
+        n: FloatArray, elev: FloatArray,
+    ) -> Grid3dProvider:
+        """The grid3d provider, after checking the 3D tables belong to these stations and cover
+        the search volume."""
+        unknown = [sid for sid in ids if sid not in tables3d.columns]
+        if unknown:
+            raise ValueError(f"stations {unknown} were not passed to the 3D table build")
+        tol = self.cfg.enuConsistencyTolM
+        for sid, se, sn, sz in zip(ids, e, n, elev, strict=True):
+            if tables3d.has(sid):
+                re, rn, rz = tables3d.table(sid, "P").receiver
+                if max(abs(re - se), abs(rn - sn), abs(rz - sz)) > tol:
+                    raise ValueError(f"station {sid}: its 3D table sits at {(re, rn, rz)}, the "
+                                     f"station at {(se, sn, sz)}")
+        vol = self.volume
+        corners = tables3d.grid.covers([vol.e_min_m, vol.e_max_m], [vol.n_min_m, vol.n_max_m],
+                                       [vol.bottom_elev_m, vol.top_elev_m])
+        if not corners.all():
+            raise ValueError(f"the search volume {vol.to_record()} reaches outside the 3D tables "
+                             f"{tables3d.grid.to_record()}")
+        return Grid3dProvider(tables3d, grid1d)
 
     def _check_reach(self, ids: list[str]) -> None:
         vol = self.volume
@@ -420,11 +549,23 @@ class Locator:
         Columns stationId, phase, travelTimeS; stations in ``station_ids`` order, P before S.
         """
         rows = []
-        for sid, i in self._index.items():
-            r = math.hypot(e_m - float(self._e[i]), n_m - float(self._n[i]))
+        for sid in self._index:
             for ph in PHASES:
-                rows.append((sid, ph, float(self.tables.table(sid, ph).lookup(r, elev_m))))
+                rows.append((sid, ph, float(self.provider.times(sid, ph, e_m, n_m, elev_m))))
         return pd.DataFrame(rows, columns=["stationId", "phase", "travelTimeS"])
+
+    def station_times(
+        self, station_id: str, phase: Phase, e_m: ArrayLike, n_m: ArrayLike, elev_m: ArrayLike
+    ) -> FloatArray:
+        """Table travel times (s) from broadcastable hypocentres to one station (this locator's
+        tables: 3D for grid3d stations with a 3D table, 1D otherwise)."""
+        if station_id not in self._index:
+            raise KeyError(f"unknown station {station_id!r}")
+        return self.provider.times(station_id, phase, e_m, n_m, elev_m)
+
+    def covers(self, e_m: float, n_m: float, elev_m: float) -> bool:
+        """Whether every station's tables reach the point (ENU m, elevM)."""
+        return self.provider.covers(float(e_m), float(n_m), float(elev_m))
 
     def pick_sigma(self, station_id: str, phase: Phase) -> float:
         """Pick sigma (s) the locator uses for ``station_id`` and ``phase``."""
@@ -502,10 +643,8 @@ class Locator:
         if cached is None:
             ce, cn, cz = self._coarse_axes
             vol = self.volume
-            i = self._index[station_id]
-            r = np.hypot(vol.e_at(ce)[None, :] - self._e[i], vol.n_at(cn)[:, None] - self._n[i])
-            times = self.tables.table(station_id, phase).lookup(
-                r[None, :, :], vol.z_at(cz)[:, None, None]
+            times = self.provider.times_box(
+                station_id, phase, vol.e_at(ce), vol.n_at(cn), vol.z_at(cz)
             )
             cached = np.ascontiguousarray(times.ravel())
             cached.setflags(write=False)
@@ -541,11 +680,6 @@ class Locator:
         e = vol.e_at(ie)
         n = vol.n_at(i_n)
         z = vol.z_at(iz)
-        r_by_station: dict[str, FloatArray] = {}
-        for j in cols:
-            sid = p.station_ids[j]
-            if sid not in r_by_station:
-                r_by_station[sid] = np.hypot(e[None, :] - p.se[j], n[:, None] - p.sn[j])
         offset = p.t_rel[cols] - p.static[cols]
         w = p.w[cols]
         plane = n.size * e.size
@@ -556,9 +690,7 @@ class Locator:
             zc = z[start : start + levels]
             times = np.stack(
                 [
-                    self.tables.table(p.station_ids[j], p.phases[j])
-                    .lookup(r_by_station[p.station_ids[j]][None, :, :], zc[:, None, None])
-                    .ravel()
+                    self.provider.times_box(p.station_ids[j], p.phases[j], e, n, zc).ravel()
                     for j in cols
                 ],
                 axis=1,
@@ -708,10 +840,8 @@ class Locator:
     def _travel_times(self, p: _Picks, e: float, n: float, z: float) -> FloatArray:
         return np.array(
             [
-                float(
-                    self.tables.table(sid, ph).lookup(math.hypot(e - se, n - sn), z)
-                )
-                for sid, ph, se, sn in zip(p.station_ids, p.phases, p.se, p.sn, strict=True)
+                float(self.provider.times(sid, ph, e, n, z))
+                for sid, ph in zip(p.station_ids, p.phases, strict=True)
             ]
         )
 
@@ -809,6 +939,7 @@ class Locator:
             relocated=bool((~used).any()),
             outlier_note=note,
             search=dict(s.box),
+            method=self.method,
         )
 
     def to_record(self) -> dict[str, Any]:
@@ -819,7 +950,7 @@ class Locator:
         (``velocity_model_record()``), not the source model's.
         """
         return {
-            "method": METHOD,
+            "method": self.method,
             "config": self.cfg.model_dump(mode="json"),
             "volume": self.volume.to_record(),
             "stationIds": list(self._index),
@@ -841,22 +972,69 @@ class Locator:
                 self.cfg.mapOnVolumeFaceBandM,
             ),
             "tables": self.tables.to_record(),
+            "tables3d": None if self.tables3d is None else self.tables3d.to_record(),
         }
 
     def velocity_model_record(self) -> dict[str, Any]:
-        """``ProcessingRun.velocityModel``: the top-extended model the tables were solved on."""
-        return self.tables.model.to_record()
+        """``ProcessingRun.velocityModel``: the model the tables were solved on.
+
+        grid1d: the top-extended 1D model. grid3d: the 3D model (SourceRef, file, CRS, datum,
+        evidence), its lattice and air handling, and the 1D model of the fallback stations.
+        """
+        if self.tables3d is None:
+            return self.tables.model.to_record()
+        t3 = self.tables3d
+        return {
+            **t3.source.to_record(),
+            "method": self.method,
+            "grid": t3.grid.to_record(),
+            "airHandling": t3.air_handling,
+            "fallback1d": {"stations": t3.fallback, "model": self.tables.model.to_record()},
+        }
 
 
 @dataclass(frozen=True)
 class LocatorSetup:
-    """Everything a (possibly spawned) process needs to rebuild the same Locator."""
+    """Everything a (possibly spawned) process needs to rebuild the same Locator.
+
+    ``model3d`` (grid3d only): the 3D model; None opens the configured file under
+    ``<cache_dir>/velocity/`` (``locate_many`` does that once before spawning workers).
+    """
 
     stations: pd.DataFrame
     model: LayerModel  # the source model; the top extension happens in build_station_tables
     config: SeismologyConfig
     run: RunSection
     cache_dir: Path
+    model3d: Model3dSource | None = None
+
+
+def with_model3d(setup: LocatorSetup) -> LocatorSetup:
+    """``setup`` with its 3D model opened when the method is grid3d (else unchanged)."""
+    cfg = setup.config
+    if cfg.locator.method != GRID3D or setup.model3d is not None:
+        return setup
+    path = model3d_path(cfg.velocity, setup.cache_dir)
+    return replace(setup, model3d=open_model3d(path, cfg.velocity.model3d))
+
+
+def build_tables3d(setup: LocatorSetup, volume: SearchVolume) -> StationTables3d:
+    """The stations' 3D tables (built or loaded from ``<cache_dir>/ttgrids/3d``)."""
+    cfg = setup.config
+    source = with_model3d(setup).model3d
+    if source is None:
+        raise ValueError("build_tables3d needs locator.method grid3d or setup.model3d")
+    return build_station_tables3d(
+        setup.stations,
+        source,
+        cfg.grid3d,
+        origin_utm=origin_utm(setup.run.origin),
+        volume=volume.box(),
+        cache_dir=setup.cache_dir,
+        vp_range_m_per_s=cfg.velocity.plausibleVpMPerS,
+        vs_range_m_per_s=cfg.velocity.plausibleVsMPerS,
+        column_grid=cfg.grids,
+    )
 
 
 def build_locator(setup: LocatorSetup) -> Locator:
@@ -871,12 +1049,14 @@ def build_locator(setup: LocatorSetup) -> Locator:
         max_extension_m=cfg.velocity.maxTopExtensionM,
         cover_top_elev_m=volume.top_elev_m,
     )
+    tables3d = build_tables3d(setup, volume) if cfg.locator.method == GRID3D else None
     return Locator(
         setup.stations,
         tables,
         cfg.locator,
         origin_elev_m=setup.run.origin.elevM,
         ref_surface_elev_m=setup.run.refSurfaceElevM,
+        tables3d=tables3d,
     )
 
 
@@ -913,6 +1093,7 @@ def locate_many(
     raises, since the workers rebuild from ``setup``.
     """
     started = time.perf_counter()
+    setup = with_model3d(setup)  # grid3d: open the 3D model once, not in every worker
     if locator is not None and (
         locator.cfg != setup.config.locator
         or list(locator._index) != setup.stations["id"].astype(str).tolist()

@@ -22,6 +22,16 @@ class Velocity3dConfig(BaseModel):
     expectedBytes: int = Field(gt=0)  # Content-Length reported by the server
     citation: str = Field(min_length=1)
     license: str = Field(min_length=1)
+    # Units of the file's Vp / Vs values (checked in the file: basement 5.8 / 3.392 = km/s).
+    units: Literal["km/s", "m/s"]
+    # The value the file holds above the ground (file units), found in the file: air nodes are
+    # the run of nodes from a column's top holding it (hq.locate.tt_grid3d, "Air").
+    airVp: float = Field(gt=0)
+    airVs: float = Field(gt=0)
+    # Horizontal CRS of the file's easting / northing (the file has no CRS attributes; the
+    # evidence is in hq.locate.tt_grid3d). The run's ENU frame is EPSG:32612 minus the origin and
+    # no reprojection is implemented, so only EPSG:32612 is accepted.
+    crs: Literal["EPSG:32612"]
 
     @field_validator("cacheFile")
     @classmethod
@@ -110,6 +120,36 @@ class GridsConfig(BaseModel):
         return self
 
 
+class Grid3dConfig(BaseModel):
+    """Per-station 3D travel-time tables on the resampled 3D model (LOC-07, ``hq.locate.tt_grid3d``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Node spacing (m) of the resampled model and the tables, the same along e, n and elevM.
+    # Nodes sit at multiples of it in the run's ENU frame (e, n) and above bottomElevM.
+    spacingM: float = Field(gt=0)
+    # Horizontal extent: the bounding box of the search volume and every receiver inside the 3D
+    # model, plus this margin (m) on each side, clipped to the model's own extent.
+    horizontalMarginM: float = Field(ge=0)
+    # Grid top: the highest in-model receiver or the search-volume top, whichever is higher, plus
+    # this margin (m), snapped up onto the lattice and capped at the model's top.
+    topMarginM: float = Field(ge=0)
+    bottomElevM: float  # grid bottom (m ASL); at or above the model's bottom node (checked on load)
+    # Cells above the ground in the model file (hq.locate.tt_grid3d, "Air"): topSurfaceVelocity
+    # gives them the velocity of their column's topmost ground cell; asFile keeps the file values.
+    airHandling: Literal["topSurfaceVelocity", "asFile"]
+    # Near-receiver initialisation: nodes within this distance of the receiver get the exact
+    # layered times of the receiver's own model column; the eikonal solve starts inside it.
+    seedRadiusM: float = Field(gt=0)
+    fmmOrder: Literal[1, 2]  # scikit-fmm stencil order
+
+    @model_validator(mode="after")
+    def _check(self) -> "Grid3dConfig":
+        if self.seedRadiusM < 4.0 * self.spacingM:
+            raise ValueError("grid3d.seedRadiusM must be at least 4 grid cells (4 x spacingM)")
+        return self
+
+
 class SearchVolumeConfig(BaseModel):
     """Where the locator searches, in ENU metres around the run origin and in elevM."""
 
@@ -146,6 +186,10 @@ class LocatorConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    # Travel times (LocationQuality.method): grid1d = per-station 2D (r, elevM) tables of the 1D
+    # layer file; grid3d = per-station 3D tables of the 3D model (grid3d section), 1D tables for
+    # stations outside it. Every other locator step is the same for both.
+    method: Literal["grid1d", "grid3d"]
     volume: SearchVolumeConfig
     coarseSpacingM: float = Field(gt=0)  # full-volume grid search
     fineSpacingM: float = Field(gt=0)  # the reported PDF lives on this lattice
@@ -663,6 +707,7 @@ class SeismologyConfig(BaseModel):
 
     velocity: VelocityConfig
     grids: GridsConfig
+    grid3d: Grid3dConfig
     locator: LocatorConfig
     synthetic: SyntheticConfig
     catalog: CatalogConfig
@@ -692,6 +737,11 @@ class SeismologyConfig(BaseModel):
         if self.grids.bottomElevM > vol.bottomElevM - self.grids.dzM:
             raise ValueError(
                 f"grids.bottomElevM {self.grids.bottomElevM} must lie at least one dzM below "
+                f"locator.volume.bottomElevM {vol.bottomElevM}"
+            )
+        if self.grid3d.bottomElevM > vol.bottomElevM:
+            raise ValueError(
+                f"grid3d.bottomElevM {self.grid3d.bottomElevM} must not lie above "
                 f"locator.volume.bottomElevM {vol.bottomElevM}"
             )
         corner = math.hypot(vol.halfWidthM, vol.halfWidthM)
