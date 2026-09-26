@@ -445,20 +445,69 @@ def test_thread_count_does_not_change_results(world: dict[str, Any]) -> None:
     pd.testing.assert_frame_equal(one.picks, many.picks)
 
 
-def test_stalta_labelled_picks_associate_unchanged(world: dict[str, Any]) -> None:
-    picks = world["picks"]
+def _check_stalta_unchanged(world: dict[str, Any], picks: pd.DataFrame) -> None:
+    """The same picks labelled as STA/LTA picks associate into the same events."""
     stalta = picks.assign(
         picker="stalta", id="stalta:" + picks["id"].str.split(":", n=2).str[2]
     )
     rename = dict(zip(picks["id"], stalta["id"], strict=True))
-    base, _, _ = _associate_toy(world)
+    base, _, _ = _associate_toy(world, picks=picks)
     other, _, _ = _associate_toy(world, picks=stalta)
+    assert len(base.events) > 0
     pd.testing.assert_frame_equal(other.events, base.events)
     mapped = base.picks.assign(pickId=base.picks["pickId"].map(rename).astype("string"))
     pd.testing.assert_frame_equal(
         other.picks.sort_values(["assocId", "pickId"]).reset_index(drop=True),
         mapped.sort_values(["assocId", "pickId"]).reset_index(drop=True),
     )
+
+
+def test_stalta_labelled_picks_associate_unchanged(world: dict[str, Any]) -> None:
+    """Not smoke: every PyOcto call reloads its station tables (about 0.8 s), even on a few
+    picks, so an association test can't fit the smoke budget."""
+    _check_stalta_unchanged(world, world["picks"])
+
+
+def test_real_sweep_driver_scores_every_point(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``hq.tier.sweep.real_pipeline`` with the real closures (association at every point,
+    ``locate_detailed``, ``match``, tiers), which produced the published sweep.parquet; the
+    stage test fakes them. Not smoke: a drifted signature fails here, not in a full-day tier run.
+    """
+    import importlib
+
+    from hq.associate import core
+    from hq.associate.sweep import grid
+    from hq.tier import derive_thresholds
+    from hq.tier.sweep import real_pipeline, score_sweep
+
+    for target in (core, importlib.import_module("hq.locate")):  # homogeneous-model picks
+        monkeypatch.setattr(target, "load_configured_model", lambda _cfg: HOMOGENEOUS)
+    raw = world["cfg"].model_dump(mode="json")
+    raw["associator"]["sweep"] = {"enabled": False, "minStations": [5, 8], "nSPicks": [1],
+                                  "minPickProb": [0.3]}
+    raw["tiering"]["minMatched"] = 3
+    cfg = SeismologyConfig.model_validate(raw)
+    run, events = world["run"], world["events"]
+    lat, lon, _ = from_enu(events["e"], events["n"], events["elevM"] - run.origin.elevM, run.origin)
+    catalog = pd.DataFrame({"id": [f"pub{k}" for k in range(len(events))], "t": events["t"],
+                            "latitude": lat, "longitude": lon, "elevM": events["elevM"],
+                            "enu_e": events["e"], "enu_n": events["n"],
+                            "enu_u": events["elevM"] - run.origin.elevM})
+    run_points, pipeline = real_pipeline(world["picks"], world["stations"], catalog, cfg, run,
+                                         run_id="test-run", cache_dir=world["cache"], statics={})
+    configured, _, _ = _associate_toy(world, cfg=cfg)
+    located, flags, arrivals = pipeline.locate(configured)
+    matches = pipeline.match(located)
+    assert flags is not None and arrivals is not None and matches["eventId"].notna().any()
+    matched = located[located["id"].isin(matches["eventId"].dropna())]
+    points, record = score_sweep(run_points, pipeline, cfg, derive_thresholds(matched,
+                                                                               cfg.tiering))
+    assert [p.params for p in points] == grid(cfg.associator)
+    at = next(p for p in points if p.params["minStations"] == cfg.associator.minStations)
+    assert at.candidates == len(located) and at.recoveredPublic == len(matched)
+    assert all(p.tierA <= p.candidates for p in points) and len(record) == len(points)
 
 
 def test_zero_picks_give_typed_zero_row_tables(world: dict[str, Any], tmp_path: Path) -> None:
@@ -776,7 +825,8 @@ def test_stage_writes_tables_record_and_counts_sweep(
     seis = _cfg(world["cfg"], sweep=sweep)  # the configured point (0.3, nS 1) is a sweep point
     ctx = make_ctx(world["run"], seis)
     _write_inputs(ctx, world)
-    ctx.path("sweep.parquet").write_bytes(b"stale")
+    for name in ("sweep.parquet", "matches.parquet", "match_sensitivity.parquet"):
+        ctx.path(name).write_bytes(b"stale")
     runs: list[float] = []
     real_run_pyocto = core.run_pyocto
 
@@ -790,7 +840,9 @@ def test_stage_writes_tables_record_and_counts_sweep(
     picks = read_table(ctx.path("assoc_picks.parquet"))
     assert events.attrs["model"] == "AssocEvent" and len(events) == N_EVENTS
     assert list(picks.columns) == list(PICK_DTYPES) and not picks["pickId"].duplicated().any()
-    assert not ctx.path("sweep.parquet").exists()  # the stale sweep of another association
+    # The stale sweep and match of another association: locate must run pass 1 next.
+    for name in ("sweep.parquet", "matches.parquet", "match_sensitivity.parquet"):
+        assert not ctx.path(name).exists()
     assert not list(ctx.run_dir.glob("*.part"))
     assert len(runs) == 1  # the sweep reran PyOcto only for nS 2, not the configured point
     (rec,) = ctx.records
@@ -800,6 +852,8 @@ def test_stage_writes_tables_record_and_counts_sweep(
     assert params["sweep"]["grid"] == grid(seis.associator)
     assert [p["associated"] for p in params["sweep"]["points"]][1] == N_EVENTS  # (0.3, 1, 8)
     assert "LOC-06" in params["sweep"]["note"]
+    assert params["removedStale"] == ["sweep.parquet", "matches.parquet",
+                                      "match_sensitivity.parquet"]
     assert (ctx.cache_dir / params["tables"]["directory"]).is_dir()
     assert str(ctx.cache_dir) not in json.dumps(params)  # no machine-specific path in run.json
 

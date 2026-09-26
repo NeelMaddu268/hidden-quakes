@@ -76,6 +76,7 @@
 - **In → out:** association → `events_located.parquet`, `arrivals.parquet`, `diagnostics.md` in the run dir
 - **Depends on:** LOC-02, LOC-03
 - **Accept:** every diagnostics row has a result and a conclusion; known events relocate within their catalog uncertainty.
+- **Status (LOC-09):** the second half is not met on the showcase run `20260926-0210-a04c611`. With reference statics the known events sit within the catalog's stated depth error for only some of them, and outside its stated horizontal error for all of them; `diagnostics.md` row 2 now reports both halves (horizontal offsets next to the catalog's stated horizontal error). Over all matched events the offsets are about the size of the catalog's own stated errors, and the reference statics tie positions to the catalog's frame, so this reads as the limit of a 1D model plus terms, not a locator defect. Recorded here for the lead; no change to the locations.
 
 ### MATCH-02 · P0 · Start ~2:00 AM — Catalog matching
 
@@ -108,6 +109,7 @@
 - **Files:** `hq/locate/tt_grid3d.py`, `tests/seismology/test_tt_grid3d.py`
 - **Depends on:** LOC-02, the 3D download
 - **Accept:** synthetic test passes with 3D grids; a 1D vs 3D residual and depth-shift comparison is saved in `diagnostics.md`.
+- **Lead decision (Sat 1:35 PM, after LOC-07 merged):** keep `grid1d` with `referenceEvents` statics for the showcase; `grid3d` stays a cross-check.
 - **Status (LOC-07, after review):** `locator.method: grid3d` runs the same locator on per-station 3D tables (`hq/locate/tt_grid3d.py`: the model's CRS, vertical datum and air values confirmed from the paper and the file, evidence in its docstring and in `diagnostics.md`). `grid1d` stays the default. Receivers in the model's one-value columns (no ground surface or basin data in the file) use their 1D tables unless `grid3d.constantColumns` is `asFile`. Every grid3d stage run also locates the same association with grid1d and the same statics, and `diagnostics.md` compares the two. On the showcase run's acceptance (`_runners/LOC-07_acceptance.out`), with `referenceEvents` statics grid3d and grid1d locate the events within the held-out scatter of each other, and grid3d leaves more unexplained statics. Without statics neither 3D variant removes the epicentre offset from the public regional catalog. With `asFile`, depths move far above the catalog's; the review traced that to the one-value columns under the Mineral Mountains outcrop stations (basement velocity right up to the sensor), not to the basin model. With those stations on 1D tables, depths sit somewhat deeper than the catalog's and the residuals grow. The basin model does remove most of the S-heavy azimuthal trend at the catalog's hypocentres (row 7). Recommendation: keep grid1d + statics for the showcase and use grid3d as a cross-check (lead call). Before any switch: grid3d has no above-ground mask (the report counts such events), its synthetic test has no table error (its forward model is the locator's own tables), and 100 m tables are the safer spacing.
 
 ### LOC-08 · P1 · Only if the depth gate fails at 4 AM — Relative relocation
@@ -128,6 +130,8 @@
 ### LOC-09 · P1 · 2–6 PM Saturday — Lane hardening pass
 
 - **Goal:** a fresh reviewer agent audits the lane against "Definition of done" and fixes what it finds.
+- **Status (LOC-09 hardening, agent/LOC-09-hardening):** four audit lenses (physics, contracts, tests, checklist) ran on the lane and on run `20260926-0210-a04c611` v3. Fixed without changing any published value (on a rerun `catalog.parquet` and `matches.parquet` change string dtypes only): CI smoke now runs the locate stage (its synthetic test, `synthetic.json`, every diagnostics row), docs/02 `locate()` on STA/LTA-labelled picks, noise-free recovery, the one-to-one property and a docs/02 §5 signature test; stage tier fails without `locate_flags.parquet` and removes a stale `magnitude.json`; stage associate removes a stale `matches.parquet`; `diagnostics.md` wording (row 7 hedged after statics, both halves of the known-event check, sigma and origin-time notes); unmatched-reason windows move by the station statics; `run.json` records every table and velocity knob, each H2 stage's code and software, and no stale keys after a method switch; `catalog.parquet` and `matches.parquet` follow the docs/02 §2 dtype rule. Open lead decisions (each would change published numbers or needs the lead): association without station terms, synthetic station coverage, pick sigma (Locator step 2), `event_picks.parquet` scope, the locator vs association volume, and the sweep config below.
+- **Sweep config (lead decision):** the published v3 `sweep.parquet` came from an out-of-repo overlay with `tiering.sweep.enabled: true`; the committed `seismology.yaml` has it false, and stage tier removes `sweep.parquet` when it is disabled. A pipeline-of-record rerun from the committed config therefore ships an empty `Validation.sweep`. Either enable it in the committed config (much longer tier runs) or hand H4 an override for the final rerun. That override has to be made from the committed `configs/showcase` with only this flag flipped: the overlay that produced v3 predates later changes to `signal.yaml`, `validate.yaml` and `seismology.yaml` and no longer loads. The configured point was kept without a recorded knee choice (Association: "pick the knee"); the lead records which point and why.
 
 ## Domain notes (give these to your agent)
 
@@ -148,6 +152,7 @@
 
 1. Coarse grid search at 200 m over the volume, then a 25 m grid within ±1 km of the best node.
 2. L1 misfit with origin time removed analytically: `t0` = weighted median of `t_obs − T_pred`. Weight = picker probability / σ for that phase and profile. Start σ at 0.02 s (P) and 0.04 s (S); update from the Tier A residual spread.
+   *Status (LOC-09):* not applied. Stage locate compares the robust residual sigma with `pickSigmaS` and flags only a ratio above `statics.sigmaFlagRatio`; on the showcase run the robust sigma is below the configured values, so the formal `hErrM` / `vErrM` stay at the configured (larger) sigma. Changing σ would move the formal errors, the tier bars and the synthetic comparison: lead decision whether to keep this rule or rerun with an updated σ.
 3. Drop picks with |residual| > max(3 × MAD, 0.15 s) and relocate once.
 4. **Uncertainty:** normalize `exp(−misfit)` over the fine grid into a PDF, take its covariance, report `hErrM` (larger horizontal axis) and `vErrM`. Set `depthOnEdge` when > 5% of the mass sits on the top or bottom face.
 5. **Statics:** after pass 1, take each station-phase's median residual over well-constrained events, subtract, relocate; three iterations; cap 0.3 s. This is `statics.mode: selfConsistent`. The showcase default, `referenceEvents` (LOC-05 lead decision), instead takes each station-phase term as the median residual at the public regional catalog's hypocentres of the matched events (hypocentre fixed, origin time by weighted median), relocates each matched event with terms computed without it (leave-one-out or `statics.folds`), gives unmatched events the terms from all matched events, and caps at `statics.referenceCapS`. It needs a match first, so the stages run locate (pass 1, no statics) → match → locate (pass 2) → match → tier; stage `locate` runs pass 2 when `matches.parquet` is in the run dir.
@@ -213,13 +218,15 @@ Consequences:
 
 ## Definition of done (the hardening pass checks every line)
 
-- [ ] Synthetic test passes in CI and its numbers are in `synthetic.json`
-- [ ] Every diagnostics row in `diagnostics.md` has a result and a conclusion
-- [ ] Every PyOcto and locator parameter is in `seismology.yaml` and `run.json`
-- [ ] Tier thresholds trace to quantiles of the matched set, stored in `ProcessingRun.tiering`
-- [ ] Every unmatched public event has a reason
-- [ ] `associate`, `locate`, `match`, `assign_tiers` match `docs/02` §5 exactly and run on STA/LTA picks unchanged
-- [ ] `pytest -m smoke tests/seismology` < 30 s, offline, seeded
+- [x] Synthetic test passes in CI and its numbers are in `synthetic.json`
+- [x] Every diagnostics row in `diagnostics.md` has a result and a conclusion
+- [x] Every PyOcto and locator parameter is in `seismology.yaml` and `run.json`
+- [x] Tier thresholds trace to quantiles of the matched set, stored in `ProcessingRun.tiering`
+- [x] Every unmatched public event has a reason
+- [x] `associate`, `locate`, `match`, `assign_tiers` match `docs/02` §5 exactly and run on STA/LTA picks unchanged
+- [x] `pytest -m smoke tests/seismology` < 30 s, offline, seeded
+
+Checked by LOC-09 (status above). In CI (`make check`, smoke only): the locate stage's synthetic test and `synthetic.json`, every diagnostics row, noise-free recovery, the docs/02 §5 signatures, docs/02 `locate()` on STA/LTA-labelled picks and the one-to-one property. The STA/LTA association test (every PyOcto call reloads its tables, too slow for the smoke budget) and the larger `run_synthetic` test stay in the full suite (`pytest tests/seismology`).
 
 ## Kickoff prompt
 

@@ -54,12 +54,12 @@ T0 = 1_789_041_600.25  # 2026-09-10T12:00:00.25Z, inside the showcase window
 KM = 1000.0
 HYPO_U = -4000.0  # ENU u of every synthetic hypocentre
 HYPO = (0.0, 0.0, HYPO_U)  # public hypocentre ENU used by the reason tests
-MATCH_ARROW = {
-    "catalogId": pa.string(),
-    "eventId": pa.string(),
+MATCH_ARROW = {  # docs/02 §2 dtype rule: str -> Arrow large_string
+    "catalogId": pa.large_string(),
+    "eventId": pa.large_string(),
     "dtS": pa.float64(),
     "distM": pa.float64(),
-    "reason": pa.string(),
+    "reason": pa.large_string(),
 }
 SENSITIVITY_ARROW = {"dtS": pa.float64(), "distM": pa.float64(), "recovered": pa.int64()}
 # events_located.parquet (docs/02 §2): SeismicEvent fields except tier, tierReasons, catalogMatch
@@ -378,14 +378,10 @@ def _check_one_to_one(pub: pd.DataFrame, loc: pd.DataFrame, cfg: SeismologyConfi
     return matches
 
 
-@pytest.mark.parametrize("scaled", [False, True])
-def test_one_to_one_property_over_random_scenarios(
-    seismology_config: SeismologyConfig, scaled: bool
-) -> None:
+def _one_to_one_property(cfg: SeismologyConfig, scenarios: int, seed: int) -> None:
     """Never a located or public event twice; the count is the maximum possible (Hopcroft-Karp)."""
-    cfg = _scaled(seismology_config) if scaled else seismology_config
-    rng = np.random.default_rng(20260926)
-    for _ in range(150):
+    rng = np.random.default_rng(seed)
+    for _ in range(scenarios):
         pub, loc = _scenario(rng, int(rng.integers(0, 25)), int(rng.integers(0, 30)))
         matches = _check_one_to_one(pub, loc, cfg)
         pub_sorted = pub.sort_values(["t", "id"]).reset_index(drop=True)
@@ -394,6 +390,20 @@ def test_one_to_one_property_over_random_scenarios(
         ok, _ = _reference(off.dt, off.dist, cfg.matching)
         most = int((maximum_bipartite_matching(csr_matrix(ok.astype(np.int8))) >= 0).sum())
         assert int(matches["eventId"].notna().sum()) == most
+
+
+@pytest.mark.parametrize("scaled", [False, True])
+def test_one_to_one_property_over_random_scenarios(
+    seismology_config: SeismologyConfig, scaled: bool
+) -> None:
+    _one_to_one_property(_scaled(seismology_config) if scaled else seismology_config, 150,
+                         20260926)
+
+
+@pytest.mark.smoke
+def test_one_to_one_property_smoke(seismology_config: SeismologyConfig) -> None:
+    """MATCH-02 'one-to-one guaranteed by test' in CI: a few scenarios of the full test above."""
+    _one_to_one_property(seismology_config, 12, 20260927)
 
 
 @pytest.mark.parametrize("scaled", [False, True])
@@ -882,6 +892,34 @@ def test_window_edges_and_pad(seismology_config: SeismologyConfig, arrivals: Arr
     no_pad = _with_reasons(seismology_config, arrivalPadS=0.0)
     assert reason(edge_picks(pad, 0.0), no_pad).startswith("too few picks (")
     assert reason(edge_picks(0.0, 0.0), no_pad).startswith("no candidate within")
+
+
+@pytest.mark.smoke
+def test_windows_move_by_each_station_static(
+    seismology_config: SeismologyConfig, arrivals: ArrivalModel
+) -> None:
+    """A late station (large S term, as referenceEvents statics give) keeps its S picks in its
+    window: statics.parquet moves each station-phase's window by its term."""
+    pub = public([("a", T0, 0, 0)])
+    sta = stations()
+    used = _used(sta)
+    ids = used["id"].tolist()
+    enu = used[["enu_e", "enu_n", "enu_u"]].to_numpy(dtype=np.float64)
+    pad = seismology_config.matching.reasons.arrivalPadS
+    s_hi = expected_windows(T0, np.array(HYPO), enu, RUN.origin.elevM, arrivals, pad)["S"][1]
+    late = 0.8
+    picks = [pick(sid, "S", float(s_hi[k]) + late) for k, sid in enumerate(ids)]
+    terms = pd.DataFrame({"stationId": ids, "phase": "S", "staticS": late + 0.1, "nEvents": 5})
+
+    def reason(statics: pd.DataFrame | None) -> str:
+        evidence = Evidence(stations=sta, picks=picks_frame(picks), statics=statics)
+        return _explain(located([]), pub, seismology_config, arrivals, evidence)[0]["a"]
+
+    assert reason(None).startswith("too few picks (picks in the expected arrival windows on 0 of")
+    assert reason(terms).startswith("no candidate within")
+    assert reason(terms.assign(phase="P")).startswith("too few picks (")  # S picks, P terms
+    with pytest.raises(ValueError, match="appears twice"):
+        reason(pd.concat([terms, terms]))
 
 
 @pytest.mark.smoke

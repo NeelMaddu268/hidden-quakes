@@ -17,6 +17,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from hq_contracts.io import read_table
 from obspy import UTCDateTime, read_events
 from obspy.clients.fdsn.header import FDSNException, FDSNNoDataException
 from obspy.core.event import Catalog
@@ -34,22 +35,23 @@ LATEST_ID = "uu80155936"  # 2026-09-10T23:42:53.300Z, ml 1.34, depth 2740 m, lon
 MIDDLE_ID = "uu80155911"  # 2026-09-10T22:23:28.740Z, md 1.19, lat 38.52, lon -112.9005
 EARLIEST_ID = "uu80155571"  # 2026-09-10T09:27:56.880Z, ml 2.14, lat 38.4928, lon -112.89667
 EARLIEST_LON = -112.89666666667
-# docs/02 CatalogEvent, flattened (docs/02 §2): str -> Arrow string, float -> Arrow double.
+# docs/02 CatalogEvent, flattened (docs/02 §2 dtype rule): str -> Arrow large_string, float ->
+# Arrow double.
 DOCS02_TYPES = {
-    "id": pa.string(),
-    "source": pa.string(),
+    "id": pa.large_string(),
+    "source": pa.large_string(),
     "t": pa.float64(),
     "latitude": pa.float64(),
     "longitude": pa.float64(),
     "depthKm": pa.float64(),
-    "depthDatum": pa.string(),
+    "depthDatum": pa.large_string(),
     "elevM": pa.float64(),
     "mag": pa.float64(),
-    "magType": pa.string(),
+    "magType": pa.large_string(),
     "enu_e": pa.float64(),
     "enu_n": pa.float64(),
     "enu_u": pa.float64(),
-    "matchedEventId": pa.string(),
+    "matchedEventId": pa.large_string(),
 }
 DOCS02_COLUMNS = list(DOCS02_TYPES)
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -646,7 +648,9 @@ def test_stage_writes_both_files_and_records(
         "idsWithArrivalsProduct",
         "quakemlSha256",
         "config",
+        "provenance",
     }
+    assert params["provenance"]["gitSha"]  # the code this stage ran with
     assert params["providerUrl"] == FakeClient.base_url
     assert params["quakemlSha256"] == hashlib.sha256(raw).hexdigest()
     assert params["query"]["minlongitude"] == run_section.bbox[0]
@@ -1010,13 +1014,14 @@ def test_event_obspy_cannot_parse_fails_when_it_would_be_kept(
 # ---------------------------------------------------------------- reading the table back
 
 
-def test_null_strings_read_back_as_nan_like_every_run_table(
+def test_null_strings_read_back_as_pd_na_like_every_run_table(
     tmp_path: Path,
     run_section: RunSection,
     seismology_config: SeismologyConfig,
     comcat_quakeml: Path,
 ) -> None:
-    """Pins how a null comes back: NaN through pandas (never pd.NA), None through pyarrow."""
+    """Pins how a null comes back: pd.NA through hq_contracts.io (docs/02 §2), None through
+    pyarrow."""
     served = _served(comcat_quakeml)
     event = _by_id(served, MIDDLE_ID)
     event.magnitudes = []
@@ -1025,16 +1030,15 @@ def test_null_strings_read_back_as_nan_like_every_run_table(
     path = tmp_path / "catalog.parquet"
     catalog_stage.write_catalog(rows, path)
 
-    default_str = pd.Series(["x", None]).dtype  # pandas' default string dtype (missing = NaN)
-    string_columns = [c for c, t in DOCS02_TYPES.items() if t == pa.string()]
-    for frame in (rows, pd.read_parquet(path), pq.read_table(path).to_pandas()):
+    # docs/02 §2: str columns are pandas `string`, missing is pd.NA (as in every other H2 table).
+    string_columns = [c for c, t in DOCS02_TYPES.items() if t == pa.large_string()]
+    for frame in (rows, read_table(path)):
         for column in string_columns:
             dtype = frame[column].dtype
-            assert isinstance(dtype, pd.StringDtype) and dtype.na_value is default_str.na_value
+            assert isinstance(dtype, pd.StringDtype) and dtype.na_value is pd.NA, column
         middle = frame.set_index("id").loc[MIDDLE_ID]
         for value in (middle["magType"], middle["matchedEventId"]):
-            assert pd.isna(value) and value is not pd.NA  # NaN: pd.isna, never `is None`
-    assert pd.read_parquet(path)["magType"].dtype == default_str
+            assert value is pd.NA  # test with pd.isna, never `is None` or truthiness
 
     records = pq.read_table(path).to_pylist()
     assert all(r["matchedEventId"] is None for r in records)

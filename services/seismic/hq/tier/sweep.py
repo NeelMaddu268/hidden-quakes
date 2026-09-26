@@ -17,8 +17,8 @@ its Tier A next to the one in ``events.parquet``. ``statics.parquet`` holds the 
 it. Every point's ``recoveredPublic`` and matched-event Tier A are therefore in-sample; the stage
 warns and records it (``sweep.statics.inSample``).
 
-``locate`` is LOC-04's ``hq.locate.locate_detailed``, imported only when the sweep runs
-(``real_pipeline``); a branch without it fails with a message naming LOC-04. Tests inject a
+``real_pipeline`` binds LOC-04's ``hq.locate.locate_detailed``, MATCH-02's ``hq.match.match``
+and LOC-03's association sweep, imported only when the sweep runs. Tests inject a
 ``SweepPipeline`` and the association step.
 """
 
@@ -33,7 +33,7 @@ from hq_contracts.models import SweepPoint
 
 from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
-from hq.tier import Thresholds, TierError, assign_tiers
+from hq.tier import Thresholds, assign_tiers
 
 if TYPE_CHECKING:
     from hq.associate.result import AssocResult
@@ -117,15 +117,9 @@ def real_pipeline(
 ) -> tuple[RunPoints, SweepPipeline]:
     """The real association sweep and LOC-04 / MATCH-02 steps for one run's tables; every point
     is located with ``statics`` ({(stationId, phase): s}, the run's ``statics.parquet``)."""
-    try:
-        from hq.locate import locate_detailed  # LOC-04
-    except ImportError as exc:
-        raise TierError(
-            "the association sweep needs hq.locate.locate_detailed (LOC-04), which this branch "
-            "does not have yet; set tiering.sweep.enabled false or merge LOC-04"
-        ) from exc
     from hq.associate.core import prepared
     from hq.associate.sweep import run_sweep
+    from hq.locate import locate_detailed
     from hq.match import match
 
     def locate(

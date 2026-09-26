@@ -20,8 +20,11 @@ reference events (mapped to their association events through the ``events_locate
 ``locate_flags.parquet`` the match read; a matches table written for other located events fails
 the stage), and ``catalog.parquet`` gives their hypocentres. Without ``matches.parquet`` it runs
 pass 1 and logs that the statics pass needs a match first. selfConsistent needs nothing more.
-After pass 2 the run dir's ``matches.parquet`` belongs to the pass-1 locations (logged): stage
-tier (``hq.tier.run.check_matches_current``) and a further locate refuse it until match reruns.
+After pass 2 the run dir's ``matches.parquet`` belongs to the locations before it (logged): stage
+tier (``hq.tier.run.check_matches_current``) and a further locate refuse it until match reruns,
+unless no matched event moved (a pass 2 rerun on the same inputs). Such a rerun finds
+``events_located.parquet`` already located with statics, so the no-statics median rmsS for
+diagnostics.md comes from run.json (``carried_previous_rms``).
 
 With ``locator.method`` grid3d (LOC-07) the stage also locates the same association with grid1d,
 the same statics configuration and the same reference events (``grid1d_comparison``; about one
@@ -29,15 +32,18 @@ more locate pass, nothing of it written) for diagnostics.md's 1D vs 3D section, 
 run's report carries the 1D vs 3D depth-shift and residual comparison.
 
 ``ctx.record`` gets the counts, the runtime, the locator record (``ProcessingRun.locator``, with
-the stage's conventions under ``locate``, the synthetic test's params under ``synthetic`` and the
-diagnostics knobs) and the top-extended velocity model the tables were solved on
-(``ProcessingRun.velocityModel``).
+the stage's conventions under ``locate``, the synthetic test's params under ``synthetic``, the
+diagnostics knobs and the velocity, grids and grid3d sections under ``tableConfig``) and the
+top-extended velocity model the tables were solved on (``ProcessingRun.velocityModel``); keys
+an earlier locate wrote into either record and this one does not are set to None
+(``without_stale_keys``).
 
 The package attribute ``hq.locate.run`` is this module's ``run`` function (the stage registry
 resolves it there), so ``import hq.locate.run as m`` binds the function, not this module; reach
 the module with ``importlib.import_module("hq.locate.run")``.
 """
 
+import dataclasses
 import json
 import logging
 import os
@@ -51,12 +57,14 @@ from hq_contracts.io import read_table, write_table
 
 from hq.locate import LocateDetails
 from hq.locate.diagnostics import (
+    KNOWN_WINDOWS_FILE,
     Comparison1d,
     DiagnosticsInputs,
     build_diagnostics,
     catalog_uncertainties,
 )
 from hq.locate.locator import GRID1D, GRID3D, LocatorSetup
+from hq.locate.provenance import stage_provenance
 from hq.locate.result import ARRIVALS_MODEL, EVENTS_MODEL, FLAGS_MODEL, STATICS_MODEL
 from hq.locate.statics import (
     REFERENCE_EVENTS,
@@ -93,7 +101,9 @@ SYNTHETIC_PARAMS_SKIPPED = ("locator", "velocityModel")
 CATALOG_TABLE = "catalog.parquet"
 CATALOG_QUAKEML = "catalog.quakeml"
 MATCHES_TABLE = "matches.parquet"  # a prior match pass: the reference events (LOC-05)
-KNOWN_WINDOWS = "known/windows.json"
+KNOWN_WINDOWS = KNOWN_WINDOWS_FILE
+# seismology.yaml sections recorded verbatim under ProcessingRun.locator["tableConfig"].
+TABLE_CONFIG_SECTIONS = ("velocity", "grids", "grid3d")
 PART_SUFFIX = ".part"
 # Model name each input's parquet metadata must carry (docs/02 §2; the assoc tables are LOC-03's,
 # matches MATCH-02's, events_located and locate_flags this stage's own).
@@ -232,6 +242,44 @@ def grid1d_comparison(
     return Comparison1d(details=outcome.details, statics=outcome.report, runtime_s=runtime)
 
 
+def without_stale_keys(previous: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    """``record`` plus every key of the stored ``previous`` record it lacks, set to None.
+
+    ``RunContext.record`` merges params one level deep, so a key this stage wrote before and
+    does not write now (a run dir that switched ``locator.method``: the 1D layers next to a 3D
+    model, or the 3D grid next to the 1D layers) would otherwise stay and misstate the model.
+    """
+    return {**dict.fromkeys(k for k in previous if k not in record), **record}
+
+
+def carried_previous_rms(
+    ctx: "RunContext", outcome: StaticsOutcome, previous: pd.DataFrame | None,
+) -> StaticsOutcome:
+    """A pass 2 rerun on events already located with statics has no no-statics table to take the
+    median rmsS from; take the value the previous pass 2 recorded in run.json instead, when it
+    used the same reference events and association events (stage associate removes
+    matches.parquet, so a new association always goes through pass 1 first)."""
+    rep = outcome.report
+    if (rep.previous_median_rms_s is not None or rep.reference is None or previous is None
+            or not previous["quality_statics"].astype(bool).any()):
+        return outcome
+    stored = ctx.read_run().locator.get("statics") or {}
+    value = stored.get("previousMedianRmsS")
+    pairs = {(str(r["catalogId"]), str(r["assocId"])) for r in stored.get("reference") or []}
+    now = set(zip(rep.reference["catalogId"].astype(str), rep.reference["assocId"].astype(str),
+                  strict=True))
+    if value is None or pairs != now:
+        return outcome
+    log.info("locate: %s was already located with statics; the no-statics median rmsS %.3f s is "
+             "carried from run.json (same reference and association events)", EVENTS_TABLE,
+             value)
+    return dataclasses.replace(outcome, report=dataclasses.replace(
+        rep, previous_median_rms_s=float(value),
+        previous_median_rms_from="carried from run.json (recorded by the previous pass 2 on the "
+        "same reference and association events, whose events_located.parquet was located "
+        "without statics)"))
+
+
 def run(ctx: "RunContext") -> None:
     """Stage ``locate`` (docs/02 §4); see the module docstring."""
     started = time.perf_counter()
@@ -247,9 +295,9 @@ def run(ctx: "RunContext") -> None:
     reference = reference_input(ctx)
     previous = (_read(ctx.path(EVENTS_TABLE), "events_located")
                 if ctx.path(EVENTS_TABLE).is_file() else None)
-    outcome = locate_with_statics(assoc, picks, stations, cfg, run_cfg, run_id=ctx.run_id,
-                                  cache_dir=ctx.cache_dir, reference=reference,
-                                  previous_events=previous)
+    outcome = carried_previous_rms(ctx, locate_with_statics(
+        assoc, picks, stations, cfg, run_cfg, run_id=ctx.run_id, cache_dir=ctx.cache_dir,
+        reference=reference, previous_events=previous), previous)
     details = outcome.details
     grid1d = grid1d_comparison(ctx, assoc, picks, stations, reference)
     synthetic = synthetic_test(ctx, details, picks, stations)
@@ -321,15 +369,23 @@ def run(ctx: "RunContext") -> None:
         },
         "outputs": [p.name for p in targets],
         "diagnostics": cfg.diagnostics.model_dump(mode="json"),
+        # The seismology.yaml sections the travel-time tables and velocity models come from,
+        # verbatim (the tables' and models' own records hold only what they derived from them).
+        "tableConfig": {key: getattr(cfg, key).model_dump(mode="json")
+                        for key in TABLE_CONFIG_SECTIONS},
         "statics": {"config": cfg.statics.model_dump(mode="json"), **rep.to_record()},
         "locateRuntimeS": details.runtime_s,
+        "provenance": stage_provenance(),
         "grid1dComparisonRuntimeS": None if grid1d is None else grid1d.runtime_s,
     }
     log.info("locate: wrote %s in %.1f s", ", ".join(p.name for p in targets), runtime_s)
     if reference is not None:
-        log.warning("locate: pass 2 relocated every event; %s still holds the match of the "
-                    "pass-1 locations: rerun stage match before tier (stage tier and a further "
-                    "locate refuse it until then)", MATCHES_TABLE)
-    ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params=details.velocity_model,
+        log.warning("locate: pass 2 relocated every event; %s holds the match made before this "
+                    "relocation: rerun stage match before tier (stage tier and a further locate "
+                    "refuse it if any matched event moved)", MATCHES_TABLE)
+    stored = ctx.read_run()
+    ctx.record(STAGE, runtime_s=runtime_s, counts=counts,
+               params=without_stale_keys(stored.velocityModel, details.velocity_model),
                field="velocityModel")
-    ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params=params)
+    ctx.record(STAGE, runtime_s=runtime_s, counts=counts,
+               params=without_stale_keys(stored.locator, params))
