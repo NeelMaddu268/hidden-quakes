@@ -3,6 +3,8 @@
 // their own useFrame. Plain mutable numbers: no React state, no allocation, nothing re-renders.
 // There is exactly one <Scene/> on the page, so one module-level object is enough.
 
+import { FILTER_LOOK, type FilterLook } from "./filters/fade";
+
 export interface SceneFx {
   /** Seconds since reveal() was called; 0 before it and after reset(). */
   revealElapsedS: number;
@@ -10,19 +12,23 @@ export interface SceneFx {
   terrainOpacity: number;
   /** Multiplier on bloom intensity (the reveal can flare it while events pop). */
   bloomBoost: number;
+  /** The eased PUBLIC / ALL / STRICT look (scene/filters, WEB-04): tier, layer and halo opacities. */
+  filterLook: FilterLook;
 }
 
 export const INITIAL_SCENE_FX: Readonly<SceneFx> = Object.freeze({
   revealElapsedS: 0,
   terrainOpacity: 1,
   bloomBoost: 1,
+  filterLook: FILTER_LOOK.public,
 });
 
-export const sceneFx: SceneFx = { ...INITIAL_SCENE_FX };
+export const sceneFx: SceneFx = { ...INITIAL_SCENE_FX, filterLook: { ...FILTER_LOOK.public } };
 
 /** Back to the start-frame values (tests, and the reveal driver on reset()). */
 export function resetSceneFx(): void {
   sceneFx.revealElapsedS = INITIAL_SCENE_FX.revealElapsedS;
   sceneFx.terrainOpacity = INITIAL_SCENE_FX.terrainOpacity;
   sceneFx.bloomBoost = INITIAL_SCENE_FX.bloomBoost;
+  Object.assign(sceneFx.filterLook, FILTER_LOOK.public);
 }
