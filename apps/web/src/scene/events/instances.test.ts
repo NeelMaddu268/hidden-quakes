@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { appearTimeOf } from "../reveal/timeline";
 import type { CatalogEvent, SeismicEvent } from "../types";
 import {
   buildCandidateInstances,
@@ -121,6 +122,10 @@ describe("buildCandidateInstances", () => {
     expect(inst.scales[0]).toBeGreaterThan(inst.scales[1]);
     expect(inst.scales[1]).toBeGreaterThan(inst.scales[2]);
     expect(Array.from(inst.revealAt)).toEqual([0.5, 0, 1]);
+    // appearance times are the counter clock's exact inverse: first event at 1.0 s, last at 6.0 s
+    expect(inst.appearAt[1]).toBe(1);
+    expect(inst.appearAt[2]).toBe(6);
+    expect(inst.appearAt[0]).toBeCloseTo(appearTimeOf(0.5), 5);
     expect(Array.from(inst.times)).toEqual([60, 0, 3600]);
   });
 
@@ -157,6 +162,7 @@ describe("buildPublicInstances", () => {
     );
     expect(Array.from(inst.positions)).toEqual([1, -3, -2]);
     expect(Array.from(inst.revealAt)).toEqual([-1]);
+    expect(Array.from(inst.appearAt)).toEqual([-1]);
     expect(Array.from(inst.tiers)).toEqual([0]);
     expect(Array.from(inst.times)).toEqual([30]);
   });

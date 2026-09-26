@@ -5,17 +5,18 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { motion } from "@hq/visualization";
 import { useEffect, useLayoutEffect, useRef, type ComponentRef } from "react";
 import type { Camera } from "three";
-import { onDemoReset, useDemo } from "../../state/demo";
+import { onDemoReset, useDemo, type CameraView } from "../../state/demo";
+import { sceneFx } from "../fx";
 import type { SceneBounds } from "./bounds";
+import { createCameraDirector, type CameraDirector } from "./director";
 import { presetPose, type CameraPose } from "./presets";
 import { aspectOf, boundsSignature, dropOrbitMomentum, ORBIT } from "./rig";
-import { createTween, startTween, stepTween, type PoseTween } from "./tween";
 
 type Controls = ComponentRef<typeof OrbitControls>;
 
-/** Puts camera and orbit target exactly on `pose` and cancels any running move. */
-function snapTo(camera: Camera, c: Controls, pose: CameraPose, tween: PoseTween): void {
-  tween.active = false;
+/** Puts camera and orbit target exactly on `pose` and releases the camera. */
+function snapTo(camera: Camera, c: Controls, pose: CameraPose, director: CameraDirector): void {
+  director.cancel();
   dropOrbitMomentum(c, camera.position);
   camera.position.set(pose.position[0], pose.position[1], pose.position[2]);
   c.target.set(pose.target[0], pose.target[1], pose.target[2]);
@@ -24,22 +25,28 @@ function snapTo(camera: Camera, c: Controls, pose: CameraPose, tween: PoseTween)
 }
 
 /**
- * Orbit camera with the docs/02 presets. `setView` tweens to a preset over `motion.scene`; `reset()`
- * tweens back to the view's preset (even when no store field changed, e.g. R after orbiting). User
- * orbiting works between moves and is disabled while one runs.
+ * Orbit camera with the docs/02 presets. The decisions (which move runs when, the reveal dolly locked
+ * to the reveal clock, reveal from plan view, presenter sequences like R then Space) live in the tested
+ * camera director (./director.ts); this component wires it to the store, the frame loop and the orbit
+ * controls, which stay disabled while the director owns the camera.
  */
 export function CameraRig({ bounds }: { bounds: SceneBounds }) {
   const camera = useThree((s) => s.camera);
   const width = useThree((s) => s.size.width);
   const height = useThree((s) => s.size.height);
   const controls = useRef<Controls>(null);
-  const tween = useRef<PoseTween>(createTween());
+  const director = useRef<CameraDirector | null>(null);
   const aspect = useRef(aspectOf(width, height));
   const framed = useRef<string | null>(null);
+  const bounds$ = useRef(bounds);
 
   useLayoutEffect(() => {
     aspect.current = aspectOf(width, height);
   }, [width, height]);
+
+  useLayoutEffect(() => {
+    bounds$.current = bounds;
+  }, [bounds]);
 
   // A different default camera (e.g. an orthographic plan camera) must be framed afresh.
   useLayoutEffect(() => {
@@ -56,33 +63,50 @@ export function CameraRig({ bounds }: { bounds: SceneBounds }) {
     if (signature === framed.current) return;
     framed.current = signature;
     const { view, phase } = useDemo.getState();
-    if (first || phase === "public") snapTo(camera, c, presetPose(view, bounds, aspect.current), tween.current);
+    director.current ??= createCameraDirector();
+    if (first || phase === "public") snapTo(camera, c, presetPose(view, bounds, aspect.current), director.current);
   }, [bounds, camera]);
 
+  // Stable callback for the dolly destination: no closure allocated per frame.
+  const dollyTo = useRef(() => presetPose(useDemo.getState().view, bounds$.current, aspect.current));
+
   useEffect(() => {
-    const moveTo = (pose: CameraPose) => {
+    director.current ??= createCameraDirector();
+    const d = director.current;
+    const moveTo = (view: CameraView) => {
       const c = controls.current;
       if (!c) return;
       dropOrbitMomentum(c, camera.position);
-      startTween(tween.current, camera.position.toArray(), c.target.toArray(), pose, motion.scene / 1000);
-      c.enabled = false;
+      d.moveTo(camera.position, c.target, presetPose(view, bounds$.current, aspect.current), motion.scene / 1000);
+      c.enabled = !d.busy;
     };
-    const offView = useDemo.subscribe((s, prev) => {
-      if (s.view !== prev.view) moveTo(presetPose(s.view, bounds, aspect.current));
+    const offStore = useDemo.subscribe((s, prev) => {
+      const c = controls.current;
+      if (!c) return;
+      if (prev.phase === "public" && s.phase === "revealing") {
+        dropOrbitMomentum(c, camera.position);
+        d.onReveal(s.view === "plan");
+        c.enabled = !d.busy; // one rule everywhere: orbit is enabled exactly when the director is idle
+        return;
+      }
+      // reset() is handled by onDemoReset (including its view change back to the start view).
+      if (s.phase === "public" && prev.phase !== "public") return;
+      if (s.view !== prev.view) moveTo(s.view);
     });
-    const offReset = onDemoReset(() => moveTo(presetPose(useDemo.getState().view, bounds, aspect.current)));
+    const offReset = onDemoReset(() => moveTo(useDemo.getState().view));
     return () => {
-      offView();
+      offStore();
       offReset();
     };
-  }, [bounds, camera]);
+  }, [camera]);
 
   useFrame((_, delta) => {
     const c = controls.current;
-    if (!c || !tween.current.active) return;
-    const done = stepTween(tween.current, delta, camera.position, c.target);
+    const d = director.current;
+    if (!c || !d || !d.busy) return;
+    d.step(delta, sceneFx.revealElapsedS, camera.position, c.target, dollyTo.current);
     c.update();
-    if (done) c.enabled = true;
+    c.enabled = !d.busy;
   });
 
   return (
