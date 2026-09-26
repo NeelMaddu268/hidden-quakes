@@ -433,6 +433,48 @@ def test_row_seven_sp_ratio_separates_catalog_mislocation_from_structure(
 
 
 @pytest.mark.smoke
+def test_row_seven_and_catalog_conclusion_after_statics(
+    world: dict[str, Any], located: LocateDetails
+) -> None:
+    """Pass 2 (LOC-05): row 7 keeps the before-statics evidence and never says nothing asks for
+    3D grids; the catalog conclusion says a cause the statics absorbed is not absent."""
+    import dataclasses
+    from types import SimpleNamespace
+
+    from hq.locate import diagnostics as dg
+
+    run, cfg = world["run"], world["cfg"]
+    catalog = _catalog(run, -1500.0)
+    errors = pd.DataFrame({"id": ["pub0", "pub1"], "horizontalErrorM": [300.0, 300.0],
+                           "depthErrorM": [400.0, 400.0]})
+    base = dg.DiagnosticsInputs(RUN_ID, run, cfg, world["stations"], located,
+                                world["assoc"].events, catalog=catalog, catalog_errors=errors)
+    inputs = dataclasses.replace(base, statics=SimpleNamespace(  # type: ignore[arg-type]
+        pass_number=2, reference=pd.DataFrame({"catalogId": ["pub0"]})))
+    st = located.stations
+    az = np.arctan2(st["enu_e"], st["enu_n"]).to_numpy()
+    before = pd.concat([
+        pd.DataFrame({"catalogId": "pub0", "eventId": located.result.events["id"].iloc[0],
+                      "stationId": st["id"], "phase": ph, "residualS": amp * np.sin(az),
+                      "evE": 0.0, "evN": 0.0, "evElevM": -2000.0, "stE": st["enu_e"],
+                      "stN": st["enu_n"], "sensorElevM": st["sensorElevM"]})
+        for ph, amp in (("P", 0.1), ("S", 0.4))
+    ], ignore_index=True)
+    ua = dg.used_arrivals(located, st)
+    pa = dg.picked_arrivals(located, st)
+    row = dg.row_trend(inputs, ua, pa, None, None, before)
+    assert row.conclusion.startswith("Residuals here are after statics")
+    assert "nothing here asks for 3D grids" not in row.conclusion
+    assert "expected by construction" in row.conclusion
+    assert "Before statics (the same picks with the statics removed)" in row.conclusion
+    comp = dg.compare_with_catalog(located.result.events, catalog, errors, cfg)
+    text = " ".join(dg.catalog_section(inputs, comp, False, True))
+    assert "after statics, 2 of 2 compared events lie outside" in text
+    assert "absorbed, not absent" in text and "flag no cause" not in text
+    assert "not independent of the catalog" in text
+
+
+@pytest.mark.smoke
 def test_measured_pick_stats_need_located_events(world: dict[str, Any]) -> None:
     from hq.locate.synthetic import measured_pick_stats, with_pick_stats
 

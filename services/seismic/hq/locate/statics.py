@@ -25,8 +25,9 @@ referenceEvents (the showcase default)
     Circularity: every reference event is relocated with terms computed WITHOUT it (``folds``
     null: leave-one-out; k: k-fold, dealt round-robin in catalog origin-time order). Unmatched
     candidate events use the terms from every reference event; those are the statics table. The
-    held-out relocations' offsets from the catalog are the honest accuracy number, and absolute
-    positions are then tied to the public regional catalog's frame.
+    held-out relocations' offsets from the catalog are the cross-validated agreement with the
+    public regional catalog's frame (reported next to an in-sample relocation with every term),
+    not absolute accuracy, and absolute positions are then tied to that frame.
 
     Pipeline order with this mode:
         locate (pass 1, no statics) -> match -> locate (pass 2, reference terms) -> match -> tier
@@ -503,19 +504,23 @@ class StaticsReport:
     sigma_events: str  # the calibration events (the recommendation comes from them)
     history: pd.DataFrame  # per pass: iteration, medianRmsS, nCalibration, nNonZero, maxAbsS
     # referenceEvents pass 2: per reference event, catalogId, eventId (after), assocId, fold,
-    # offsets before (no statics) and after (held-out terms): h/de/dn/dz (m), rmsS (s)
+    # offsets before (no statics), after (held-out terms) and inSample (all-reference terms):
+    # h/de/dn/dz (m), rmsS (s)
     reference: pd.DataFrame | None = None
     skipped: tuple[str, ...] = ()  # reference events outside the travel-time grid
     previous_median_rms_s: float | None = None  # stored no-statics events_located, all events
     extra: dict[str, Any] = field(default_factory=dict)
 
     def offsets_summary(self) -> dict[str, dict[str, float]]:
-        """Median and p90 of the horizontal and |vertical| offsets, before and after."""
+        """Median and p90 of the horizontal and |vertical| offsets: before (no statics), after
+        (held-out terms) and inSample (all-reference terms, the held-out events included)."""
         ref = self.reference
         if ref is None or ref.empty:
             return {}
         out = {}
-        for when in ("before", "after"):
+        for when in ("before", "after", "inSample"):
+            if f"{when}HM" not in ref.columns:
+                continue
             h = ref[f"{when}HM"].to_numpy(dtype=np.float64)
             v = np.abs(ref[f"{when}DzM"].to_numpy(dtype=np.float64))
             out[when] = {"medianHM": float(np.median(h)), "p90HM": float(np.quantile(h, 0.9)),
@@ -691,11 +696,15 @@ def locate_with_statics(
     subset = _Subset(events=assoc.events[assoc.events["assocId"].astype(str).isin(ref_assoc)],
                      picks=assoc.picks[assoc.picks["assocId"].astype(str).isin(ref_assoc)])
     before = locate_detailed(subset, picks, stations, cfg, run, **kw)
+    # In-sample comparison only (never written): the reference events with every term.
+    in_sample = locate_detailed(subset, picks, stations, cfg, run, statics=statics_map(terms),
+                                static_events=_counts(terms), **kw)
     details = locate_detailed(assoc, picks, stations, cfg, run, statics=statics_map(terms),
                               event_statics=held_out, static_events=_counts(terms), **kw)
     ref = pairs[["catalogId", "assocId"]].assign(fold=folds.reindex(pairs["assocId"]).to_numpy())
     ref = ref.merge(_offsets(before, pairs, "before"), on="assocId").merge(
-        _offsets(details, pairs, "after"), on="assocId")
+        _offsets(details, pairs, "after"), on="assocId").merge(
+        _offsets(in_sample, pairs, "inSample").drop(columns="inSampleEventId"), on="assocId")
     k_desc = "leave-one-out" if scfg.folds is None else f"{scfg.folds}-fold"
     report = _report(
         cfg, details, terms, mode=REFERENCE_EVENTS, pass_number=2,
@@ -711,12 +720,13 @@ def locate_with_statics(
     )
     summary = report.offsets_summary()
     if summary:
-        b, a = summary["before"], summary["after"]
+        b, a, i = summary["before"], summary["after"], summary["inSample"]
         log.info(
             "statics: referenceEvents pass 2 on %d reference events (%s): horizontal offset from "
-            "the catalog median %.0f -> %.0f m, p90 %.0f -> %.0f m; |dz| median %.0f -> %.0f m; "
-            "%d non-zero terms; %.1f s", len(pairs), k_desc, b["medianHM"], a["medianHM"],
-            b["p90HM"], a["p90HM"], b["medianAbsDzM"], a["medianAbsDzM"],
+            "the catalog median %.0f -> %.0f m (in-sample %.0f m), p90 %.0f -> %.0f m (in-sample "
+            "%.0f m); |dz| median %.0f -> %.0f m (in-sample %.0f m); %d non-zero terms; %.1f s",
+            len(pairs), k_desc, b["medianHM"], a["medianHM"], i["medianHM"], b["p90HM"],
+            a["p90HM"], i["p90HM"], b["medianAbsDzM"], a["medianAbsDzM"], i["medianAbsDzM"],
             int(np.count_nonzero(terms["staticS"])), time.perf_counter() - started,
         )
     return StaticsOutcome(details, report)

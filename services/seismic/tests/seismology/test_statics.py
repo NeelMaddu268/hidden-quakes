@@ -369,6 +369,9 @@ def test_reference_statics_recover_the_planted_delays_held_out(world: dict[str, 
     assert summary["after"]["medianHM"] < summary["before"]["medianHM"]
     assert summary["after"]["medianRmsS"] < summary["before"]["medianRmsS"]
     assert summary["after"]["medianHM"] < 100.0
+    # The in-sample relocation (every term, the event's own included) is reported next to it.
+    assert summary["inSample"]["medianHM"] < summary["before"]["medianHM"]
+    assert ref["inSampleHM"].notna().all()
     assert res.events["quality_statics"].all()
     # The unmatched event uses the all-reference terms (the statics table); a reference event
     # uses its held-out ones.
@@ -439,6 +442,8 @@ def test_stage_runs_pass_1_then_pass_2_after_a_match(
     report = ctx.path("diagnostics.md").read_text()
     assert "## Station statics (LOC-05)" in report and "pass 2" in report
     assert "held-out terms (leave-one-out)" in report
+    assert "all-reference terms (in-sample)" in report and "Held-out minus in-sample" in report
+    assert "not absolute accuracy" in report
     assert "tied to the public regional catalog's (UUSS) frame" in report
     record = ctx.records[-1]["params"]["statics"]
     assert record["pass"] == 2 and record["previousMedianRmsS"] == pytest.approx(
