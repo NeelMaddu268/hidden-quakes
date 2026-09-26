@@ -61,6 +61,7 @@ export const DRAWER_CSS = `
 .hqd-reasons { color: ${colors.textDim}; font-size: 11px; }
 .hqd-reasons span + span::before { content: " · "; }
 .hqd-origin { display: grid; grid-template-columns: 76px 1fr; gap: 1px 8px; margin-top: 10px; font-size: 12.5px; }
+.hqd-depth { margin-top: 10px; }
 .hqd-stats {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); gap: 8px 10px;
   margin-top: 10px; padding-top: 10px; border-top: 1px solid ${colors.contour};

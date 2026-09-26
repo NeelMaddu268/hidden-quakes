@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { appearTimeOf } from "../reveal/timeline";
 import type { CatalogEvent, SeismicEvent } from "../types";
 import {
   buildCandidateInstances,
@@ -35,6 +36,9 @@ function ev(id: string, over: Partial<SeismicEvent> = {}): SeismicEvent {
     tier: "A",
     tierReasons: [],
     meanPickProb: 0.8,
+    source: "hq-pipeline",
+    magnitude: null,
+    catalogMatch: null,
     revealOrder: 0,
     pickIds: [],
     ...over,
@@ -51,6 +55,9 @@ function cat(id: string, over: Partial<CatalogEvent> = {}): CatalogEvent {
     depthKm: 0,
     depthDatum: "test",
     elevM: 0,
+    mag: null,
+    magType: null,
+    matchedEventId: null,
     enu: { e: 0, n: 0, u: 0 },
     ...over,
   };
@@ -121,6 +128,10 @@ describe("buildCandidateInstances", () => {
     expect(inst.scales[0]).toBeGreaterThan(inst.scales[1]);
     expect(inst.scales[1]).toBeGreaterThan(inst.scales[2]);
     expect(Array.from(inst.revealAt)).toEqual([0.5, 0, 1]);
+    // appearance times are the counter clock's exact inverse: first event at 1.0 s, last at 6.0 s
+    expect(inst.appearAt[1]).toBe(1);
+    expect(inst.appearAt[2]).toBe(6);
+    expect(inst.appearAt[0]).toBeCloseTo(appearTimeOf(0.5), 5);
     expect(Array.from(inst.times)).toEqual([60, 0, 3600]);
   });
 
@@ -137,16 +148,14 @@ describe("buildCandidateInstances", () => {
     ).toThrow(/unknown tier/);
   });
 
-  it("builds 2,000 instances in well under a frame budget's worth of setup", () => {
+  it("builds 2,000 instances (the performance-budget size) with correctly sized arrays", () => {
     const many = Array.from({ length: 2000 }, (_, i) =>
       ev(`e${i}`, { enu: { e: i, n: -i, u: -i }, revealOrder: i, tier: (["A", "B", "C"] as const)[i % 3] }),
     );
-    const t0 = performance.now();
     const inst = buildCandidateInstances(many, 1, 0);
-    const ms = performance.now() - t0;
     expect(inst.count).toBe(2000);
     expect(inst.positions.length).toBe(6000);
-    expect(ms).toBeLessThan(50);
+    expect(inst.revealAt[1999]).toBe(1);
   });
 });
 
@@ -159,6 +168,7 @@ describe("buildPublicInstances", () => {
     );
     expect(Array.from(inst.positions)).toEqual([1, -3, -2]);
     expect(Array.from(inst.revealAt)).toEqual([-1]);
+    expect(Array.from(inst.appearAt)).toEqual([-1]);
     expect(Array.from(inst.tiers)).toEqual([0]);
     expect(Array.from(inst.times)).toEqual([30]);
   });

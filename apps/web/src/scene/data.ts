@@ -1,2 +1,2 @@
-// The one place the scene gets bundle data from (docs/02 §6: hooks are the only way components get data).
-export { useBundle, useEvidence } from "./bundle-shim";
+// Scene components share the one H4 provider and its evidence preload cache.
+export { useBundle, useEvidence } from "../providers/hooks";

@@ -111,3 +111,9 @@ describe("isClick", () => {
     expect(isClick({ x: 10, y: 10, t: 0 }, { x: 10, y: 10, t: 300 })).toBe(false);
   });
 });
+
+ it("caps close-up hit areas to the rendered screen radius", () => {
+   const viewProj = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+   expect(pickNearest([0,0,0], { viewProj, width:100, height:100, x:80, y:50,
+     thresholdPx:12, focalPx:50, radius:()=>100, maxRadiusPx:18 })).toBeNull();
+ });

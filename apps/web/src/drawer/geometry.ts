@@ -185,7 +185,7 @@ function niceKmStep(span: number, maxTicks: number): number {
   return 10 * pow;
 }
 
-/** Event position for the depth section: east offset and display depth from the record. */
-export function eventDepthPoint(ev: Pick<SeismicEvent, "enu" | "depthKm">): { e: number; depthKm: number } {
-  return { e: ev.enu.e, depthKm: ev.depthKm };
+/** Event position for the depth section: east offset and display depth from the shared site datum. */
+export function eventDepthPoint(ev: Pick<SeismicEvent, "enu" | "elevM">, scene: Pick<SceneMeta, "refSurfaceElevM">): { e: number; depthKm: number } {
+  return { e: ev.enu.e, depthKm: depthKmOfElev(ev.elevM, scene) };
 }

@@ -18,8 +18,8 @@ export function RevealDriver() {
   useEffect(() => {
     const m = createRevealMachine();
     machine.current = m;
-    const { phase } = useDemo.getState();
-    m.onPhase(phase, phase);
+    const { phase, revealProgress } = useDemo.getState();
+    m.sync(phase, revealProgress);
     const unsubscribe = useDemo.subscribe((s, prev) => {
       if (s.phase !== prev.phase) m.onPhase(prev.phase, s.phase);
     });

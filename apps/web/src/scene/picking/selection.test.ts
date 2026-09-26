@@ -28,9 +28,9 @@ describe("candidatePickable (matches what the candidate layer draws)", () => {
     const slot = 0.5;
     const at = appearTimeOf(slot);
     expect(at).toBeGreaterThan(TIMELINE.events.startS);
-    expect(candidatePickable("revealing", "all", at - 0.01, A, slot)).toBe(false);
-    expect(candidatePickable("revealing", "all", at + 0.01, A, slot)).toBe(true);
-    expect(candidatePickable("revealing", "all", 0, A, 0)).toBe(false); // first event appears at 1.0 s
+    expect(candidatePickable("revealing", "all", at - 0.01, A, at)).toBe(false);
+    expect(candidatePickable("revealing", "all", at + 0.01, A, at)).toBe(true);
+    expect(candidatePickable("revealing", "all", 0, A, appearTimeOf(0))).toBe(false); // first event appears at 1.0 s
   });
 });
 
@@ -45,7 +45,9 @@ describe("publicSelectTargets", () => {
     depthDatum: "test",
     elevM: 0,
     enu: { e: 0, n: 0, u: 0 },
-    matchedEventId,
+    mag: null,
+    magType: null,
+    matchedEventId: matchedEventId ?? null,
   });
 
   it("maps each public event to its matched candidate, or null", () => {

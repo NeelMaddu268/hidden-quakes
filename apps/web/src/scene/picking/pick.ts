@@ -31,6 +31,8 @@ export interface PickQuery {
   focalPx?: number;
   /** World-space glyph radius of instance i (scene units). */
   radius?: (i: number) => number;
+  /** CSS pixel cap matching the rendered glyph clamp (including the reveal pop). */
+  maxRadiusPx?: number;
   /** Whether instance i is drawn right now. Hidden instances are never picked. */
   visible?: (i: number) => boolean;
   tieEpsPx?: number;
@@ -82,7 +84,7 @@ export function pickNearest(positions: ArrayLike<number>, q: PickQuery): PickHit
     const dy = sy - q.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
     let reach = q.thresholdPx;
-    if (q.radius && q.focalPx) reach = Math.max(reach, (q.radius(i) * q.focalPx) / cw);
+    if (q.radius && q.focalPx) reach = Math.max(reach, Math.min(q.maxRadiusPx ?? Infinity, (q.radius(i) * q.focalPx) / cw));
     if (dist > reach) continue;
     const hit: PickHit = { index: i, distPx: dist, depth: cw };
     if (betterHit(hit, best, tie)) best = hit;

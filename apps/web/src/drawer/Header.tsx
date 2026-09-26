@@ -1,4 +1,5 @@
-import type { BundleMeta, SeismicEvent } from "../scene/types";
+import type { BundleMeta, SceneMeta, SeismicEvent } from "../scene/types";
+import { depthKmOfElev } from "./geometry";
 import { DASH, fmtFixed, fmtMagnitude, fmtPlusMinusM, fmtUnit, fmtUtahLocal, fmtUtc, isNum } from "./format";
 
 export interface HeaderProps {
@@ -37,12 +38,12 @@ export function Header({ eventId, event, meta, onClose }: HeaderProps) {
           ×
         </button>
       </div>
-      {event ? <EventSummary event={event} /> : null}
+      {event && meta ? <EventSummary event={event} scene={meta.scene} /> : null}
     </header>
   );
 }
 
-function EventSummary({ event }: { event: SeismicEvent }) {
+function EventSummary({ event, scene }: { event: SeismicEvent; scene: SceneMeta }) {
   const q = event.quality;
   const n = q.nStations;
   const mag = fmtMagnitude(event.magnitude);
@@ -70,8 +71,10 @@ function EventSummary({ event }: { event: SeismicEvent }) {
         <span />
         <span className="hqd-num hqd-dim">{fmtUtahLocal(event.t)}</span>
       </div>
+      <div className="hqd-depth">
+        <Stat label={scene.depthLabel} value={fmtUnit(depthKmOfElev(event.elevM, scene), 2, "km")} />
+      </div>
       <div className="hqd-stats">
-        <Stat label="Depth" value={fmtUnit(event.depthKm, 2, "km")} />
         <Stat label="RMS" value={fmtUnit(q.rmsS, 3, "s")} />
         <Stat label="±h" value={fmtPlusMinusM(q.hErrM)} />
         <Stat label="±v" value={fmtPlusMinusM(q.vErrM)} />

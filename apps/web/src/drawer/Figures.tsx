@@ -38,7 +38,7 @@ export function Figures({ event, meta, stations, missing }: FiguresProps) {
         <div className="hqd-fig">
           <span className="hqd-label">Plan view</span>
           {stations ? <MiniMap event={event} stations={stations} /> : <div className="hqd-fig-empty" />}
-          <div className="hqd-fig-caption">North up · station → epicenter lines</div>
+          <div className="hqd-fig-caption">Grid north up · station → epicenter lines</div>
         </div>
         <div className="hqd-fig">
           <span className="hqd-label">Depth section · looking north</span>
@@ -131,7 +131,7 @@ function DepthSection({ event, meta, stations }: { event: SeismicEvent; meta: Bu
   const vErrKm = isNum(vErrM) && vErrM > 0 ? vErrM / 1000 : 0;
   const scene = meta.scene;
   const layout = useMemo(() => {
-    const ev = eventDepthPoint(event);
+    const ev = eventDepthPoint(event, scene);
     const sensors = stations.map((st) => ({
       st,
       e: st.enu.e,

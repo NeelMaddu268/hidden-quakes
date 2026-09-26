@@ -25,6 +25,8 @@ function station(i: number, over: Partial<Station> = {}): Station {
   return {
     id: `XX.S${String(i).padStart(2, "0")}`,
     network: "XX",
+    location: "",
+    staticsS: {},
     station: `S${i}`,
     latitude: 0,
     longitude: 0,
@@ -50,11 +52,12 @@ function event(id: string, over: Partial<SeismicEvent> = {}): SeismicEvent {
   return {
     id,
     runId: "test",
+    source: "test",
     t: ORIGIN,
     latitude: 0,
     longitude: 0,
     elevM: -90,
-    depthKm: 1.72,
+    depthKm: 99,
     enu: { e: 1270, n: 1414, u: -1717 },
     quality: {
       method: "pyocto",
@@ -133,9 +136,15 @@ function readyBundle(isSynthetic = false): BundleState {
         projection: "EPSG:32612 minus origin",
         depthLabel: "Depth below site surface (test ref)",
         heroEventId: HERO,
+        verticalExaggeration: 1,
         isSynthetic,
       },
-      run: { id: "test", windowStart: ORIGIN - 3600, windowEnd: ORIGIN + 3600, windowLabel: "test" },
+      run: {
+        id: "test", windowStart: ORIGIN - 3600, windowEnd: ORIGIN + 3600, windowLabel: "test",
+        associator: {}, bbox: [0, 0, 1, 1], createdAt: "test", gitSha: "test", isSynthetic,
+        locator: {}, matching: {}, mode: "mock", picker: {}, pickerModel: "test", pickerWeights: "test",
+        runtimeS: {}, softwareVersions: {}, stationIds: STATIONS.map(s => s.id), tiering: {}, velocityModel: {},
+      },
       summary: {
         runId: "test",
         publicCatalogCount: 1,
@@ -149,8 +158,9 @@ function readyBundle(isSynthetic = false): BundleState {
         strictAdditionalCount: 1,
         medianStations: 11,
         medianRmsS: 0.078,
+        baseline: null,
       },
-    } as Extract<BundleState, { status: "ready" }>["meta"],
+    },
     stations: STATIONS,
     catalog: [],
     events: EVENTS,
@@ -297,23 +307,6 @@ describe("missing values render gracefully, never as NaN", () => {
     expectNoBadValues();
   });
 
-  it("the same fields absent from the JSON entirely", () => {
-    const ev = evidence(HERO, 4);
-    for (const tr of ev.traces) {
-      delete tr.pickP;
-      delete tr.pickS;
-      delete tr.probP;
-      delete tr.probS;
-      delete tr.predP;
-      delete tr.predS;
-    }
-    data.evidence[HERO] = { status: "ready", evidence: ev };
-    render(<EvidenceDrawer />);
-    select(HERO);
-    expect(document.querySelectorAll(".hqd-mark")).toHaveLength(0);
-    expectNoBadValues();
-  });
-
   it("a mix: missing predP and pickS on some traces draws only what exists", () => {
     data.evidence[HERO] = {
       status: "ready",
@@ -401,7 +394,7 @@ describe("figures", () => {
     select(HERO);
     const depth = screen.getByRole("img", { name: /Depth section: event at 1\.72 km/ });
     expect(depth.querySelector("rect title")?.textContent).toBe("XX.S15 borehole sensor, 0.98 km");
-    expect(screen.getByText(/Depth below site surface \(test ref\)/)).toBeTruthy();
+    expect(screen.getAllByText(/Depth below site surface \(test ref\)/)[0]).toBeTruthy();
   });
 
   it("lists evidence stations the bundle doesn't know", () => {

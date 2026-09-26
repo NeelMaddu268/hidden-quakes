@@ -79,14 +79,14 @@ describe("origin time", () => {
 
 describe("magnitude", () => {
   it("always carries its type", () => {
-    expect(fmtMagnitude({ value: 1.23, type: "ML_cal" })).toBe("M 1.2 ML_cal");
+    expect(fmtMagnitude({ value: 1.23, type: "ML_cal", sigma: null })).toBe("M 1.2 ML_cal");
     expect(fmtMagnitude({ value: 0.4, type: "ml", sigma: 0.21 })).toBe("M 0.4 ml ±0.2");
     expect(fmtMagnitude({ value: 0.4, type: "ml", sigma: null })).toBe("M 0.4 ml");
   });
   it("is null when absent", () => {
     expect(fmtMagnitude(null)).toBeNull();
     expect(fmtMagnitude(undefined)).toBeNull();
-    expect(fmtMagnitude({ value: NaN, type: "ml" })).toBeNull();
+    expect(fmtMagnitude({ value: NaN, type: "ml", sigma: null })).toBeNull();
   });
 });
 
