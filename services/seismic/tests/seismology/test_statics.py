@@ -25,6 +25,7 @@ from hq.config.seismology import SeismologyConfig
 from hq.locate import locate
 from hq.locate.coords import from_enu
 from hq.locate.statics import (
+    check_same_association,
     explain_terms,
     fold_of,
     held_out_terms,
@@ -124,7 +125,8 @@ def _match_tables(run: Any) -> tuple[pd.DataFrame, ...]:
     catalog = pd.DataFrame({"id": ["c1", "c2", "c3"], "t": [100.0, 200.0, 300.0],
                             "latitude": lat, "longitude": lon,
                             "elevM": [-2000.0, -2500.0, -3000.0]})
-    events = pd.DataFrame({"id": ["e0", "e1", "e2"], "t": [100.3, 199.8, 500.0]})
+    events = pd.DataFrame({"id": ["e0", "e1", "e2"], "t": [100.3, 199.8, 500.0],
+                           "pickIds": [["p0", "p1"], ["p2"], ["p3"]]})
     flags = pd.DataFrame({"eventId": ["e0", "e1", "e2"], "assocId": ["x0", "x1", "x2"]})
     matches = pd.DataFrame({"catalogId": ["c1", "c2", "c3"], "eventId": ["e0", "e1", None],
                             "dtS": [100.3 - 100.0, 199.8 - 200.0, np.nan],
@@ -141,6 +143,10 @@ def test_reference_pairs_map_matches_and_refuse_stale_ones(run_section: Any) -> 
     assert pairs["catalogE"].tolist() == pytest.approx([100.0, -300.0], abs=1e-6)
     assert pairs["catalogN"].tolist() == pytest.approx([50.0, 400.0], abs=1e-6)
     assert pairs["catalogElevM"].tolist() == [-2000.0, -2500.0]
+    links = pd.DataFrame({"assocId": ["x0", "x0", "x0", "x1"], "pickId": ["p0", "p1", "p9", "p2"]})
+    check_same_association(pairs, links)  # every located pick belongs to its association event
+    with pytest.raises(ValueError, match="another association"):
+        check_same_association(pairs, links.assign(assocId=["x0", "x1", "x0", "x1"]))
     moved = events.assign(t=events["t"] + 0.01)  # relocated since the match: stale
     with pytest.raises(ValueError, match="stale"):
         reference_pairs(matches, moved, flags, catalog, run_section)
@@ -314,6 +320,9 @@ def world(loc02: Any) -> dict[str, Any]:
         "assocId": [f"assoc-{k:06d}" for k in range(len(HYPOS) - 1)],
         "catalogT": [r["t"] for r in rows[:-1]], "catalogE": [h[0] for h in HYPOS[:-1]],
         "catalogN": [h[1] for h in HYPOS[:-1]], "catalogElevM": [h[2] for h in HYPOS[:-1]],
+        "pickIds": [links_k for links_k in (
+            [x["pickId"] for x in links if x["assocId"] == f"assoc-{k:06d}"]
+            for k in range(len(HYPOS) - 1))],
     })
     return {"run": run, "cfg": cfg, "picks": picks, "assoc": assoc, "stations": st,
             "catalog": catalog, "pairs": pairs, "cache": loc02.cache_dir}
