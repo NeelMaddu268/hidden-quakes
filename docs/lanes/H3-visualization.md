@@ -414,3 +414,41 @@ WEB-08 items found while testing (not WEB-07 scope): the VE badge's CornerNote s
 bottom-left, under H4's mode pills (hidden today only because the mock's VE is 1); in 3D oblique the depth
 ruler title and unverified-well labels can overlap; the true-scale section shows a compact cluster when
 Tier C events scatter wide (a "fit structure" toggle would help, clearly labelled).
+
+### WEB-08 hardening checkpoint · 2026-09-26 05:45 EDT
+
+Fixed ahead of the Saturday QA pass (branch `agent/WEB-08`, PR into feat/web "Refs #29"; the ticket stays
+open for the 2–6 PM pass with a fresh reviewer and a human on the demo laptop with the real bundle):
+
+- **VE badge.** The permanent "Vertical ×N" corner note sat bottom-left, under H4's mode pills and validation
+  panel. It is bottom-right now (`cornerNoteAnchor`), and the abstract-slab note stacks above it.
+- **5-second test.** The depth ruler (line, ticks, title) drew over the opaque pre-reveal terrain. It now fades
+  in with the reveal's terrain fade (`rulerRevealOpacity`) and out on reset. The slab note moved from the
+  ruler title to the corner stack, permanent in every view including plan.
+- **Label overlap.** In the side view at 1280×720 the mock's pad and well labels printed on top of each
+  other. Feature labels are now placed per frame in screen space (`references/labelPlacement.ts`):
+  - Default: right of the anchor.
+  - A label moves to the next free slot if it would cover another label, the ruler's title or tick
+    labels, another feature's anchor, or the plan panel, or would run off screen. Slots go left side
+    first, then 1–3 lines up or down with a thin leader.
+  - Labels are never hidden; with no free slot, the one with the least overlap wins.
+  - Slots are held only while the camera moves, so a still camera always gets the same layout.
+  - DepthRuler publishes its label boxes as obstacles each frame (priority −1). Sizes come from a
+    ResizeObserver (`useLabelElements`). There are no per-frame allocations, and style is written only
+    on change.
+
+QA checklist on the dev machine (Apple M4 Pro, headed Chrome 153 + WebKit 26.5, mock bundle; the local
+Playwright harness is outside the repo):
+
+| Item | Status |
+| --- | --- |
+| 5-second test | pass: no ruler on the pre-reveal frame; terrain, geothermal reference, PUBLIC, REVEAL |
+| Depth label and ruler in every preset | pass: side (after reveal), oblique, plan (depth-section axis title), 1280×720 and 3840×2160, both engines; zero label overlaps incl. pre-reveal and plan |
+| Reveal identical ×10; reset → exact start | pass: 10/10 canvas hashes (Chrome `97a502f9…`, WebKit `84d63c41…`) **and** DOM label layout, both engines |
+| STRICT count matches the shell | pass (43 / 500 / 150 on mock) |
+| Drawer with 4 and 16 traces | pass: both engines, 1280×720 and 4K; every row inside the record, no overflow, 16 traces ≥ 13 px tall at 720p |
+| Plan view finished | pass: WEB-07 acceptance re-run on this build |
+| Chrome + Safari, 1280×720 and 4K, 60 fps | pass on dev (Chrome 120 fps median with 2,000 events; WebKit at its 60 Hz cap, 0 frames > 33 ms); **re-measure on the demo laptop** |
+| "Not random dots" screenshot | **open**: needs the real showcase bundle (REQ-H3-8) |
+
+`make check`: seismic 686 passed / 2 skipped, API 26, web 523, tokens 12, copy clean.

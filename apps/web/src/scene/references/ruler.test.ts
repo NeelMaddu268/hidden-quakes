@@ -9,6 +9,7 @@ import {
   rulerAnchor,
   rulerDepthsKm,
   rulerLayout,
+  rulerRevealOpacity,
   SLICE_DEPTHS_KM,
   sliceSegments,
   stickyTitleT,
@@ -186,5 +187,19 @@ describe("sliceSegments", () => {
     const zs = segs.map((p) => p[2]);
     expect([Math.min(...xs), Math.max(...xs)]).toEqual([-8, 8]);
     expect([Math.min(...zs), Math.max(...zs)]).toEqual([-7, 6]); // z = −n
+  });
+});
+
+describe("rulerRevealOpacity", () => {
+  it("hides the ruler on the pre-reveal frame and shows it once the terrain has faded", () => {
+    expect(rulerRevealOpacity(1, 0.12)).toBe(0);
+    expect(rulerRevealOpacity(0.12, 0.12)).toBe(1);
+    expect(rulerRevealOpacity(0.56, 0.12)).toBeCloseTo(0.5, 12);
+  });
+
+  it("clamps outside the fade and never divides by zero", () => {
+    expect(rulerRevealOpacity(1.2, 0.12)).toBe(0);
+    expect(rulerRevealOpacity(0, 0.12)).toBe(1);
+    expect(rulerRevealOpacity(0.5, 1)).toBe(1);
   });
 });
