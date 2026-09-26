@@ -1,0 +1,803 @@
+"""``diagnostics.md``: the lane doc's depth diagnostics (rows 1-7), each with a computed result.
+
+Every number in the report comes from the run's own tables and locator; the thresholds come from
+``seismology.yaml`` (``diagnostics``, ``locator``, ``matching``). A row that the data can't settle
+says so and gives the counts. Rows (docs/lanes/H2-seismology.md, "Diagnostics for smeared depths"):
+
+1. Borehole sensor depths: ``surfaceElevM``, ``sensorDepthM``, ``sensorElevM`` per station; a
+   borehole at depth 0, a row where ``sensorElevM != surfaceElevM - sensorDepthM``, or a table
+   not at ``sensorElevM`` fails the row.
+2. Datum check: noise-free P and S picks from the exact 1D layered times at every used station
+   for synthetic events at ``diagnostics.datumCheck`` (known elevM), located by the run's locator
+   and tables; errors above ``passTolM`` fail the row.
+3. PyOcto elevM (association) vs relocated elevM, per event, joined through ``assocId``.
+4. Formal ``vErrM`` and the elevM spread for ``nS >= minSForDepth`` vs ``nS < minSForDepth``.
+5. Residuals of the picks used in the locations, split by ``Station.preprocessProfile``: median
+   and MAD (unscaled, as the outlier pass) per profile and phase.
+6. Median residual per station and phase over used picks (input for LOC-05 statics).
+7. Residual trend: least squares ``r = a + b cos(az) + c sin(az)`` per phase over used picks
+   (az: station azimuth from the epicentre, grid north), and the per-station medians against
+   station position and ``sensorElevM`` (input for LOC-07).
+
+Residuals are ``tObs - tPred`` (positive: the pick is later than the model predicts). Also
+reported: the travel-time tables' error against the exact layered times at the located
+hypocentres (the shallow-interface bias LOC-02 recorded per layer), and a comparison with the
+public regional catalog when the run dir holds it.
+"""
+
+import json
+import logging
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import pandas as pd
+
+from hq.config.run import RunSection
+from hq.config.seismology import SeismologyConfig
+from hq.locate.tt_grid import PHASES, layered_first_arrival
+
+if TYPE_CHECKING:
+    from hq.locate import LocateDetails
+
+log = logging.getLogger(__name__)
+
+HEADER = ("#", "Suspect", "Quick test", "Result (this run)", "Conclusion", "Fix")
+SUSPECTS = {
+    1: ("Borehole sensor depth ignored",
+        "surfaceElevM, sensorDepthM, sensorElevM per station; a borehole at depth 0 is a bug",
+        "Request H1 fix; use sensorElevM"),
+    2: ("Datum mixing", "Locate a synthetic event at a known elevM and check the output",
+        "Everything in elevM; convert only at display"),
+    3: ("Coarse or homogeneous model used as the final location",
+        "Compare PyOcto depth with relocated depth", "Relocate with the layered model"),
+    4: ("Too few S picks, so depth trades off against origin time",
+        "Depth spread for nS >= {k} vs nS < {k}", "Require S for Tier A"),
+    5: ("Borehole picks degraded by resampling", "Residuals split by preprocessing profile",
+        "Ask H1 to try borehole-B; per-profile sigma"),
+    6: ("Station timing offsets or local sediment", "Median residual per station and phase",
+        "Statics (LOC-05)"),
+    7: ("1D can't represent the dipping basement", "Residuals trend with azimuth or position",
+        "3D grids (LOC-07)"),
+}
+
+
+@dataclass(frozen=True)
+class Row:
+    number: int
+    result: str
+    conclusion: str
+
+
+@dataclass(frozen=True)
+class DiagnosticsInputs:
+    run_id: str
+    run: RunSection
+    cfg: SeismologyConfig
+    stations: pd.DataFrame  # stations.parquet rows, all of them
+    details: "LocateDetails"
+    assoc_events: pd.DataFrame  # assoc_events (assocId, latitude, longitude, elevM)
+    catalog: pd.DataFrame | None = None  # catalog.parquet rows when present
+    catalog_errors: pd.DataFrame | None = None  # catalog_uncertainties() when catalog.quakeml is
+    known_ids: tuple[str, ...] | None = None  # known/windows.json ids when present
+
+
+def _cell(text: str) -> str:
+    return " ".join(str(text).replace("|", "/").split())
+
+
+def _f(value: float, fmt: str = ".0f") -> str:
+    return "n/a" if value is None or not math.isfinite(float(value)) else format(float(value), fmt)
+
+
+def _q(values: np.ndarray, q: float) -> float:
+    return float(np.quantile(values, q)) if values.size else math.nan
+
+
+def used_arrivals(details: "LocateDetails", stations: pd.DataFrame) -> pd.DataFrame:
+    """Arrivals of picks used in a location, with event epicentre and station position/profile."""
+    arr = details.result.arrivals
+    arr = arr[arr["usedInLocation"].to_numpy(dtype=bool)]
+    ev = details.result.events[["id", "enu_e", "enu_n", "elevM"]].rename(
+        columns={"id": "eventId", "enu_e": "evE", "enu_n": "evN", "elevM": "evElevM"}
+    )
+    st = stations[["id", "enu_e", "enu_n", "sensorElevM", "preprocessProfile"]].rename(
+        columns={"id": "stationId", "enu_e": "stE", "enu_n": "stN"}
+    )
+    st = st.assign(stationId=st["stationId"].astype(str),
+                   preprocessProfile=st["preprocessProfile"].astype(str))
+    out = arr.assign(eventId=arr["eventId"].astype(str), stationId=arr["stationId"].astype(str),
+                     phase=arr["phase"].astype(str))
+    out = out.merge(ev.assign(eventId=ev["eventId"].astype(str)), on="eventId", how="left")
+    out = out.merge(st, on="stationId", how="left", validate="many_to_one")
+    return out.reset_index(drop=True)
+
+
+# --- row 1 ----------------------------------------------------------------------------------------
+
+
+def row_borehole(inputs: DiagnosticsInputs) -> tuple[Row, list[str]]:
+    st = inputs.stations
+    tol = inputs.cfg.locator.enuConsistencyTolM
+    kind = st["kind"].astype(str)
+    depth = st["sensorDepthM"].to_numpy(dtype=np.float64)
+    surface = st["surfaceElevM"].to_numpy(dtype=np.float64)
+    sensor = st["sensorElevM"].to_numpy(dtype=np.float64)
+    ids = st["id"].astype(str).to_numpy()
+    bore = (kind == "borehole").to_numpy()
+    zero = bore & (depth == 0.0)
+    mismatch = np.abs(surface - depth - sensor) > tol
+    receivers = inputs.details.locator.tables.receiver_elev_m
+    used = inputs.details.stations
+    off_table = [
+        str(sid) for sid, z in zip(used["id"], used["sensorElevM"], strict=True)
+        if receivers.get(str(sid)) != float(z)
+    ]
+    other_depth = ~bore & (depth > 0.0)
+    result = (
+        f"{len(st)} stations ({len(used)} used in the run): {int(bore.sum())} borehole sensors "
+        f"with sensorDepthM {_f(depth[bore].min() if bore.any() else math.nan, 'g')} to "
+        f"{_f(depth[bore].max() if bore.any() else math.nan, 'g')} m; {int(zero.sum())} borehole(s) "
+        f"at depth 0; {int(mismatch.sum())} row(s) with sensorElevM != surfaceElevM - "
+        f"sensorDepthM (tolerance {tol:g} m); travel-time tables at sensorElevM for "
+        f"{len(used) - len(off_table)} of {len(used)} used stations; {int(other_depth.sum())} "
+        f"non-borehole sensor(s) with sensorDepthM > 0 ({', '.join(ids[other_depth]) or 'none'}). "
+        "Per-station values: appendix A."
+    )
+    bad = sorted(set(ids[zero]) | set(ids[mismatch]) | set(off_table))
+    if bad:
+        conclusion = (
+            f"FAIL for {', '.join(bad)}: a borehole at depth 0, an inconsistent sensorElevM or a "
+            "table off the sensor puts receivers at the wrong elevation. Request an H1 fix "
+            "(docs/requests/H1.md) before trusting depths."
+        )
+    else:
+        conclusion = (
+            "Not the cause: every borehole sensor carries a non-zero channel depth, sensorElevM = "
+            "surfaceElevM - sensorDepthM holds on every row, and every table puts its receiver at "
+            "sensorElevM."
+        )
+    lines = [
+        (
+            "| id | kind | preprocessProfile | usedInRun | surfaceElevM | sensorDepthM | "
+            "sensorElevM | note |"
+        ),
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for k, sid in enumerate(ids):
+        note = []
+        if zero[k]:
+            note.append("borehole at depth 0")
+        if mismatch[k]:
+            note.append("sensorElevM inconsistent")
+        if sid in off_table:
+            note.append("table not at sensorElevM")
+        lines.append(
+            f"| {sid} | {kind.iloc[k]} | {st['preprocessProfile'].astype(str).iloc[k]} | "
+            f"{bool(st['usedInRun'].iloc[k])} | {surface[k]:.1f} | {depth[k]:g} | {sensor[k]:.1f} | "
+            f"{'; '.join(note)} |"
+        )
+    return Row(1, result, conclusion), lines
+
+
+# --- row 2 ----------------------------------------------------------------------------------------
+
+
+def datum_check(inputs: DiagnosticsInputs) -> pd.DataFrame:
+    """Noise-free synthetic events at the configured elevations, located by the run's locator."""
+    dc = inputs.cfg.diagnostics.datumCheck
+    locator = inputs.details.locator
+    stations = inputs.details.stations
+    top = locator.volume.top_elev_m
+    if max(dc.elevM) > top:
+        raise ValueError(
+            f"diagnostics.datumCheck elevM {max(dc.elevM)} lies above the search volume top {top}"
+        )
+    t0 = inputs.run.window_start_s
+    rows = []
+    for z in dc.elevM:
+        picks = []
+        for sid, se, sn, zr in stations[["id", "enu_e", "enu_n", "sensorElevM"]].itertuples(
+            index=False
+        ):
+            r = math.hypot(dc.eM - float(se), dc.nM - float(sn))
+            for ph in PHASES:
+                tt = float(layered_first_arrival(locator.tables.model, ph, float(zr), r, z))
+                picks.append({"id": f"datum-check:{sid}:{ph}", "stationId": str(sid),
+                              "phase": ph, "t": t0 + tt, "prob": 1.0})
+        loc = locator.locate(pd.DataFrame(picks))
+        rows.append(
+            {
+                "trueElevM": z,
+                "elevM": loc.elev_m,
+                "dzM": loc.elev_m - z,
+                "dhM": math.hypot(loc.e_m - dc.eM, loc.n_m - dc.nM),
+                "dtS": loc.t0 - t0,
+                "depthKm": (inputs.run.refSurfaceElevM - loc.elev_m) / 1000.0,
+                "trueDepthKm": (inputs.run.refSurfaceElevM - z) / 1000.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def row_datum(inputs: DiagnosticsInputs) -> Row:
+    dc = inputs.cfg.diagnostics.datumCheck
+    check = datum_check(inputs)
+    worst_z = float(check["dzM"].abs().max())
+    worst_h = float(check["dhM"].max())
+    per = "; ".join(
+        f"{r.trueElevM:g} m ASL -> {r.elevM:.0f} m (dz {r.dzM:+.0f} m, dh {r.dhM:.0f} m, dt "
+        f"{r.dtS * 1000:+.0f} ms; depthKm {r.depthKm:.3f} vs {r.trueDepthKm:.3f})"
+        for r in check.itertuples(index=False)
+    )
+    datum = ""
+    if inputs.catalog is not None and len(inputs.catalog):
+        labels = sorted(set(inputs.catalog["depthDatum"].astype(str)))
+        datum = f" Public regional catalog depths were converted to elevM with: {'; '.join(labels)}."
+    result = (
+        f"Noise-free P+S picks at {len(inputs.details.stations)} used stations for synthetic "
+        f"events at (e {dc.eM:g}, n {dc.nM:g}) m: {per}. Largest |dz| {worst_z:.0f} m, largest "
+        f"dh {worst_h:.0f} m (passTolM {dc.passTolM:g} m).{datum}"
+    )
+    if worst_z <= dc.passTolM and worst_h <= dc.passTolM:
+        conclusion = (
+            "Not the cause: station elevations (sensorElevM), travel-time tables and hypocentres "
+            "share one datum (elevM, m ASL); depth appears only as depthKm = (refSurfaceElevM - "
+            "elevM) / 1000 in the output."
+        )
+    else:
+        conclusion = (
+            f"FAIL: a noise-free event comes back {worst_z:.0f} m off in elevM or {worst_h:.0f} m "
+            "off horizontally; look for datum mixing (depth vs elevM, wellhead vs sensor) before "
+            "trusting any depth."
+        )
+    return Row(2, result, conclusion)
+
+
+# --- row 3 ----------------------------------------------------------------------------------------
+
+
+def pyocto_shift(inputs: DiagnosticsInputs) -> pd.DataFrame:
+    """Per located event: relocated minus PyOcto (association) position, joined via assocId."""
+    from hq.locate.coords import to_enu
+
+    flags = inputs.details.flags[["eventId", "assocId"]].astype(str)
+    ev = inputs.details.result.events
+    assoc = inputs.assoc_events.assign(assocId=inputs.assoc_events["assocId"].astype(str))
+    joined = flags.merge(assoc[["assocId", "latitude", "longitude", "elevM"]], on="assocId",
+                         how="left", validate="one_to_one")
+    if joined["elevM"].isna().any():
+        raise ValueError("located events whose assocId is missing from assoc_events")
+    pe, pn, _ = to_enu(joined["latitude"].to_numpy(dtype=np.float64),
+                       joined["longitude"].to_numpy(dtype=np.float64),
+                       joined["elevM"].to_numpy(dtype=np.float64), inputs.run.origin)
+    loc = ev.set_index(ev["id"].astype(str)).loc[joined["eventId"]]
+    return pd.DataFrame(
+        {
+            "eventId": joined["eventId"].to_numpy(),
+            "dzM": loc["elevM"].to_numpy(dtype=np.float64) - joined["elevM"].to_numpy(dtype=float),
+            "deM": loc["enu_e"].to_numpy(dtype=np.float64) - pe,
+            "dnM": loc["enu_n"].to_numpy(dtype=np.float64) - pn,
+        }
+    )
+
+
+def row_pyocto(inputs: DiagnosticsInputs) -> Row:
+    shift = pyocto_shift(inputs)
+    n = len(shift)
+    n_assoc = inputs.details.counts["assocEvents"]
+    if n == 0:
+        return Row(3, f"No located events (0 of {n_assoc} association events).",
+                   "Can't conclude on this data: nothing was located to compare.")
+    dz = shift["dzM"].to_numpy()
+    dh = np.hypot(shift["deM"], shift["dnM"]).to_numpy()
+    result = (
+        f"{n} events: relocated minus PyOcto elevM median {np.median(dz):+.0f} m (p10 "
+        f"{_q(dz, 0.1):+.0f}, p90 {_q(dz, 0.9):+.0f} m), median |dz| {np.median(np.abs(dz)):.0f} m; "
+        f"epicentre shift median {np.median(dh):.0f} m (p90 {_q(dh, 0.9):.0f} m), median de "
+        f"{np.median(shift['deM']):+.0f} m, dn {np.median(shift['dnM']):+.0f} m."
+    )
+    conclusion = (
+        "Not the cause: the final locations are the grid1d relocation on the layered model "
+        f"({inputs.cfg.locator.fineSpacingM:g} m fine grid, PDF errors); PyOcto's locations (same "
+        f"1D model, {inputs.cfg.associator.minNodeSizeLocationKm:g} km location nodes) only seed "
+        "association. The shift above is what keeping PyOcto's positions would have added."
+    )
+    return Row(3, result, conclusion)
+
+
+# --- row 4 ----------------------------------------------------------------------------------------
+
+
+def row_ns(inputs: DiagnosticsInputs) -> Row:
+    dcfg = inputs.cfg.diagnostics
+    k = dcfg.minSForDepth
+    ev = inputs.details.result.events
+    flags = inputs.details.flags
+    n_s = ev["quality_nS"].to_numpy(dtype=np.int64)
+    groups = {f"nS >= {k}": n_s >= k, f"nS < {k}": n_s < k}
+    stats = {}
+    parts = []
+    for label, mask in groups.items():
+        verr = ev.loc[mask, "quality_vErrM"].to_numpy(dtype=np.float64)
+        verr = verr[np.isfinite(verr)]
+        elev = ev.loc[mask, "elevM"].to_numpy(dtype=np.float64)
+        med = float(np.median(verr)) if verr.size else math.nan
+        stats[label] = (int(mask.sum()), med)
+        parts.append(
+            f"{label}: {int(mask.sum())} events, median vErrM {_f(med)} m ({int(verr.size)} with "
+            f"formal errors), elevM IQR {_f(_q(elev, 0.75) - _q(elev, 0.25))} m, depthOnEdge "
+            f"{int(ev.loc[mask, 'quality_depthOnEdge'].sum())}, MAP on volume top "
+            f"{int(flags.loc[mask, 'mapOnVolumeTop'].sum())}"
+        )
+    result = "; ".join(parts) + "."
+    (n_hi, med_hi), (n_lo, med_lo) = stats.values()
+    if min(n_hi, n_lo) < dcfg.minGroupSize or not (math.isfinite(med_hi) and math.isfinite(med_lo)):
+        conclusion = (
+            f"Can't conclude on this data: {n_hi} events with nS >= {k} and {n_lo} with nS < {k}; "
+            f"each group needs at least minGroupSize {dcfg.minGroupSize} events with formal errors."
+        )
+    else:
+        ratio = med_lo / med_hi
+        if ratio > dcfg.degradationRatio:
+            conclusion = (
+                f"Too few S picks widen depth here: median vErrM is {ratio:.1f}x larger with nS < "
+                f"{k}. Require nS >= {k} for Tier A (LOC-06)."
+            )
+        else:
+            conclusion = (
+                f"No sign of this suspect: median vErrM with nS < {k} is {ratio:.2f}x that with nS "
+                f">= {k} (degraded above {dcfg.degradationRatio:g}x)."
+            )
+    return Row(4, result, conclusion)
+
+
+# --- rows 5 and 6 ---------------------------------------------------------------------------------
+
+
+def _mad(values: np.ndarray) -> float:
+    return float(np.median(np.abs(values - np.median(values)))) if values.size else math.nan
+
+
+def residual_stats(ua: pd.DataFrame, by: list[str]) -> pd.DataFrame:
+    """n, median, MAD (unscaled) and rms of residualS per group."""
+    rows = []
+    for key, g in ua.groupby(by, sort=True):
+        r = g["residualS"].to_numpy(dtype=np.float64)
+        keys = key if isinstance(key, tuple) else (key,)
+        rows.append({**dict(zip(by, keys, strict=True)), "n": int(r.size),
+                     "medianS": float(np.median(r)), "madS": _mad(r),
+                     "rmsS": float(np.sqrt(np.mean(r**2)))})
+    return pd.DataFrame(rows, columns=[*by, "n", "medianS", "madS", "rmsS"])
+
+
+def row_profiles(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> Row:
+    dcfg = inputs.cfg.diagnostics
+    stats = residual_stats(ua, ["phase", "preprocessProfile"])
+    if stats.empty:
+        return Row(5, "No used picks.", "Can't conclude on this data: nothing was located.")
+    result = "; ".join(
+        f"{r.phase} {r.preprocessProfile}: n {r.n}, median {r.medianS:+.3f} s, MAD {r.madS:.3f} s, "
+        f"rms {r.rmsS:.3f} s" for r in stats.itertuples(index=False)
+    ) + ". MAD is unscaled (as the outlier pass)."
+    notes = []
+    degraded = []
+    for phase, g in stats.groupby("phase", sort=True):
+        ok = g[g["n"] >= dcfg.minGroupSize]
+        if len(ok) < 2:
+            notes.append(
+                f"{phase}: only {len(ok)} profile(s) with >= minGroupSize {dcfg.minGroupSize} picks "
+                f"({', '.join(f'{p} n {n}' for p, n in zip(g['preprocessProfile'], g['n'], strict=True))})"
+            )
+            continue
+        best = ok.loc[ok["madS"].idxmin()]
+        for r in ok.itertuples(index=False):
+            if best["madS"] > 0 and r.madS > dcfg.degradationRatio * float(best["madS"]):
+                degraded.append(f"{phase} {r.preprocessProfile} MAD {r.madS:.3f} s = "
+                                f"{r.madS / float(best['madS']):.1f}x {best['preprocessProfile']}")
+    if degraded:
+        conclusion = (
+            f"Degraded: {'; '.join(degraded)}. Set per-profile sigma (locator.profilePickSigmaS) "
+            "and ask H1 whether borehole-B picks those stations better."
+        )
+    elif notes and len(notes) == stats["phase"].nunique():
+        conclusion = "Can't conclude on this data: " + "; ".join(notes) + "."
+    else:
+        conclusion = (
+            f"No profile's residual MAD exceeds {dcfg.degradationRatio:g}x the best profile's for "
+            "the same phase: resampling does not visibly degrade borehole picks at this level"
+            + (f" ({'; '.join(notes)})" if notes else "") + "."
+        )
+    return Row(5, result, conclusion)
+
+
+def station_medians(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> pd.DataFrame:
+    stats = residual_stats(ua, ["stationId", "phase"])
+    elev = inputs.details.stations.set_index("id")["sensorElevM"]
+    stats["sensorElevM"] = elev.reindex(stats["stationId"]).to_numpy(dtype=np.float64)
+    stats["enough"] = stats["n"] >= inputs.cfg.diagnostics.minGroupSize
+    stats["flagged"] = stats["enough"] & (
+        stats["medianS"].abs() > inputs.cfg.diagnostics.stationResidualFlagS
+    )
+    return stats
+
+
+def row_stations(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> tuple[Row, list[str]]:
+    dcfg = inputs.cfg.diagnostics
+    stats = station_medians(inputs, ua)
+    ok = stats[stats["enough"]] if len(stats) else stats
+    total = len(inputs.details.stations) * len(PHASES)
+    lines = [
+        "| stationId | phase | n used picks | median residual (s) | MAD (s) | sensorElevM | flag |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for r in stats.itertuples(index=False):
+        flag = f"> {dcfg.stationResidualFlagS:g} s" if r.flagged else (
+            "" if r.enough else f"< {dcfg.minGroupSize} picks")
+        lines.append(f"| {r.stationId} | {r.phase} | {r.n} | {r.medianS:+.3f} | {r.madS:.3f} | "
+                     f"{r.sensorElevM:.0f} | {flag} |")
+    if ok.empty:
+        return Row(6, f"No station-phase has >= minGroupSize {dcfg.minGroupSize} used picks "
+                   f"({len(stats)} of {total} have any).",
+                   "Can't conclude on this data: too few located events per station."), lines
+    worst = ok.loc[ok["medianS"].abs().idxmax()]
+    flagged = ok[ok["flagged"]]
+    listed = ", ".join(f"{r.stationId} {r.phase} {r.medianS:+.3f} s (n {r.n})"
+                       for r in flagged.itertuples(index=False))
+    result = (
+        f"{len(ok)} of {total} station-phases have >= {dcfg.minGroupSize} used picks; "
+        f"|median| > {dcfg.stationResidualFlagS:g} s at {len(flagged)}"
+        + (f": {listed}" if listed else "")
+        + f". Largest |median| {worst['medianS']:+.3f} s at {worst['stationId']} {worst['phase']}; "
+        f"P medians span {_f(ok.loc[ok.phase == 'P', 'medianS'].min(), '+.3f')} to "
+        f"{_f(ok.loc[ok.phase == 'P', 'medianS'].max(), '+.3f')} s, S "
+        f"{_f(ok.loc[ok.phase == 'S', 'medianS'].min(), '+.3f')} to "
+        f"{_f(ok.loc[ok.phase == 'S', 'medianS'].max(), '+.3f')} s. All station-phases: appendix B."
+    )
+    if len(flagged):
+        conclusion = (
+            f"Station terms matter: {len(flagged)} station-phase median(s) exceed "
+            f"{dcfg.stationResidualFlagS:g} s. LOC-05 statics absorb them, and each static above "
+            f"{dcfg.stationResidualFlagS:g} s needs a written explanation (sensor elevation above "
+            "the model's own top, local sediment, timing)."
+        )
+    else:
+        conclusion = (
+            f"No station-phase median exceeds {dcfg.stationResidualFlagS:g} s: LOC-05 statics stay "
+            "under the explanation threshold; the offsets above are its starting point."
+        )
+    return Row(6, result, conclusion), lines
+
+
+# --- row 7 ----------------------------------------------------------------------------------------
+
+
+def azimuth_fit(ua: pd.DataFrame) -> pd.DataFrame:
+    """Per phase: least squares residual = a + b cos(az) + c sin(az); amplitude and late azimuth."""
+    rows = []
+    for phase, g in ua.groupby("phase", sort=True):
+        az = np.arctan2(g["stE"] - g["evE"], g["stN"] - g["evN"]).to_numpy(dtype=np.float64)
+        r = g["residualS"].to_numpy(dtype=np.float64)
+        amp = late = math.nan
+        if r.size >= 3:
+            design = np.column_stack([np.ones_like(az), np.cos(az), np.sin(az)])
+            (_, b, c), *_ = np.linalg.lstsq(design, r, rcond=None)
+            amp = float(math.hypot(b, c))
+            late = float(math.degrees(math.atan2(c, b)) % 360.0)
+        rows.append({"phase": phase, "n": int(r.size), "amplitudeS": amp, "lateAzDeg": late})
+    return pd.DataFrame(rows, columns=["phase", "n", "amplitudeS", "lateAzDeg"])
+
+
+def position_fit(medians: pd.DataFrame, stations: pd.DataFrame) -> pd.DataFrame:
+    """Per phase: station medians ~ a + ge * e_km + gn * n_km, and r(median, sensorElevM)."""
+    pos = stations.set_index("id")[["enu_e", "enu_n", "sensorElevM"]]
+    rows = []
+    for phase, g in medians[medians["enough"]].groupby("phase", sort=True):
+        p = pos.reindex(g["stationId"])
+        m = g["medianS"].to_numpy(dtype=np.float64)
+        grad = gaz = corr = math.nan
+        if m.size >= 4:
+            design = np.column_stack([np.ones(m.size), p["enu_e"] / 1000.0, p["enu_n"] / 1000.0])
+            (_, ge, gn), *_ = np.linalg.lstsq(design, m, rcond=None)
+            grad = float(math.hypot(ge, gn))
+            gaz = float(math.degrees(math.atan2(ge, gn)) % 360.0)
+            z = p["sensorElevM"].to_numpy(dtype=np.float64)
+            if np.std(z) > 0 and np.std(m) > 0:
+                corr = float(np.corrcoef(m, z)[0, 1])
+        rows.append({"phase": phase, "nStations": int(m.size), "gradientSPerKm": grad,
+                     "gradientAzDeg": gaz, "corrWithSensorElevM": corr})
+    return pd.DataFrame(rows, columns=["phase", "nStations", "gradientSPerKm", "gradientAzDeg",
+                                       "corrWithSensorElevM"])
+
+
+def row_trend(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> Row:
+    dcfg = inputs.cfg.diagnostics
+    az = azimuth_fit(ua)
+    pos = position_fit(station_medians(inputs, ua), inputs.details.stations)
+    if az.empty:
+        return Row(7, "No used picks.", "Can't conclude on this data: nothing was located.")
+    result = "; ".join(
+        f"{r.phase} vs azimuth: amplitude {_f(r.amplitudeS, '.3f')} s, latest toward az "
+        f"{_f(r.lateAzDeg)} deg (n {r.n})" for r in az.itertuples(index=False)
+    )
+    if len(pos):
+        result += "; " + "; ".join(
+            f"{r.phase} station medians vs position ({r.nStations} stations): gradient "
+            f"{_f(r.gradientSPerKm * 1000, '.1f')} ms/km, increasing toward az "
+            f"{_f(r.gradientAzDeg)} deg, r(median, sensorElevM) {_f(r.corrWithSensorElevM, '+.2f')}"
+            for r in pos.itertuples(index=False)
+        )
+    result += ". Azimuths are grid (UTM) azimuths from the epicentre to the station."
+    ok = az[az["n"] >= dcfg.minGroupSize]
+    if ok.empty or not np.isfinite(ok["amplitudeS"]).any():
+        return Row(7, result, f"Can't conclude on this data: fewer than minGroupSize "
+                   f"{dcfg.minGroupSize} used picks per phase.")
+    trend = ok[ok["amplitudeS"] > dcfg.trendFlagS]
+    if len(trend):
+        listed = ", ".join(f"{r.phase} {r.amplitudeS:.3f} s toward az {r.lateAzDeg:.0f} deg"
+                           for r in trend.itertuples(index=False))
+        conclusion = (
+            f"Residuals trend with azimuth ({listed}, above trendFlagS {dcfg.trendFlagS:g} s): "
+            "either the 1D model misses lateral structure (dipping basement; LOC-07 3D grids) or "
+            "station terms line up with azimuth (LOC-05 statics first, then recheck)."
+        )
+    else:
+        conclusion = (
+            f"No azimuthal trend above trendFlagS {dcfg.trendFlagS:g} s (largest "
+            f"{float(ok['amplitudeS'].max()):.3f} s): nothing here asks for 3D grids (LOC-07) yet."
+        )
+    return Row(7, result, conclusion)
+
+
+# --- table error exposure ------------------------------------------------------------------------
+
+
+def table_errors(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> pd.DataFrame:
+    """Per used pick: table travel time minus the exact layered time at the located hypocentre."""
+    tables = inputs.details.locator.tables
+    parts = []
+    for (sid, phase), g in ua.groupby(["stationId", "phase"], sort=True):
+        r = np.hypot(g["evE"] - g["stE"], g["evN"] - g["stN"]).to_numpy(dtype=np.float64)
+        z = g["evElevM"].to_numpy(dtype=np.float64)
+        zr = tables.receiver_elev_m[str(sid)]
+        exact = layered_first_arrival(tables.model, phase, zr, r, z)
+        table = tables.table(str(sid), phase).lookup(r, z)
+        parts.append(pd.DataFrame({"eventId": g["eventId"].to_numpy(), "stationId": sid,
+                                   "phase": phase, "errS": table - exact}))
+    if not parts:
+        return pd.DataFrame(columns=["eventId", "stationId", "phase", "errS"])
+    return pd.concat(parts, ignore_index=True)
+
+
+def table_error_section(inputs: DiagnosticsInputs, ua: pd.DataFrame) -> list[str]:
+    dcfg = inputs.cfg.diagnostics
+    tables = inputs.details.locator.tables
+    by_layer = tables.accuracy_by_layer()
+    sigma = inputs.cfg.locator.pickSigmaS
+    lines = ["## Shallow-interface bias exposure (travel-time tables vs exact layered times)", ""]
+    layer_bits = []
+    for phase in PHASES:
+        worst = [f"top {row['topElevM']:g} m: {row['maxErrS'] * 1000:.1f} ms"
+                 for row in by_layer[phase] if row["maxErrS"] > dcfg.tableErrorFlagS]
+        layer_bits.append(f"{phase}: " + ("; ".join(worst) if worst else
+                                          f"no layer above {dcfg.tableErrorFlagS * 1000:g} ms"))
+    lines.append("LOC-02 accuracy record, largest table error per model layer over all tables "
+                 f"(layers above tableErrorFlagS {dcfg.tableErrorFlagS * 1000:g} ms): "
+                 + " / ".join(layer_bits) + ".")
+    lines.append("")
+    err = table_errors(inputs, ua)
+    if err.empty:
+        lines.append("No used picks: no exposure at located hypocentres to report.")
+        return lines
+    parts = []
+    exposed_events = set()
+    for phase, g in err.groupby("phase", sort=True):
+        a = g["errS"].abs().to_numpy()
+        exposed = g[g["errS"].abs() > dcfg.tableErrorFlagS]
+        exposed_events |= set(exposed["eventId"])
+        sig = sigma.P if phase == "P" else sigma.S
+        parts.append(
+            f"{phase}: {len(g)} used picks, table - exact median {np.median(g['errS']) * 1000:+.1f} "
+            f"ms, max |error| {a.max() * 1000:.1f} ms ({a.max() / sig:.2f} of pickSigmaS "
+            f"{sig * 1000:g} ms); {len(exposed)} picks above {dcfg.tableErrorFlagS * 1000:g} ms"
+        )
+    n_ev = len(inputs.details.result.events)
+    lines.append("At the located hypocentres, " + "; ".join(parts) + f". {len(exposed_events)} of "
+                 f"{n_ev} located events have at least one used pick above "
+                 f"{dcfg.tableErrorFlagS * 1000:g} ms.")
+    lines.append("")
+    worst = float(err["errS"].abs().max())
+    if worst <= min(sigma.P, sigma.S) / 2:
+        lines.append(f"Conclusion: the tables' interface bias at these hypocentres (at most "
+                     f"{worst * 1000:.1f} ms) stays under half the smallest pick sigma; it can't "
+                     "move depths by more than a fraction of the formal errors.")
+    else:
+        lines.append(f"Conclusion: table errors reach {worst * 1000:.1f} ms at these hypocentres, "
+                     "comparable to the pick sigma; finer tables (grids.dzM) or exact layered "
+                     "times near interfaces would remove that bias.")
+    return lines
+
+
+# --- public regional catalog comparison ----------------------------------------------------------
+
+
+def catalog_uncertainties(quakeml: Path) -> pd.DataFrame:
+    """Per catalog event id: preferred-origin horizontal and depth uncertainty (m), when stated."""
+    from obspy import read_events
+
+    from hq.match.catalog import comcat_id  # at call time: hq.match imports hq.locate
+
+    rows = []
+    for event in read_events(str(quakeml), format="QUAKEML"):
+        origin = event.preferred_origin()
+        if origin is None:
+            continue
+        unc = origin.origin_uncertainty
+        h = None if unc is None else unc.horizontal_uncertainty
+        z = origin.depth_errors.uncertainty if origin.depth_errors is not None else None
+        rows.append({"id": comcat_id(event),
+                     "horizontalErrorM": math.nan if h is None else float(h),
+                     "depthErrorM": math.nan if z is None else float(z)})
+    return pd.DataFrame(rows, columns=["id", "horizontalErrorM", "depthErrorM"])
+
+
+def compare_with_catalog(
+    events: pd.DataFrame,
+    catalog: pd.DataFrame,
+    errors: pd.DataFrame | None,
+    cfg: SeismologyConfig,
+    known_ids: tuple[str, ...] | None = None,
+) -> pd.DataFrame:
+    """Per public event: the lowest-cost located event within matching.maxDtS / maxDistM.
+
+    Not one-to-one (the match stage is); offsets are ours minus the catalog's: ``dtS``, ``deM``,
+    ``dnM`` (ENU), ``distM`` (epicentral), ``dzM`` (elevM; the catalog's elevM uses its stated
+    depth datum). ``withinH`` / ``withinZ``: ``distM`` / ``|dzM|`` within the catalog's stated
+    horizontal / depth uncertainty (null where the catalog states none).
+    """
+    m = cfg.matching
+    cat = catalog.sort_values(["t", "id"], kind="stable").reset_index(drop=True)
+    err = (errors.set_index("id") if errors is not None and len(errors)
+           else pd.DataFrame(columns=["horizontalErrorM", "depthErrorM"]))
+    ev_t = events["t"].to_numpy(dtype=np.float64)
+    ev_e = events["enu_e"].to_numpy(dtype=np.float64)
+    ev_n = events["enu_n"].to_numpy(dtype=np.float64)
+    rows = []
+    for c in cat.itertuples(index=False):
+        cid = str(c.id)
+        h_err = float(err.loc[cid, "horizontalErrorM"]) if cid in err.index else math.nan
+        z_err = float(err.loc[cid, "depthErrorM"]) if cid in err.index else math.nan
+        row: dict[str, Any] = {"catalogId": cid, "known": bool(known_ids and cid in known_ids),
+                               "catalogT": float(c.t), "catalogElevM": float(c.elevM),
+                               "catalogMag": c.mag, "catalogMagType": c.magType,
+                               "catalogHErrM": h_err, "catalogZErrM": z_err, "eventId": None}
+        dt = ev_t - float(c.t)
+        dist = np.hypot(ev_e - float(c.enu_e), ev_n - float(c.enu_n))
+        ok = (np.abs(dt) <= m.maxDtS) & (dist <= m.maxDistM)
+        if ok.any():
+            cost = np.where(ok, np.abs(dt) / m.dtScaleS + dist / m.distScaleM, np.inf)
+            j = int(np.argmin(cost))
+            e = events.iloc[j]
+            dz = float(e["elevM"]) - float(c.elevM)
+            row.update(
+                eventId=str(e["id"]), dtS=float(dt[j]), distM=float(dist[j]),
+                deM=float(ev_e[j] - float(c.enu_e)), dnM=float(ev_n[j] - float(c.enu_n)),
+                dzM=dz, elevM=float(e["elevM"]), hErrM=float(e["quality_hErrM"]),
+                vErrM=float(e["quality_vErrM"]), nStations=int(e["quality_nStations"]),
+                nP=int(e["quality_nP"]), nS=int(e["quality_nS"]), rmsS=float(e["quality_rmsS"]),
+                withinH=None if math.isnan(h_err) else bool(dist[j] <= h_err),
+                withinZ=None if math.isnan(z_err) else bool(abs(dz) <= z_err),
+            )
+        rows.append(row)
+    columns = ["catalogId", "known", "catalogT", "catalogElevM", "catalogMag", "catalogMagType",
+               "catalogHErrM", "catalogZErrM", "eventId", "dtS", "distM", "deM", "dnM", "dzM",
+               "elevM", "hErrM", "vErrM", "nStations", "nP", "nS", "rmsS", "withinH", "withinZ"]
+    return pd.DataFrame(rows, columns=columns)
+
+
+def catalog_section(inputs: DiagnosticsInputs) -> list[str]:
+    lines = ["## Comparison with the public regional catalog", ""]
+    if inputs.catalog is None:
+        lines.append("catalog.parquet is not in the run dir: no comparison.")
+        return lines
+    m = inputs.cfg.matching
+    comp = compare_with_catalog(inputs.details.result.events, inputs.catalog,
+                                inputs.catalog_errors, inputs.cfg, inputs.known_ids)
+    have = comp[comp["eventId"].notna()]
+    source = ("catalog.quakeml preferred origins" if inputs.catalog_errors is not None
+              else "none (catalog.quakeml absent)")
+    lines.append(
+        f"Per public event, the lowest-cost located candidate event within {m.maxDtS:g} s and "
+        f"{m.maxDistM / 1000:g} km (not one-to-one; the match stage assigns). Offsets are ours "
+        "minus the catalog's; dz compares elevM (the catalog's converted with its stated datum). "
+        f"Catalog uncertainties: {source}. {len(have)} of {len(comp)} public events have a "
+        "candidate" + (f"; known events (known/windows.json): {', '.join(inputs.known_ids)}"
+                       if inputs.known_ids else "") + "."
+    )
+    lines.append("")
+    if len(have):
+        within = have["withinH"].eq(True) & have["withinZ"].eq(True)
+        lines.append(
+            f"Median offsets over those {len(have)}: dt {have['dtS'].median():+.2f} s, de "
+            f"{have['deM'].median():+.0f} m, dn {have['dnM'].median():+.0f} m, dz "
+            f"{have['dzM'].median():+.0f} m; within the catalog's stated horizontal and depth "
+            f"uncertainty: {int(within.sum())} of {len(have)}."
+        )
+        lines.append("")
+        lines.append("| catalogId | known | eventId | dt (s) | dist (m) | de (m) | dn (m) | dz (m) "
+                     "| our hErrM / vErrM (m) | catalog h / z err (m) | nSta / nP / nS | rmsS (s) "
+                     "| within catalog h / z |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | "
+                     "--- |")
+        for r in have.itertuples(index=False):
+            lines.append(
+                f"| {r.catalogId} | {'yes' if r.known else ''} | {r.eventId} | {r.dtS:+.2f} | "
+                f"{r.distM:.0f} | {r.deM:+.0f} | {r.dnM:+.0f} | {r.dzM:+.0f} | {_f(r.hErrM)} / "
+                f"{_f(r.vErrM)} | {_f(r.catalogHErrM)} / {_f(r.catalogZErrM)} | {r.nStations} / "
+                f"{r.nP} / {r.nS} | {r.rmsS:.3f} | {r.withinH} / {r.withinZ} |"
+            )
+    missing = comp[comp["eventId"].isna()]
+    if len(missing):
+        lines.append("")
+        lines.append(f"No located candidate within tolerance for {len(missing)} public event(s): "
+                     + ", ".join(missing["catalogId"].astype(str)) + ".")
+    return lines
+
+
+# --- report ---------------------------------------------------------------------------------------
+
+
+def build_rows(inputs: DiagnosticsInputs) -> tuple[list[Row], dict[str, list[str]]]:
+    ua = used_arrivals(inputs.details, inputs.details.stations)
+    row1, stations_table = row_borehole(inputs)
+    row6, medians_table = row_stations(inputs, ua)
+    rows = [row1, row_datum(inputs), row_pyocto(inputs), row_ns(inputs),
+            row_profiles(inputs, ua), row6, row_trend(inputs, ua)]
+    return rows, {"stations": stations_table, "medians": medians_table,
+                  "tableErrors": table_error_section(inputs, ua)}
+
+
+def build_diagnostics(inputs: DiagnosticsInputs) -> str:
+    """The Markdown report (see the module docstring)."""
+    rows, extra = build_rows(inputs)
+    d = inputs.details
+    c = d.counts
+    applied = d.record["locate"]["statics"]
+    lines = [
+        "# Location diagnostics (LOC-04)",
+        "",
+        (
+            f"Run `{inputs.run_id}`, stage `locate`: {c['events']} of {c['assocEvents']} "
+            f"association events located as candidate events on {c['stations']} stations "
+            f"({c['picksUsed']} of {c['picksIn']} associated picks used), method `grid1d` on the "
+            f"`{d.velocity_model.get('name', '?')}` layer model, statics "
+            f"{'applied' if applied['applied'] else 'none (LOC-05)'}. depthOnEdge "
+            f"{c['eventsDepthOnEdge']}, MAP on the volume top {c['eventsMapOnVolumeTop']}, PDF "
+            f"truncated {c['eventsPdfTruncated']}."
+        ),
+        "",
+        (
+            "Every result below is computed by `hq.locate.diagnostics` from this run's tables and "
+            "locator; thresholds are in seismology.yaml (`diagnostics`). Residual = tObs - tPred "
+            "over the picks used in the final locations."
+        ),
+        "",
+        "## Depth diagnostics (docs/lanes/H2-seismology.md)",
+        "",
+        "| " + " | ".join(HEADER) + " |",
+        "| " + " | ".join("---" for _ in HEADER) + " |",
+    ]
+    for row in rows:
+        suspect, test, fix = SUSPECTS[row.number]
+        test = test.format(k=inputs.cfg.diagnostics.minSForDepth)
+        cells = [str(row.number), suspect, test, row.result, row.conclusion, fix]
+        lines.append("| " + " | ".join(_cell(x) for x in cells) + " |")
+    lines += ["", *extra["tableErrors"], "", *catalog_section(inputs), "",
+              "## Appendix A: stations (row 1)", "", *extra["stations"], "",
+              "## Appendix B: residuals per station and phase (row 6, input for LOC-05)", "",
+              *extra["medians"], "",
+              "## Configuration", "", "```json",
+              json.dumps(inputs.cfg.diagnostics.model_dump(mode="json"), indent=1), "```", ""]
+    return "\n".join(lines)
