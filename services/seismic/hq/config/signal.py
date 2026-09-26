@@ -124,6 +124,28 @@ class AvailabilityCheck(_Section):
     onMissing: Literal["error", "unused", "used"]
 
 
+class RateCheck(_Section):
+    """Checks each chosen triplet's metadata sample rate against a few seconds of served data.
+
+    StationXML can disagree with the data: a channel epoch that says 200 Hz can serve 100 Hz.
+    The preprocessing profile follows the sample rate, so a wrong rate sends the station through
+    the wrong profile, and for_picking rejects it.
+    """
+
+    probeS: float = Field(gt=0)  # seconds of data per probe request
+    probeOffsetsS: tuple[float, ...] = Field(min_length=1)  # probe starts after windowStart
+    relTol: float = Field(gt=0, lt=0.01)  # data and metadata rates agree within this fraction
+    timeoutS: float = Field(gt=0)
+    retries: int = Field(ge=0)  # extra attempts after a transport error or timeout
+    backoffS: float = Field(ge=0)  # sleep backoffS * attempt before each retry
+    cacheFile: str = Field(min_length=1)  # probe results, JSON under the stationxml cache dir
+    # Data rate differs from metadata. "data": use the served rate and its profile, and flag it.
+    # "skip": drop the station. "error": stop.
+    onMismatch: Literal["error", "data", "skip"]
+    # No probe returned data. "metadata": keep the StationXML rate, flagged. "error": stop.
+    onNoData: Literal["error", "metadata"]
+
+
 class StationSelection(_Section):
     """Which stations and channel triplets enter the run, and how their sensor depth is resolved."""
 
@@ -133,6 +155,7 @@ class StationSelection(_Section):
     profiles: tuple[ProfileRule, ...] = Field(min_length=1)
     elevation: ElevationCheck
     availability: AvailabilityCheck
+    rateCheck: RateCheck
 
 
 # --- SEIS-05: full-window download and cache --------------------------------------------------------
