@@ -11,3 +11,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hq_contracts"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,1406 @@
+{
+  "$defs": {
+    "AnalysisSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "additional": {
+          "$ref": "#/$defs/TierCounts"
+        },
+        "additionalCount": {
+          "type": "integer"
+        },
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BaselineGain"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "candidateCount": {
+          "type": "integer"
+        },
+        "medianRmsS": {
+          "type": "number"
+        },
+        "medianStations": {
+          "type": "number"
+        },
+        "publicCatalogCount": {
+          "type": "integer"
+        },
+        "recall": {
+          "type": "number"
+        },
+        "recoveredCatalogCount": {
+          "type": "integer"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "strictAdditionalCount": {
+          "type": "integer"
+        },
+        "strictQualityCount": {
+          "type": "integer"
+        },
+        "unmatchedPublicIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runId",
+        "publicCatalogCount",
+        "recoveredCatalogCount",
+        "recall",
+        "unmatchedPublicIds",
+        "candidateCount",
+        "additionalCount",
+        "additional",
+        "strictQualityCount",
+        "strictAdditionalCount",
+        "medianStations",
+        "medianRmsS"
+      ],
+      "title": "AnalysisSummary",
+      "type": "object"
+    },
+    "BaselineGain": {
+      "additionalProperties": false,
+      "properties": {
+        "associationProfile": {
+          "enum": [
+            "full",
+            "p_only"
+          ],
+          "type": "string"
+        },
+        "gain": {
+          "type": "number"
+        },
+        "strictPhasenet": {
+          "type": "integer"
+        },
+        "strictStalta": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "associationProfile",
+        "strictPhasenet",
+        "strictStalta",
+        "gain"
+      ],
+      "title": "BaselineGain",
+      "type": "object"
+    },
+    "BaselineRow": {
+      "additionalProperties": false,
+      "properties": {
+        "associationProfile": {
+          "enum": [
+            "full",
+            "p_only"
+          ],
+          "type": "string"
+        },
+        "candidates": {
+          "type": "integer"
+        },
+        "medianRmsS": {
+          "type": "number"
+        },
+        "medianStations": {
+          "type": "number"
+        },
+        "method": {
+          "enum": [
+            "phasenet",
+            "stalta"
+          ],
+          "type": "string"
+        },
+        "recoveredPublic": {
+          "type": "integer"
+        },
+        "tiers": {
+          "$ref": "#/$defs/TierCounts"
+        }
+      },
+      "required": [
+        "method",
+        "associationProfile",
+        "candidates",
+        "recoveredPublic",
+        "tiers",
+        "medianRmsS",
+        "medianStations"
+      ],
+      "title": "BaselineRow",
+      "type": "object"
+    },
+    "BundleMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/DataMode"
+        },
+        "run": {
+          "$ref": "#/$defs/ProcessingRun"
+        },
+        "scene": {
+          "$ref": "#/$defs/SceneMeta"
+        },
+        "schemaVersion": {
+          "default": "1.0",
+          "type": "string"
+        },
+        "summary": {
+          "$ref": "#/$defs/AnalysisSummary"
+        }
+      },
+      "required": [
+        "mode",
+        "scene",
+        "run",
+        "summary"
+      ],
+      "title": "BundleMeta",
+      "type": "object"
+    },
+    "CatalogEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "depthDatum": {
+          "type": "string"
+        },
+        "depthKm": {
+          "type": "number"
+        },
+        "elevM": {
+          "type": "number"
+        },
+        "enu": {
+          "$ref": "#/$defs/Enu"
+        },
+        "id": {
+          "type": "string"
+        },
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        },
+        "mag": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "magType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "matchedEventId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "type": "string"
+        },
+        "t": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "t",
+        "latitude",
+        "longitude",
+        "depthKm",
+        "depthDatum",
+        "elevM",
+        "enu"
+      ],
+      "title": "CatalogEvent",
+      "type": "object"
+    },
+    "CatalogMatch": {
+      "additionalProperties": false,
+      "properties": {
+        "catalogId": {
+          "type": "string"
+        },
+        "distM": {
+          "type": "number"
+        },
+        "dtS": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "catalogId",
+        "dtS",
+        "distM"
+      ],
+      "title": "CatalogMatch",
+      "type": "object"
+    },
+    "DataMode": {
+      "enum": [
+        "mock",
+        "showcase",
+        "live",
+        "snapshot"
+      ],
+      "title": "DataMode",
+      "type": "string"
+    },
+    "Enu": {
+      "additionalProperties": false,
+      "description": "Position relative to the run origin, in meters.",
+      "properties": {
+        "e": {
+          "type": "number"
+        },
+        "n": {
+          "type": "number"
+        },
+        "u": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "e",
+        "n",
+        "u"
+      ],
+      "title": "Enu",
+      "type": "object"
+    },
+    "EventEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "filterHz": {
+          "additionalItems": false,
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "traces": {
+          "items": {
+            "$ref": "#/$defs/WaveformSnippet"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "eventId",
+        "filterHz",
+        "traces"
+      ],
+      "title": "EventEvidence",
+      "type": "object"
+    },
+    "GRCurve": {
+      "additionalProperties": false,
+      "properties": {
+        "bSigma": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "bValue": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "magBins": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "mcPublic": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mcRecovered": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "publicCum": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "recoveredCum": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "magBins",
+        "publicCum",
+        "recoveredCum"
+      ],
+      "title": "GRCurve",
+      "type": "object"
+    },
+    "GeoFeature": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "well",
+            "facility",
+            "boundary"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/Enu"
+          },
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceRef"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "name",
+        "path",
+        "source"
+      ],
+      "title": "GeoFeature",
+      "type": "object"
+    },
+    "LiveStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/SeismicEvent"
+          },
+          "type": "array"
+        },
+        "latencyS": {
+          "type": "number"
+        },
+        "stationsOnline": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "number"
+        },
+        "windowS": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "updatedAt",
+        "windowS",
+        "latencyS",
+        "stationsOnline",
+        "events"
+      ],
+      "title": "LiveStatus",
+      "type": "object"
+    },
+    "LocationQuality": {
+      "additionalProperties": false,
+      "properties": {
+        "depthOnEdge": {
+          "type": "boolean"
+        },
+        "gapDeg": {
+          "type": "number"
+        },
+        "hErrM": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "method": {
+          "enum": [
+            "pyocto",
+            "grid1d",
+            "grid3d",
+            "relative"
+          ],
+          "type": "string"
+        },
+        "minEpiDistM": {
+          "type": "number"
+        },
+        "nP": {
+          "type": "integer"
+        },
+        "nS": {
+          "type": "integer"
+        },
+        "nStations": {
+          "type": "integer"
+        },
+        "rmsS": {
+          "type": "number"
+        },
+        "statics": {
+          "type": "boolean"
+        },
+        "vErrM": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "statics",
+        "nStations",
+        "nP",
+        "nS",
+        "rmsS",
+        "gapDeg",
+        "minEpiDistM",
+        "hErrM",
+        "vErrM",
+        "depthOnEdge"
+      ],
+      "title": "LocationQuality",
+      "type": "object"
+    },
+    "MagCalibration": {
+      "additionalProperties": false,
+      "properties": {
+        "coefficients": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        "looMae": {
+          "type": "number"
+        },
+        "n": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n",
+        "looMae",
+        "coefficients"
+      ],
+      "title": "MagCalibration",
+      "type": "object"
+    },
+    "Magnitude": {
+      "additionalProperties": false,
+      "properties": {
+        "sigma": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "Magnitude",
+      "type": "object"
+    },
+    "NullTest": {
+      "additionalProperties": false,
+      "properties": {
+        "meanChanceEvents": {
+          "type": "number"
+        },
+        "meanChanceStrict": {
+          "type": "number"
+        },
+        "nShuffles": {
+          "type": "integer"
+        },
+        "shiftRangeS": {
+          "type": "number"
+        },
+        "stdChanceEvents": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "nShuffles",
+        "shiftRangeS",
+        "meanChanceEvents",
+        "meanChanceStrict",
+        "stdChanceEvents"
+      ],
+      "title": "NullTest",
+      "type": "object"
+    },
+    "Phase": {
+      "enum": [
+        "P",
+        "S"
+      ],
+      "title": "Phase",
+      "type": "string"
+    },
+    "Pick": {
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "picker": {
+          "type": "string"
+        },
+        "prob": {
+          "type": "number"
+        },
+        "residualS": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stationId": {
+          "type": "string"
+        },
+        "t": {
+          "type": "number"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "stationId",
+        "phase",
+        "t",
+        "prob",
+        "picker"
+      ],
+      "title": "Pick",
+      "type": "object"
+    },
+    "ProcessingRun": {
+      "additionalProperties": false,
+      "properties": {
+        "associator": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "bbox": {
+          "additionalItems": false,
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "gitSha": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "isSynthetic": {
+          "default": false,
+          "type": "boolean"
+        },
+        "locator": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "matching": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "mode": {
+          "$ref": "#/$defs/DataMode"
+        },
+        "picker": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "pickerModel": {
+          "type": "string"
+        },
+        "pickerWeights": {
+          "type": "string"
+        },
+        "runtimeS": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        "softwareVersions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "stationIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tiering": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "velocityModel": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "windowEnd": {
+          "type": "number"
+        },
+        "windowLabel": {
+          "type": "string"
+        },
+        "windowStart": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "mode",
+        "createdAt",
+        "gitSha",
+        "windowStart",
+        "windowEnd",
+        "windowLabel",
+        "bbox",
+        "stationIds",
+        "pickerModel",
+        "pickerWeights",
+        "softwareVersions",
+        "runtimeS",
+        "picker",
+        "associator",
+        "velocityModel",
+        "locator",
+        "tiering",
+        "matching"
+      ],
+      "title": "ProcessingRun",
+      "type": "object"
+    },
+    "SceneMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "depthLabel": {
+          "type": "string"
+        },
+        "heroEventId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "isSynthetic": {
+          "default": false,
+          "type": "boolean"
+        },
+        "originElevM": {
+          "type": "number"
+        },
+        "originLat": {
+          "type": "number"
+        },
+        "originLon": {
+          "type": "number"
+        },
+        "projection": {
+          "type": "string"
+        },
+        "refSurfaceElevM": {
+          "type": "number"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "verticalExaggeration": {
+          "default": 1.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "runId",
+        "originLat",
+        "originLon",
+        "originElevM",
+        "refSurfaceElevM",
+        "projection",
+        "depthLabel"
+      ],
+      "title": "SceneMeta",
+      "type": "object"
+    },
+    "SeismicEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "catalogMatch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogMatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "depthKm": {
+          "type": "number"
+        },
+        "elevM": {
+          "type": "number"
+        },
+        "enu": {
+          "$ref": "#/$defs/Enu"
+        },
+        "id": {
+          "type": "string"
+        },
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        },
+        "magnitude": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Magnitude"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "meanPickProb": {
+          "type": "number"
+        },
+        "pickIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "quality": {
+          "$ref": "#/$defs/LocationQuality"
+        },
+        "revealOrder": {
+          "type": "integer"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "source": {
+          "default": "hq-pipeline",
+          "type": "string"
+        },
+        "t": {
+          "type": "number"
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        },
+        "tierReasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "runId",
+        "t",
+        "latitude",
+        "longitude",
+        "elevM",
+        "depthKm",
+        "enu",
+        "quality",
+        "tier",
+        "tierReasons",
+        "meanPickProb",
+        "revealOrder",
+        "pickIds"
+      ],
+      "title": "SeismicEvent",
+      "type": "object"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "citation": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "citation",
+        "url",
+        "verified"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    },
+    "Station": {
+      "additionalProperties": false,
+      "properties": {
+        "channels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enu": {
+          "$ref": "#/$defs/Enu"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "surface",
+            "borehole",
+            "strong_motion"
+          ],
+          "type": "string"
+        },
+        "latitude": {
+          "type": "number"
+        },
+        "location": {
+          "default": "",
+          "type": "string"
+        },
+        "longitude": {
+          "type": "number"
+        },
+        "network": {
+          "type": "string"
+        },
+        "preprocessProfile": {
+          "type": "string"
+        },
+        "sampleRateHz": {
+          "type": "number"
+        },
+        "sensorDepthM": {
+          "type": "number"
+        },
+        "sensorElevM": {
+          "type": "number"
+        },
+        "staticsS": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/Phase"
+          },
+          "type": "object"
+        },
+        "station": {
+          "type": "string"
+        },
+        "surfaceElevM": {
+          "type": "number"
+        },
+        "usedInRun": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "network",
+        "station",
+        "latitude",
+        "longitude",
+        "surfaceElevM",
+        "sensorDepthM",
+        "sensorElevM",
+        "kind",
+        "channels",
+        "sampleRateHz",
+        "enu",
+        "preprocessProfile",
+        "usedInRun"
+      ],
+      "title": "Station",
+      "type": "object"
+    },
+    "SweepPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "type": "integer"
+        },
+        "params": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "recoveredPublic": {
+          "type": "integer"
+        },
+        "tierA": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "params",
+        "candidates",
+        "recoveredPublic",
+        "tierA"
+      ],
+      "title": "SweepPoint",
+      "type": "object"
+    },
+    "SyntheticTest": {
+      "additionalProperties": false,
+      "properties": {
+        "medianDepthBiasM": {
+          "type": "number"
+        },
+        "medianHErrM": {
+          "type": "number"
+        },
+        "medianVErrM": {
+          "type": "number"
+        },
+        "nEvents": {
+          "type": "integer"
+        },
+        "p90VErrM": {
+          "type": "number"
+        },
+        "pickSigmaS": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/Phase"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "nEvents",
+        "pickSigmaS",
+        "medianHErrM",
+        "medianVErrM",
+        "p90VErrM",
+        "medianDepthBiasM"
+      ],
+      "title": "SyntheticTest",
+      "type": "object"
+    },
+    "Tier": {
+      "enum": [
+        "A",
+        "B",
+        "C"
+      ],
+      "title": "Tier",
+      "type": "string"
+    },
+    "TierCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "A": {
+          "type": "integer"
+        },
+        "B": {
+          "type": "integer"
+        },
+        "C": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "A",
+        "B",
+        "C"
+      ],
+      "title": "TierCounts",
+      "type": "object"
+    },
+    "Validation": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {
+          "items": {
+            "$ref": "#/$defs/BaselineRow"
+          },
+          "type": "array"
+        },
+        "gr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GRCurve"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "magnitude": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MagCalibration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nullTest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NullTest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sweep": {
+          "items": {
+            "$ref": "#/$defs/SweepPoint"
+          },
+          "type": "array"
+        },
+        "synthetic": {
+          "$ref": "#/$defs/SyntheticTest"
+        }
+      },
+      "required": [
+        "baseline",
+        "sweep",
+        "synthetic"
+      ],
+      "title": "Validation",
+      "type": "object"
+    },
+    "WaveformSnippet": {
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "type": "string"
+        },
+        "dt": {
+          "type": "number"
+        },
+        "epiDistM": {
+          "type": "number"
+        },
+        "pickP": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pickS": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "predP": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "predS": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "probP": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "probS": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "samples": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "stationId": {
+          "type": "string"
+        },
+        "t0": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "stationId",
+        "channel",
+        "epiDistM",
+        "t0",
+        "dt",
+        "samples"
+      ],
+      "title": "WaveformSnippet",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Hidden Quakes contracts, schemaVersion 1.0",
+  "properties": {
+    "catalog": {
+      "items": {
+        "$ref": "#/$defs/CatalogEvent"
+      },
+      "type": "array"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/SeismicEvent"
+      },
+      "type": "array"
+    },
+    "evidence": {
+      "$ref": "#/$defs/EventEvidence"
+    },
+    "features": {
+      "items": {
+        "$ref": "#/$defs/GeoFeature"
+      },
+      "type": "array"
+    },
+    "live": {
+      "$ref": "#/$defs/LiveStatus"
+    },
+    "meta": {
+      "$ref": "#/$defs/BundleMeta"
+    },
+    "stations": {
+      "items": {
+        "$ref": "#/$defs/Station"
+      },
+      "type": "array"
+    },
+    "validation": {
+      "$ref": "#/$defs/Validation"
+    }
+  },
+  "required": [
+    "meta",
+    "stations",
+    "catalog",
+    "events",
+    "features",
+    "validation",
+    "evidence",
+    "live"
+  ],
+  "title": "Bundle",
+  "type": "object"
+}
