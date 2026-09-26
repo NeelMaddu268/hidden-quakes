@@ -28,6 +28,8 @@ import { sceneFx } from "./fx";
 import { depthFogPerSceneUnit, LOOK } from "./look";
 import { Post } from "./post/Post";
 import { RevealDriver } from "./reveal/RevealDriver";
+import { References } from "./references";
+import { Terrain } from "./terrain";
 import type { BundleState } from "./types";
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
@@ -94,6 +96,8 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
 
   return (
     <>
+      <Terrain scene={meta.scene} bounds={bounds} />
+      <References bundle={bundle} bounds={bounds} />
       <EventsLayer
         name="public-events"
         instances={publicEvents}

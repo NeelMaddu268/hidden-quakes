@@ -1,0 +1,11 @@
+comcat_uu_3events.quakeml is a real USGS ComCat FDSN event-service response (QuakeML 1.2), trimmed.
+
+Query: the showcase window and bbox from configs/showcase/run.yaml, exactly as recorded in the
+file's eventParameters publicID:
+https://earthquake.usgs.gov/fdsnws/event/1/query?starttime=2026-09-10T00:00:00&endtime=2026-09-11T00:00:00&minlatitude=38.28&maxlatitude=38.74&minlongitude=-113.2&maxlongitude=-112.6
+Fetched 2026-09-26T01:01:35Z during HackGT 13 (the response's eventParameters creationTime).
+
+Trimmed: only the <event> blocks of uu80155936, uu80155911 and uu80155571 are kept, in the order
+served (newest first). Nothing else was changed. Checked against a later fetch of the same query
+(catalog.quakeml of run 20260926-0114-4b2b074): the header and all three event blocks are
+byte-identical; only the eventParameters creationTime differs.
