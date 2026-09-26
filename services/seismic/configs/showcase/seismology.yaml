@@ -183,6 +183,83 @@ catalog:
         - https://earthquake.usgs.gov/data/comcat/index.php#depth
         - https://quake.ethz.ch/quakeml/Documents
 
+# Association (stage "associate", hq.associate, LOC-03) with PyOcto 0.2.0, fed the same 1D layer
+# file as the locator (velocity.layerFile) through station-specific travel-time tables built here.
+# Every value below, and every argument actually passed to PyOcto, is recorded in
+# ProcessingRun.associator. PyOcto's own knobs keep its units: km (Km suffix) and s.
+# Values are starting points; the sweep below, completed in LOC-06, picks the knee.
+associator:
+  # Stage input in the run dir: known/picks.parquet (H1's known-event windows) or picks.parquet.
+  picksTable: picks.parquet
+  # Picks from stations in stations.parquet with usedInRun false (H1's known-event picker picks
+  # them on purpose): drop (counted and logged) or reject. Unknown stations always fail.
+  picksFromUnusedStations: drop
+  # Picks are stored at prob >= 0.1; association uses only picks at or above this. PyOcto 0.2.0
+  # takes no per-pick weight, so prob is used only as this threshold.
+  minPickProb: 0.3
+  # Final events need picks from at least this many distinct stations (applied after the
+  # duplicate merge and shared-pick resolution below).
+  minStations: 5
+  # PyOcto's pick minimums (n_picks, n_p_picks, n_s_picks, n_p_and_s_picks; P/S/both count
+  # stations). The config rejects values PyOcto would silently raise, and nPicks/nPPicks above the
+  # smallest minStations, so the station minimum stays the binding one.
+  nPicks: 4
+  nPPicks: 2
+  nSPicks: 1
+  nPAndSPicks: 0
+  toleranceS: 0.3                     # velocity model tolerance
+  # Not knobs, fixed by design and recorded with the others: second_pass_overwrites null (no
+  # second pass), velocity_model_location null (location uses the association model), crs null
+  # (coordinates are projected in hq.associate.frame).
+  associationCutoffDistanceKm: null   # null: every station takes part in the space partitioning
+  # Overlap between time slices. Must cover the largest S travel time from any station to any
+  # point of the search volume; the stage computes that from the tables and fails if it does not.
+  timeBeforeS: 30.0
+  timeSlicingS: 1200.0
+  minNodeSizeKm: 4.0                  # half the runtime of 2.0, same recall (synthetic 57k-pick day)
+  minNodeSizeLocationKm: 0.25
+  pickMatchToleranceS: 0.5
+  # PyOcto drops the smaller of two events closer than this in time, whatever picks they share.
+  # 0 leaves near-simultaneous events to the explicit duplicate merge below.
+  minIntereventTimeS: 0.0
+  exponentialEdt: false
+  edtPickStdS: 1.0                    # used by PyOcto only when exponentialEdt is true
+  maxPickOverlap: 4
+  refinementIterations: 3
+  locationSplitDepth: 6
+  locationSplitReturn: 4
+  minPickFraction: 0.25
+  queueMemoryProtectionDfsSize: 500000
+  nodeLogInterval: 0                  # 0: PyOcto prints no node progress
+  nThreads: 8                         # results do not depend on it (tested)
+  # Stations: |stored enu - enu from latitude/longitude/sensorElevM| must be below this (m).
+  enuConsistencyTolM: 0.01
+  # Duplicate merge: two events whose origin times differ by at most mergeWithinS and that share
+  # at least mergeMinSharedFraction of the smaller event's picks become one.
+  mergeWithinS: 0.5
+  mergeMinSharedFraction: 0.5
+  volume:
+    horizontalMarginM: 1000.0         # around the run bbox projected to ENU (EPSG:32612 - origin)
+    topElevM: null                    # null = run.refSurfaceElevM (the ground at the origin)
+    bottomElevM: -10000.0             # m ASL
+  # Station-specific tables in PyOcto's binary format, cached under data/cache/ttgrids/pyocto/.
+  tables:
+    spacingM: 50.0                    # with cell-averaged slowness: within ~20 ms of a 10 m solve
+    seedRadiusM: 100.0
+    fmmOrder: 2
+    maxSeedErrorS: 0.05
+  # Sweep (docs/lanes/H2 -> Association): every combination of these values, all other knobs as
+  # above. sweep.parquet (SweepPoint: located candidates, recoveredPublic, tierA) is written by
+  # LOC-06's tier stage, which runs the sweep with its locate/match/tier evaluator. enabled: true
+  # also runs it in stage associate, only to log and record associated counts per point: one
+  # PyOcto run per (minPickProb, nSPicks) pair beyond the configured one, several minutes on a
+  # full day at the permissive points, so it is off by default.
+  sweep:
+    enabled: false
+    minStations: [4, 5, 6, 8]
+    nSPicks: [0, 1, 2]
+    minPickProb: [0.1, 0.2, 0.3]
+
 # Catalog matching (stage "match", hq.match, MATCH-02): one-to-one assignment of located events to
 # public regional catalog events with scipy's linear_sum_assignment. Distance is epicentral, from
 # the horizontal ENU of both tables. Magnitude is never in the cost: magnitudes are calibrated on these
