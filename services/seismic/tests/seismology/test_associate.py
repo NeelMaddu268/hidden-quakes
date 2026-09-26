@@ -367,6 +367,28 @@ def test_model_top_extended_to_highest_station_and_recorded(world: dict[str, Any
         ext = setup.velocity_model["topExtension"]
         assert ext == {**ext, "fromElevM": source_top, "toElevM": 2400.0}
         assert setup.tables.model_top_elev_m == 2400.0
+        above = setup.station_note["aboveModelSourceTopM"]
+        expected = {
+            str(sid): float(z) - source_top
+            for sid, z in zip(stations["id"], stations["sensorElevM"], strict=True)
+            if z > source_top
+        }
+        assert above == expected and "XX.S03" in above
+
+
+@pytest.mark.smoke
+def test_pyocto_stations_sit_at_the_sensor_not_the_wellhead(world: dict[str, Any]) -> None:
+    """PyOcto station z is -sensorElevM / 1000 (km below sea level), boreholes included."""
+    stations = world["stations"]
+    with prepared(stations, world["cfg"], world["run"], model=HOMOGENEOUS,
+                  cache_dir=world["cache"]) as setup:
+        frame = setup.stations.set_index("id").loc[stations["id"]]
+    np.testing.assert_array_equal(frame["z"].to_numpy(), -stations["sensorElevM"].to_numpy() / 1e3)
+    borehole = (stations["kind"] == "borehole").to_numpy()
+    assert borehole.any() and (stations["sensorDepthM"].to_numpy()[borehole] > 100.0).all()
+    assert not np.allclose(
+        frame["z"].to_numpy()[borehole], -stations["surfaceElevM"].to_numpy()[borehole] / 1e3
+    )
 
 
 # --- association ----------------------------------------------------------------------------------

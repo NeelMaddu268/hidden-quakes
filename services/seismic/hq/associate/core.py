@@ -245,6 +245,25 @@ def prepared(
     extended = base.with_top_extended_to(
         max(float(elev.max()), volume.top_elev_m), max_extension_m=cfg.velocity.maxTopExtensionM
     )
+    source_top = (
+        base.top_extension.from_elev_m if base.top_extension else base.top_of_model_elev_m
+    )
+    above = {sid: float(z) - source_top for sid, z in zip(ids, elev, strict=True) if z > source_top}
+    if above:
+        log.warning(
+            "associate: %d sensors sit above the velocity model's own top (%.1f m ASL), in its "
+            "top layer extended upward: %s (m above); their predicted times assume that layer's "
+            "velocities over this thickness and PyOcto adds no station term",
+            len(above), source_top, {k: round(v, 1) for k, v in above.items()},
+        )
+    note = {
+        **note,
+        "aboveModelSourceTopM": above,
+        "aboveModelSourceTopNote": "sensor elevation minus the velocity model's own top, for "
+        "sensors above it: their tables run through the top layer extended upward over this "
+        "thickness, so their predicted times are late where the ground there is faster; "
+        "PyOcto station terms are 0 (statics come after location, LOC-05)",
+    }
     farthest = volume.farthest_horizontal_m(e, n)
     x, y = pyocto_xy_km(e, n)
     frame = pd.DataFrame({"id": ids, "x": x, "y": y, "z": pyocto_z_km(elev)})
@@ -668,7 +687,13 @@ def record(acfg: AssociatorConfig, setup: Setup, picks: pd.DataFrame) -> dict[st
             "elevM": "-z * 1000 (m ASL)",
             "origin": setup.origin.model_dump(),
         },
-        "volume": setup.volume.to_record(),
+        "volume": {
+            **setup.volume.to_record(),
+            "note": "bbox projected to ENU plus volume.horizontalMarginM, from topElevM (null: "
+            "run.refSurfaceElevM, not the local ground) down to bottomElevM; it is not the "
+            "locator's volume. Association elevM is preliminary: it may lie above the local "
+            "ground and must not be shown without relocation",
+        },
         "stations": setup.station_note,
         "picks": {
             "minPickProb": acfg.minPickProb,
@@ -676,6 +701,7 @@ def record(acfg: AssociatorConfig, setup: Setup, picks: pd.DataFrame) -> dict[st
             "fromUnusedStations": f"{acfg.picksFromUnusedStations}: picks from stations with "
             "usedInRun false (counts.picksFromUnusedStationsDropped)",
             "nIn": len(picks),
+            "probMinIn": float(picks["prob"].min()) if len(picks) else None,  # stored threshold
             "tMinS": float(t.min()) if t.size else None,
             "tMaxS": float(t.max()) if t.size else None,
         },
