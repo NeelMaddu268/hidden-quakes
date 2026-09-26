@@ -26,7 +26,7 @@ Failing beat 1–2 loses. Failing beat 4 under questioning also loses. We need b
 | "The public regional catalog lists {publicCatalogCount} events here in this window." | The catalog query for the exact window is saved in the run |
 | "Using only public waveforms, we recovered {recoveredCatalogCount} of {publicCatalogCount}." | One-to-one matching ran and every miss is listed |
 | "We associated {additionalCount} more candidate events; {strictAdditionalCount} pass our strict tier." | Tiers were derived from matched-event quantiles |
-| "Strict means located at least as well as three-quarters of the public events we recovered." | That derivation is stored in `ProcessingRun.tiering` |
+| "Strict means every quality metric is within the range reached by three-quarters of the public events we recovered." | That derivation is stored in `ProcessingRun.tiering`; each bar is per metric, and the share meeting every bar at once is `tiering.matchedSet.meetingEveryBar.A` over `tiering.matchedSet.n`, never assumed |
 | "This station geometry resolves depth to about ±{medianVErrM} m." | The synthetic recovery test ran on the real station geometry |
 | "At comparable quality, neural picking yields {gain}× more strict events than STA/LTA." | The baseline table supports it in both association profiles |
 | "Chance associations on time-scrambled picks: {meanChanceEvents}." | The null test ran |

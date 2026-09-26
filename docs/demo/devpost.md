@@ -36,7 +36,7 @@ Three interactions:
 2. **The evidence.** Click any dot (or press E for the hero event, the strict event located with the most stations) and the drawer shows the waveforms that put it there: `<from evidence/<heroEventId>.json: traces.length>` stations sorted by distance, the neural P and S picks on each, and the arrival times implied by the final location. They agree, and that agreement is what makes a dot an event.
 3. **Time.** The scrubber replays the window, so clustering in space and time is visible instead of described.
 
-Everything on screen is a candidate event, tiered. Strict means located at least as well as three-quarters of the public-catalog events we recovered, on every metric.
+Everything on screen is a candidate event, tiered. Strict means every quality metric is within the range reached by three-quarters of the public-catalog events we recovered; each bar is set per metric, and the run stores how many of those events meet every bar at once (`run.json` → `tiering.matchedSet.meetingEveryBar.A` over `tiering.matchedSet.n`).
 
 ## How we built it
 
@@ -69,7 +69,7 @@ Numbers below are copied from the Validation card of the deployed page, which re
 
 ## Limits
 
-- **Candidate events, not verified earthquakes.** Each needs consistent picks across multiple stations; strict ones locate at least as well as most public-catalog events. We don't claim all of them are real, and there is no false-positive rate because there is no ground truth for events the public catalog lacks; the null test and the tiers are the proxies.
+- **Candidate events, not verified earthquakes.** Each needs consistent picks across multiple stations; strict ones meet, on every quality metric, a bar that three-quarters of the recovered public-catalog events meet. We don't claim all of them are real, and there is no false-positive rate because there is no ground truth for events the public catalog lacks; the null test and the tiers are the proxies.
 - **Sparse public geometry.** Depth is the weakest dimension. Published catalogs from downhole arrays are far denser and sharper than ours; every halo is that event's own error, and we claim no fracture geometry.
 - **No attribution.** Several operations share the region. We never name a cause for any event, and we never attribute seismicity to Utah FORGE, Cape Station or any operator.
 - **Pretrained picker.** PhaseNet weights are public and unchanged; site-specific training needs labels we don't have.

@@ -4,7 +4,8 @@ isn't merged yet. Offline; everything lives under ``tmp_path``.
 
 Every test passes whether or not H1's / H2's config modules and YAMLs are merged: ``config_dir``
 removes the lane YAMLs and blocks the lane modules, "present" cases inject fake modules, and
-missing-stage cases use private registries or blocked modules, never the real lane packages."""
+missing-stage cases use private registries or blocked modules, never the real lane packages. The
+reference-statics tests (section 8) read the real ``seismology.yaml`` and skip without it."""
 
 import json
 import logging
@@ -606,3 +607,186 @@ def test_cli_worktrees_share_the_main_checkout_data_dir(
     broken.mkdir()
     (broken / ".git").write_text("gitdir: elsewhere\n")
     assert cli.resolve_data_dir(None, broken / "configs") == broken / "data"
+
+
+# --- 8: the reference-statics pass (REQ-H2-14) ----------------------------------------------------
+
+
+def statics_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[str],
+    *,
+    fail_on: tuple[str, int] | None = None,
+    modules: dict[str, str] | None = None,
+) -> tuple[runs.StageSpec, ...]:
+    """Fake locate/match/tier stages that append their name to ``calls`` and record runtime
+    ``n`` and ``{"events": 10 n}`` on their n-th call; ``fail_on=(stage, n)`` makes that call
+    raise. ``modules`` maps a stage to the module name to install (default: a private one)."""
+
+    def make(stage: str) -> Callable[[runs.RunContext], None]:
+        def run(ctx: runs.RunContext) -> None:
+            calls.append(stage)
+            n = calls.count(stage)
+            if fail_on == (stage, n):
+                raise RuntimeError(f"{stage} call {n} exploded")
+            ctx.record(stage, runtime_s=float(n), counts={"events": 10 * n})
+
+        return run
+
+    registry = []
+    for name in ("locate", "match", "tier"):
+        module = (modules or {}).get(name, f"hq_test_statics_{name}")
+        install_module(monkeypatch, module, run=make(name))
+        registry.append(runs.StageSpec(name, module, "H2 Seismology"))
+    return tuple(registry)
+
+
+def set_statics_mode(config_dir: Path, mode: str) -> None:
+    yaml = config_dir / "seismology.yaml"
+    text = yaml.read_text()
+    assert text.count("\n  mode: referenceEvents\n") == 1
+    yaml.write_text(text.replace("\n  mode: referenceEvents\n", f"\n  mode: {mode}\n"))
+
+
+@pytest.fixture
+def seismology_config(showcase_config: Path) -> Path:
+    """The showcase config with H2's section loaded, ``statics.mode: referenceEvents``."""
+    pytest.importorskip("hq.config.seismology")
+    if not (showcase_config / "seismology.yaml").is_file():
+        pytest.skip("seismology.yaml not merged")
+    cfg = load_config(showcase_config)
+    assert cfg.section("seismology").statics.mode == runs.REFERENCE_STATICS_MODE
+    return showcase_config
+
+
+def test_reference_statics_runs_locate_and_match_twice(
+    seismology_config: Path,
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="hq.runs")
+    calls: list[str] = []
+    registry = statics_registry(monkeypatch, calls)
+    ctx = runs.create_run(seismology_config, data_dir, now=NOW)
+    assert [s.label for s in runs.plan_stages(ctx, None, registry)] == [
+        "locate pass 1 of 2", "match pass 1 of 2", "locate pass 2 of 2", "match pass 2 of 2", "tier",
+    ]  # fmt: skip
+    assert runs.statics_passes(ctx, ["locate", "match", "tier"]) == 2
+    assert runs.statics_passes(ctx, ["pick", "tier"]) == 1  # the seismology section isn't needed
+
+    done = runs.run_stages(ctx, None, registry=registry)
+
+    assert done == calls == ["locate", "match", "locate", "match", "tier"]
+    # runtimeS holds the total over both passes; stages.json keeps each pass and the last counts.
+    assert ctx.read_run().runtimeS == {"locate": 3.0, "match": 3.0, "tier": 1.0}
+    stages = json.loads(ctx.path("stages.json").read_text())
+    assert stages["locate"] == {
+        "runtimeS": 3.0,
+        "counts": {"events": 20},
+        "passes": [
+            {"runtimeS": 1.0, "counts": {"events": 10}},
+            {"runtimeS": 2.0, "counts": {"events": 20}},
+        ],
+    }
+    assert stages["match"]["passes"] == stages["locate"]["passes"]
+    assert stages["tier"] == {"runtimeS": 1.0, "counts": {"events": 10}}
+    assert runs.read_stage_records(ctx.run_dir)["locate"].passes is not None  # round-trips
+    messages = [r.getMessage() for r in caplog.records]
+    for expected in (
+        "stage locate pass 1 of 2: start",
+        "stage match pass 1 of 2: finished",
+        "stage locate pass 2 of 2: start",
+        "stage match pass 2 of 2: finished",
+        "stage tier: start",
+        "stage locate: 2 passes, 3.0 s total (1.0 s + 2.0 s)",
+    ):
+        assert any(expected in m for m in messages), expected
+
+
+def test_other_statics_mode_runs_each_stage_once(
+    seismology_config: Path, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_statics_mode(seismology_config, "selfConsistent")
+    calls: list[str] = []
+    registry = statics_registry(monkeypatch, calls)
+    ctx = runs.create_run(seismology_config, data_dir, now=NOW)
+    assert [s.label for s in runs.plan_stages(ctx, None, registry)] == ["locate", "match", "tier"]
+    assert runs.run_stages(ctx, None, registry=registry) == ["locate", "match", "tier"]
+    assert calls == ["locate", "match", "tier"]
+    assert ctx.read_run().runtimeS == {"locate": 1.0, "match": 1.0, "tier": 1.0}
+    stages = json.loads(ctx.path("stages.json").read_text())
+    assert all("passes" not in entry for entry in stages.values())
+
+
+def test_stage_rerun_and_partial_selection_run_once(
+    seismology_config: Path,
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="hq.runs")
+    calls: list[str] = []
+    # Install the fakes where the real registry looks, so `hq run` and `hq stage` see them.
+    modules = {n: f"hq.{n}.run" for n in ("locate", "match", "tier")}
+    statics_registry(monkeypatch, calls, modules=modules)
+    common = ["--config-dir", str(seismology_config), "--data-dir", str(data_dir)]
+
+    ctx = runs.create_run(seismology_config, data_dir, now=NOW)
+    assert runs.run_stages(ctx, ["locate"]) == ["locate"]  # no match selected: one pass
+    assert calls == ["locate"]
+    warnings = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING and r.getMessage().startswith("statics.mode")
+    ]
+    assert len(warnings) == 1 and "needs locate -> match -> locate -> match" in warnings[0]
+    assert ctx.read_run().runtimeS == {"locate": 1.0}
+
+    # `hq stage locate` reruns once and replaces the record instead of adding a pass.
+    assert cli.main(["stage", "locate", "--run", ctx.run_id, *common]) == 0
+    assert calls == ["locate", "locate"]
+    assert ctx.read_run().runtimeS == {"locate": 2.0}
+    assert json.loads(ctx.path("stages.json").read_text())["locate"] == {
+        "runtimeS": 2.0,
+        "counts": {"events": 20},
+    }
+
+    # `hq run --stages locate,match` on the real registry performs the pass.
+    calls.clear()
+    monkeypatch.setattr(runs, "git_sha", lambda cwd: "1234567")  # a distinct run id
+    argv = ["run", str(seismology_config), "--data-dir", str(data_dir), "--stages", "locate,match"]
+    assert cli.main(argv) == 0
+    assert calls == ["locate", "match", "locate", "match"]
+
+
+def test_reference_statics_pass_needs_the_seismology_section(
+    config_dir: Path, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    registry = statics_registry(monkeypatch, calls)
+    ctx = runs.create_run(config_dir, data_dir, now=NOW)
+    assert ctx.config.seismology is None
+    with pytest.raises(ConfigError, match=r"'seismology'.*H2 Seismology"):
+        runs.run_stages(ctx, ["locate", "match"], registry=registry)
+    assert calls == [] and ctx.read_run().runtimeS == {}
+    assert runs.run_stages(ctx, ["tier"], registry=registry) == ["tier"]  # no section needed
+    assert runs.run_stages(ctx, ["locate"], registry=registry) == ["locate"]  # nor here
+    assert calls == ["tier", "locate"]
+
+
+def test_failed_second_pass_keeps_the_first_pass_record(
+    seismology_config: Path, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    registry = statics_registry(monkeypatch, calls, fail_on=("locate", 2))
+    ctx = runs.create_run(seismology_config, data_dir, now=NOW)
+    with pytest.raises(RuntimeError, match="locate call 2 exploded") as info:
+        runs.run_stages(ctx, None, registry=registry)
+    assert calls == ["locate", "match", "locate"]
+    notes = getattr(info.value, "__notes__", [])
+    assert any("'locate pass 2 of 2' after 2/5 steps" in n for n in notes), notes
+    assert any(f"hq stage locate --run {ctx.run_id}" in n for n in notes)
+    assert ctx.read_run().runtimeS == {"locate": 1.0, "match": 1.0}
+    stages = json.loads(ctx.path("stages.json").read_text())
+    assert stages["locate"] == {"runtimeS": 1.0, "counts": {"events": 10}}
