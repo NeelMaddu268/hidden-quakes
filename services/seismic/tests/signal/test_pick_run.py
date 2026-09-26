@@ -4,7 +4,8 @@ Offline and fast: a fake model with PhaseNet's ``classify`` interface (it honour
 stands in for seisbench, and chunks come either from a fake iterator (exact control over keep
 intervals, data edges and the TimeMap) or from the real ``iter_model_chunks`` over a fake
 ``read_window``. Tests that write parquet use the real ``hq_contracts`` (a hard dependency: a
-broken package fails, never skips). One test starts a real spawned process pool (about 1.5 s on the dev laptop).
+broken package fails, never skips). One test starts a real spawned process pool (about 1.5 s on
+the dev laptop).
 """
 
 import copy
