@@ -3,6 +3,7 @@
 // updates are a handful of float writes and never touch per-instance data.
 
 import { Color, Vector3, type IUniform } from "three";
+import { TIMELINE } from "../reveal/timeline";
 
 export interface EventUniforms {
   [name: string]: IUniform;
@@ -13,10 +14,21 @@ export interface EventUniforms {
   uMinPx: IUniform<number>;
   /** Drawing-buffer height in device pixels (set on resize). */
   uViewportHeight: IUniform<number>;
-  /** Instances with revealAt <= uReveal are shown. −1 hides every candidate; public (−1) always shows. */
-  uReveal: IUniform<number>;
-  /** Width, in revealAt units, of the pop (scale 2 → 1, brightness spike, settle) after appearing. */
-  uPopWidth: IUniform<number>;
+  /**
+   * Seconds since reveal() on the reveal clock. An instance with slot s ≥ 0 appears at
+   * uEventsStart + uEventsDuration × s^(1/uEventsExponent) (scene/reveal/timeline.ts → appearTimeOf).
+   * Negative hides every candidate; public-catalog instances (slot −1) always show.
+   */
+  uRevealElapsed: IUniform<number>;
+  uEventsStart: IUniform<number>;
+  uEventsDuration: IUniform<number>;
+  uEventsExponent: IUniform<number>;
+  /** Seconds each instance's pop (scale 2 → 1, brightness spike, settle) lasts after it appears. */
+  uPopS: IUniform<number>;
+  /** Scene y of the site surface; fog increases with depth below it. */
+  uSurfaceY: IUniform<number>;
+  /** Exponential depth-fog density per km below the surface (0 disables). */
+  uDepthFog: IUniform<number>;
   /** Opacity for tiers A, B, C (the filter drives B and C). */
   uTierOpacity: IUniform<Vector3>;
   /** Whole-layer opacity (the PUBLIC filter fades the candidate layer out). */
@@ -33,8 +45,13 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
   uniform float uSize;
   uniform float uMinPx;
   uniform float uViewportHeight;
-  uniform float uReveal;
-  uniform float uPopWidth;
+  uniform float uRevealElapsed;
+  uniform float uEventsStart;
+  uniform float uEventsDuration;
+  uniform float uEventsExponent;
+  uniform float uPopS;
+  uniform float uSurfaceY;
+  uniform float uDepthFog;
   uniform vec3 uTierOpacity;
   uniform float uLayerOpacity;
 
@@ -43,16 +60,20 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
   varying float vBoost;
 
   void main() {
-    vec4 mvCenter = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 worldCenter = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 mvCenter = viewMatrix * worldCenter;
 
-    float age = uReveal - aRevealAt;
-    float shown = aRevealAt < 0.0 ? 1.0 : step(0.0, age);
-    float pop = aRevealAt < 0.0 ? 1.0 : clamp(age / max(uPopWidth, 1e-6), 0.0, 1.0);
+    bool always = aRevealAt < 0.0;
+    float appearT = uEventsStart + uEventsDuration * pow(clamp(aRevealAt, 0.0, 1.0), 1.0 / uEventsExponent);
+    float age = uRevealElapsed - appearT;
+    float shown = always ? 1.0 : step(0.0, age);
+    float pop = always ? 1.0 : clamp(age / max(uPopS, 1e-6), 0.0, 1.0);
     float settle = 1.0 - pow(1.0 - pop, 3.0);
     vBoost = (1.0 - settle) * 1.5;
 
     float tierOpacity = aTier < 0.5 ? uTierOpacity.x : (aTier < 1.5 ? uTierOpacity.y : uTierOpacity.z);
-    vAlpha = tierOpacity * uLayerOpacity * shown;
+    float fog = exp(-uDepthFog * max(0.0, uSurfaceY - worldCenter.y));
+    vAlpha = tierOpacity * uLayerOpacity * shown * fog;
 
     // Pixels per scene unit at this depth; perspective when projectionMatrix[2][3] == -1.
     float pxPerUnit = projectionMatrix[1][1] * uViewportHeight * 0.5;
@@ -93,6 +114,8 @@ export interface EventMaterialOptions {
   size: number;
   minPx: number;
   glow?: number;
+  depthFog?: number;
+  surfaceY?: number;
 }
 
 /** Fresh uniforms for one layer. The layer's ShaderMaterial keeps this object; frames write `.value`s. */
@@ -102,8 +125,13 @@ export function createEventUniforms(opts: EventMaterialOptions): EventUniforms {
     uSize: { value: opts.size },
     uMinPx: { value: opts.minPx },
     uViewportHeight: { value: 1 },
-    uReveal: { value: -1 },
-    uPopWidth: { value: 0.05 },
+    uRevealElapsed: { value: -1 },
+    uEventsStart: { value: TIMELINE.events.startS },
+    uEventsDuration: { value: TIMELINE.events.endS - TIMELINE.events.startS },
+    uEventsExponent: { value: TIMELINE.events.exponent },
+    uPopS: { value: TIMELINE.popS },
+    uSurfaceY: { value: opts.surfaceY ?? 0 },
+    uDepthFog: { value: opts.depthFog ?? 0 },
     uTierOpacity: { value: new Vector3(1, 1, 1) },
     uLayerOpacity: { value: 1 },
     uGlow: { value: opts.glow ?? 1 },

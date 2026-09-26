@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TIMELINE } from "../reveal/timeline";
 import { candidateLayerOpacity, candidateRevealUniform, FILTER_TIER_OPACITY } from "./driver";
 
 describe("FILTER_TIER_OPACITY", () => {
@@ -20,15 +21,15 @@ describe("candidateLayerOpacity", () => {
 });
 
 describe("candidateRevealUniform", () => {
-  it("hides every candidate before the reveal (all revealAt are >= 0)", () => {
-    expect(candidateRevealUniform("public", 0.7, 0.05)).toBeLessThan(0);
+  it("hides every candidate before the reveal (every appearance time is >= 1 s)", () => {
+    expect(candidateRevealUniform("public", 3)).toBeLessThan(TIMELINE.events.startS);
   });
 
-  it("follows the timeline slot while revealing", () => {
-    expect(candidateRevealUniform("revealing", 0.42, 0.05)).toBe(0.42);
+  it("follows the reveal clock while revealing", () => {
+    expect(candidateRevealUniform("revealing", 2.5)).toBe(2.5);
   });
 
   it("settles every instance past its pop once revealed", () => {
-    expect(candidateRevealUniform("revealed", 0.3, 0.05)).toBeGreaterThanOrEqual(1 + 0.05);
+    expect(candidateRevealUniform("revealed", 0)).toBeGreaterThan(TIMELINE.endS + TIMELINE.popS);
   });
 });

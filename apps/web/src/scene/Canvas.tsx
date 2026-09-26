@@ -9,7 +9,12 @@ import { CameraRig } from "./camera/CameraRig";
 import { CAMERA_FOV_DEG } from "./camera/presets";
 import { depthKmToSceneY, verticalExaggerationOf } from "./coords";
 import { useBundle } from "./data";
-import { candidateLayerOpacity, candidateRevealUniform, FILTER_TIER_OPACITY } from "./events/driver";
+import {
+  candidateLayerOpacity,
+  candidateRevealUniform,
+  FILTER_TIER_OPACITY,
+  REVEALED_ELAPSED_S,
+} from "./events/driver";
 import { EventsLayer } from "./events/EventsLayer";
 import {
   buildCandidateInstances,
@@ -19,6 +24,9 @@ import {
   TIER_INDEX,
 } from "./events/instances";
 import type { EventUniforms } from "./events/material";
+import { sceneFx } from "./fx";
+import { Post } from "./post/Post";
+import { RevealDriver } from "./reveal/RevealDriver";
 import type { BundleState } from "./types";
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
@@ -29,11 +37,15 @@ const CANDIDATE_SIZE_KM = 0.06;
 const CANDIDATE_MIN_PX = 1.8;
 const PUBLIC_SIZE_KM = 0.08;
 const PUBLIC_MIN_PX = 2.6;
+/** Event cores are drawn this far above 1.0 so bloom (threshold in scene/post) catches only events. */
+const EVENT_GLOW = 1.6;
+/** Depth fog density per km below the site surface: deeper events read slightly dimmer. */
+const DEPTH_FOG_PER_KM = 0.07;
 
 /** Candidate (amber) layer: follows the reveal and the filter. Reads the store without re-rendering. */
 function driveCandidates(u: EventUniforms): void {
   const s = useDemo.getState();
-  u.uReveal.value = candidateRevealUniform(s.phase, s.revealProgress, u.uPopWidth.value);
+  u.uRevealElapsed.value = candidateRevealUniform(s.phase, sceneFx.revealElapsedS);
   const [a, b, c] = FILTER_TIER_OPACITY[s.filter];
   u.uTierOpacity.value.set(a, b, c);
   u.uLayerOpacity.value = candidateLayerOpacity(s.filter);
@@ -41,7 +53,7 @@ function driveCandidates(u: EventUniforms): void {
 
 /** Public-catalog (cool white) layer: on screen from the first frame, at full weight. */
 function drivePublic(u: EventUniforms): void {
-  u.uReveal.value = 1;
+  u.uRevealElapsed.value = REVEALED_ELAPSED_S;
   u.uTierOpacity.value.set(1, 1, 1);
   u.uLayerOpacity.value = 1;
 }
@@ -55,6 +67,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
   const publicEvents = useMemo(() => buildPublicInstances(catalog, ve, windowStart), [catalog, ve, windowStart]);
   // Frame the structure: Tier A and B candidates plus the public catalog. Scattered Tier C events
   // stay rendered but don't widen the shot.
+  const surfaceY = depthKmToSceneY(0, meta.scene);
   const bounds = useMemo(
     () =>
       computeBounds(
@@ -78,6 +91,9 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         size={PUBLIC_SIZE_KM}
         minPx={PUBLIC_MIN_PX}
         drive={drivePublic}
+        glow={EVENT_GLOW}
+        surfaceY={surfaceY}
+        depthFog={DEPTH_FOG_PER_KM}
         renderOrder={2}
       />
       <EventsLayer
@@ -87,6 +103,9 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         size={CANDIDATE_SIZE_KM}
         minPx={CANDIDATE_MIN_PX}
         drive={driveCandidates}
+        glow={EVENT_GLOW}
+        surfaceY={surfaceY}
+        depthFog={DEPTH_FOG_PER_KM}
         renderOrder={1}
       />
       <CameraRig bounds={bounds} />
@@ -107,12 +126,14 @@ export function Scene() {
     <Canvas
       dpr={[1, 2]}
       flat
-      gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
+      gl={{ antialias: false, alpha: false, powerPreference: "high-performance" }}
       camera={{ fov: CAMERA_FOV_DEG, near: 0.02, far: 1000, position: [0, 10, 20] }}
       style={{ position: "fixed", inset: 0, background: colors.bg }}
     >
       <color attach="background" args={[colors.bg]} />
+      <RevealDriver />
       <SceneContents />
+      <Post />
     </Canvas>
   );
 }

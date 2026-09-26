@@ -19,6 +19,12 @@ export interface EventsLayerProps {
   size: number;
   /** Minimum on-screen radius, CSS pixels (scaled by DPR internally). */
   minPx: number;
+  /** Intensity multiplier (cores above 1.0 bloom). */
+  glow?: number;
+  /** Scene y of the site surface, for depth fog. */
+  surfaceY?: number;
+  /** Depth fog density per km below the surface (0 = off). */
+  depthFog?: number;
   /** Called every frame with this layer's uniforms; must not allocate. */
   drive: (uniforms: EventUniforms, deltaS: number) => void;
   renderOrder?: number;
@@ -29,10 +35,24 @@ export interface EventsLayerProps {
  * One InstancedMesh of event glyphs. The per-instance attributes are the bundle's typed arrays, set
  * once; every frame only writes a few uniforms. R3F disposes the geometry and material on unmount.
  */
-export function EventsLayer({ instances, color, size, minPx, drive, renderOrder, name }: EventsLayerProps) {
+export function EventsLayer({
+  instances,
+  color,
+  size,
+  minPx,
+  glow = 1,
+  surfaceY = 0,
+  depthFog = 0,
+  drive,
+  renderOrder,
+  name,
+}: EventsLayerProps) {
   const mesh = useRef<InstancedMesh>(null);
   const material = useRef<ShaderMaterial>(null);
-  const uniforms = useMemo(() => createEventUniforms({ color, size, minPx }), [color, size, minPx]);
+  const uniforms = useMemo(
+    () => createEventUniforms({ color, size, minPx, glow, depthFog, surfaceY }),
+    [color, size, minPx, glow, depthFog, surfaceY],
+  );
 
   useLayoutEffect(() => {
     const m = mesh.current;
