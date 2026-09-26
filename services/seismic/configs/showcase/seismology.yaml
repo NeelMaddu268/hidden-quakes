@@ -319,10 +319,12 @@ matching:
 # M in ProcessingRun.tiering. Metrics: nStations, nP, nS (higher is better); rmsS, hErrM, vErrM,
 # gapDeg (lower is better), all from SeismicEvent.quality.
 # Fixed by design and recorded with the thresholds, not knobs:
-# - A bar is an actual matched event's value: sort M from best to worst on the metric and take the
-#   ceil((1 - q) * n)-th (numpy's inverted_cdf on the lower-is-better side), so at least (1 - q)
-#   of M meets or beats every bar. Boundary equality passes.
-# - A null hErrM or vErrM (truncated PDF) fails A and B on that metric; in M it counts as the worst.
+# - A bar is an actual matched event's value: sort the events of M with a value on the metric from
+#   best to worst and take the ceil((1 - q) * n)-th, n their count (numpy's inverted_cdf on the
+#   lower-is-better side), so at least (1 - q) of them meets or beats the bar. Boundary equality
+#   passes. matchedSet.meetingEveryBar records how many matched events meet every bar at once.
+# - A null hErrM or vErrM (truncated PDF) fails A and B on that metric. Bars on those metrics come
+#   from the matched events with a value (nUsed, nNull recorded), so a null never loosens a bar.
 # - Focal depth for the nearest-station rule is depthKm * 1000 = run.refSurfaceElevM - elevM, the
 #   depth below the run's reference ground surface (the same depth the scene shows).
 # Caveat recorded with every run: public regional catalog events are the larger ones, so bars
@@ -331,7 +333,8 @@ tiering:
   # Per tier, the share q of M allowed on the worse side of each bar: the bar is p(100q) for
   # higher-is-better metrics and p(100(1 - q)) for lower-is-better ones. A: 0.25 is "at least as
   # good as the 25th-percentile-worst matched event" (>= p25, <= p75), so each Strict bar is met
-  # by at least three-quarters of the recovered public events. B: 0.0 is the worst matched event.
+  # by at least three-quarters of the recovered public events with a value on that metric (each
+  # metric separately; fewer meet all of them). B: 0.0 is the worst matched event.
   # B must not exceed A (checked), so every Tier A event also meets the B bars.
   quantiles:
     A: 0.25
@@ -341,8 +344,9 @@ tiering:
   # fallback, "a station within about 1-2x the focal depth"). Tier A also needs depthOnEdge false
   # and, when locate_flags.parquet exists, mapOnVolumeTop false (the z = 0 collapse).
   strictNearestStationFactor: 2.0
-  # Deriving bars from fewer matched events than this fails the stage instead of inventing bars:
-  # at 10 the p75 bar is the 8th-best matched event, so at most two matched events lie beyond it.
+  # Deriving bars from fewer matched events than this (or, on hErrM/vErrM, fewer with a value)
+  # fails the stage instead of inventing bars: at 10 the p75 bar is the 8th-best matched event,
+  # so at most two matched events lie beyond it.
   minMatched: 10
   # Association sweep over associator.sweep's grid (associate -> locate -> match -> tiers at every
   # point, Tier A counted with the bars derived from the configured run so points compare), written

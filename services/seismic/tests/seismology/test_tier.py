@@ -171,6 +171,18 @@ def test_bars_are_quantiles_of_the_matched_set(cfg: SeismologyConfig) -> None:
         assert a["op"] == metric.op
         assert a["nMeeting"] >= math.ceil(0.75 * N_MATCHED)  # three-quarters meet each A bar
         assert b["nMeeting"] == N_MATCHED
+    # The joint share: matched events meeting every A (B) bar at once, counted independently.
+    every = result.tiering["matchedSet"]["meetingEveryBar"]
+    for tier in ("A", "B"):
+        expected = sum(
+            all((row[m.column] >= th[tier][m.name]["value"]) if m.better == "higher"
+                else (row[m.column] <= th[tier][m.name]["value"]) for m in METRICS)
+            for _, row in matched.iterrows()
+        )
+        assert every[tier] == expected
+    assert every["B"] == N_MATCHED
+    assert every["A"] < min(th["A"][m.name]["nMeeting"] for m in METRICS)  # not a per-metric share
+    assert every["A"] >= result.tiering["counts"]["matched"]["A"]  # the A rules only remove events
     # Unmatched events never move the bars.
     shifted = events.copy()
     unmatched = ~shifted["id"].isin(matched_ids)
@@ -201,23 +213,36 @@ def test_null_errors_fail_a_and_b(cfg: SeismologyConfig) -> None:
     assert "vErrM null (no formal error): fails A and B" in out["tierReasons"].iloc[13]
 
 
-def test_null_error_in_the_matched_set_counts_as_worst(
-    cfg: SeismologyConfig,
-) -> None:
-    """One null hErrM among 12 matched: the A bar (p75) is finite, the B bar unbounded."""
+def test_a_null_error_in_the_matched_set_never_loosens_a_bar(cfg: SeismologyConfig) -> None:
+    """One null hErrM among 12 matched: both bars come from the 11 matched values, so the null
+    event fails, and so does an event worse than every matched value."""
     models = [event(k, hErrM=100.0 + 10 * k) for k in range(11)] + [event(11, hErrM=None)]
     events = located(models + [event(12, hErrM=5000.0)])
     matches = matches_for(events, [m.id for m in models])
     result = assign_tiers(events, matches, cfg)
     a, b = (result.tiering["thresholds"][t]["hErrM"] for t in ("A", "B"))
-    assert a["value"] == 100.0 + 10 * 8  # rank ceil(0.75 * 12) = 9 of 12, null last
-    assert b["value"] is None and b["unbounded"] and b["nNull"] == 1
-    assert b["nMeeting"] == 11  # the null itself never meets a bar
+    assert a["value"] == 100.0 + 10 * 8  # rank ceil(0.75 * 11) = 9 of the 11 values
+    assert b["value"] == 200.0  # the worst matched value, not "unbounded"
+    assert (a["n"], a["nUsed"], a["nNull"]) == (b["n"], b["nUsed"], b["nNull"]) == (12, 11, 1)
+    assert (a["nMeeting"], b["nMeeting"]) == (9, 11)  # the null itself never meets a bar
+    assert result.tiering["thresholds"]["A"]["rmsS"]["nUsed"] == 12
     tiers = list(result.events["tier"])
-    assert tiers[11] == "C" and tiers[12] == "B"  # a finite 5 km passes the unbounded B bar
-    assert "B: worst of matched is null, any value meets it" in result.events["tierReasons"][12][4]
+    assert tiers[11] == "C" and tiers[12] == "C"
+    assert result.events["tierReasons"][12][4] == (
+        "hErrM 5000 > 180 (A: p75 of matched, n=11); > 200 (B: worst of matched)"
+    )
     rebuilt = Thresholds.from_record(result.tiering["thresholds"])
-    assert rebuilt.bars["B"]["hErrM"].passes(1e9) and not rebuilt.bars["B"]["hErrM"].passes(None)
+    assert rebuilt.bars["B"]["hErrM"].passes(200.0) and not rebuilt.bars["B"]["hErrM"].passes(None)
+
+
+def test_too_few_matched_values_on_one_metric_fail_loudly(cfg: SeismologyConfig) -> None:
+    min_matched = cfg.tiering.minMatched
+    models = [event(k, vErrM=None if k < 3 else 200.0) for k in range(min_matched + 2)]
+    events = located(models)
+    matches = matches_for(events, [m.id for m in models])
+    with pytest.raises(TierError, match=f"only {min_matched - 1} of the {len(models)} matched "
+                       "events have a vErrM value"):
+        assign_tiers(events, matches, cfg)
 
 
 # --- rules ----------------------------------------------------------------------------------------
