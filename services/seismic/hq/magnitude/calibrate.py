@@ -10,13 +10,18 @@ fitted over all rows with scipy's ``least_squares`` from the ordinary (ridge) le
 ``fit.amplitudeSlope`` null fits ``a``; a number fixes it (the rows then fit ``mag - a logA``).
 
 Station terms carry a ridge constraint: the objective adds ``stationTermRidge * sum(s_j^2)``,
-kept quadratic (only the data rows go through the robust ``fit.loss`` with ``fit.fScaleMag``).
-Why not sum-to-zero: the calibration events cluster within a few km, so each station's
-hypocentral distance barely changes between events; free station terms then absorb the distance
-dependence and ``b`` is left to the small within-station distance changes (it can come out with
-the wrong sign). The ridge makes the between-station distance lever arm inform ``b`` and keeps the
-terms to what distance does not explain. With the Gaussian reading of the penalty,
-``stationTermRidge = (residual sd / station-term sd)^2``.
+kept quadratic (only the data rows go through the robust ``fit.loss`` with ``fit.fScaleMag``);
+with the free intercept ``c`` the terms also sum to zero at the optimum. With the Gaussian
+reading of the penalty, ``stationTermRidge = (residual sd / station-term sd)^2``.
+
+``b`` is not identified by a clustered calibration set. When the calibration events sit within a
+few km of each other, each station's hypocentral distance barely changes between them
+(``Calibration.distanceSpread["withinStationLogRSd"]``), so free station terms would absorb the
+distance dependence and leave ``b`` to that small spread. The ridge decides how much of the
+between-station distance spread (``betweenStationLogRSd``) is credited to ``b`` rather than to the
+terms, so the fitted ``b`` follows ``stationTermRidge`` and ``fit.loss`` as much as the data. The
+leave-one-event-out MAE cannot test ``b``: every held-out event shares the others' source region.
+Magnitudes of events far from the calibration events depend on it.
 
 A station with fewer than ``fit.minStationObs`` rows gets no term: its rows are left out of the
 fit and it gives no station magnitude from that fit.
@@ -115,6 +120,9 @@ class Calibration:
     nObs: int
     stationsWithoutTerm: dict[str, int] = field(default_factory=dict)
     robust: dict[str, Any] = field(default_factory=dict)
+    # log10(R km) spread of the fitted rows: within stations (rms about each station's mean, the
+    # only distance information once terms are free) and between the stations' means.
+    distanceSpread: dict[str, float] = field(default_factory=dict)
 
     def coefficients(self) -> dict[str, float]:
         """``MagCalibration.coefficients``: the global terms (station terms go to the record)."""
@@ -192,6 +200,13 @@ def fit_calibration(obs: pd.DataFrame, fit: MagnitudeFitConfig) -> Calibration:
     values = dict(zip(names, (float(v) for v in p[: len(names)]), strict=True))
     terms = [float(v) for v in p[len(names) :]]
     robust["stationTermSum"] = float(sum(terms))
+    station_mean_log_r = np.bincount(k, weights=x_r, minlength=n_terms) / np.bincount(
+        k, minlength=n_terms
+    )
+    spread = {
+        "withinStationLogRSd": float(np.sqrt(np.mean((x_r - station_mean_log_r[k]) ** 2))),
+        "betweenStationLogRSd": float(np.std(station_mean_log_r)),
+    }
     return Calibration(
         a=values["a"] if fit.amplitudeSlope is None else float(fit.amplitudeSlope),
         b=values["b"],
@@ -202,6 +217,7 @@ def fit_calibration(obs: pd.DataFrame, fit: MagnitudeFitConfig) -> Calibration:
         nObs=int(n_rows),
         stationsWithoutTerm=without,
         robust=robust,
+        distanceSpread=spread,
     )
 
 
