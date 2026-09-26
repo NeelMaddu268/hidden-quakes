@@ -5,7 +5,7 @@ CSV table ``topElevM,vpMPerS,vsMPerS`` ordered top-down. Each row is the top of 
 layer's constant velocities; the deepest layer is a half-space. The header carries the source
 (citation, URLs, license), how the source's depths were converted to ``elevM``, and the datum.
 Load it with ``load_configured_model(cfg.velocity)``, which resolves the path and applies the
-configured Vp/Vs unit guard.
+configured unit guards (``check_units``). A model built directly skips them: call ``check_units``.
 
 Boundary convention: layer ``i`` spans ``topElevM[i+1] < elevM <= topElevM[i]``, so a point exactly
 on a boundary takes the layer below it. The top of the model belongs to the first layer. Anything
@@ -15,11 +15,11 @@ does it explicitly and records that it did.
 
 import logging
 import math
+import re
 import time
-from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 import numpy as np
@@ -63,6 +63,9 @@ RECORD_HEADER_KEYS = (
     "notes",
     "verifiedBasis",
 )
+# With verified: true a file must say what that rests on and pin the exact source bytes.
+VERIFIED_REQUIRES_KEYS = ("verifiedBasis", "sourceSha256")
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 BOUNDARY_CONVENTION = (
     "layer i spans topElevM[i+1] < elevM <= topElevM[i]: a point exactly on a boundary takes the "
     "layer below; the deepest layer is a half-space; above the top of the model is an error"
@@ -103,6 +106,27 @@ class TopExtension:
         }
 
 
+class ReadOnlyHeader(Mapping[str, str]):
+    """A read-only copy of a layer file's header. Unlike ``MappingProxyType`` it pickles."""
+
+    __slots__ = ("_items",)
+
+    def __init__(self, items: Mapping[str, str]) -> None:
+        self._items = dict(items)
+
+    def __getitem__(self, key: str) -> str:
+        return self._items[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __repr__(self) -> str:
+        return f"ReadOnlyHeader({self._items!r})"
+
+
 def _frozen(values: ArrayLike) -> NDArray[np.float64]:
     arr = np.array(values, dtype=np.float64)  # always a copy
     arr.setflags(write=False)
@@ -132,9 +156,17 @@ def _check_layers(top: NDArray[np.float64], vp: NDArray[np.float64], vs: NDArray
         raise LayerFileError(f"Vs must be below Vp; layer {bad + 1} has Vp {vp[bad]}, Vs {vs[bad]}")
 
 
+def _rebuild_layer_model(kwargs: dict[str, Any]) -> "LayerModel":
+    return LayerModel(**kwargs)
+
+
 @dataclass(frozen=True, eq=False)
 class LayerModel:
-    """A 1D layered P/S model. Arrays are read-only copies, ordered top-down, in m ASL and m/s."""
+    """A 1D layered P/S model. Arrays are read-only copies, ordered top-down, in m ASL and m/s.
+
+    The constructor checks the layers' shape, order and sign, not their units: ``load_layer_model``
+    also runs ``check_units``, and code that builds a model directly must call it too.
+    """
 
     name: str
     datum: str  # one sentence: what topElevM is relative to and how the source was converted
@@ -150,7 +182,7 @@ class LayerModel:
     def __post_init__(self) -> None:
         for attr in ("top_elev_m", "vp_m_per_s", "vs_m_per_s"):
             object.__setattr__(self, attr, _frozen(getattr(self, attr)))
-        object.__setattr__(self, "header", MappingProxyType(dict(self.header)))
+        object.__setattr__(self, "header", ReadOnlyHeader(self.header))
         _check_layers(self.top_elev_m, self.vp_m_per_s, self.vs_m_per_s)
         provenance = {
             "name": self.name,
@@ -163,6 +195,24 @@ class LayerModel:
         empty = [key for key, value in provenance.items() if not value.strip()]
         if empty:
             raise LayerFileError(f"a layer model needs non-empty provenance; empty: {empty}")
+        # The header travels into the run record next to these fields, so they must agree.
+        from_fields = {
+            "name": self.name,
+            "datum": self.datum,
+            "citation": self.source.citation,
+            "url": self.source.url,
+            "sourceFile": self.source_file,
+            "license": self.license,
+            "verified": "true" if self.source.verified else "false",
+        }
+        disagree = [k for k, v in from_fields.items() if k in self.header and self.header[k] != v]
+        if disagree:
+            raise LayerFileError(f"header and model fields disagree on {disagree}")
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Rebuild through the constructor, so a pickled or deep-copied model is re-validated and
+        # its arrays are read-only again (plain unpickling skips __post_init__).
+        return (_rebuild_layer_model, ({f.name: getattr(self, f.name) for f in fields(self)},))
 
     @property
     def n_layers(self) -> int:
@@ -199,18 +249,20 @@ class LayerModel:
         """S velocity (m/s) at each elevation (m ASL); same shape as the input."""
         return np.asarray(self.vs_m_per_s[self.layer_index(elev_m)])
 
-    def with_top_extended_to(self, elev_m: float) -> "LayerModel":
+    def with_top_extended_to(self, elev_m: float, *, max_extension_m: float) -> "LayerModel":
         """A model whose top reaches at least ``elev_m`` (m ASL), with any extension recorded.
 
         If ``elev_m`` lies above the current top, returns a copy whose top layer reaches up to it.
         The top layer keeps its velocities, no other layer changes, and ``top_extension`` records
         the change; extending twice keeps the source model's original top in the record. If the
         model already reaches ``elev_m``, returns this model unchanged (logged), so
-        ``model.with_top_extended_to(max(sensor_elev_m))`` is safe to call.
+        ``model.with_top_extended_to(max(sensor_elev_m), ...)`` is safe to call.
+        ``max_extension_m`` (config ``maxTopExtensionM``) caps the extension above the source
+        model's own top; a larger request raises ``ValueError``.
         """
         new_top = float(elev_m)
-        if not math.isfinite(new_top):
-            raise ValueError("elev_m must be finite")
+        if not (math.isfinite(new_top) and math.isfinite(max_extension_m)):
+            raise ValueError("elev_m and max_extension_m must be finite")
         current = self.top_of_model_elev_m
         if new_top <= current:
             log.info(
@@ -219,6 +271,12 @@ class LayerModel:
             )
             return self
         original = self.top_extension.from_elev_m if self.top_extension else current
+        if new_top - original > max_extension_m:
+            raise ValueError(
+                f"extending velocity model {self.name!r} to {new_top:.1f} m ASL would put "
+                f"{new_top - original:.1f} m above its source top ({original:.1f} m ASL), more "
+                f"than max_extension_m {max_extension_m:.1f}; is the elevation in feet or a sentinel?"
+            )
         tops = self.top_elev_m.copy()
         tops[0] = new_top
         log.info(
@@ -274,6 +332,13 @@ def _parse_header(lines: list[tuple[int, str]], path: Path) -> dict[str, str]:
         raise LayerFileError(f"{path}: missing header fields {missing}")
     if header["verified"] not in ("true", "false"):
         raise LayerFileError(f"{path}: verified must be 'true' or 'false', got {header['verified']!r}")
+    if header["verified"] == "true":
+        missing = [k for k in VERIFIED_REQUIRES_KEYS if k not in header]
+        if missing:
+            raise LayerFileError(f"{path}: verified: true also needs header fields {missing}")
+    sha = header.get("sourceSha256")
+    if sha is not None and not SHA256_HEX.fullmatch(sha):
+        raise LayerFileError(f"{path}: sourceSha256 must be 64 lowercase hex digits, got {sha!r}")
     return header
 
 
@@ -297,9 +362,19 @@ def _parse_table(lines: list[tuple[int, str]], path: Path) -> NDArray[np.float64
     return np.array(rows, dtype=np.float64)
 
 
-def _check_ranges(
-    model: LayerModel, vp_range_m_per_s: tuple[float, float], vs_range_m_per_s: tuple[float, float]
+def check_units(
+    model: LayerModel,
+    *,
+    vp_range_m_per_s: tuple[float, float],
+    vs_range_m_per_s: tuple[float, float],
+    min_layer_thickness_m: float,
 ) -> None:
+    """Raise ``LayerFileError`` unless the model is plausibly in m and m/s.
+
+    Every Vp and Vs must lie in its range (config ``plausibleVpMPerS``/``plausibleVsMPerS``) and
+    every layer above the half-space must be at least ``min_layer_thickness_m`` thick (config
+    ``minLayerThicknessM``). These catch velocities in km/s and layer tops in km.
+    """
     for name, values, (low, high) in (
         ("vpMPerS", model.vp_m_per_s, vp_range_m_per_s),
         ("vsMPerS", model.vs_m_per_s, vs_range_m_per_s),
@@ -310,6 +385,12 @@ def _check_ranges(
                 f"{name} values {outside.tolist()} lie outside the plausible range [{low}, {high}] "
                 "m/s; is the file in km/s?"
             )
+    thickness = -np.diff(model.top_elev_m)
+    if np.any(thickness < min_layer_thickness_m):
+        raise LayerFileError(
+            f"layer thicknesses {thickness.tolist()} m include some below {min_layer_thickness_m} "
+            "m; is topElevM in km?"
+        )
 
 
 def load_layer_model(
@@ -317,11 +398,12 @@ def load_layer_model(
     *,
     vp_range_m_per_s: tuple[float, float],
     vs_range_m_per_s: tuple[float, float],
+    min_layer_thickness_m: float,
 ) -> LayerModel:
     """Load and validate a layer file. Raises ``LayerFileError`` on anything malformed.
 
-    ``vp_range_m_per_s`` and ``vs_range_m_per_s`` (config ``plausibleVpMPerS``/``plausibleVsMPerS``)
-    reject a file whose velocities are not plausibly in m/s.
+    The keyword arguments are ``check_units``'s unit guards (config ``plausibleVpMPerS``,
+    ``plausibleVsMPerS``, ``minLayerThicknessM``).
     """
     started = time.perf_counter()
     path = Path(path)
@@ -356,7 +438,12 @@ def load_layer_model(
             license=header["license"],
             header=header,
         )
-        _check_ranges(model, vp_range_m_per_s, vs_range_m_per_s)
+        check_units(
+            model,
+            vp_range_m_per_s=vp_range_m_per_s,
+            vs_range_m_per_s=vs_range_m_per_s,
+            min_layer_thickness_m=min_layer_thickness_m,
+        )
     except LayerFileError as err:
         raise LayerFileError(f"{path}: {err}") from err
     log.info(
@@ -369,11 +456,12 @@ def load_layer_model(
 
 
 def load_configured_model(cfg: VelocityConfig) -> LayerModel:
-    """Load ``cfg.layerFile`` (resolved against services/seismic) with the configured unit guard."""
+    """Load ``cfg.layerFile`` (resolved against services/seismic) with the configured unit guards."""
     return load_layer_model(
         cfg.layer_path(),
         vp_range_m_per_s=cfg.plausibleVpMPerS,
         vs_range_m_per_s=cfg.plausibleVsMPerS,
+        min_layer_thickness_m=cfg.minLayerThicknessM,
     )
 
 
