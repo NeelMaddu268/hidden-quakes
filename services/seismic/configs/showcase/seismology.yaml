@@ -185,6 +185,44 @@ diagnostics:
   # below shallow interfaces).
   tableErrorFlagS: 0.005
 
+# Station statics (LOC-05, hq.locate.statics): one additive term per station and phase, applied in
+# the locator (tPred = origin time + table time + static). Every static above
+# diagnostics.stationResidualFlagS gets a written explanation in diagnostics.md.
+statics:
+  # selfConsistent: the lane doc's method, inside locate(). referenceEvents: terms at the public
+  # regional catalog's hypocentres of the matched events (needs matches.parquet in the run dir:
+  # locate -> match -> locate -> match -> tier); without it locate runs with no statics.
+  mode: referenceEvents
+  # selfConsistent: median residual per station-phase over the used picks of well-constrained
+  # events, subtracted, every event relocated; iterations times; each static capped at +/- capS.
+  iterations: 3
+  capS: 0.3
+  minEvents: 5
+  wellConstrained: # depthOnEdge events and truncated PDFs (null hErrM) never count
+    minStations: 8
+    minS: 3
+    maxGapDeg: 180.0
+  # referenceEvents: residuals at each reference hypocentre (the catalog's, fixed; origin time by
+  # the locator's weighted median), term = median over reference events, alternated with the
+  # origin times polishIterations times (median polish). A station-phase with fewer than
+  # minReferenceEvents reference events gets 0 (nEvents in statics.parquet shows it). Every
+  # reference event is relocated with terms computed without it: folds null = leave-one-out,
+  # k = k-fold (folds dealt round-robin in catalog origin-time order). Unmatched candidate events
+  # use the terms from every reference event.
+  minReferenceEvents: 3
+  # The lateral-structure terms exceed selfConsistent's 0.3 s cap by design (LOC-04 row 7: S up
+  # to about 1 s at the catalog hypocentres), so the cap is set from the data; justification in
+  # diagnostics.md (largest uncapped term, how many the cap clips).
+  referenceCapS: 1.0
+  folds: null
+  polishIterations: 3
+  explain:
+    lateralFraction: 0.5
+    minTrendStations: 4
+    minRatioTermS: 0.05
+    ratioBand: 1.3
+  sigmaFlagRatio: 1.5
+
 # Public regional catalog (stage "catalog", hq.match.catalog, MATCH-01).
 catalog:
   # ObsPy FDSN client key. "USGS" is the ComCat FDSN event service at https://earthquake.usgs.gov,
