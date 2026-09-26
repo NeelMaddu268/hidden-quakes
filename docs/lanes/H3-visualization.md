@@ -218,8 +218,8 @@ rewrite the code yourself.
 
 ## WEB-07 implementation plan · prepared before the 1–5 AM sleep window
 
-Status: planned on `agent/WEB-07`; issue #27 stays open. Implementation starts around 5 AM after the
-Gate S depth decision. No merges during the 1–5 AM sleep window. The plan does not claim Gate S,
+Status: foundation implemented on `agent/WEB-07`; issue #27 stays open. The user asked H3 to
+continue ahead of the original ~5 AM start. Camera/component wiring and Gate S verification remain. No merges during the 1–5 AM sleep window. The plan does not claim Gate S,
 Gate M, deployed acceptance, or WEB-07 completion.
 
 ### Starting point and invariant
@@ -341,3 +341,35 @@ The failed export left feat/platform clean at 2803a8a. No source changes outside
 bundle commit. The detailed next-agent handoff in the task's outputs directory includes release
 identity, precise export errors, workaround, shared-data/worktree layout and retry steps. Browser
 and local server were stopped after acceptance. WEB-07 remains plan-only; preserve 1–5 AM no merges.
+
+### WEB-07 foundation checkpoint · 2026-09-26 03:34 EDT
+
+The user asked to use the remaining usage and stop fully with saved work before the limit. H3 began
+bounded implementation ahead of the original ~5 AM estimate; no merges occurred during 1–5 AM.
+
+- `scene/plan/geometry.ts`: tested orthographic framing, independent untrimmed depth clipping,
+  site-elevation depth projection, true-scale fitting of all candidates/catalog events/errors and
+  borehole endpoints. It preserves input order and never uses published catalog depth for display.
+- `scene/plan/halos.ts`: typed horizontal uncertainty instances use hErrM alone, preserve exact
+  candidate positions/appearance times, and remain valid when vErrM is null. No invented error radius.
+- `scene/picking/pick.ts`: orthographic stacked-event ties use NDC depth, because clip w is constant;
+  perspective picking retains its original distance key. Three regression tests use a real camera.
+- Full `make check` PASS: seismic 465 passed / 2 skipped, API 26 passed, web 453 passed, token tests 12;
+  lint/typecheck/copy checks clean. New foundation coverage is 33 tests. Third-party SeisBench emitted
+  one Python 3.14 invalid-escape SyntaxWarning during fresh environment import; checks still pass.
+- Self-review fixed an edge-tolerance assertion, narrowed geometry input types to the fields read,
+  and separated camera composition from full-data clipping so pan/zoom does not discard deep outliers.
+
+This is a tested foundation, not a completed WEB-07. No PlanCamera, PlanHalos renderer or depth-section
+panel is mounted yet, and no browser/performance acceptance is claimed for these new modules. Next:
+explicit camera ownership, stable plan portal/panel layout, MAX-blended horizontal rings, allocation-free
+Canvas2D depth projection, shared selection/filter/reveal, and the previously documented full acceptance.
+Retain the existing SceneHtml portal and exact glyph clamp; the event shader already supports orthographic
+projection. The current CameraRig assumes perspective preset ownership, so do not simply replace its
+camera without suspending its director and OrbitControls. Test P/Space/R, rapid toggles and resize.
+
+The release was replaced again at 07:27:29 UTC (03:27 EDT): 945,879 bytes, SHA-256
+`8de669484030182f1efe650e3297619f82486abeaa7f69d75262300f3284d432`. It adds synthetic.json but drops
+root picks and baseline outputs that were in the earlier 04:05 archive; events/arrivals/matches remain
+absent. Scratch inspection did not extract over the earlier fetched run. REQ-H3-8 has an appended FYI.
+Do not overlay versions into a misleading mixed run or infer a real-data depth gate from synthetic.json.
