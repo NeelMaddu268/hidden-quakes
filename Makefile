@@ -12,6 +12,7 @@ help:
 	@echo "make run [STAGES=a,b]       run the showcase pipeline; HQ_DATA_DIR=<dir> overrides <main checkout>/data"
 	@echo "make export RUN=<id>        export a run to apps/web/public/data/<mode>/ and validate the bundle"
 	@echo "make api                    run the live worker + API (services/api/config.yaml; ARGS='--port 8001')"
+	@echo "make api ARGS=freeze-snapshot  copy the last good live window into apps/web/public/data/snapshot/ (commit it)"
 	@echo "make dev                    run the web app locally (next dev)"
 	@echo "make build                  static export of the web app into apps/web/out (next build)"
 	@echo "make offline                build (NEXT_PUBLIC_ALLOW_MOCK=1) and serve apps/web/out locally; works with Wi-Fi off"
