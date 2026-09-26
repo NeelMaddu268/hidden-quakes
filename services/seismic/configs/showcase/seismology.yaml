@@ -144,6 +144,36 @@ synthetic:
   sKeepProb: 0.6
   pickProb: 1.0
 
+# Depth diagnostics (LOC-04, hq.locate.diagnostics): stage "locate" writes diagnostics.md with the
+# lane doc's table (rows 1-7), each with a result computed from the run and a conclusion.
+diagnostics:
+  # Row 2 (datum mixing): noise-free P and S picks from the exact 1D layered times at every used
+  # station, for a synthetic event at each elevM below (m ASL) at (eM, nM) (ENU m), located by the
+  # run's own locator and tables. Passes when |elevM error| and the horizontal error stay within
+  # passTolM (LOC-02's noise-free depth-bias bound).
+  datumCheck:
+    eM: 0.0
+    nM: 0.0
+    elevM: [-3500.0, -1500.0, 500.0]
+    passTolM: 50.0
+  minSForDepth: 3 # row 4 compares events with nS >= this against nS < this (lane doc)
+  # Fewest events (row 4) or picks (rows 5-7) a group needs before a row draws a conclusion from
+  # it; below this the row says it can't conclude and gives the counts.
+  minGroupSize: 5
+  # Rows 4 and 5: one group's spread (median vErrM, residual MAD) counts as degraded when it
+  # exceeds the other's by more than this factor.
+  degradationRatio: 1.5
+  # Row 6: station-phase median residuals above this (s) are flagged; the lane doc asks for a
+  # written explanation of every static above 0.15 s (LOC-05).
+  stationResidualFlagS: 0.15
+  # Row 7: the amplitude (s) of a residual ~ a + b cos(az) + c sin(az) fit above this counts as
+  # an azimuthal trend (1D misses lateral structure; LOC-07).
+  trendFlagS: 0.05
+  # Travel-time table error vs the exact layered time (s) at a located hypocentre above this
+  # counts as exposure to the tables' cell-mean interface bias (LOC-02: up to ~14 ms for S just
+  # below shallow interfaces).
+  tableErrorFlagS: 0.005
+
 # Public regional catalog (stage "catalog", hq.match.catalog, MATCH-01).
 catalog:
   # ObsPy FDSN client key. "USGS" is the ComCat FDSN event service at https://earthquake.usgs.gov,

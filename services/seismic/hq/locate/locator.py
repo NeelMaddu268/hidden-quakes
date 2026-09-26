@@ -408,6 +408,23 @@ class Locator:
         sig = override if override is not None else self.cfg.pickSigmaS
         return float(sig.P if phase == "P" else sig.S)
 
+    @property
+    def station_ids(self) -> list[str]:
+        """The stations in use, in the order they were given."""
+        return list(self._index)
+
+    def travel_times(self, e_m: float, n_m: float, elev_m: float) -> pd.DataFrame:
+        """Table travel times (s) from a hypocentre at (e, n, elevM) to every station, P and S.
+
+        Columns stationId, phase, travelTimeS; stations in ``station_ids`` order, P before S.
+        """
+        rows = []
+        for sid, i in self._index.items():
+            r = math.hypot(e_m - float(self._e[i]), n_m - float(self._n[i]))
+            for ph in PHASES:
+                rows.append((sid, ph, float(self.tables.table(sid, ph).lookup(r, elev_m))))
+        return pd.DataFrame(rows, columns=["stationId", "phase", "travelTimeS"])
+
     def pick_sigma(self, station_id: str, phase: Phase) -> float:
         """Pick sigma (s) the locator uses for ``station_id`` and ``phase``."""
         if phase not in PHASES:
