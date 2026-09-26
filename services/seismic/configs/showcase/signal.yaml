@@ -387,3 +387,88 @@ baseline:
                              # product is logged, with a WARNING above the CPU count). 1 scores in this
                              # process
     maxPasses: 3             # coordinate mode: at most this many passes over pOn, sOn and off
+
+# --- SEIS-09: sonification ---------------------------------------------------------------------------
+# Audio renderings of the cached public waveforms for the web app (hq.preprocess.sonify). A sped-up
+# rendering of recorded ground motion, never "the sound of" an event. Not a pipeline stage: it reads
+# the run's stations.parquet / picks.parquet, the bundle's events.json / meta.json and the cache, and
+# writes only the audio files and their manifests. No stage records this block.
+# Per gap-separated segment of the vertical channel: detrend, taper, zero-phase Butterworth bandpass,
+# resample_poly to the real-axis rate audioRateHz / speed, then placement on a zero timeline at the
+# segment's true time, so gaps (and missing data at the window ends) are exact digital silence, never
+# interpolated or bridged. Then robust level, soft-knee compression, edge fades, peak normalization.
+sonify:
+  component: Z                 # vertical channel (stations.parquet channels ending in this letter)
+  stationKind: borehole
+  usedInRunOnly: true
+  padS: 10.0                   # real s read beyond each window end: taper and filter edges fall outside
+  detrend: linear
+  taper:                       # per segment, ObsPy Trace.taper, before the bandpass
+    type: hann
+    maxPercentage: 0.05
+    maxLengthS: 1.0
+  bandpassCorners: 4           # zero-phase (sosfiltfilt), so the magnitude response is squared
+  joinMisalignmentSamples: 0.01   # pieces of one channel that abut within this fraction of a sample join
+  resample:
+    kaiserBeta: 5.0            # scipy.signal.resample_poly's default anti-alias window, made explicit
+    maxFactor: 1000            # largest up or down factor; 1000 Hz -> 240 Hz is up 6 / down 25
+    rateRelTol: 1.0e-9
+  oggStreamSerial: 1213284673  # libsndfile draws a random Ogg serial per file; this fixed one makes
+                               # re-encodes byte-identical (page CRCs are recomputed)
+  truePeakOversample: 4        # decoded files are oversampled this much (resample_poly) for
+                               # their true peak, checked against maxTruePeakDbtp
+  # Main clip. The busiest bin of candidate events in the bundle's events.json (ties: earliest), then
+  # the station of stationKind with the most picks.parquet picks (any phase) inside it (ties: id order).
+  busiestHour:
+    binS: 3600.0               # epoch-aligned bins: UTC clock hours [HH:00, HH+1:00)
+    render:
+      fileStem: hidden-quakes-busiest-hour
+      speed: 200               # 3600 s -> 18 s
+      audioRateHz: 48000       # real-axis rate 240 Hz: the band must stay below 120 Hz real
+      bandHz: [10.0, 80.0]     # real Hz -> 2-16 kHz audio. Measured on the busiest hour at the chosen
+                               # station: a 10 Hz low corner gives its P picks a higher median SNR than
+                               # 2 Hz (strong 5-10 Hz noise there); 16 kHz audio stays audible after MP3
+      edgeFadeMs: 5.0          # audio ms (1 s real at 200x)
+      levelPercentile: 50.0    # robust level = median |x| over samples with data: the noise floor,
+                               # even in an hour dense with candidate events
+      compressor:
+        thresholdDb: 18.0      # above the median: clears the noise envelope (its running maximum)
+        ratio: 3.0             # gentle: a loud event keeps its lead, small ones come up relative to it.
+                               # Checked on this clip: P-pick peaks sit well above the noise floor with
+                               # 3 (ratio 1 leaves the small ones near the noise); 4 flattens more
+        kneeDb: 12.0
+        lookaheadMs: 0.5       # audio ms (0.1 s real): the gain starts to fall at most this long
+                               # before the sample that drives it; one cycle of the 2 kHz low corner
+        releaseMs: 10.0        # audio ms (2 s real): the gain recovers slower than a pop decays, so
+                               # pops keep their shape; the noise envelope stays below the knee
+      peakDbfs: -1.0
+      maxTruePeakDbtp: -0.5    # decoded OGG / MP3, oversampled: headroom for codec overshoot
+      oggQuality: 0.6          # Vorbis quality (oggenc -q 6)
+      mp3BitrateKbps: 192      # constant bitrate
+      maxBytes: 2000000
+  # Optional clip around the hero event (meta.json scene.heroEventId, origin time from events.json):
+  # the nearest station of stationKind (epicentral ENU distance; ties: id order) whose vertical channel
+  # covers at least minCoverageFraction of the window.
+  hero:
+    preS: 30.0
+    postS: 30.0                # 60 s real -> 0.6 s of audio at 100x. For a longer clip lower
+                               # render.speed and keep bandHz[1] below audioRateHz / speed / 2
+    minCoverageFraction: 0.5
+    render:
+      fileStem: hidden-quakes-hero
+      speed: 100
+      audioRateHz: 48000       # real-axis rate 480 Hz: the band must stay below 240 Hz real
+      bandHz: [10.0, 160.0]    # real Hz -> 1-16 kHz audio
+      edgeFadeMs: 5.0          # audio ms (0.5 s real at 100x)
+      levelPercentile: 50.0
+      compressor:
+        thresholdDb: 18.0
+        ratio: 3.0
+        kneeDb: 12.0
+        lookaheadMs: 0.5       # audio ms (0.05 s real): an emergent arrival's start keeps its level
+        releaseMs: 10.0        # audio ms (1 s real)
+      peakDbfs: -1.0
+      maxTruePeakDbtp: -0.5
+      oggQuality: 0.6
+      mp3BitrateKbps: 192
+      maxBytes: 2000000
