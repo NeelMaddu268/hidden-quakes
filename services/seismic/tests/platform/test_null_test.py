@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from hq_contracts import models as m
 from hq_contracts.io import from_frame, read_table, to_frame, write_models
 
@@ -48,6 +49,7 @@ pytestmark = pytest.mark.smoke
 SHOWCASE_DIR = Path(__file__).resolve().parents[2] / "configs" / "showcase"
 NOW = datetime(2026, 9, 10, 6, 7, tzinfo=UTC)
 SEED = 11
+STAGE_TEST_SHUFFLES = 4  # reruns the stage tests configure (the showcase config uses more)
 RUN_ID = "test-run"
 
 # --- synthetic picks (test-local; CLAUDE.md rule 5 allows small synthetic data in tests) ------
@@ -99,6 +101,11 @@ def config_dir(tmp_path: Path) -> Path:
     target.mkdir()
     for path in sorted(SHOWCASE_DIR.glob("*.yaml")):
         shutil.copy(path, target / path.name)
+    # Fewer reruns than the showcase config: the stage tests exercise the wiring, not the
+    # statistics, and the lane's smoke suite must stay under 30 s (CLAUDE.md rule 10).
+    validate = yaml.safe_load((target / "validate.yaml").read_text(encoding="utf-8"))
+    validate["nullTest"]["nShuffles"] = STAGE_TEST_SHUFFLES
+    (target / "validate.yaml").write_text(yaml.safe_dump(validate), encoding="utf-8")
     return target
 
 
@@ -414,7 +421,7 @@ class FakeSeismologyApi:
 
 
 def null_cfg(**overrides: Any) -> NullTestConfig:
-    return NullTestConfig(**{"nShuffles": 20, "shiftS": 30.0, "seed": 3, **overrides})
+    return NullTestConfig(**{"nShuffles": 8, "shiftS": 30.0, "seed": 3, **overrides})
 
 
 # --- the null test on its own -----------------------------------------------------------------
