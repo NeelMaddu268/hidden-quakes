@@ -86,7 +86,9 @@ grid3d:
   # The ticket's range is 100-200 m. 200 m builds every table of the showcase stations in about
   # a minute; the 100 m cost is in the LOC-07 acceptance report.
   spacingM: 200.0
-  horizontalMarginM: 2000.0
+  # The model's west edge holds no values in a strip (velocity.model3d above); a lattice cell
+  # with none fails the build. 2000 m reached it at 100 m spacing on the showcase stations (LOC-07).
+  horizontalMarginM: 1000.0
   topMarginM: 100.0
   # The model's bottom node (the locator volume reaches it; checked against locator.volume).
   bottomElevM: -7000.0
