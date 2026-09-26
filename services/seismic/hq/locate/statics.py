@@ -98,9 +98,10 @@ def reference_pairs(
 ) -> pd.DataFrame:
     """Matched public events with their located event, association event and catalog hypocentre.
 
-    Columns ``catalogId, eventId, assocId, catalogT, catalogE, catalogN, catalogElevM``, sorted by
-    catalog origin time. ``matches`` must have been written for ``events_located`` (every matched
-    event present, ``t_event - t_catalog == dtS``), or this raises: rerun stage match first.
+    Columns ``catalogId, eventId, assocId, catalogT, catalogE, catalogN, catalogElevM`` and
+    ``pickIds`` (the located event's), sorted by catalog origin time. ``matches`` must have been
+    written for ``events_located`` (every matched event present, ``t_event - t_catalog == dtS``),
+    or this raises: rerun stage match first.
     """
     matched = matches[matches["eventId"].notna()]
     ev = events_located.set_index(events_located["id"].astype(str))
@@ -133,8 +134,26 @@ def reference_pairs(
         "assocId": link.loc[ids].to_numpy(dtype=object), "catalogT": ct,
         "catalogE": np.asarray(e, dtype=np.float64), "catalogN": np.asarray(n, dtype=np.float64),
         "catalogElevM": cat.loc[cids, "elevM"].to_numpy(dtype=np.float64),
+        "pickIds": [list(p) for p in ev.loc[ids, "pickIds"]],
     })
     return out.sort_values(["catalogT", "catalogId"], kind="stable").reset_index(drop=True)
+
+
+def check_same_association(pairs: pd.DataFrame, assoc_picks: pd.DataFrame) -> None:
+    """Raise unless every reference event's located picks belong to its association event in
+    ``assoc_picks``: an association rerun since the match renumbers or regroups events."""
+    groups: dict[str, set[str]] = {}
+    for aid, pid in zip(assoc_picks["assocId"].astype(str), assoc_picks["pickId"].astype(str),
+                        strict=True):
+        groups.setdefault(aid, set()).add(pid)
+    bad = [str(r.catalogId) for r in pairs.itertuples(index=False)
+           if not set(map(str, r.pickIds)) <= groups.get(str(r.assocId), set())]
+    if bad:
+        raise ValueError(
+            f"reference events {bad[:5]} were located from another association than "
+            "assoc_picks.parquet holds now: rerun stage locate (pass 1) and match on this "
+            "association first"
+        )
 
 
 def catalog_residuals(
@@ -616,6 +635,7 @@ def locate_with_statics(
         config=cfg, run=run,
         cache_dir=Path(cache_dir) if cache_dir is not None else _process_cache_dir(),
     )
+    check_same_association(reference, assoc.picks)
     locator = build_locator(setup)
     order, frames = event_picks(assoc, picks, cfg.locator.minPicks)
     res, skipped = catalog_residuals(locator, setup.stations, reference,
