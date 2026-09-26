@@ -23,10 +23,18 @@ interfaces close to the source). The eikonal solve starts from the isochron ``T 
 region, with ``t1 = (seedRadiusM - 2 * max(drM, dzM)) / vMax``, so the whole isochron and its grid
 neighbours lie inside the seeded region, and the seeded nodes keep their exact times.
 
+Accuracy record: cell-mean slowness is first order at interfaces, so a table is slow by up to about
+14 ms (S) at nodes just below a shallow interface, and by about 3 ms or less at elevM <= 0 for the
+FORGE model. After each solve the table is compared with ``layered_first_arrival`` at every
+elevation node and every ``accuracyCheckStrideR``-th distance node; the largest error in each model
+layer is kept in the sidecar and in ``StationTables.to_record()``. The check never changes a table.
+
 Tables are cached as ``.npy`` under ``<cache_dir>/ttgrids/<key>.npy`` with a ``<key>.json`` sidecar
-holding the key's inputs. The key is a SHA-256 of the velocity record (with the top extension),
-the phase, the receiver elevation, the grid, the seed radius, the stencil order, the scikit-fmm
-version and ``ALGORITHM``. Receivers at the same ``sensorElevM`` share a table.
+holding the key's inputs and the accuracy record. The key is a SHA-256 of the velocity record (with
+the top extension), the phase, the receiver elevation, the grid, the seed radius, the stencil
+order, the scikit-fmm version, ``ALGORITHM`` and the SHA-256 of this module's source, so any edit to
+the solver code gives new keys instead of stale tables. Receivers at the same ``sensorElevM`` share
+a table.
 """
 
 import hashlib
@@ -53,8 +61,10 @@ log = logging.getLogger(__name__)
 
 Phase = Literal["P", "S"]
 PHASES: tuple[Phase, ...] = ("P", "S")
-# Bump when the solver changes in a way that changes table values; it is part of the cache key.
-ALGORITHM = "tt_grid/1: skfmm, cell-mean slowness, exact 1D layered seed"
+# Human-readable solver label, part of the cache key. The key also hashes this module's source
+# (SOURCE_SHA256), so a solver edit can't serve stale tables even if nobody bumps this label.
+ALGORITHM = "tt_grid/2: skfmm, cell-mean slowness, exact 1D layered seed"
+SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 CACHE_SUBDIR = "ttgrids"  # docs/01: travel-time grids live in data/cache/ttgrids/
 # Bisection halvings for the ray parameter: 64 take the bracket below float64 resolution.
 _BISECTION_STEPS = 64
@@ -297,6 +307,7 @@ class TravelTimeTable:
     grid: GridSpec
     times_s: FloatArray  # read-only, shape (n_z, n_r)
     key: str
+    accuracy: Mapping[str, Any] | None = None  # table vs exact layered times (see table_accuracy)
 
     def __post_init__(self) -> None:
         if self.times_s.shape != (self.grid.n_z, self.grid.n_r):
@@ -339,6 +350,7 @@ def table_key(
     """The cache key (SHA-256 hex) of a table and the JSON payload it hashes."""
     payload = {
         "algorithm": ALGORITHM,
+        "solverSourceSha256": SOURCE_SHA256,
         "scikitFmm": skfmm.__version__,
         "velocityModel": model.to_record(),
         "phase": phase,
@@ -349,6 +361,44 @@ def table_key(
     }
     text = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(text.encode("utf-8")).hexdigest(), payload
+
+
+def table_accuracy(
+    model: LayerModel,
+    phase: Phase,
+    receiver_elev_m: float,
+    grid: GridSpec,
+    times_s: FloatArray,
+    *,
+    stride_r: int,
+) -> dict[str, Any]:
+    """Largest ``|table - exact layered time|`` (s), overall and per model layer.
+
+    Checked at every elevation node and every ``stride_r``-th distance node. A node on an
+    interface belongs to the layer below it (``LayerModel.layer_index``).
+    """
+    r = grid.r_nodes()[::stride_r]
+    z = grid.z_nodes()
+    rr, zz = np.meshgrid(r, z)
+    err = np.abs(times_s[:, ::stride_r] - layered_first_arrival(model, phase, receiver_elev_m, rr, zz))
+    k = np.unravel_index(int(np.argmax(err)), err.shape)
+    row_max = err.max(axis=1)
+    layer = model.layer_index(z)
+    by_layer = [
+        {
+            "topElevM": float(model.top_elev_m[i]),
+            "maxErrS": float(row_max[layer == i].max()),
+        }
+        for i in range(model.n_layers)
+        if np.any(layer == i)
+    ]
+    return {
+        "strideR": int(stride_r),
+        "maxErrS": float(err[k]),
+        "atElevM": float(zz[k]),
+        "atRM": float(rr[k]),
+        "byLayer": by_layer,
+    }
 
 
 def _write_atomic(path: Path, data: bytes) -> None:
@@ -380,13 +430,15 @@ def load_or_build_table(
     """The table from ``<cache_dir>/ttgrids/`` if present, else solved and cached.
 
     Returns the table and whether it was built (False: loaded). A cached file with the wrong
-    shape or non-finite values raises: delete it and rerun.
+    shape or non-finite values, or a sidecar that is missing or does not match the key's inputs,
+    raises: delete both files and rerun.
     """
     key, payload = table_key(
         model, phase, receiver_elev_m, grid, seed_radius_m=cfg.seedRadiusM, fmm_order=cfg.fmmOrder
     )
     folder = Path(cache_dir) / CACHE_SUBDIR
     path = folder / f"{key}.npy"
+    sidecar_path = folder / f"{key}.json"
     if path.exists():
         # A plain read-only ndarray view of the memory map (fancy indexing on np.memmap is slow);
         # spawned workers share the pages.
@@ -395,7 +447,13 @@ def load_or_build_table(
             raise ValueError(f"cached table {path} has shape {times.shape} {times.dtype}; delete it")
         if not np.all(np.isfinite(times)):
             raise ValueError(f"cached table {path} has non-finite values; delete it")
-        return TravelTimeTable(phase, float(receiver_elev_m), grid, times, key), False
+        if not sidecar_path.exists():
+            raise ValueError(f"cached table {path} has no sidecar {sidecar_path.name}; delete it")
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        accuracy = sidecar.pop("accuracyVsExact", None)
+        if sidecar != payload or accuracy is None:
+            raise ValueError(f"sidecar {sidecar_path} does not match the table key; delete both")
+        return TravelTimeTable(phase, float(receiver_elev_m), grid, times, key, accuracy), False
     started = time.perf_counter()
     times = solve_table(
         model,
@@ -405,16 +463,23 @@ def load_or_build_table(
         seed_radius_m=cfg.seedRadiusM,
         fmm_order=cfg.fmmOrder,
     )
+    accuracy = table_accuracy(
+        model, phase, receiver_elev_m, grid, times, stride_r=cfg.accuracyCheckStrideR
+    )
     folder.mkdir(parents=True, exist_ok=True)
-    sidecar = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False)
-    _write_atomic(folder / f"{key}.json", sidecar.encode("utf-8"))
+    text = json.dumps(
+        {**payload, "accuracyVsExact": accuracy}, indent=2, sort_keys=True, allow_nan=False
+    )
+    _write_atomic(sidecar_path, text.encode("utf-8"))
     _write_atomic(path, _npy_bytes(times))
     times.setflags(write=False)
     log.info(
-        "built %s table for receiver %.2f m ASL: %d x %d nodes in %.2f s -> %s",
-        phase, receiver_elev_m, grid.n_z, grid.n_r, time.perf_counter() - started, path.name,
+        "built %s table for receiver %.2f m ASL: %d x %d nodes in %.2f s (max %.1f ms from the "
+        "exact layered times, at elevM %.0f m) -> %s",
+        phase, receiver_elev_m, grid.n_z, grid.n_r, time.perf_counter() - started,
+        accuracy["maxErrS"] * 1e3, accuracy["atElevM"], path.name,
     )
-    return TravelTimeTable(phase, float(receiver_elev_m), grid, times, key), True
+    return TravelTimeTable(phase, float(receiver_elev_m), grid, times, key, accuracy), True
 
 
 @dataclass(frozen=True, eq=False)
@@ -438,25 +503,46 @@ class StationTables:
             raise KeyError(f"no travel-time table for station {station_id!r}") from err
         return self.tables[(phase, elev)]
 
+    def accuracy_by_layer(self) -> dict[str, list[dict[str, float]]]:
+        """Per phase and model layer, the largest table-vs-exact error (s) over all tables."""
+        out: dict[str, list[dict[str, float]]] = {}
+        for phase in PHASES:
+            worst: dict[float, float] = {}
+            for (ph, _), table in self.tables.items():
+                if ph != phase:
+                    continue
+                if table.accuracy is None:
+                    raise ValueError(f"table {table.key} carries no accuracy record")
+                for row in table.accuracy["byLayer"]:
+                    top = float(row["topElevM"])
+                    worst[top] = max(worst.get(top, 0.0), float(row["maxErrS"]))
+            out[phase] = [
+                {"topElevM": top, "maxErrS": err} for top, err in sorted(worst.items(), reverse=True)
+            ]
+        return out
+
     def to_record(self) -> dict[str, Any]:
-        """Grid, seed, velocity model (with extension) and table keys, for the run record."""
+        """Grid, seed, velocity model (with extension), table keys and accuracy, for the record."""
         by_table: dict[tuple[Phase, float], list[str]] = {}
         for sid, elev in sorted(self.receiver_elev_m.items()):
             for phase in PHASES:
                 by_table.setdefault((phase, elev), []).append(sid)
         return {
             "algorithm": ALGORITHM,
+            "solverSourceSha256": SOURCE_SHA256,
             "scikitFmm": skfmm.__version__,
             "grid": self.grid.to_record(),
             "seedRadiusM": self.seed_radius_m,
             "fmmOrder": self.fmm_order,
             "velocityModel": self.model.to_record(),
+            "accuracyVsExactByLayer": self.accuracy_by_layer(),
             "tables": [
                 {
                     "phase": phase,
                     "receiverElevM": elev,
                     "key": self.tables[(phase, elev)].key,
                     "stationIds": ids,
+                    "maxErrVsExactS": _max_err(self.tables[(phase, elev)]),
                 }
                 for (phase, elev), ids in sorted(by_table.items())
             ],
@@ -464,6 +550,12 @@ class StationTables:
             "nLoaded": self.n_loaded,
             "buildS": self.build_s,
         }
+
+
+def _max_err(table: TravelTimeTable) -> float:
+    if table.accuracy is None:
+        raise ValueError(f"table {table.key} carries no accuracy record")
+    return float(table.accuracy["maxErrS"])
 
 
 def build_station_tables(

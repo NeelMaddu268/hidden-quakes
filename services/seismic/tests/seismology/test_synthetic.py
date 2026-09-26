@@ -3,16 +3,18 @@
 import dataclasses
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
-from loc02_helpers import make_setup, make_test_config, shared_cache
+from hq_contracts.models import SyntheticTest
 
+from hq.config.seismology import PhaseSigma
 from hq.locate.locator import Locator, LocatorSetup, build_locator
 from hq.locate.synthetic import (
-    SyntheticTest,
     draw_hypocentres,
+    geometry_record,
     run_synthetic,
     synthetic_picks,
     write_synthetic_json,
@@ -27,8 +29,8 @@ N_SMOKE = 6
 
 
 @pytest.fixture(scope="module")
-def loc_setup(tmp_path_factory: pytest.TempPathFactory) -> LocatorSetup:
-    return make_setup(shared_cache(tmp_path_factory))
+def loc_setup(loc02: Any) -> LocatorSetup:
+    return loc02.setup()
 
 
 @pytest.fixture(scope="module")
@@ -37,8 +39,8 @@ def locator(loc_setup: LocatorSetup) -> Locator:
 
 
 @pytest.fixture(scope="module")
-def smoke_setup(loc_setup: LocatorSetup) -> LocatorSetup:
-    return dataclasses.replace(loc_setup, config=make_test_config(nEvents=N_SMOKE))
+def smoke_setup(loc02: Any, loc_setup: LocatorSetup) -> LocatorSetup:
+    return dataclasses.replace(loc_setup, config=loc02.test_config(nEvents=N_SMOKE))
 
 
 def test_test_geometry_has_boreholes(loc_setup: LocatorSetup) -> None:
@@ -50,7 +52,7 @@ def test_test_geometry_has_boreholes(loc_setup: LocatorSetup) -> None:
 
 
 def test_small_synthetic_run(smoke_setup: LocatorSetup, tmp_path: Path) -> None:
-    result = run_synthetic(smoke_setup)
+    result = run_synthetic(smoke_setup, geometry_label="TEST")
     report = result.report
     assert report.nEvents == N_SMOKE == len(result.events)
     assert report.pickSigmaS == {"P": 0.02, "S": 0.04}
@@ -60,8 +62,19 @@ def test_small_synthetic_run(smoke_setup: LocatorSetup, tmp_path: Path) -> None:
     assert 0.0 < report.medianHErrM < 500.0 and 0.0 < report.medianVErrM < 500.0
     assert report.p90VErrM >= report.medianVErrM
     noisy = result.params["noisy"]
+    assert noisy["nPdfTruncated"] == 0
     assert 0.0 <= noisy["fracHWithinHErrM"] <= 1.0 and 0.0 <= noisy["fracVWithinVErrM"] <= 1.0
-    assert result.params["depthBiasSign"].startswith("elevM_true - elevM_located")
+    params = result.params
+    assert params["depthBiasSign"].startswith("elevM_true - elevM_located")
+    assert "placeholders" in params and "sKeepProb" in params["placeholders"]
+    geometry = params["stationGeometry"]
+    stations = smoke_setup.stations
+    assert geometry["label"] == "TEST" and geometry["stationIds"] == stations["id"].tolist()
+    assert geometry["sensorElevM"] == stations["sensorElevM"].tolist()
+    assert geometry == geometry_record(stations, "TEST") and len(geometry["sha256"]) == 64
+    assert params["locator"]["stationIds"] == geometry["stationIds"]
+    assert params["velocityModel"]["topExtension"] is not None
+    json.dumps(params, allow_nan=False)  # the params can go into run.json as they are
     ev = result.events
     zone = smoke_setup.config.synthetic.zone
     assert np.all(np.hypot(ev["e"] - zone.centerEM, ev["n"] - zone.centerNM) <= zone.radiusM)
@@ -71,20 +84,30 @@ def test_small_synthetic_run(smoke_setup: LocatorSetup, tmp_path: Path) -> None:
     path = write_synthetic_json(tmp_path / "run" / "synthetic.json", report)
     written = json.loads(path.read_text(encoding="utf-8"))
     assert tuple(written) == DOCS02_SYNTHETIC_FIELDS
+    assert SyntheticTest.model_validate(written) == report  # the landed docs/02 contract model
     assert set(written["pickSigmaS"]) == {"P", "S"}
     assert written["medianVErrM"] == report.medianVErrM
     assert not list(path.parent.glob(".*.part"))
 
 
-def test_synthetic_test_stand_in_matches_docs02() -> None:
-    assert tuple(f.name for f in dataclasses.fields(SyntheticTest)) == DOCS02_SYNTHETIC_FIELDS
+def test_geometry_hash_changes_with_the_geometry(loc_setup: LocatorSetup) -> None:
+    st = loc_setup.stations
+    base = geometry_record(st, None)["sha256"]
+    moved = st.copy()
+    moved.loc[0, "sensorElevM"] += 1.0
+    assert geometry_record(moved, None)["sha256"] != base
+    assert geometry_record(st.copy(), "other label")["sha256"] == base
+
+
+def test_synthetic_test_model_matches_docs02() -> None:
+    assert tuple(SyntheticTest.model_fields) == DOCS02_SYNTHETIC_FIELDS
 
 
 def test_synthetic_draws_are_seeded(smoke_setup: LocatorSetup, locator: Locator) -> None:
     def draw() -> tuple[pd.DataFrame, list[pd.DataFrame], list[pd.DataFrame]]:
         rng = np.random.default_rng(smoke_setup.config.synthetic.seed)
         truth = draw_hypocentres(smoke_setup, 4, rng)
-        noisy, clean = synthetic_picks(smoke_setup, locator.tables.model, truth, rng)
+        noisy, clean = synthetic_picks(smoke_setup, locator, truth, rng)
         return truth, noisy, clean
 
     (t1, n1, c1), (t2, n2, c2) = draw(), draw()
@@ -98,3 +121,24 @@ def test_synthetic_draws_are_seeded(smoke_setup: LocatorSetup, locator: Locator)
         assert (noisy["phase"] == "P").sum() == len(smoke_setup.stations)
         resid = (noisy["t"] - clean["t"]).to_numpy()
         assert np.all(np.abs(resid) < 0.3) and np.any(resid != 0.0)
+
+
+def test_synthetic_noise_uses_the_locator_sigma_per_station(
+    smoke_setup: LocatorSetup, locator: Locator
+) -> None:
+    # A per-profile sigma override must change the simulated noise, not only the fit's weights.
+    cfg = smoke_setup.config
+    loud = cfg.locator.model_copy(
+        update={"profilePickSigmaS": {"borehole": PhaseSigma(P=0.5, S=0.5)}})
+    loud_locator = Locator(
+        smoke_setup.stations, locator.tables, loud, origin_elev_m=smoke_setup.run.origin.elevM,
+        ref_surface_elev_m=smoke_setup.run.refSurfaceElevM,
+    )
+    rng = np.random.default_rng(cfg.synthetic.seed)
+    truth = draw_hypocentres(smoke_setup, 20, rng)
+    noisy, clean = synthetic_picks(smoke_setup, loud_locator, truth, rng)
+    resid = pd.concat([(n.assign(r=n["t"] - c["t"])) for n, c in zip(noisy, clean, strict=True)])
+    borehole = resid["stationId"].str.startswith("T.B")
+    surface_p = resid[~borehole & (resid["phase"] == "P")]["r"].std()
+    borehole_p = resid[borehole & (resid["phase"] == "P")]["r"].std()
+    assert surface_p == pytest.approx(0.02, rel=0.3) and borehole_p == pytest.approx(0.5, rel=0.3)

@@ -2,18 +2,27 @@
 
 The stand-in mirrors the parts of H4's RunContext (docs/02 §4) that H2 stages use until RUN-01
 lands: ``config.run``, ``config.seismology``, ``path(name)`` and ``record(...)``.
+
+LOC-02 helpers (test station geometry, test config, exact picks) reach the tests as the session
+fixture ``loc02``: under ``--import-mode=importlib`` a test module can't import a sibling module.
 """
 
 import socket
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pandas as pd
 import pytest
 import yaml
 
 from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
+from hq.locate.locator import Locator, LocatorSetup
+from hq.locate.tt_grid import PHASES, layered_first_arrival
+from hq.locate.velocity import LayerModel, SourceRef, load_configured_model
 
 SEISMIC_ROOT = Path(__file__).resolve().parents[2]
 SHOWCASE_DIR = SEISMIC_ROOT / "configs" / "showcase"
@@ -104,3 +113,136 @@ def make_ctx(tmp_path: Path, seismology_config: SeismologyConfig) -> Any:
         )
 
     return _make
+
+
+# --- LOC-02: travel-time tables, locator, synthetic test ---------------------------------------
+
+
+class Loc02Kit:
+    """LOC-02 test helpers: a small made-up station geometry, a test config, exact picks.
+
+    The geometry is made up inside the tests (tests may build small synthetic data): 12 stations
+    within 7 km of the origin, 3 of them borehole sensors about 300 m down. The config is the
+    showcase ``seismology.yaml`` with a smaller search volume and shorter tables, so the smoke
+    tests stay fast; every other knob is the showcase value. All LOC-02 modules share one
+    travel-time cache per session (``cache_dir``).
+    """
+
+    # id, e (m), n (m), surfaceElevM, sensorDepthM
+    STATIONS: tuple[tuple[str, float, float, float, float], ...] = (
+        ("T.S01", 1500.0, 0.0, 1650.0, 0.0),
+        ("T.S02", -1200.0, 2500.0, 1700.0, 0.0),
+        ("T.S03", -3000.0, -1500.0, 1560.0, 0.0),
+        ("T.S04", 2500.0, -3500.0, 1880.0, 0.0),
+        ("T.S05", 5500.0, 1000.0, 2100.0, 0.0),
+        ("T.S06", -6000.0, 2500.0, 1520.0, 0.0),
+        ("T.S07", 1000.0, 6000.0, 1740.0, 0.0),
+        ("T.S08", -2500.0, -6000.0, 1600.0, 0.0),
+        ("T.S09", 4500.0, -5000.0, 1950.0, 0.0),
+        ("T.B01", 300.0, 500.0, 1690.0, 290.0),
+        ("T.B02", -800.0, -300.0, 1650.0, 300.0),
+        ("T.B03", 200.0, -900.0, 1700.0, 320.0),
+    )
+
+    def __init__(self, cache_dir: Path) -> None:
+        self.cache_dir = cache_dir
+
+    @staticmethod
+    def showcase_raw() -> dict[str, Any]:
+        """A fresh parse of the showcase seismology.yaml (callers may mutate it)."""
+        return load_yaml(SHOWCASE_DIR / "seismology.yaml")
+
+    def test_config(self, **synthetic: object) -> SeismologyConfig:
+        raw = self.showcase_raw()
+        raw["grids"] = {**raw["grids"], "rMaxM": 15000.0, "bottomElevM": -6000.0}
+        raw["locator"] = {
+            **raw["locator"],
+            "volume": {"halfWidthM": 5000.0, "topElevM": None, "bottomElevM": -5000.0},
+            "nWorkers": 1,
+        }
+        raw["synthetic"] = {**raw["synthetic"], **synthetic}
+        return SeismologyConfig.model_validate(raw)
+
+    def stations(self, origin_elev_m: float) -> pd.DataFrame:
+        rows = []
+        for sid, e, n, surface, depth in self.STATIONS:
+            sensor = surface - depth
+            rows.append(
+                {
+                    "id": sid,
+                    "surfaceElevM": surface,
+                    "sensorDepthM": depth,
+                    "sensorElevM": sensor,
+                    "kind": "borehole" if depth > 0 else "surface",
+                    "enu_e": e,
+                    "enu_n": n,
+                    "enu_u": sensor - origin_elev_m,
+                    "preprocessProfile": "borehole" if depth > 0 else "surface",
+                }
+            )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def toy_model(tops: list[float], vp: list[float], vs: list[float]) -> LayerModel:
+        return LayerModel(
+            name="toy",
+            datum="topElevM is m above mean sea level.",
+            source=SourceRef(citation="toy", url="https://example.invalid", verified=False),
+            top_elev_m=np.array(tops),
+            vp_m_per_s=np.array(vp),
+            vs_m_per_s=np.array(vs),
+            source_file="https://example.invalid/toy.csv",
+            license="CC0",
+        )
+
+    def exact_picks(
+        self,
+        locator: Locator,
+        e: float,
+        n: float,
+        elev_m: float,
+        t0: float,
+        *,
+        s_stations: Collection[str] | None = None,
+        p_stations: Collection[str] | None = None,
+        prob: float = 1.0,
+    ) -> pd.DataFrame:
+        """Noise-free picks from the exact layered times (receivers from ``STATIONS``).
+
+        P on every station (or ``p_stations``), S on every station (or ``s_stations``).
+        """
+        rows = []
+        for sid, se, sn, surface, depth in self.STATIONS:
+            z_rec = surface - depth
+            r = float(np.hypot(e - se, n - sn))
+            for ph in PHASES:
+                wanted = s_stations if ph == "S" else p_stations
+                if wanted is not None and sid not in wanted:
+                    continue
+                tt = float(layered_first_arrival(locator.tables.model, ph, z_rec, r, elev_m))
+                rows.append({"id": f"test:{sid}:{ph}", "stationId": sid, "phase": ph,
+                             "t": t0 + tt, "prob": prob})
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def run_section() -> RunSection:
+        return RunSection.model_validate(load_yaml(SHOWCASE_DIR / "run.yaml"))
+
+    def setup(
+        self, cfg: SeismologyConfig | None = None, run: RunSection | None = None
+    ) -> LocatorSetup:
+        config = cfg if cfg is not None else self.test_config()
+        section = run if run is not None else self.run_section()
+        return LocatorSetup(
+            stations=self.stations(section.origin.elevM),
+            model=load_configured_model(config.velocity),
+            config=config,
+            run=section,
+            cache_dir=self.cache_dir,
+        )
+
+
+@pytest.fixture(scope="session")
+def loc02(tmp_path_factory: pytest.TempPathFactory) -> Loc02Kit:
+    """LOC-02 helpers with one travel-time cache directory for the whole session."""
+    return Loc02Kit(tmp_path_factory.mktemp("loc02-cache"))
