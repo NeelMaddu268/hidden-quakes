@@ -9,7 +9,8 @@ check that fails gives the reason:
 1. ``window``, ``bbox``: the public origin lies outside the run window or bbox.
 2. ``oneToOne`` (from ``match``): an admissible candidate exists but every one was assigned to
    another public event. The reason is kept as ``match`` wrote it.
-3. ``arrivalWindows`` (stations): fewer than ``minStations`` used stations have an expected
+3. ``arrivalWindows`` (stations): the run has fewer than ``minStations`` used stations at all
+   ("too few used stations"), or fewer than ``minStations`` used stations have an expected
    arrival window that overlaps the run window (an event near the end of the processed window).
 4. ``waveformData`` (stations, gaps): fewer than ``minStations`` used stations have waveform data
    in their expected arrival windows. A station has none when, on every channel, the gaps cover
@@ -454,6 +455,8 @@ def _evidence_reason(base: str, ev: pd.Series, i: int, ctx: _Context) -> str:
     st, k_min = ctx.stations, ctx.k_min
     need = f"classifier minimum {k_min} stations"
     n_used = len(st.ids)
+    if n_used < k_min:
+        return f"{REASONS['tooFewUsedStations']} ({n_used} used in the run; {need})"
     t = float(ev["t"])
     hypo = np.array([ev["enu_e"], ev["enu_n"], ev["enu_u"]], dtype=np.float64)
     ws, we = ctx.run.window_start_s, ctx.run.window_end_s

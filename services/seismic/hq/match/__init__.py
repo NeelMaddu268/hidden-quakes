@@ -81,6 +81,7 @@ REASONS: dict[str, str] = {
     "noCandidate": "no candidate within",
     "outsideWindow": "outside run window",
     "outsideBbox": "outside run bbox",
+    "tooFewUsedStations": "too few used stations",
     "arrivalsOutsideWindow": "arrivals outside run window",
     "noWaveformData": "no waveform data",
     "tooFewPicks": "too few picks",
