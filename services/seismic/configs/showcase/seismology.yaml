@@ -18,23 +18,27 @@ velocity:
   maxTopExtensionM: 1000.0
   # Display only: the profile figure draws the half-space down to this elevation (m ASL).
   profilePlotBottomElevM: -2000.0
-  # 3D model for LOC-07, downloaded into data/cache/velocity/<cacheFile>. Checked in the file:
+  # 3D model for LOC-07 (hq.locate.tt_grid3d), downloaded into data/cache/velocity/<cacheFile>.
+  # Checked in the file (LOC-01) and confirmed against the paper (LOC-07; evidence in the
+  # tt_grid3d docstring and in diagnostics.md's 3D section):
   # - Vp and Vs are float64 in km/s (basement 5.8 / 3.392); the 1D layer file is in m/s.
   # - Dims (northing 601, easting 601, elevation 201), 50 m spacing, elevation -7000..3000 m.
-  # - No CRS attributes anywhere (spatial_ref has none). Extents E 315300-345300, N 4246200-4276200
-  #   look like UTM 12N (EPSG:32612); unconfirmed.
+  # - No CRS attributes anywhere (spatial_ref has none). easting/northing are EPSG:32612 (UTM
+  #   zone 12N) metres, confirmed: the ground surface in the model's basin columns matches the
+  #   3DEP terrain in the run's ENU frame at zero shift (sub-metre median difference), and the
+  #   ground at the used stations in basin columns lies within a few metres of their surfaceElevM.
+  # - elevation is m above sea level (NAVD88, the 3DEP vertical), up positive: Nakata.pdf p. 3
+  #   (10 km deep from a maximum altitude of 3000 m, topography from 3DEP) and the same match.
   # - Basin (log-fit) velocities exist only in some columns, all inside E 322350-342250,
   #   N 4248700-4276100. Every other non-NaN column is Vp 5.8 / Vs 3.392 km/s at every elevation,
-  #   air included. That covers real basement outcrop (Mineral Mountains) but also the Milford
-  #   valley floor west of a near-straight cut at E ~322350, although Nakata.pdf p. 3 says the
-  #   top-of-basement surface was extrapolated to the model limits.
+  #   air included, so the file carries no ground surface there. That covers real basement outcrop
+  #   (Mineral Mountains) but also the Milford valley floor west of a near-straight cut at E
+  #   ~322350, although Nakata.pdf p. 3 says the top-of-basement surface was extrapolated to the
+  #   model limits (and clipped at the topography).
   # - In basin columns, cells above ground hold Vp 0.73271 / Vs 0.40002 km/s (near the p. 3
-  #   surface anchors, Vp 736 m/s and Vs30 400 m/s), not the 0.01 km/s p. 3 states. Air can't be
-  #   masked by value anywhere: mask it with the DEM. A station in a column with no basin cells
-  #   may sit outside the real 3D model even inside the grid: use the 1D fallback there, or
-  #   confirm with the authors.
+  #   surface anchors, Vp 736 m/s and Vs30 400 m/s), not the 0.01 km/s p. 3 states. grid3d
+  #   .airHandling says what the tables do with them.
   # - Vp and Vs are NaN in a strip at the west edge (E 315300-315400, N 4270750-4276200), all depths.
-  # LOC-07 adds these as knobs and builds the SourceRef (citation, url, verified) for velocityModel.
   model3d:
     submissionUrl: https://gdr.openei.org/submissions/1800
     url: https://gdr.openei.org/files/1800/Cape-model_50m_grid_sonic-logs-only_stretched_3-1-24.nc
@@ -42,6 +46,11 @@ velocity:
     expectedBytes: 1161642687
     citation: "Nakata, N., Hopp, C., Wu, S., Robertson, M., & Dadi, S. (2025). Cape EGS and Utah FORGE: Empirical 3D Seismic Velocity Model [Data set]. Geothermal Data Repository, Lawrence Berkeley National Laboratory. https://gdr.openei.org/submissions/1800"
     license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+    units: km/s
+    crs: EPSG:32612
+    # Above-ground value in basin columns (file units, found in the file; see the comment above).
+    airVp: 0.73271
+    airVs: 0.40002
 
 # Travel-time tables (LOC-02, hq.locate.tt_grid): one 2D (r, elevM) eikonal table per receiver
 # elevation and phase, solved with scikit-fmm with the source at the sensor (reciprocity).
@@ -68,8 +77,34 @@ grids:
   # Cell-mean slowness makes the tables slow by up to ~14 ms (S) just below shallow interfaces.
   accuracyCheckStrideR: 4
 
+# 3D travel-time tables (LOC-07, hq.locate.tt_grid3d), used when locator.method is grid3d: the 3D
+# model (velocity.model3d) resampled to cell-mean slowness on an ENU lattice, one 3D eikonal
+# table per receiver and phase with the source at the sensor (reciprocity), cached as .npy under
+# <cache_dir>/ttgrids/3d/ keyed by a hash of the model file's SHA-256 and every input below.
+# Receivers outside the 3D model use their 1D tables (grids above); the run record names them.
+grid3d:
+  # The ticket's range is 100-200 m. 200 m builds every table of the showcase stations in about
+  # a minute; the 100 m cost is in the LOC-07 acceptance report.
+  spacingM: 200.0
+  horizontalMarginM: 2000.0
+  topMarginM: 100.0
+  # The model's bottom node (the locator volume reaches it; checked against locator.volume).
+  bottomElevM: -7000.0
+  # topSurfaceVelocity: each identified above-ground cell gets its column's topmost ground
+  # velocity, so resampled cells that straddle the ground average only rock, not the file's
+  # constant air value. Columns with one value at every elevation carry no ground surface in the
+  # file and keep their values (their air already holds that velocity). asFile keeps every value.
+  airHandling: topSurfaceVelocity
+  # Exact layered times of the receiver's own model column (50 m cells) within this radius (m):
+  # the near-surface under the station, which the resampled cells can't hold, enters every
+  # table through it. At least 4 cells (checked).
+  seedRadiusM: 1000.0
+  fmmOrder: 2
+
 # Grid-search locator (LOC-02, hq.locate.locator and hq.locate.uncertainty).
 locator:
+  # grid1d (the showcase default until the lead decides) or grid3d (LOC-07).
+  method: grid1d
   volume:
     halfWidthM: 10000.0 # e and n in [-halfWidthM, +halfWidthM] around the run origin
     # null = run.refSurfaceElevM (the ground at the origin; there is no DEM in a 1D search),

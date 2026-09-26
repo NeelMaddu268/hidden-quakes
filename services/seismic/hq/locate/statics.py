@@ -65,6 +65,7 @@ from hq.locate import (
 from hq.locate.coords import to_enu
 from hq.locate.locator import Locator, LocatorSetup, build_locator, weighted_median
 from hq.locate.tt_grid import PHASES
+from hq.locate.tt_grid3d import Model3dSource
 from hq.locate.velocity import LayerModel, load_configured_model
 
 if TYPE_CHECKING:
@@ -167,14 +168,9 @@ def catalog_residuals(
     phase, d, w`` with ``w = prob / sigma``, the catalog ids left out because their hypocentre
     lies outside the travel-time grid).
     """
-    grid = locator.tables.grid
-    st_e = stations["enu_e"].to_numpy(dtype=np.float64)
-    st_n = stations["enu_n"].to_numpy(dtype=np.float64)
     parts, skipped = [], []
     for r in pairs.itertuples(index=False):
-        reach = float(np.max(np.hypot(st_e - r.catalogE, st_n - r.catalogN)))
-        if not (grid.bottom_elev_m <= r.catalogElevM <= grid.top_elev_m
-                and reach <= grid.r_max_m):
+        if not locator.covers(r.catalogE, r.catalogN, r.catalogElevM):
             skipped.append(str(r.catalogId))
             continue
         f = frames[str(r.assocId)]
@@ -332,8 +328,12 @@ def explain_terms(
     flag_s: float,
     min_events: int,
     cfg: StaticsExplainConfig,
+    against: str = "the 1D model",
 ) -> pd.DataFrame:
     """One row per static with ``|staticS| > flag_s``: its evidence and a written explanation.
+
+    ``against`` names the travel times the terms are relative to (grid3d: the 3D model); the
+    S/P and elevation evidence use ``model`` (the 1D layer model) either way.
 
     Evidence, each computed from the terms, the station geometry and the model. Each verdict
     says what the term is consistent with; none proves a cause:
@@ -400,13 +400,13 @@ def explain_terms(
                                                 ("far", far)) if hit), "unexplained")
         above = elev - source_top
         side = "early" if term < 0 else "late"
-        text = [f"{ph} arrives {abs(term):.3f} s {side} against the 1D model (n {int(r.nEvents)})."]
+        text = [f"{ph} arrives {abs(term):.3f} s {side} against {against} (n {int(r.nEvents)})."]
         if near_ids:
             text.append(
                 f"Its nearest stations with a {ph} term within "
                 f"{cfg.neighbourMaxDistM / 1000:g} km ({', '.join(near_ids)}) have a median "
                 f"{near:+.3f} s: " + (
-                    "they share it, consistent with lateral structure the 1D model can't hold "
+                    f"they share it, consistent with lateral structure {against} can't hold "
                     "(row 7) rather than a station fault." if lateral else "they don't share it.")
             )
         else:
@@ -575,9 +575,11 @@ def _report(
     ev = details.result.events
     centre = ((float(ev["enu_e"].median()), float(ev["enu_n"].median())) if len(ev)
               else (0.0, 0.0))
-    explained = explain_terms(terms, details.stations, details.locator.tables.model, centre,
+    locator = details.locator
+    against = "the 1D model" if locator.tables3d is None else "the 3D model"
+    explained = explain_terms(terms, details.stations, locator.tables.model, centre,
                               cfg.diagnostics.stationResidualFlagS, min_events,
-                              cfg.statics.explain)
+                              cfg.statics.explain, against)
     return StaticsReport(
         mode=mode, pass_number=pass_number, note=note, terms=terms, cap_s=cap_s,
         min_events=min_events, explanations=explained,
@@ -621,6 +623,7 @@ def locate_with_statics(
     reference: pd.DataFrame | None = None,
     previous_events: pd.DataFrame | None = None,
     model: LayerModel | None = None,
+    model3d: Model3dSource | None = None,
 ) -> StaticsOutcome:
     """Locate with the configured statics (see the module docstring).
 
@@ -630,7 +633,8 @@ def locate_with_statics(
     """
     started = time.perf_counter()
     scfg = cfg.statics
-    kw: dict[str, Any] = {"run_id": run_id, "cache_dir": cache_dir, "model": model}
+    kw: dict[str, Any] = {"run_id": run_id, "cache_dir": cache_dir, "model": model,
+                          "model3d": model3d}
     previous = _previous_rms(previous_events)
     if scfg.mode == SELF_CONSISTENT:
         details = locate_detailed(assoc, picks, stations, cfg, run, **kw)
@@ -677,6 +681,7 @@ def locate_with_statics(
         model=load_configured_model(cfg.velocity) if model is None else model,
         config=cfg, run=run,
         cache_dir=Path(cache_dir) if cache_dir is not None else _process_cache_dir(),
+        model3d=model3d,
     )
     check_same_association(reference, assoc.picks)
     locator = build_locator(setup)

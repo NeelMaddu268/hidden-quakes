@@ -16,10 +16,12 @@ Inputs
 Per event
     Its associated picks go through ``hq.locate.locator.Locator`` (coarse then fine grid search,
     weighted L1 with the origin time removed analytically, one outlier pass, PDF errors) on the
-    per-station 1D tables of the configured layer model (``hq.locate.tt_grid``). Tables are
-    cached under ``<cache_dir>/ttgrids/``; without ``cache_dir`` (the docs/02 call) they go to a
+    travel-time tables ``locator.method`` names: the per-station 1D tables of the configured layer
+    model (``grid1d``, ``hq.locate.tt_grid``) or the per-station 3D tables of the 3D model
+    (``grid3d``, ``hq.locate.tt_grid3d``; 1D tables for stations outside it). Tables are cached
+    under ``<cache_dir>/ttgrids/``; without ``cache_dir`` (the docs/02 call) they go to a
     temporary directory kept for the life of the process, so repeated validation reruns in one
-    process build them once.
+    process build them once. grid3d reads the 3D model from ``<cache_dir>/velocity/``.
 
 Outputs (``hq.locate.result`` has the dtypes)
     ``events`` (``events_located.parquet``): ``SeismicEvent`` fields except ``tier``,
@@ -28,7 +30,7 @@ Outputs (``hq.locate.result`` has the dtypes)
     ``hq-<runId>-NNNNNN``, numbered from 000000 in origin-time order (ties: assocId); ``runId`` is
     ``run_id`` (the docs/02 call has none, so ``run.name`` stands in); ``source`` is
     ``hq-pipeline``; latitude/longitude come from ``hq.locate.coords.from_enu``; ``depthKm`` is
-    ``(run.refSurfaceElevM - elevM) / 1000``; ``quality.method`` is ``grid1d`` and
+    ``(run.refSurfaceElevM - elevM) / 1000``; ``quality.method`` is ``locator.method`` and
     ``quality.statics`` is true only when a used pick carried a non-zero static;
     ``meanPickProb`` is the mean ``prob`` of the picks used in the final location, which
     are ``pickIds``; ``revealOrder`` is -1.
@@ -85,7 +87,6 @@ from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
 from hq.locate.coords import from_enu, to_enu
 from hq.locate.locator import (
-    METHOD,
     PICK_COLUMNS,
     EventLocation,
     Locator,
@@ -102,6 +103,7 @@ from hq.locate.result import (
     typed_frame,
 )
 from hq.locate.tt_grid import PHASES
+from hq.locate.tt_grid3d import Model3dSource
 from hq.locate.velocity import LayerModel, load_configured_model
 
 if TYPE_CHECKING:
@@ -365,6 +367,7 @@ def locate_detailed(
     event_statics: Mapping[str, Statics] | None = None,
     static_events: Mapping[tuple[str, str], int] | None = None,
     model: LayerModel | None = None,
+    model3d: Model3dSource | None = None,
 ) -> LocateDetails:
     """``locate`` plus flags, the per-event locations, counts and the run record.
 
@@ -372,7 +375,8 @@ def locate_detailed(
     ``event_statics`` (keyed by assocId) gives those events their own map instead (LOC-05's
     held-out reference terms). ``static_events`` is the ``nEvents`` column of the statics table:
     how many events each static was estimated from (default: the located events that used a
-    pick of that station-phase). ``model`` replaces the configured layer file (tests).
+    pick of that station-phase). ``model`` replaces the configured layer file and ``model3d``
+    the configured 3D model file (tests).
     """
     started = time.perf_counter()
     rid = run.name if run_id is None else run_id
@@ -390,6 +394,7 @@ def locate_detailed(
         config=cfg,
         run=run,
         cache_dir=Path(cache_dir) if cache_dir is not None else _process_cache_dir(),
+        model3d=model3d,
     )
     locator = build_locator(setup)
     located = (
@@ -494,7 +499,7 @@ def locate_detailed(
             "flagsTable": "locate_flags.parquet (H2-internal): " + ", ".join(FLAG_DTYPES),
             "stations": {"nUsed": len(used), "ids": locator.station_ids},
             "pickers": pickers,
-            "method": METHOD,
+            "method": locator.method,
         },
     }
     runtime = time.perf_counter() - started
