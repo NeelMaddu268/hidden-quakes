@@ -691,7 +691,8 @@ def _exercise_stage(io, fake_ctx, monkeypatch) -> None:
 
 
 def test_stage_run_writes_gaps_and_records(fake_ctx, monkeypatch) -> None:
-    io = pytest.importorskip("hq_contracts.io")  # CONTRACT-01 (H4) has not landed yet
+    from hq_contracts import io  # a hard dependency (pyproject.toml): a broken package fails
+
     _exercise_stage(io, fake_ctx, monkeypatch)
 
 
