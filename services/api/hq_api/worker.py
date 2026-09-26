@@ -361,39 +361,52 @@ class LiveWorker:
     async def _tick_forever(self) -> None:
         every_s = self.config.window.everyS
         due = self.clock()
-        while not self._stop.is_set():
-            if self.running:
-                self.skipped += 1
-                log.warning(
-                    "live: tick at %.0f skipped, the previous window is still running "
-                    "(%d skipped so far)",
-                    due,
-                    self.skipped,
-                )
-            else:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(self.run_once())
-                task.add_done_callback(_log_task_error)
-            due += every_s
-            self.next_run_at = due
-            wait_s = max(0.0, due - self.clock())
-            try:
-                await asyncio.wait_for(self._stop.wait(), timeout=wait_s)
-            except TimeoutError:
-                continue
-        self.next_run_at = None
+        try:
+            while not self._stop.is_set():
+                if self.running:
+                    self.skipped += 1
+                    log.warning(
+                        "live: tick at %.0f skipped, the previous window is still running "
+                        "(%d skipped so far)",
+                        due,
+                        self.skipped,
+                    )
+                else:
+                    loop = asyncio.get_running_loop()
+                    task = loop.create_task(self.run_once())
+                    task.add_done_callback(_log_task_error)
+                due += every_s
+                self.next_run_at = due
+                wait_s = max(0.0, due - self.clock())
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=wait_s)
+                except TimeoutError:
+                    continue
+        finally:
+            # Reached on a clean stop AND on cancellation. On Python 3.12+ a cancel() issued
+            # right after the stop event is set wins the race inside wait_for, so the loop exits
+            # through CancelledError; without this finally, next_run_at stayed set after stop().
+            self.next_run_at = None
 
     async def stop(self) -> None:
         """Stop the ticker. A window still running finishes in its thread and is committed;
         the executor is released without waiting for it."""
         self._stop.set()
         if self._ticker is not None:
-            self._ticker.cancel()
+            ticker, self._ticker = self._ticker, None
             try:
-                await self._ticker
+                # The stop event ends the loop on its own; the timeout is only a backstop.
+                await asyncio.wait_for(ticker, timeout=self.config.server.gracefulShutdownS)
+            except TimeoutError:
+                log.warning("live: ticker did not stop on its own; cancelling it")
+                ticker.cancel()
+                try:
+                    await ticker
+                except asyncio.CancelledError:
+                    pass
             except asyncio.CancelledError:
                 pass
-            self._ticker = None
+        self.next_run_at = None
         if self.running:
             log.warning(
                 "live: a window is still running at shutdown; it finishes in the background"
