@@ -295,17 +295,20 @@ or change inclusion because the depth gate failed.
 
 ### Handoffs to preserve
 
-Main 544c869 integrates all four lanes. H4 completed drawer mounting (REQ-H3-5), mock evidence
+Main 2803a8a includes all four lanes, VAL-01, API-05 and the scheduler shutdown fix. H4 completed drawer mounting (REQ-H3-5), mock evidence
 preload coverage (REQ-H3-3), and ENU-to-geographic UTM conversion with the matching DEM projection
 (REQ-H3-4). The stock mock can now render the real terrain; retain `?terrain=slab` as the explicit
 fallback. FEAT-01 reference features remain honestly unverified and must stay dashed.
 
 The public Gate M check still needs the one-time Vercel connection and a deployment URL. Offline
-static-export acceptance is distinct from that deployed gate. The available shared run
-`20260926-0210-a04c611` contains inventory, catalog and known-event picks, but no run-root events,
-arrivals or picks tables; do not treat it as a completed showcase export input. H1/H2 must finish and
-publish the run stages before H4's exporter can produce the real bundle. This laptop has working gh
-access, so downloading a completed run is not blocked here.
+static-export acceptance is distinct from that deployed gate. The refreshed shared run
+`20260926-0210-a04c611` was fetched successfully on this laptop. Its 04:05:21 UTC archive includes
+full-run picks and baseline outputs, but still lacks events, arrivals and matches. An actual export
+fails on missing events.parquet. H2 must publish the completed event tables (REQ-H3-8); H1's waveform
+cache is also absent locally (REQ-H3-9). The default make export invocation has a macOS Bash 3.2
+empty-array failure (REQ-H3-7); passing the script's explicit --data-dir reaches Python safely.
+The user authorized committing a validated generated showcase bundle directly to feat/platform,
+but there is no generated bundle to commit yet. Use /Users/snp/hq-worktrees/platform-export for it.
 
 After WEB-07, WEB-06 remains scheduled after Gate E and WEB-08 retains the full ten-run, two-browser
 hardening checklist. The 1–5 AM no-merge window remains in force.
@@ -322,3 +325,19 @@ also displayed its label. This verifies the local production export, not a Verce
 The web gate passes (404 web tests, 12 token tests, lint and typecheck). Full `make check` on this
 laptop reports seismic 453 passed / 2 skipped and API 18 passed / 1 failed. The scheduler shutdown
 failure reproduces alone and is reported to H4 in REQ-H3-6; do not mark the aggregate gate green.
+
+### Latest integration and export checkpoint · 2026-09-26 01:03 EDT
+
+Supersedes the failing 544c869 test result above. feat/web is synchronized and pushed at 2803a8a;
+agent/WEB-07 merged that baseline before 1 AM. Full make check passes: seismic 465 passed / 2 skipped,
+API 26, web 420, visualization tokens 12, with lint/typecheck/copy checks clean. The production build
+passes. Headed Chrome offline acceptance again passed at 1280×720 DPR 2: 21 evidence preloads,
+one fetch per core bundle file, actual terrain, monotonic reveal and exact STRICT count, E hero
+(19.9 ms trace paint), panels and reset. No external requests, HTTP failures or page/console errors.
+Explicit slab fallback is labelled. Dense feature-label overlap remains a WEB-08 polish item.
+This is mock/local verification; the real showcase and public deployment are still unverified.
+
+The failed export left feat/platform clean at 2803a8a. No source changes outside the H3 lane and no
+bundle commit. The detailed next-agent handoff in the task's outputs directory includes release
+identity, precise export errors, workaround, shared-data/worktree layout and retry steps. Browser
+and local server were stopped after acceptance. WEB-07 remains plan-only; preserve 1–5 AM no merges.
