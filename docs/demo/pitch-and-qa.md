@@ -18,7 +18,7 @@ Every `{value}` is read off the screen at demo time, never memorized and never t
 | 0:10–0:25 | Press REVEAL | "That's what made it into the public catalog. We went straight to the raw public seismometers." *(Let the counter finish. Say nothing for two seconds.)* |
 | 0:25–0:45 | Press S, orbit slowly | Depth gate passed: "The strict events concentrate {depthBand} below the surface. That's structure the public view doesn't show." Depth gate failed: "In map view, activity concentrates here, and each halo is that event's own location error." |
 | 0:45–1:05 | Press E | "How do we know this dot is an earthquake? {nStations} stations. The neural picker marks P and S on each, and the lines are where physics says they should land from that location. They agree." |
-| 1:05–1:25 | Validation panel | "We recover {recoveredCatalogCount} of {publicCatalogCount} public events. Strict means located at least as well as three-quarters of those. This station geometry resolves depth to about ±{medianVErrM} m." Add only if measured: the baseline gain and the null test. |
+| 1:05–1:25 | Validation panel | "We recover {recoveredCatalogCount} of {publicCatalogCount} public events. Strict means every quality metric is within the range reached by three-quarters of those. This station geometry resolves depth to about ±{medianVErrM} m." Add only if measured: the baseline gain and the null test. |
 | 1:25–1:40 | LIVE pill, if it works | "It runs on rolling windows too. This is the last two hours, updated {n} minutes ago." If Live isn't working, spend this time in the drawer. |
 | 1:40–2:00 | Full scene | "Operators can see underground. Regulators, journalists and communities mostly can't. This is an open, public-data-only window into what the public network is already hearing." Stop. |
 
@@ -32,7 +32,7 @@ Answer in one or two sentences, then show something on screen. If the honest ans
 | 2 | Isn't this QuakeFlow? | Same family of methods, and we say so. QuakeFlow is a research workflow; we built a public-data product with reproducible runs, tiers anchored to the public catalog, evidence behind every dot, and a UI a non-seismologist can read. |
 | 3 | Doesn't FORGE already have better sensors? | Yes. Downhole geophones and fiber give far denser catalogs than ours. Those belong to operators and research teams and usually arrive later. We show what the public stream supports, today. |
 | 4 | Why compare to a public catalog? | It's the reference the public actually has, and our only independent label set: recovering it is our recall check, and its events set our quality bar. |
-| 5 | Are the additional events real? | We call them candidate events. Each needs consistent picks across multiple stations; strict ones locate at least as well as most public-catalog events. We don't claim all {candidateCount} are real. |
+| 5 | Are the additional events real? | We call them candidate events. Each needs consistent picks across multiple stations; strict ones meet, on every quality metric, a bar that three-quarters of the recovered public-catalog events meet. We don't claim all {candidateCount} are real. If asked how many recovered public events pass every bar at once, say {strictJointShare}, never three-quarters. |
 | 6 | How many do you actually trust? | *(Press S.)* {strictQualityCount}. |
 | 7 | Why are your depths broader than published FORGE clouds? | Those use sensors much closer to the source, plus relative relocation. We use sparser public stations and absolute locations. Every halo is that event's own error, and we don't claim fracture geometry at this resolution. |
 | 8 | Why care about tiny earthquakes? | Microseismicity is how an engineered reservoir becomes visible, and induced-seismicity oversight (traffic-light protocols) is built on it. Small events are the earliest public signal of how injection changes the subsurface. |
@@ -106,6 +106,7 @@ Every spoken `{value}` above is read off the screen at demo time. This table map
 | `{gain}` | `meta.json` → `summary.baseline.gain` (only when present) | Validation card (gain row, shown only when the baseline ran and the gain holds) |
 | `{meanChanceEvents}` | `validation.json` → `nullTest.meanChanceEvents` (only when present) | Validation card (chance associations row) |
 | `{n}` matched events, `{looMae}` (Q27) | `validation.json` → `magnitude.n`, `magnitude.looMae` (only when present) | Not on screen; read from `validation.json` |
+| `{strictJointShare}` (Q5) | `run.json` → `tiering.matchedSet.meetingEveryBar.A` over `tiering.matchedSet.n` (the bars are per metric; this is the share of recovered public events that meets all of them) | Not on screen; read from the run's `run.json` |
 | `{depthBand}` | No bundle field. Read it off the depth ruler with STRICT on; say what is visible, never a mechanism | Scene, depth ruler and slices |
 | `{n}` minutes ago (Live) | `/api/live/status` → `updatedAt` | Live mode label |
 | `{latency}` (Q19) | `/api/live/status` → `latencyS`, and `/health` → `served.latencyS` | Not on screen; read from the API |
