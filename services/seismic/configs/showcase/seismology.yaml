@@ -190,8 +190,10 @@ diagnostics:
 # diagnostics.stationResidualFlagS gets a written explanation in diagnostics.md.
 statics:
   # selfConsistent: the lane doc's method, inside locate(). referenceEvents: terms at the public
-  # regional catalog's hypocentres of the matched events (needs matches.parquet in the run dir:
-  # locate -> match -> locate -> match -> tier); without it locate runs with no statics.
+  # regional catalog's hypocentres of the matched events. Stage locate does it in one call:
+  # pass 1 (no statics), its own one-to-one match of pass 1 against catalog.parquet (hq.match,
+  # the matching section below), pass 2; it never reads matches.parquet. locate() (docs/02) has
+  # no catalog and locates without statics.
   mode: referenceEvents
   # selfConsistent: median residual per station-phase over the used picks of well-constrained
   # events, subtracted, every event relocated; iterations times; each static capped at +/- capS.
@@ -221,6 +223,12 @@ statics:
   referenceCapS: 1.0
   folds: null
   polishIterations: 3
+  # referenceEvents in stage locate, when catalog.parquet is absent or the internal match leaves
+  # too few reference events (every fold must leave at least minReferenceEvents of them to
+  # estimate the held-out terms from): fail stops the stage with the reason; noStatics locates
+  # every event without statics and records a WARNING in the log, the run record's counts
+  # (staticsFallback) and diagnostics.md.
+  referenceFallback: fail
   # Evidence rules for the written explanation of each static above
   # diagnostics.stationResidualFlagS (hq.locate.statics.explain_terms).
   explain:

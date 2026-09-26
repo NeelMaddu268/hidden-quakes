@@ -14,8 +14,8 @@ referenceEvents (the showcase default)
     LOC-04 found the 1D model can't hold the region's lateral structure: at the public regional
     catalog's hypocentres, stations on one side arrive early and on the other late, and
     self-consistent statics trade that against the locations. Here the terms come from the
-    public regional catalog events matched to located events (``matches.parquet`` of a prior
-    match pass), with every hypocentre fixed at the catalog's (latitude/longitude to ENU through
+    public regional catalog events matched to the pass-1 locations (the internal match below),
+    with every hypocentre fixed at the catalog's (latitude/longitude to ENU through
     ``hq.locate.coords``; the catalog's ``elevM`` already carries its stated depth datum).
     Per reference event, ``d = t_obs - T(catalog hypocentre)`` over its associated picks. Median
     polish, ``polishIterations`` times: origin time per event = the locator's weighted median of
@@ -29,11 +29,23 @@ referenceEvents (the showcase default)
     public regional catalog's frame (reported next to an in-sample relocation with every term),
     not absolute accuracy, and absolute positions are then tied to that frame.
 
-    Pipeline order with this mode:
-        locate (pass 1, no statics) -> match -> locate (pass 2, reference terms) -> match -> tier
-    Stage ``locate`` runs pass 2 when ``matches.parquet`` is in the run dir and pass 1 otherwise
-    (logged: the statics pass needs a match first). ``locate()`` (docs/02 §5) has no matches, so
-    in this mode it always runs pass 1 (no statics).
+    One call of stage ``locate`` (``locate_with_statics`` with the run's ``catalog.parquet``):
+        1. pass 1: every event located without statics;
+        2. an internal one-to-one match of the pass-1 locations against the catalog
+           (``match_pass_one``: ``hq.match.match`` with the same ``matching`` config, after the
+           same ENU-frame check of the catalog, so the rules stage match applies);
+        3. the reference pairs of its matched rows (``reference_pairs``);
+        4. pass 2: terms from those pairs, every reference event relocated with held-out terms;
+        5. the stage writes the pass-2 outputs, and ``statics_reference.parquet`` (H2-internal:
+           the internal match's pairs, ``hq.locate.result.REFERENCE_DTYPES``).
+    Then stage match -> tier as usual: stage match writes ``matches.parquet`` for the final
+    locations and tier checks it is current. Stage locate never reads ``matches.parquet``, so
+    rerunning it on a run dir gives the same outputs whatever match or tier files are there.
+    Without a catalog, or when every fold would leave fewer than ``minReferenceEvents``
+    reference events to estimate held-out terms from, ``referenceFallback`` decides: ``fail``
+    (the default) raises with the reason; ``noStatics`` keeps pass 1 and records a WARNING
+    (``StaticsReport.fallback``). ``locate()`` (docs/02 §5) has no catalog: in this mode it
+    locates without statics (pass 1 only).
 
 Both modes: ``statics.parquet`` holds the station-phase terms (``nEvents`` = the events each was
 estimated from, so a term zeroed for too few events shows it), ``quality.statics`` is true on
@@ -54,18 +66,13 @@ import numpy as np
 import pandas as pd
 
 from hq.config.run import RunSection
-from hq.config.seismology import SeismologyConfig, StaticsExplainConfig
-from hq.locate import (
-    LocateDetails,
-    _process_cache_dir,
-    event_picks,
-    locate_detailed,
-    used_stations,
-)
+from hq.config.seismology import SeismologyConfig, StaticsConfig, StaticsExplainConfig
+from hq.locate import LocateDetails, event_picks, locate_detailed
 from hq.locate.coords import to_enu
-from hq.locate.locator import Locator, LocatorSetup, build_locator, weighted_median
+from hq.locate.locator import Locator, weighted_median
+from hq.locate.result import REFERENCE_DTYPES, typed_frame
 from hq.locate.tt_grid import PHASES
-from hq.locate.velocity import LayerModel, load_configured_model
+from hq.locate.velocity import LayerModel
 
 if TYPE_CHECKING:
     from hq.associate.result import AssocResult
@@ -74,13 +81,18 @@ log = logging.getLogger(__name__)
 
 SELF_CONSISTENT = "selfConsistent"
 REFERENCE_EVENTS = "referenceEvents"
+FAIL = "fail"  # statics.referenceFallback
 PIPELINE_ORDER = (
-    "locate (pass 1, no statics) -> match -> locate (pass 2, reference terms from "
-    "matches.parquet) -> match -> tier"
+    "locate (one call: pass 1 without statics -> internal one-to-one match of pass 1 with "
+    "catalog.parquet -> pass 2 with reference terms) -> match -> tier"
 )
-# |t_event - t_catalog - matches.dtS| above this means matches.parquet was written for another
-# events_located.parquet (parquet keeps float64 exactly; this only absorbs float round-off).
+# |t_event - t_catalog - matches.dtS| above this means the matches were computed for other
+# located events (float64 kept exactly; this only absorbs float round-off).
 ROUNDOFF_S = 1e-6
+NO_CATALOG = "no public regional catalog (catalog.parquet) to match the pass-1 locations against"
+# StaticsReport.previous_source: where the no-statics median rmsS came from.
+PREVIOUS_RUN_DIR = "the run dir's previous events_located.parquet, located without statics"
+PREVIOUS_PASS_ONE = "pass 1 of this call (the same events, located without statics)"
 ALL_EVENTS = "all located events"
 GAUSS_MAD = 1.4826  # robust sigma = GAUSS_MAD * MAD (consistent with a Gaussian's sigma)
 TERM_COLUMNS = ["stationId", "phase", "staticS", "rawS", "nEvents", "madS"]
@@ -101,8 +113,8 @@ def reference_pairs(
 
     Columns ``catalogId, eventId, assocId, catalogT, catalogE, catalogN, catalogElevM`` and
     ``pickIds`` (the located event's), sorted by catalog origin time. ``matches`` must have been
-    written for ``events_located`` (every matched event present, ``t_event - t_catalog == dtS``),
-    or this raises: rerun stage match first.
+    computed for ``events_located`` (every matched event present, ``t_event - t_catalog ==
+    dtS``), or this raises.
     """
     matched = matches[matches["eventId"].notna()]
     ev = events_located.set_index(events_located["id"].astype(str))
@@ -113,20 +125,20 @@ def reference_pairs(
     missing = sorted((set(ids) - set(ev.index)) | (set(ids) - set(link.index)))
     if missing:
         raise ValueError(
-            f"matches.parquet names located events that events_located.parquet / "
-            f"locate_flags.parquet lack ({missing[:5]}): rerun stage match on these events first"
+            f"the matches name located events that the located events / flags lack "
+            f"({missing[:5]}): they were computed for other located events"
         )
     unknown = sorted(set(cids) - set(cat.index))
     if unknown:
-        raise ValueError(f"matches.parquet names public events not in catalog.parquet: {unknown[:5]}")
+        raise ValueError(f"the matches name public events not in the catalog: {unknown[:5]}")
     ct = cat.loc[cids, "t"].to_numpy(dtype=np.float64)
     dt = ev.loc[ids, "t"].to_numpy(dtype=np.float64) - ct
     stale = np.abs(dt - matched["dtS"].to_numpy(dtype=np.float64)) > ROUNDOFF_S
     if stale.any():
         raise ValueError(
-            f"matches.parquet is stale: {int(stale.sum())} matched event(s) have another origin "
-            f"time in events_located.parquet than when matched (e.g. {ids.iloc[int(np.argmax(stale))]})"
-            ": rerun stage match on these located events first"
+            f"the matches are stale: {int(stale.sum())} matched event(s) have another origin "
+            f"time in the located events than when matched (e.g. "
+            f"{ids.iloc[int(np.argmax(stale))]})"
         )
     e, n, _ = to_enu(cat.loc[cids, "latitude"], cat.loc[cids, "longitude"],
                      cat.loc[cids, "elevM"], run.origin)
@@ -140,21 +152,47 @@ def reference_pairs(
     return out.sort_values(["catalogT", "catalogId"], kind="stable").reset_index(drop=True)
 
 
-def check_same_association(pairs: pd.DataFrame, assoc_picks: pd.DataFrame) -> None:
-    """Raise unless every reference event's located picks belong to its association event in
-    ``assoc_picks``: an association rerun since the match renumbers or regroups events."""
-    groups: dict[str, set[str]] = {}
-    for aid, pid in zip(assoc_picks["assocId"].astype(str), assoc_picks["pickId"].astype(str),
-                        strict=True):
-        groups.setdefault(aid, set()).add(pid)
-    bad = [str(r.catalogId) for r in pairs.itertuples(index=False)
-           if not set(map(str, r.pickIds)) <= groups.get(str(r.assocId), set())]
-    if bad:
-        raise ValueError(
-            f"reference events {bad[:5]} were located from another association than "
-            "assoc_picks.parquet holds now: rerun stage locate (pass 1) and match on this "
-            "association first"
-        )
+@dataclass(frozen=True, eq=False)
+class InternalMatch:
+    """Stage locate's own one-to-one match of its pass-1 locations against the catalog."""
+
+    matches: pd.DataFrame  # hq.match.match rows (docs/02 Match), one per public event
+    pairs: pd.DataFrame  # reference_pairs of its matched rows
+
+    def table(self) -> pd.DataFrame:
+        """``statics_reference.parquet``: one row per matched public event, catalog order."""
+        assoc = dict(zip(self.pairs["catalogId"].astype(str), self.pairs["assocId"].astype(str),
+                         strict=True))
+        rows = [{"pass1EventId": str(r.eventId), "catalogId": str(r.catalogId),
+                 "assocId": assoc[str(r.catalogId)], "dtS": float(r.dtS), "distM": float(r.distM)}
+                for r in self.matches[self.matches["eventId"].notna()].itertuples(index=False)]
+        return typed_frame(rows, REFERENCE_DTYPES)
+
+    def summary(self, n_reference: int, skipped: Sequence[str]) -> dict[str, Any]:
+        """Run-record summary: the rule, recovered / public events, reference events used."""
+        return {
+            "rule": "hq.match.match of the pass-1 locations (no statics) against "
+            "catalog.parquet with the matching config stage match uses (one-to-one, the same "
+            "admissibility, cost and catalog ENU-frame check)",
+            "publicEvents": len(self.matches),
+            "recovered": int(self.matches["eventId"].notna().sum()),
+            "referenceEvents": n_reference,
+            "skippedOutsideGrid": list(skipped),
+        }
+
+
+def match_pass_one(
+    pass_one: LocateDetails, catalog: pd.DataFrame, cfg: SeismologyConfig, run: RunSection
+) -> InternalMatch:
+    """``hq.match.match`` of the pass-1 events against ``catalog`` with ``cfg`` (stage match's
+    rules, after its ENU-frame check of the catalog), and the reference pairs of the matches."""
+    from hq.match import match  # at call time: hq.match imports hq.locate
+    from hq.match.run import check_enu_frame
+
+    check_enu_frame(catalog, "catalog", run, cfg.matching.enuConsistencyM)
+    events = pass_one.result.events
+    matches = match(events, catalog, cfg).matches
+    return InternalMatch(matches, reference_pairs(matches, events, pass_one.flags, catalog, run))
 
 
 def catalog_residuals(
@@ -508,7 +546,10 @@ class StaticsReport:
     # h/de/dn/dz (m), rmsS (s)
     reference: pd.DataFrame | None = None
     skipped: tuple[str, ...] = ()  # reference events outside the travel-time grid
-    previous_median_rms_s: float | None = None  # stored no-statics events_located, all events
+    previous_median_rms_s: float | None = None  # all events located without statics
+    previous_source: str = PREVIOUS_RUN_DIR  # where previous_median_rms_s came from
+    # referenceEvents with referenceFallback noStatics: why no statics were applied (a WARNING)
+    fallback: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def offsets_summary(self) -> dict[str, dict[str, float]]:
@@ -544,7 +585,9 @@ class StaticsReport:
             "sigmaEvents": self.sigma_events, "history": rows(self.history),
             "reference": rows(self.reference), "skippedOutsideGrid": list(self.skipped),
             "crossValidatedOffsets": self.offsets_summary() or None,
-            "previousMedianRmsS": self.previous_median_rms_s, **self.extra,
+            "previousMedianRmsS": self.previous_median_rms_s,
+            "previousMedianRmsSource": self.previous_source, "fallback": self.fallback,
+            **self.extra,
         }
 
 
@@ -552,6 +595,7 @@ class StaticsReport:
 class StaticsOutcome:
     details: LocateDetails
     report: StaticsReport
+    internal: InternalMatch | None = None  # referenceEvents: the internal match of pass 1
 
 
 @dataclass(frozen=True, eq=False)
@@ -618,21 +662,23 @@ def locate_with_statics(
     *,
     run_id: str | None = None,
     cache_dir: Path | None = None,
-    reference: pd.DataFrame | None = None,
+    catalog: pd.DataFrame | None = None,
     previous_events: pd.DataFrame | None = None,
     model: LayerModel | None = None,
 ) -> StaticsOutcome:
     """Locate with the configured statics (see the module docstring).
 
-    ``reference``: ``reference_pairs`` output (mode referenceEvents; None runs pass 1).
-    ``previous_events``: the run dir's events_located.parquet before this pass, whose median
-    rmsS is reported as the no-statics value when it was located without statics.
+    ``catalog``: the run's ``catalog.parquet`` rows (``CatalogEvent``), used by mode
+    referenceEvents only; None means there is none (``referenceFallback`` decides).
+    ``previous_events``: mode selfConsistent only, the run dir's events_located.parquet before
+    this call, whose median rmsS is reported as the no-statics value when it was located without
+    statics (referenceEvents reports its own pass 1 instead).
     """
     started = time.perf_counter()
     scfg = cfg.statics
     kw: dict[str, Any] = {"run_id": run_id, "cache_dir": cache_dir, "model": model}
-    previous = _previous_rms(previous_events)
     if scfg.mode == SELF_CONSISTENT:
+        previous = _previous_rms(previous_events)
         details = locate_detailed(assoc, picks, stations, cfg, run, **kw)
         current = polish_terms(pd.DataFrame(), iterations=1, cap_s=scfg.capS, min_events=1)
         cal = well_constrained(details, cfg)
@@ -656,56 +702,59 @@ def locate_with_statics(
         log.info("statics: selfConsistent done in %.1f s", time.perf_counter() - started)
         return StaticsOutcome(details, report)
 
-    if reference is None or reference.empty:
-        base = locate_detailed(assoc, picks, stations, cfg, run, **kw)
-        note = ("no matches.parquet in the run dir: the statics pass needs a match first ("
-                + PIPELINE_ORDER + "); located without statics" if reference is None else
-                "matches.parquet has no matched public event: located without statics")
-        log.info("statics: referenceEvents pass 1: %s", note)
-        report = _report(
-            cfg, base, polish_terms(pd.DataFrame(), iterations=1, cap_s=1.0, min_events=1),
-            mode=REFERENCE_EVENTS, pass_number=1, note=note, cap_s=scfg.referenceCapS,
-            min_events=scfg.minReferenceEvents,
-            sigma_ids=base.result.events["id"].astype(str).tolist(),
-            sigma_events=ALL_EVENTS, history=[_history_row(0, base, 0, None)],
-            previous_median_rms_s=previous)
-        return StaticsOutcome(base, report)
+    # referenceEvents (module docstring): pass 1, internal match, pass 2, in this one call.
+    if catalog is None:
+        _fallback_or_fail(scfg, NO_CATALOG)  # before pass 1: with "fail" nothing is located
+    base = locate_detailed(assoc, picks, stations, cfg, run, **kw)  # pass 1, no statics
+    pass_one = base.result.events
+    pass_one_rms = float(pass_one["quality_rmsS"].median()) if len(pass_one) else None
+    if catalog is None:
+        return _pass_one_only(cfg, base, NO_CATALOG, pass_one_rms)
+    internal = match_pass_one(base, catalog, cfg, run)
+    order, frames = event_picks(assoc, picks, cfg.locator.minPicks)
+    res, skipped = catalog_residuals(base.locator, base.stations, internal.pairs,
+                                     dict(zip(order, frames, strict=True)))
+    pairs = internal.pairs[~internal.pairs["catalogId"].isin(skipped)].reset_index(drop=True)
+    folds = fold_of(pairs, scfg.folds)
+    k_desc = "leave-one-out" if scfg.folds is None else f"{scfg.folds}-fold"
+    matched = internal.summary(len(pairs), skipped)
+    log.info("statics: internal match of pass 1: recovered %d / %d public regional catalog "
+             "events; %d reference event(s) inside the travel-time grid", matched["recovered"],
+             matched["publicEvents"], len(pairs))
+    # Each held-out term is estimated from the reference events outside its fold.
+    fewest = len(pairs) - int(folds.value_counts().max()) if len(pairs) else 0
+    if fewest < scfg.minReferenceEvents:
+        reason = (
+            f"the internal match of pass 1 recovered {matched['recovered']} of "
+            f"{matched['publicEvents']} public regional catalog events, {len(pairs)} of them "
+            f"usable as reference events"
+            + (f" ({len(skipped)} outside the travel-time grid: {', '.join(skipped)})"
+               if skipped else "")
+            + f"; held out {k_desc}, a fold leaves {fewest} to estimate its terms from, fewer "
+            f"than minReferenceEvents {scfg.minReferenceEvents}"
+        )
+        _fallback_or_fail(scfg, reason)
+        return _pass_one_only(cfg, base, reason, pass_one_rms, internal, skipped,
+                              {"internalMatch": matched})
 
     # Pass 2: terms at the catalog hypocentres, held out per fold for the reference events.
-    setup = LocatorSetup(
-        stations=used_stations(stations, run, cfg.locator.enuConsistencyTolM),
-        model=load_configured_model(cfg.velocity) if model is None else model,
-        config=cfg, run=run,
-        cache_dir=Path(cache_dir) if cache_dir is not None else _process_cache_dir(),
-    )
-    check_same_association(reference, assoc.picks)
-    locator = build_locator(setup)
-    order, frames = event_picks(assoc, picks, cfg.locator.minPicks)
-    res, skipped = catalog_residuals(locator, setup.stations, reference,
-                                     dict(zip(order, frames, strict=True)))
-    pairs = reference[~reference["catalogId"].isin(skipped)].reset_index(drop=True)
-    if pairs.empty:
-        raise ValueError(f"every reference event's catalog hypocentre lies outside the "
-                         f"travel-time grid ({skipped}): no station terms can be estimated")
     polish = {"iterations": scfg.polishIterations, "cap_s": scfg.referenceCapS,
               "min_events": scfg.minReferenceEvents}
     terms = polish_terms(res, **polish)
-    folds = fold_of(pairs, scfg.folds)
     held_out = held_out_terms(res, folds, **polish)
     ref_assoc = set(pairs["assocId"])
     subset = _Subset(events=assoc.events[assoc.events["assocId"].astype(str).isin(ref_assoc)],
                      picks=assoc.picks[assoc.picks["assocId"].astype(str).isin(ref_assoc)])
-    before = locate_detailed(subset, picks, stations, cfg, run, **kw)
     # In-sample comparison only (never written): the reference events with every term.
     in_sample = locate_detailed(subset, picks, stations, cfg, run, statics=statics_map(terms),
                                 static_events=_counts(terms), **kw)
     details = locate_detailed(assoc, picks, stations, cfg, run, statics=statics_map(terms),
                               event_statics=held_out, static_events=_counts(terms), **kw)
     ref = pairs[["catalogId", "assocId"]].assign(fold=folds.reindex(pairs["assocId"]).to_numpy())
-    ref = ref.merge(_offsets(before, pairs, "before"), on="assocId").merge(
+    # "before" is pass 1 (each event is located independently, so it is the no-statics location).
+    ref = ref.merge(_offsets(base, pairs, "before"), on="assocId").merge(
         _offsets(details, pairs, "after"), on="assocId").merge(
         _offsets(in_sample, pairs, "inSample").drop(columns="inSampleEventId"), on="assocId")
-    k_desc = "leave-one-out" if scfg.folds is None else f"{scfg.folds}-fold"
     report = _report(
         cfg, details, terms, mode=REFERENCE_EVENTS, pass_number=2,
         note=f"terms from {len(pairs)} reference events at the public regional catalog's "
@@ -713,10 +762,11 @@ def locate_with_statics(
         cap_s=scfg.referenceCapS, min_events=scfg.minReferenceEvents,
         sigma_ids=ref["afterEventId"].tolist(),
         sigma_events="reference events (held-out terms)",
-        history=[_history_row(0, before, len(pairs), None),
+        history=[_history_row(0, base, len(pairs), None),
                  _history_row(1, details, len(pairs), terms)],
-        reference=ref, skipped=tuple(skipped), previous_median_rms_s=previous,
-        extra={"foldScheme": k_desc, "nReferenceResiduals": len(res)},
+        reference=ref, skipped=tuple(skipped), previous_median_rms_s=pass_one_rms,
+        previous_source=PREVIOUS_PASS_ONE,
+        extra={"foldScheme": k_desc, "nReferenceResiduals": len(res), "internalMatch": matched},
     )
     summary = report.offsets_summary()
     if summary:
@@ -729,7 +779,41 @@ def locate_with_statics(
             a["p90HM"], i["p90HM"], b["medianAbsDzM"], a["medianAbsDzM"], i["medianAbsDzM"],
             int(np.count_nonzero(terms["staticS"])), time.perf_counter() - started,
         )
-    return StaticsOutcome(details, report)
+    return StaticsOutcome(details, report, internal)
+
+
+def _fallback_or_fail(scfg: StaticsConfig, reason: str) -> None:
+    """Raise with ``reason`` under referenceFallback fail; otherwise log the WARNING."""
+    if scfg.referenceFallback == FAIL:
+        raise ValueError(
+            f"statics.mode referenceEvents: {reason}. Stage locate estimates its station terms "
+            "from reference events: give it the run's catalog.parquet (stage catalog) and enough "
+            "matched events, or set statics.referenceFallback: noStatics to locate without "
+            "statics"
+        )
+    log.warning("statics: referenceEvents: %s; statics.referenceFallback is noStatics: every "
+                "event is located WITHOUT statics", reason)
+
+
+def _pass_one_only(
+    cfg: SeismologyConfig, base: LocateDetails, reason: str, pass_one_rms: float | None,
+    internal: InternalMatch | None = None, skipped: Sequence[str] = (),
+    extra: dict[str, Any] | None = None,
+) -> StaticsOutcome:
+    """referenceEvents fallback (referenceFallback noStatics): pass 1 is the result."""
+    scfg = cfg.statics
+    report = _report(
+        cfg, base, polish_terms(pd.DataFrame(), iterations=1, cap_s=1.0, min_events=1),
+        mode=REFERENCE_EVENTS, pass_number=1,
+        note=f"WARNING: {reason}; statics.referenceFallback is noStatics, so every event is "
+        "located without statics", cap_s=scfg.referenceCapS,
+        min_events=scfg.minReferenceEvents,
+        sigma_ids=base.result.events["id"].astype(str).tolist(), sigma_events=ALL_EVENTS,
+        history=[_history_row(0, base, 0, None)], skipped=tuple(skipped),
+        previous_median_rms_s=pass_one_rms, previous_source=PREVIOUS_PASS_ONE, fallback=reason,
+        extra=extra or {},
+    )
+    return StaticsOutcome(base, report, internal)
 
 
 def _counts(terms: pd.DataFrame) -> dict[tuple[str, str], int]:

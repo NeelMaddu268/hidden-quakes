@@ -268,8 +268,13 @@ def test_inputs_fail_loudly(world: dict[str, Any]) -> None:
 
 
 def _stage(world: dict[str, Any], make_ctx: Any) -> Any:
+    # No catalog.parquet here: statics.mode referenceEvents then needs referenceFallback noStatics
+    # (the showcase default, fail, stops the stage; test_statics covers that and the statics).
+    raw = world["cfg"].model_dump(mode="json")
+    raw["statics"]["referenceFallback"] = "noStatics"
+    cfg = SeismologyConfig.model_validate(raw)
     # The session's LOC-02 table cache, so the stage loads the tables instead of solving them.
-    ctx = dataclasses.replace(make_ctx(world["run"], world["cfg"]), cache_dir=world["cache"])
+    ctx = dataclasses.replace(make_ctx(world["run"], cfg), cache_dir=world["cache"])
     picks = world["picks"]
     write_table(picks, ctx.path(world["cfg"].associator.picksTable), "Pick")
     write_table(world["stations"], ctx.path("stations.parquet"), "Station")
@@ -296,6 +301,7 @@ def test_stage_writes_tables_report_and_record(
     assert velocity["params"]["name"] == located.velocity_model["name"]
     assert locator["counts"]["events"] == len(EVENTS)
     assert locator["params"]["method"] == "grid1d" and "diagnostics" in locator["params"]
+    assert locator["counts"]["staticsFallback"] == 1 and locator["counts"]["staticsPass"] == 1
 
     # synthetic.json: the docs/02 SyntheticTest, from the run's used stations and pick stats.
     synthetic = SyntheticTest.model_validate_json(ctx.path("synthetic.json").read_text("utf-8"))

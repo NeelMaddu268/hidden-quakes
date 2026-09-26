@@ -57,11 +57,12 @@ H2-internal table ``locate_flags.parquet`` (not in docs/02; LOC-06 and the depth
 Statics (LOC-05, ``hq.locate.statics``)
     ``locate_detailed(..., statics={(stationId, phase): s})`` passes additive statics to the
     locator; they enter every ``tPred`` and the ``staticS`` column; ``event_statics`` gives
-    single events (by assocId) their own. ``locate`` applies what ``statics.mode`` says. Pipeline
-    order with the default mode (referenceEvents): locate (pass 1, no statics) -> match -> locate
-    (pass 2, terms at the public-catalog hypocentres of the matched events, each matched event
-    relocated with terms computed without it) -> match -> tier. Stage ``locate`` runs pass 2 when
-    ``matches.parquet`` is in the run dir; ``locate()`` has no matches and runs pass 1.
+    single events (by assocId) their own. With the default mode (referenceEvents), one call of
+    stage ``locate`` locates every event without statics (pass 1), matches those locations
+    one-to-one to the run's ``catalog.parquet`` itself (``hq.match.match``), and relocates every
+    event with terms taken at the public-catalog hypocentres of the matched events, each matched
+    event with terms computed without it (pass 2); then match -> tier. ``locate()`` has no
+    catalog and in this mode locates without statics; selfConsistent statics it applies itself.
 """
 
 import atexit
@@ -535,11 +536,15 @@ def locate(
     ``run_id`` (keyword only; the docs/02 call leaves it out, and ``run.name`` stands in) goes
     into event ids and ``runId``. ``cache_dir`` caches the travel-time tables under
     ``<cache_dir>/ttgrids/``. Statics follow ``statics.mode`` (``hq.locate.statics``):
-    selfConsistent iterates them here; referenceEvents needs a match pass this call has no
-    access to, so it locates without statics (pass 1).
+    selfConsistent iterates them here; referenceEvents needs the public regional catalog this
+    call has no access to, so it locates without statics (stage ``locate``'s pass 1).
     """
-    from hq.locate.statics import locate_with_statics  # imports this package
+    from hq.locate.statics import REFERENCE_EVENTS, locate_with_statics  # imports this package
 
+    if cfg.statics.mode == REFERENCE_EVENTS:
+        return locate_detailed(
+            assoc, picks, stations, cfg, run, run_id=run_id, cache_dir=cache_dir
+        ).result
     return locate_with_statics(
         assoc, picks, stations, cfg, run, run_id=run_id, cache_dir=cache_dir
     ).details.result

@@ -1241,14 +1241,27 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
     scfg = inputs.cfg.statics
     flag = inputs.cfg.diagnostics.stationResidualFlagS
     terms = rep.terms
+    if rep.fallback is not None:
+        lines += [(f"**WARNING: every event is located WITHOUT statics.** {rep.fallback} "
+                   "(statics.referenceFallback noStatics)."), ""]
     lines.append(f"Mode `{rep.mode}`, pass {rep.pass_number}: {rep.note}.")
     lines.append("")
     if rep.mode == "referenceEvents":
         lines += [
-            ("Pipeline order in this mode: locate (pass 1, no statics) -> match -> locate (pass "
-             "2, reference terms read through matches.parquet) -> match -> tier. Stage locate "
-             "runs pass 2 when matches.parquet is in the run dir, pass 1 otherwise; `locate()` "
-             "(docs/02) has no matches and runs pass 1."), ""]
+            ("Pipeline order in this mode: stage locate does pass 1 (no statics), its own "
+             "one-to-one match of the pass-1 locations against catalog.parquet (hq.match.match "
+             "with the matching config stage match uses) and pass 2 (reference terms) in one "
+             "call; then match -> tier. It never reads matches.parquet, so rerunning it gives the "
+             "same outputs; stage match writes matches.parquet for the final locations. "
+             "`locate()` (docs/02) has no catalog and locates without statics."), ""]
+        matched = rep.extra.get("internalMatch")
+        if matched is not None:
+            lines += [
+                (f"Internal match of pass 1: recovered {matched['recovered']} of "
+                 f"{matched['publicEvents']} public regional catalog events; "
+                 f"{matched['referenceEvents']} of them are reference events (hypocentre inside "
+                 "the travel-time grid). The pairs are in statics_reference.parquet (pass-1 event "
+                 "id, catalogId, assocId, dtS, distM)."), ""]
     if rep.pass_number == 1:
         lines.append("No statics applied in this pass.")
         lines += ["", *_sigma_lines(rep, scfg.sigmaFlagRatio)]
@@ -1256,9 +1269,10 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
     if rep.mode == "referenceEvents":
         lines += [
             "Method: each reference event is a public regional catalog event matched to a "
-            "candidate event (matches.parquet). Its hypocentre is fixed at the catalog's "
-            "(latitude/longitude to ENU through hq.locate.coords; elevM from the catalog's stated "
-            "depth datum), and our associated picks are compared with the travel times from "
+            "pass-1 candidate event (the internal match above). Its hypocentre is fixed at the "
+            "catalog's (latitude/longitude to ENU through hq.locate.coords; elevM from the "
+            "catalog's stated depth datum), and our associated picks are compared with the "
+            "travel times from "
             "there. Median polish over the reference events: per event the origin time is the "
             "locator's weighted median, per station-phase the term is the median residual "
             f"({scfg.polishIterations} alternations), capped at +/- referenceCapS "
@@ -1302,10 +1316,9 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
     prev = rep.previous_median_rms_s
     lines.append(
         f"Median rmsS over all {len(inputs.details.result.events)} located events with statics: "
-        f"{after_all:.3f} s" + (f"; the run dir's previous events_located.parquet, located "
-                                f"without statics: {prev:.3f} s." if prev is not None else
-                                "; no no-statics events_located.parquet was in the run dir to "
-                                "compare with.")
+        f"{after_all:.3f} s" + (f"; {rep.previous_source}: {prev:.3f} s." if prev is not None
+                                else "; no no-statics events_located.parquet was in the run dir "
+                                "to compare with.")
     )
     lines.append("")
     active = terms[terms["nEvents"] >= rep.min_events]

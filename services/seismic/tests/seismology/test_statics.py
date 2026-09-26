@@ -1,4 +1,4 @@
-"""LOC-05: station statics (hq.locate.statics), the stage's pass 2 and the diagnostics section.
+"""LOC-05: station statics (hq.locate.statics), the self-contained stage and diagnostics section.
 
 Smoke tests work on small tables built here (planted station terms, seeded noise). The heavier
 tests (not smoke) locate synthetic events on the LOC-02 test geometry, whose picks carry planted
@@ -22,10 +22,12 @@ from hq.associate.result import EVENT_DTYPES as ASSOC_EVENT_DTYPES
 from hq.associate.result import PICK_DTYPES as ASSOC_PICK_DTYPES
 from hq.associate.result import AssocResult, typed_frame
 from hq.config.seismology import SeismologyConfig
-from hq.locate import locate
+from hq.locate import event_picks, locate, locate_detailed
 from hq.locate.coords import from_enu
+from hq.locate.result import REFERENCE_DTYPES
 from hq.locate.statics import (
-    check_same_association,
+    InternalMatch,
+    catalog_residuals,
     explain_terms,
     fold_of,
     held_out_terms,
@@ -34,6 +36,7 @@ from hq.locate.statics import (
     reference_pairs,
     residual_sigma,
     self_consistent_terms,
+    statics_map,
 )
 from hq.tier import TierError
 
@@ -144,15 +147,20 @@ def test_reference_pairs_map_matches_and_refuse_stale_ones(run_section: Any) -> 
     assert pairs["catalogE"].tolist() == pytest.approx([100.0, -300.0], abs=1e-6)
     assert pairs["catalogN"].tolist() == pytest.approx([50.0, 400.0], abs=1e-6)
     assert pairs["catalogElevM"].tolist() == [-2000.0, -2500.0]
-    links = pd.DataFrame({"assocId": ["x0", "x0", "x0", "x1"], "pickId": ["p0", "p1", "p9", "p2"]})
-    check_same_association(pairs, links)  # every located pick belongs to its association event
-    with pytest.raises(ValueError, match="another association"):
-        check_same_association(pairs, links.assign(assocId=["x0", "x1", "x0", "x1"]))
     moved = events.assign(t=events["t"] + 0.01)  # relocated since the match: stale
     with pytest.raises(ValueError, match="stale"):
         reference_pairs(matches, moved, flags, catalog, run_section)
-    with pytest.raises(ValueError, match="rerun stage match"):
+    with pytest.raises(ValueError, match="other located events"):
         reference_pairs(matches, events.iloc[1:], flags, catalog, run_section)
+    # statics_reference.parquet rows: the matched public events, pass-1 id and assocId.
+    table = InternalMatch(matches, pairs).table()
+    assert {c: str(d) for c, d in table.dtypes.items()} == {
+        c: str(pd.Series([], dtype=d).dtype) for c, d in REFERENCE_DTYPES.items()}
+    assert table["pass1EventId"].tolist() == ["e0", "e1"]
+    assert table["assocId"].tolist() == ["x0", "x1"]
+    assert table["dtS"].tolist() == pytest.approx([0.3, -0.2])
+    none = matches.assign(eventId=None, dtS=np.nan, distM=np.nan)
+    assert InternalMatch(none, pairs.iloc[:0]).table().empty
 
 
 def _fake_details(n_events: int = 6) -> SimpleNamespace:
@@ -269,7 +277,8 @@ def test_residual_sigma_flags_a_spread_well_above_the_configured_sigma(
 @pytest.mark.smoke
 def test_statics_config_rejects_bad_values(seismology_config: SeismologyConfig) -> None:
     raw = seismology_config.model_dump(mode="json")
-    for key, bad in (("mode", "both"), ("folds", 1), ("referenceCapS", 0.0)):
+    for key, bad in (("mode", "both"), ("folds", 1), ("referenceCapS", 0.0),
+                     ("referenceFallback", "maybe")):
         broken = {**raw, "statics": {**raw["statics"], key: bad}}
         with pytest.raises(ValueError):
             SeismologyConfig.model_validate(broken)
@@ -337,34 +346,32 @@ def world(loc02: Any) -> dict[str, Any]:
             elevM=z, mag=1.0 + k / 10, magType="ml",
             enu={"e": e, "n": n, "u": z - run.origin.elevM}))
     catalog = to_frame(cat, CatalogEvent)
-    pairs = pd.DataFrame({
-        "catalogId": [f"cat{k}" for k in range(len(HYPOS) - 1)],
-        "eventId": [f"unused{k}" for k in range(len(HYPOS) - 1)],
-        "assocId": [f"assoc-{k:06d}" for k in range(len(HYPOS) - 1)],
-        "catalogT": [r["t"] for r in rows[:-1]], "catalogE": [h[0] for h in HYPOS[:-1]],
-        "catalogN": [h[1] for h in HYPOS[:-1]], "catalogElevM": [h[2] for h in HYPOS[:-1]],
-        "pickIds": [links_k for links_k in (
-            [x["pickId"] for x in links if x["assocId"] == f"assoc-{k:06d}"]
-            for k in range(len(HYPOS) - 1))],
-    })
     return {"run": run, "cfg": cfg, "picks": picks, "assoc": assoc, "stations": st,
-            "catalog": catalog, "pairs": pairs, "cache": loc02.cache_dir}
+            "catalog": catalog, "cache": loc02.cache_dir}
+
+
+N_REFERENCE = len(HYPOS) - 1  # every catalog event is matched (the last event has none)
 
 
 def test_reference_statics_recover_the_planted_delays_held_out(world: dict[str, Any]) -> None:
     out = locate_with_statics(world["assoc"], world["picks"], world["stations"], world["cfg"],
                               world["run"], run_id="t", cache_dir=world["cache"],
-                              reference=world["pairs"])
+                              catalog=world["catalog"])
     rep, res = out.report, out.details.result
-    assert rep.mode == "referenceEvents" and rep.pass_number == 2
+    assert rep.mode == "referenceEvents" and rep.pass_number == 2 and rep.fallback is None
+    # The internal match of pass 1 found every public event; they are the reference events.
+    assert out.internal is not None
+    assert out.internal.pairs["catalogId"].tolist() == [f"cat{k}" for k in range(N_REFERENCE)]
+    assert out.internal.pairs["assocId"].tolist() == [f"assoc-{k:06d}" for k in range(N_REFERENCE)]
+    assert rep.extra["internalMatch"]["recovered"] == N_REFERENCE
     east = dict(zip(world["stations"]["id"], world["stations"]["enu_e"], strict=True))
     terms = res.statics.set_index(["stationId", "phase"])
     got = np.array([terms.loc[(s, p), "staticS"] for s, p in terms.index])
     want = np.array([_delay(east[s], p) for s, p in terms.index])
     assert np.ptp(got - want) < 0.03  # planted delays, up to the origin-time constant
-    assert (terms["nEvents"] == len(world["pairs"])).all()
+    assert (terms["nEvents"] == N_REFERENCE).all()
     ref = rep.reference
-    assert len(ref) == len(world["pairs"])
+    assert len(ref) == N_REFERENCE
     summary = rep.offsets_summary()
     assert summary["after"]["medianHM"] < summary["before"]["medianHM"]
     assert summary["after"]["medianRmsS"] < summary["before"]["medianRmsS"]
@@ -385,6 +392,9 @@ def test_reference_statics_recover_the_planted_delays_held_out(world: dict[str, 
     json.dumps(record)  # the run record must serialize
     assert record["crossValidatedOffsets"]["after"]["medianHM"] == pytest.approx(
         summary["after"]["medianHM"])
+    # "before" is pass 1: its median rmsS over every event is the no-statics comparison.
+    assert record["previousMedianRmsS"] == pytest.approx(record["history"][0]["medianRmsS"])
+    assert record["previousMedianRmsSource"].startswith("pass 1 of this call")
 
 
 def test_locate_api_applies_no_statics_in_reference_mode(world: dict[str, Any]) -> None:
@@ -411,64 +421,140 @@ def test_self_consistent_mode_lowers_rms_inside_locate(world: dict[str, Any]) ->
     pd.testing.assert_frame_equal(via_api.statics, res.statics)
 
 
-def test_stage_runs_pass_1_then_pass_2_after_a_match(
+LOCATE_OUTPUTS = ("events_located.parquet", "arrivals.parquet", "statics.parquet",
+                  "locate_flags.parquet", "statics_reference.parquet", "synthetic.json",
+                  "diagnostics.md")
+
+
+def _old_two_pass(world: dict[str, Any], ctx: Any) -> Any:
+    """The pre-LOC-05-selfpass flow as an oracle: pass 1 written to the run dir, stage match on
+    it (matches.parquet), then pass 2 from that matches.parquet, rebuilt from the public
+    functions (catalog residuals, median polish, held-out terms)."""
+    cfg, run, assoc = world["cfg"], world["run"], world["assoc"]
+    args = (world["picks"], world["stations"], cfg, run)
+    pass1 = locate_detailed(assoc, *args, run_id=ctx.run_id, cache_dir=world["cache"])
+    write_table(pass1.result.events, ctx.path("events_located.parquet"), "LocatedEvent")
+    write_table(pass1.flags, ctx.path("locate_flags.parquet"), "LocateFlags")
+    importlib.import_module("hq.match.run").run(ctx)
+    pairs = reference_pairs(read_table(ctx.path("matches.parquet")),
+                            read_table(ctx.path("events_located.parquet")),
+                            read_table(ctx.path("locate_flags.parquet")), world["catalog"], run)
+    order, frames = event_picks(assoc, world["picks"], cfg.locator.minPicks)
+    res, _ = catalog_residuals(pass1.locator, pass1.stations, pairs,
+                               dict(zip(order, frames, strict=True)))
+    s = cfg.statics
+    polish = {"iterations": s.polishIterations, "cap_s": s.referenceCapS,
+              "min_events": s.minReferenceEvents}
+    terms = polish_terms(res, **polish)
+    return locate_detailed(
+        assoc, *args, run_id=ctx.run_id, cache_dir=world["cache"], statics=statics_map(terms),
+        event_statics=held_out_terms(res, fold_of(pairs, s.folds), **polish),
+        static_events={(str(a), str(b)): int(n) for a, b, n in
+                       zip(terms["stationId"], terms["phase"], terms["nEvents"], strict=True)})
+
+
+def test_stage_is_self_contained_idempotent_and_equals_the_two_pass_flow(
     world: dict[str, Any], make_ctx: Any
 ) -> None:
-    from hq.match import match
-
     stage = importlib.import_module("hq.locate.run")
+    match_stage = importlib.import_module("hq.match.run")
     ctx = dataclasses.replace(make_ctx(world["run"], world["cfg"]), cache_dir=world["cache"])
     write_table(world["picks"], ctx.path(world["cfg"].associator.picksTable), "Pick")
-    write_table(world["stations"], ctx.path("stations.parquet"), "Station")
+    channels = [["HHZ", "HHN", "HHE"]] * len(world["stations"])  # stage match's evidence reads them
+    write_table(world["stations"].assign(channels=channels), ctx.path("stations.parquet"),
+                "Station")
     write_table(world["assoc"].events, ctx.path("assoc_events.parquet"), "AssocEvent")
     write_table(world["assoc"].picks, ctx.path("assoc_picks.parquet"), "AssocPick")
     write_table(world["catalog"], ctx.path("catalog.parquet"), "CatalogEvent")
-    stage.run(ctx)  # pass 1: no matches.parquet yet
-    first = read_table(ctx.path("events_located.parquet"))
-    assert not first["quality_statics"].any()
-    assert ctx.records[-1]["counts"]["staticsPass"] == 1
-    assert "the statics pass needs a match first" in ctx.path("diagnostics.md").read_text()
+    old = _old_two_pass(world, ctx)  # leaves a matches.parquet of the pass-1 locations behind
 
-    matches = match(first, world["catalog"], world["cfg"]).matches
-    write_table(matches, ctx.path("matches.parquet"), "Match")
-    stage.run(ctx)  # pass 2
-    second = read_table(ctx.path("events_located.parquet"))
-    assert second["quality_statics"].all()
-    counts = ctx.records[-1]["counts"]
-    assert counts["staticsPass"] == 2
-    assert counts["staticsReferenceEvents"] == int(matches["eventId"].notna().sum())
+    stage.run(ctx)  # one call: pass 1, internal match, pass 2; the stale matches.parquet unread
+    events = read_table(ctx.path("events_located.parquet"))
+    assert events["quality_statics"].all()
+    for col in ("id", "t", "enu_e", "enu_n", "elevM", "quality_rmsS", "quality_hErrM"):
+        assert events[col].tolist() == old.result.events[col].tolist(), col
+    arrivals = read_table(ctx.path("arrivals.parquet"))
+    for col in ("eventId", "stationId", "phase", "tPred", "usedInLocation"):
+        assert arrivals[col].tolist() == old.result.arrivals[col].tolist(), col
     statics = read_table(ctx.path("statics.parquet"))
-    assert (statics["staticS"] != 0.0).any()
+    for col in ("stationId", "phase", "staticS", "nEvents"):
+        assert statics[col].tolist() == old.result.statics[col].tolist(), col
+    counts = ctx.records[-1]["counts"]
+    assert counts["staticsPass"] == 2 and counts["staticsFallback"] == 0
+    assert counts["staticsMatchPublic"] == counts["staticsMatchRecovered"] == N_REFERENCE
+    assert counts["staticsReferenceEvents"] == N_REFERENCE
+    reference = read_table(ctx.path("statics_reference.parquet"))
+    assert reference.attrs["model"] == "StaticsReference" and len(reference) == N_REFERENCE
+    record = ctx.records[-1]["params"]
+    assert record["statics"]["internalMatch"]["recovered"] == N_REFERENCE
+    assert record["input"]["catalogTable"] == "catalog.parquet"
+    assert "statics_reference.parquet" in record["outputs"]
     report = ctx.path("diagnostics.md").read_text()
     assert "## Station statics (LOC-05)" in report and "pass 2" in report
-    assert "held-out terms (leave-one-out)" in report
-    assert "all-reference terms (in-sample)" in report and "Held-out minus in-sample" in report
-    assert "not absolute accuracy" in report
+    assert f"Internal match of pass 1: recovered {N_REFERENCE} of {N_REFERENCE}" in report
+    assert "It never reads matches.parquet" in report
+    assert "held-out terms (leave-one-out)" in report and "Held-out minus in-sample" in report
     assert "tied to the public regional catalog's (UUSS) frame" in report
-    record = ctx.records[-1]["params"]["statics"]
-    assert record["pass"] == 2 and record["previousMedianRmsS"] == pytest.approx(
-        float(first["quality_rmsS"].median()))
+    assert "pass 1 of this call (the same events, located without statics)" in report
+    first = {name: ctx.path(name).read_bytes() for name in LOCATE_OUTPUTS}
 
-    # matches.parquet now refers to the pass-1 locations: a third locate must refuse it, and so
-    # must stage tier.
-    with pytest.raises(ValueError, match="stale"):
-        stage.run(ctx)
+    # Stage tier refuses the pass-1 matches.parquet; stage match makes a current one.
     tier_stage = importlib.import_module("hq.tier.run")
+    tol = world["cfg"].tiering.consistencyTolM
     with pytest.raises(TierError, match="stale"):
-        tier_stage.check_matches_current(second, matches, world["catalog"],
-                                         world["cfg"].tiering.consistencyTolM)
-    tier_stage.check_matches_current(second, match(second, world["catalog"], world["cfg"]).matches,
-                                     world["catalog"], world["cfg"].tiering.consistencyTolM)
+        tier_stage.check_matches_current(events, read_table(ctx.path("matches.parquet")),
+                                         world["catalog"], tol)
+    match_stage.run(ctx)
+    tier_stage.check_matches_current(events, read_table(ctx.path("matches.parquet")),
+                                     world["catalog"], tol)
+
+    # Idempotent: a rerun on the run dir (now with a current matches.parquet) is byte-identical,
+    # and the match stage's matches.parquet stays current.
+    stage.run(ctx)
+    assert {name: ctx.path(name).read_bytes() for name in LOCATE_OUTPUTS} == first
+    assert ctx.records[-1]["counts"] == counts
+    assert ctx.records[-1]["params"]["statics"] == record["statics"]
+    tier_stage.check_matches_current(read_table(ctx.path("events_located.parquet")),
+                                     read_table(ctx.path("matches.parquet")),
+                                     world["catalog"], tol)
+
+    # No catalog.parquet: fail loudly by default; noStatics locates without statics, warns.
+    ctx.path("catalog.parquet").unlink()
+    with pytest.raises(ValueError, match="catalog.parquet"):
+        stage.run(ctx)
+    assert ctx.path("events_located.parquet").read_bytes() == first["events_located.parquet"]
+    raw = world["cfg"].model_dump(mode="json")
+    raw["statics"]["referenceFallback"] = "noStatics"
+    ctx = dataclasses.replace(ctx, config=dataclasses.replace(
+        ctx.config, seismology=SeismologyConfig.model_validate(raw)))
+    stage.run(ctx)
+    assert not read_table(ctx.path("events_located.parquet"))["quality_statics"].any()
+    assert ctx.records[-1]["counts"]["staticsFallback"] == 1
+    assert not ctx.path("statics_reference.parquet").exists()  # the earlier match removed
+    report = ctx.path("diagnostics.md").read_text()
+    assert "**WARNING: every event is located WITHOUT statics.**" in report
+    assert "no public regional catalog (catalog.parquet)" in report
 
 
-def test_catalog_hypocentres_off_the_grid_are_left_out(world: dict[str, Any]) -> None:
-    pairs = world["pairs"].copy()
-    pairs.loc[0, "catalogElevM"] = -50000.0  # below the travel-time grid
-    out = locate_with_statics(world["assoc"], world["picks"], world["stations"], world["cfg"],
-                              world["run"], cache_dir=world["cache"], reference=pairs)
+def _deeper(catalog: pd.DataFrame, rows: list[int], elev_m: float, run: Any) -> pd.DataFrame:
+    """``catalog`` with the given rows moved to ``elev_m`` (``enu_u`` kept consistent)."""
+    out = catalog.copy()
+    out.loc[rows, "elevM"] = elev_m
+    out.loc[rows, "enu_u"] = elev_m - run.origin.elevM
+    return out
+
+
+def test_off_grid_and_too_few_reference_events(world: dict[str, Any]) -> None:
+    args = (world["assoc"], world["picks"], world["stations"], world["cfg"], world["run"])
+    below = -50000.0  # below the travel-time grid
+    cat = _deeper(world["catalog"], [0], below, world["run"])
+    out = locate_with_statics(*args, cache_dir=world["cache"], catalog=cat)
     assert out.report.skipped == ("cat0",)
-    assert len(out.report.reference) == len(pairs) - 1
+    assert len(out.report.reference) == N_REFERENCE - 1
+    every = _deeper(world["catalog"], list(range(N_REFERENCE)), below, world["run"])
     with pytest.raises(ValueError, match="outside the travel-time grid"):
-        locate_with_statics(world["assoc"], world["picks"], world["stations"], world["cfg"],
-                            world["run"], cache_dir=world["cache"],
-                            reference=pairs.assign(catalogElevM=-50000.0))
+        locate_with_statics(*args, cache_dir=world["cache"], catalog=every)
+    # Leave-one-out needs minReferenceEvents + 1 reference events (3 + 1 here); 3 fall short.
+    few = world["catalog"].iloc[:3].reset_index(drop=True)
+    with pytest.raises(ValueError, match="fewer than minReferenceEvents 3"):
+        locate_with_statics(*args, cache_dir=world["cache"], catalog=few)

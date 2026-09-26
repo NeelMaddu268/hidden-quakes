@@ -8,6 +8,7 @@ types:
 - ``arrivals.parquet``: ``ARRIVAL_DTYPES`` (docs/02 §2 column list).
 - ``statics.parquet``: ``STATIC_DTYPES`` (docs/02 §2 column list).
 - ``locate_flags.parquet``: ``FLAG_DTYPES``, H2-internal (see ``hq.locate``).
+- ``statics_reference.parquet``: ``REFERENCE_DTYPES``, H2-internal (see ``hq.locate.statics``).
 """
 
 from dataclasses import dataclass
@@ -58,10 +59,20 @@ FLAG_DTYPES: dict[str, str] = {
     "nearestStationSurfaceElevM": "float64",
     "aboveNearestStationSurface": "bool",  # elevM above that proxy: hypocentre in the air
 }
+# statics_reference.parquet (H2-internal, LOC-05): stage locate's own one-to-one match of its
+# pass-1 locations (no statics) against catalog.parquet, one row per matched public event.
+REFERENCE_DTYPES: dict[str, str] = {
+    "pass1EventId": "string",  # the pass-1 event's id; pass 2 renumbers, so join on assocId
+    "catalogId": "string",
+    "assocId": "string",  # the association event (locate_flags.parquet links the final id)
+    "dtS": "float64",  # pass-1 origin time minus the catalog's (s)
+    "distM": "float64",  # epicentral distance, pass 1 to the catalog (m)
+}
 EVENTS_MODEL = "LocatedEvent"  # model names in the parquet metadata
 ARRIVALS_MODEL = "Arrival"
 STATICS_MODEL = "StationStatic"
 FLAGS_MODEL = "LocateFlags"
+REFERENCE_MODEL = "StaticsReference"
 
 
 def typed_frame(rows: list[dict[str, Any]], dtypes: dict[str, str]) -> pd.DataFrame:

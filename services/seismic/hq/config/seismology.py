@@ -337,6 +337,9 @@ class StaticsConfig(BaseModel):
     referenceCapS: float = Field(gt=0)  # every term capped at +/- this
     folds: Annotated[int, Field(ge=2)] | None  # null: leave-one-out; k: k-fold
     polishIterations: int = Field(ge=1)  # origin-time / term alternations (median polish)
+    # Stage locate without catalog.parquet or with too few reference events: fail, or locate
+    # without statics with a recorded WARNING.
+    referenceFallback: Literal["fail", "noStatics"]
     explain: StaticsExplainConfig
     # Robust residual sigma above this multiple of locator.pickSigmaS is reported as well above.
     sigmaFlagRatio: float = Field(gt=1)
