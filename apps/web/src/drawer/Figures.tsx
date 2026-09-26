@@ -87,7 +87,7 @@ function MiniMap({ event, stations }: { event: SeismicEvent; stations: Station[]
       ))}
       {errR > 0 && (
         <circle cx={r1(ex)} cy={r1(ey)} r={r1(errR)} fill="none" stroke={colors.recovered} strokeOpacity={0.55} strokeDasharray="2 2" strokeWidth={0.75}>
-          <title>{`68% horizontal error ±${fmtFixed(hErrM, 0)} m`}</title>
+          <title>{`One-sigma horizontal error ±${fmtFixed(hErrM, 0)} m`}</title>
         </circle>
       )}
       {stations.map((st) => (
@@ -205,7 +205,7 @@ function DepthSection({ event, meta, stations }: { event: SeismicEvent; meta: Bu
             strokeWidth={1}
             fill="none"
           >
-            <title>{`68% vertical error ±${fmtFixed(vErrM, 0)} m`}</title>
+            <title>{`One-sigma vertical error ±${fmtFixed(vErrM, 0)} m`}</title>
           </path>
         )}
         <circle cx={r1(ex)} cy={r1(ey)} r={6.5} fill="none" stroke={colors.strictHalo} strokeWidth={1} />

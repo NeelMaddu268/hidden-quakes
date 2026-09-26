@@ -90,7 +90,7 @@ export interface SectionPlot {
   framedOn: "structure" | "all";
 }
 
-const fmtKm = (v: number) => `${+v.toFixed(3)}`;
+const fmtKm = (v: number) => `${+v.toFixed(3)}`.replace("-", "\u2212");
 
 /** Tier A and B candidates' section points: what the plan camera frames (Canvas → framingPositions). */
 function framedPoints(model: SectionModel): Float64Array {
@@ -453,7 +453,7 @@ export function sectionHit(
   const pub = model.publicEvents.xy;
   for (let i = 0; i < model.publicTargets.length; i++) {
     const target = model.publicTargets[i];
-    if (!target || !shownAt(model.publicTime[i], now)) continue;
+    if (!target || state.phase === "public" || !shownAt(model.publicTime[i], now)) continue;
     const dx = ox + pub[i * 2] * k - x;
     const dy = oy + pub[i * 2 + 1] * k - y;
     const d = dx * dx + dy * dy;

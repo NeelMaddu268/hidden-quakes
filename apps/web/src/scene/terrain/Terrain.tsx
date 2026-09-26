@@ -103,7 +103,7 @@ function SurfaceMesh({ name, grid, shade, flatShadeValue, contours, originElevM,
 
 const SLAB_SHADE = new Uint8Array([255, 255, 255, 255]);
 
-/** The flat abstract slab; its note sits under the depth ruler's title (references/DepthRuler). */
+/** The flat abstract slab; its note is a bottom-right corner note (references/References → CornerNote). */
 function AbstractSlab({ extent, scene }: { extent: EnuBoundsM; scene: SceneMeta }) {
   const grid = useMemo(() => buildSlabGrid(extent, scene), [extent, scene]);
   return (
