@@ -9,6 +9,12 @@ velocity:
   # [min, max]. Catches a file written in km/s (values below 10) under the m/s column names.
   plausibleVpMPerS: [300.0, 9000.0]
   plausibleVsMPerS: [100.0, 5000.0]
+  # Unit guard: the loader rejects a layer thinner than this (m). Catches topElevM written in km.
+  minLayerThicknessM: 10.0
+  # Largest upward extension of the top layer (m above the source model's own top) that
+  # with_top_extended_to accepts. It must cover the highest receiver; a larger request raises, so a
+  # sensor elevation in feet or a sentinel value can't stretch the top layer silently.
+  maxTopExtensionM: 1000.0
   # Display only: the profile figure draws the half-space down to this elevation (m ASL).
   profilePlotBottomElevM: -2000.0
   # 3D model for LOC-07, downloaded into data/cache/velocity/<cacheFile>. Checked in the file:
@@ -16,8 +22,16 @@ velocity:
   # - Dims (northing 601, easting 601, elevation 201), 50 m spacing, elevation -7000..3000 m.
   # - No CRS attributes anywhere (spatial_ref has none). Extents E 315300-345300, N 4246200-4276200
   #   look like UTM 12N (EPSG:32612); unconfirmed.
-  # - Cells above ground hold Vp 0.73271 / Vs 0.40002 km/s, not the 0.01 km/s the manuscript
-  #   (Nakata.pdf p. 3) states, so air can't be masked by value: mask it with the DEM.
+  # - Basin (log-fit) velocities exist only in some columns, all inside E 322350-342250,
+  #   N 4248700-4276100. Every other non-NaN column is Vp 5.8 / Vs 3.392 km/s at every elevation,
+  #   air included. That covers real basement outcrop (Mineral Mountains) but also the Milford
+  #   valley floor west of a near-straight cut at E ~322350, although Nakata.pdf p. 3 says the
+  #   top-of-basement surface was extrapolated to the model limits.
+  # - In basin columns, cells above ground hold Vp 0.73271 / Vs 0.40002 km/s (near the p. 3
+  #   surface anchors, Vp 736 m/s and Vs30 400 m/s), not the 0.01 km/s p. 3 states. Air can't be
+  #   masked by value anywhere: mask it with the DEM. A station in a column with no basin cells
+  #   may sit outside the real 3D model even inside the grid: use the 1D fallback there, or
+  #   confirm with the authors.
   # - Vp and Vs are NaN in a strip at the west edge (E 315300-315400, N 4270750-4276200), all depths.
   # LOC-07 adds these as knobs and builds the SourceRef (citation, url, verified) for velocityModel.
   model3d:

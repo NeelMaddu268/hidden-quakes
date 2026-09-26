@@ -4,7 +4,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# services/seismic: config paths such as ``velocity.layerFile`` are relative to it.
+# services/seismic: config paths such as ``velocity.layerFile`` are relative to it. Found from this
+# file, so ``hq`` must run from the source tree (uv's editable install); a wheel ships no configs/.
 SEISMIC_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -37,6 +38,8 @@ class VelocityConfig(BaseModel):
     # Unit guard for any layer file: every Vp and Vs (m/s) must lie inside these [min, max] ranges.
     plausibleVpMPerS: tuple[float, float]
     plausibleVsMPerS: tuple[float, float]
+    minLayerThicknessM: float = Field(gt=0)  # unit guard: thinner layers mean topElevM is in km
+    maxTopExtensionM: float = Field(gt=0)  # cap on with_top_extended_to, from the source top
     profilePlotBottomElevM: float  # m ASL; how far down the profile figure draws the half-space
     model3d: Velocity3dConfig
 
