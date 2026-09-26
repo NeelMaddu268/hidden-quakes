@@ -1,0 +1,2 @@
+# Keep the recorded source bytes (CRLF) exact: its sha256 is pinned in configs/velocity/forge_1d.csv.
+gdr1613_*.csv -text
