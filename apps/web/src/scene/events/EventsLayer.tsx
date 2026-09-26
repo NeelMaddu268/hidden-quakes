@@ -40,6 +40,12 @@ export interface EventsLayerProps {
   minPx: number;
   /** Maximum on-screen radius, CSS pixels (scaled by DPR internally). */
   maxPx: number;
+  /** Core intensity (1 = token color; above 1 renders HDR cores for bloom). */
+  glow?: number;
+  /** Scene y of the site surface, for depth fog. */
+  surfaceY?: number;
+  /** Depth fog density per scene unit below the surface (look.ts → depthFogPerSceneUnit; 0 = off). */
+  depthFog?: number;
   /** Called every frame with this layer's uniforms; must not allocate. */
   drive: (uniforms: EventUniforms, deltaS: number) => void;
   renderOrder?: number;
@@ -50,10 +56,25 @@ export interface EventsLayerProps {
  * One InstancedMesh of event glyphs. The per-instance attributes are the bundle's typed arrays, set
  * once; every frame only writes a few uniforms. R3F disposes the geometry and material on unmount.
  */
-export function EventsLayer({ instances, color, size, minPx, maxPx, drive, renderOrder, name }: EventsLayerProps) {
+export function EventsLayer({
+  instances,
+  color,
+  size,
+  minPx,
+  maxPx,
+  glow = 1,
+  surfaceY = 0,
+  depthFog = 0,
+  drive,
+  renderOrder,
+  name,
+}: EventsLayerProps) {
   const mesh = useRef<InstancedMesh>(null);
   const material = useRef<ShaderMaterial>(null);
-  const uniforms = useMemo(() => createEventUniforms({ color, size, minPx, maxPx }), [color, size, minPx, maxPx]);
+  const uniforms = useMemo(
+    () => createEventUniforms({ color, size, minPx, maxPx, glow, depthFog, surfaceY }),
+    [color, size, minPx, maxPx, glow, depthFog, surfaceY],
+  );
   // three.js caches a material's uniforms object when it compiles the program, so new uniforms need a
   // new material: key the material on the uniforms object's identity.
   const materialKey = identityKey(uniforms);
@@ -89,7 +110,7 @@ export function EventsLayer({ instances, color, size, minPx, maxPx, drive, rende
       <planeGeometry args={[1, 1]}>
         <instancedBufferAttribute attach="attributes-aTier" args={[instances.tiers, 1]} />
         <instancedBufferAttribute attach="attributes-aScale" args={[instances.scales, 1]} />
-        <instancedBufferAttribute attach="attributes-aRevealAt" args={[instances.revealAt, 1]} />
+        <instancedBufferAttribute attach="attributes-aAppearAt" args={[instances.appearAt, 1]} />
         <instancedBufferAttribute attach="attributes-aTime" args={[instances.times, 1]} />
       </planeGeometry>
       <shaderMaterial

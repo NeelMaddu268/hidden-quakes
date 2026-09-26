@@ -9,7 +9,12 @@ import { CameraRig } from "./camera/CameraRig";
 import { CAMERA_FOV_DEG } from "./camera/presets";
 import { depthKmToSceneY, verticalExaggerationOf } from "./coords";
 import { useBundle } from "./data";
-import { candidateLayerOpacity, candidateRevealUniform, FILTER_TIER_OPACITY } from "./events/driver";
+import {
+  candidateLayerOpacity,
+  candidateRevealUniform,
+  FILTER_TIER_OPACITY,
+  REVEALED_ELAPSED_S,
+} from "./events/driver";
 import { EventsLayer } from "./events/EventsLayer";
 import {
   buildCandidateInstances,
@@ -19,23 +24,18 @@ import {
   TIER_INDEX,
 } from "./events/instances";
 import type { EventUniforms } from "./events/material";
+import { sceneFx } from "./fx";
+import { depthFogPerSceneUnit, LOOK } from "./look";
+import { Post } from "./post/Post";
+import { RevealDriver } from "./reveal/RevealDriver";
 import type { BundleState } from "./types";
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 
-// Glyph sizes (scene km) and on-screen minimums (CSS px). Public points read slightly larger so the
-// sparse public catalog is legible on its own before the reveal.
-const CANDIDATE_SIZE_KM = 0.06;
-const CANDIDATE_MIN_PX = 1.8;
-const PUBLIC_SIZE_KM = 0.08;
-const PUBLIC_MIN_PX = 2.6;
-/** No glyph grows past this on-screen radius (CSS px), however close the camera gets. */
-const MAX_GLYPH_PX = 18;
-
 /** Candidate (amber) layer: follows the reveal and the filter. Reads the store without re-rendering. */
 function driveCandidates(u: EventUniforms): void {
   const s = useDemo.getState();
-  u.uReveal.value = candidateRevealUniform(s.phase, s.revealProgress, u.uPopWidth.value);
+  u.uRevealElapsed.value = candidateRevealUniform(s.phase, sceneFx.revealElapsedS);
   const tiers = FILTER_TIER_OPACITY[s.filter];
   u.uTierOpacity.value.set(tiers[0], tiers[1], tiers[2]);
   u.uLayerOpacity.value = candidateLayerOpacity(s.filter);
@@ -43,7 +43,7 @@ function driveCandidates(u: EventUniforms): void {
 
 /** Public-catalog (cool white) layer: on screen from the first frame, at full weight. */
 function drivePublic(u: EventUniforms): void {
-  u.uReveal.value = 1;
+  u.uRevealElapsed.value = REVEALED_ELAPSED_S;
   u.uTierOpacity.value.set(1, 1, 1);
   u.uLayerOpacity.value = 1;
 }
@@ -58,6 +58,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
   // Frame the structure: Tier A and B candidates. Scattered Tier C events and the public regional
   // catalog (which spans the whole run bbox, tens of km) stay rendered but don't widen the shot. With
   // no candidates at all, the public catalog is framed instead.
+  const surfaceY = depthKmToSceneY(0, meta.scene);
   const bounds = useMemo(
     () =>
       computeBounds(
@@ -78,20 +79,26 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         name="public-events"
         instances={publicEvents}
         color={colors.public}
-        size={PUBLIC_SIZE_KM}
-        minPx={PUBLIC_MIN_PX}
-        maxPx={MAX_GLYPH_PX}
+        size={LOOK.publicCatalog.sizeKm}
+        minPx={LOOK.publicCatalog.minPx}
+        maxPx={LOOK.maxGlyphPx}
         drive={drivePublic}
+        glow={LOOK.publicCatalog.glow}
+        surfaceY={surfaceY}
+        depthFog={depthFogPerSceneUnit(ve)}
         renderOrder={2}
       />
       <EventsLayer
         name="candidate-events"
         instances={candidates}
         color={colors.recovered}
-        size={CANDIDATE_SIZE_KM}
-        minPx={CANDIDATE_MIN_PX}
-        maxPx={MAX_GLYPH_PX}
+        size={LOOK.candidates.sizeKm}
+        minPx={LOOK.candidates.minPx}
+        maxPx={LOOK.maxGlyphPx}
         drive={driveCandidates}
+        glow={LOOK.candidates.glow}
+        surfaceY={surfaceY}
+        depthFog={depthFogPerSceneUnit(ve)}
         renderOrder={1}
       />
       <CameraRig bounds={bounds} />
@@ -112,12 +119,14 @@ export function Scene() {
     <Canvas
       dpr={[1, 2]}
       flat
-      gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
+      gl={{ antialias: false, alpha: false, powerPreference: "high-performance" }}
       camera={{ fov: CAMERA_FOV_DEG, near: 0.02, far: 1000, position: [0, 10, 20] }}
       style={{ position: "fixed", inset: 0, background: colors.bg }}
     >
       <color attach="background" args={[colors.bg]} />
+      <RevealDriver />
       <SceneContents />
+      <Post />
     </Canvas>
   );
 }
