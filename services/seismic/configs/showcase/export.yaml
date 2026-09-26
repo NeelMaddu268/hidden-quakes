@@ -9,12 +9,24 @@ modes: [showcase]
 # tierA_most_stations: the Tier A event located with the most stations.
 heroRule: tierA_most_stations
 
+# Where bundles go: <outputDir>/<mode>/. Relative to the checkout that holds the hq package (the
+# bundle is committed to git, so it never goes to another worktree's tree), or an absolute path.
+outputDir: apps/web/public/data
+
+# SceneMeta knobs that are not derived from the run; origin and refSurfaceElevM come from run.yaml.
+scene:
+  # 1.0 is true scale; any other value makes the scene show a permanent "Vertical xN" badge.
+  verticalExaggeration: 1.0
+  # SceneMeta.depthLabel, shown next to the depth ruler; {refSurfaceElevM} is filled from run.yaml.
+  depthLabel: "Depth below site surface (ref {refSurfaceElevM:g} m ASL)"
+
 # Waveform snippets for the evidence drawer (EventEvidence).
 evidence:
   # Seconds of waveform before the predicted P arrival at each station.
-  beforeS: 2.0
+  beforeS: 1.5
   # Seconds after it. A snippet is beforeS + afterS long and must fit [minLengthS, maxLengthS].
-  afterS: 4.0
+  # 5 s x 16 traces x 100 Hz with 3-decimal samples stays under maxFileBytes; 6 s does not.
+  afterS: 3.5
   # Shortest snippet worth showing in the drawer, s (the contract describes 4-8 s snippets).
   minLengthS: 4.0
   # Longest snippet, s. Longer snippets make every evidence file heavier for no extra evidence.
@@ -28,6 +40,28 @@ evidence:
   displayRateHz: 100.0
   # Evidence files the web app fetches up front: the hero plus the first N in reveal order.
   preloadCount: 20
+  # Extra seconds read on both sides of the window before filtering, so the display copy's
+  # detrend/taper and the resampler never touch the samples that end up in the snippet.
+  padS: 1.0
+  # Component codes tried in order (last character of Station.channels); the first one the station
+  # has with data in the window becomes the trace. A station with none is dropped and logged.
+  channelPriority: [Z]
+  # Hard cap on one evidence file in bytes (docs/01: 20-60 KB). A file over it drops its farthest
+  # trace until it fits; the run fails if even a single trace does not fit.
+  maxFileBytes: 61440
+  # Events that get an evidence file: the hero, then reveal order. null = every event that has
+  # arrivals. The bundle is committed to git (docs/01 budgets < 30 MB), so cap this on a big run.
+  maxEvents: null
+
+# Decimals of every value the exporter derives itself (pipeline values are written as stored), so
+# the same run gives a byte-identical bundle.
+rounding:
+  timeS: 3      # WaveformSnippet.t0
+  distM: 1      # WaveformSnippet.epiDistM
+  sample: 3     # WaveformSnippet.samples, scaled to [-1, 1]
+  recall: 4     # AnalysisSummary.recall
+  rmsS: 3       # AnalysisSummary.medianRmsS
+  gain: 2       # AnalysisSummary.baseline.gain
 
 # Geothermal reference features (wells, facilities, boundaries), each with a cited SourceRef.
 # Empty until FEAT-01 sources a verified reference; the exporter then writes features.json from it.

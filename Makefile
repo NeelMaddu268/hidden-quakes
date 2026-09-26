@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 RUN ?=
 
-.PHONY: help check check-py check-web contracts check-contracts mock run publish-run fetch-run runs
+.PHONY: help check check-py check-web contracts check-contracts mock run export publish-run fetch-run runs
 
 help:
 	@echo "make check                  typecheck + lint + smoke tests (run before every PR)"
@@ -9,6 +9,7 @@ help:
 	@echo "make check-contracts        regenerate and fail if the committed TS/schema differ"
 	@echo "make mock                   regenerate the synthetic mock bundle in apps/web/public/data/mock"
 	@echo "make run [STAGES=a,b]       run the showcase pipeline; HQ_DATA_DIR=<dir> overrides <main checkout>/data"
+	@echo "make export RUN=<id>        export a run to apps/web/public/data/<mode>/ and validate the bundle"
 	@echo "make publish-run RUN=<id>   share a run's tables with the team (GitHub release)"
 	@echo "make fetch-run RUN=<id>     download a teammate's run tables"
 	@echo "make runs                   list shared runs"
@@ -33,6 +34,10 @@ mock:
 
 run:
 	@cd services/seismic && uv run hq run configs/showcase $(if $(STAGES),--stages $(STAGES),)
+
+export:
+	@test -n "$(RUN)" || { echo "usage: make export RUN=<runId>"; exit 1; }
+	@bash scripts/export-showcase.sh "$(RUN)"
 
 publish-run:
 	@set -e; \
