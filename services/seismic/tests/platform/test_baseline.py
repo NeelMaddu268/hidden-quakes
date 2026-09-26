@@ -2,8 +2,10 @@
 H2's associate -> locate -> match -> assign_tiers reproduces byte for byte from the stored
 tables, the gain is claimed only when it holds in both profiles, an STA/LTA set that matches
 PhaseNet's strict count gives no gain (and logs the docs/03 kill switch), and the ``validate``
-stage writes ``baseline.json``, ``gr.json`` and ``validation.json`` with counts. Offline: the
-toy seismology API and planted picks come from ``test_null_test``."""
+stage writes ``baseline.json``, ``gr.json``, ``validation_notes.json`` and ``validation.json``
+with counts. The G-R public curve is drawn on one magnitude scale (REQ-H2-13) and H2's gate and
+null model are read from the run record (FYI-H2-7). Offline: the toy seismology API and planted
+picks come from ``test_null_test``."""
 
 import json
 import logging
@@ -18,28 +20,40 @@ from hq_contracts import models as m
 from hq_contracts.io import read_table, to_frame, write_models
 
 from hq import runs
+from hq.config import RunConfig
 from hq.config.run import RunSection
-from hq.config.validate import BaselineConfig
+from hq.config.validate import BaselineConfig, GRConfig
 from hq.validate import (
     BASELINE_JSON,
+    CALIBRATION_TYPE_RECORD,
+    GATE_RECORD,
     GR_JSON,
+    NOTES_JSON,
     NULL_TEST_JSON,
+    PUBLIC_MAG_TYPE_KNOB,
     VALIDATION_JSON,
     ValidateError,
+    effective_gr_config,
+    magnitude_sets,
+    public_mag_type,
     validate_run,
 )
 from hq.validate import run as validate_stage
-from hq.validate.baseline import baseline_gain, index_rows, run_baseline
+from hq.validate.baseline import baseline_gain, baseline_reruns, index_rows, run_baseline
 from hq.validate.sidecars import BASELINE, GR, MAGNITUDE
 from tests.platform.test_null_test import (
     CATALOG_EVENT_INDICES,
+    CATALOG_MAG_TYPE,
+    N_MATCHED,
     N_STATIONS,
     NOW,
+    RUN_TIERING,
     SHOWCASE_DIR,
     TIER_A_MIN_STATIONS,
     FakeSeismologyApi,
     SyntheticPicks,
     build_picks,
+    read_notes,
     write_h2_validation_inputs,
     write_run_tables,
 )
@@ -57,6 +71,8 @@ MAG_MIN = 0.5
 MAG_BIN = 0.1
 STALTA_PICKER = "stalta"
 ROW_ORDER = [("phasenet", "full"), ("phasenet", "p_only"), ("stalta", "full"), ("stalta", "p_only")]
+OTHER_MAG_TYPE = "md"  # a second public scale (duration based) the curve must leave out
+RECOVERED_MAG_TYPE = "ML_cal"
 
 
 # --- fixtures -----------------------------------------------------------------------------------
@@ -72,6 +88,7 @@ def config_dir(tmp_path: Path) -> Path:
     validate = yaml.safe_load((target / "validate.yaml").read_text())
     validate["nullTest"]["nShuffles"] = NULL_SHUFFLES
     validate["gr"]["minEvents"] = GR_MIN_EVENTS
+    validate["gr"]["publicMagType"] = CATALOG_MAG_TYPE  # the fallback scale (REQ-H2-13)
     (target / "validate.yaml").write_text(yaml.safe_dump(validate))
     return target
 
@@ -161,7 +178,7 @@ def magnitude_events(section: RunSection, ctx: runs.RunContext) -> list[m.Seismi
                 tier="A",
                 tierReasons=["test"],
                 meanPickProb=0.9,
-                magnitude=m.Magnitude(value=float(mag), type="ML_cal", sigma=0.2),
+                magnitude=m.Magnitude(value=float(mag), type=RECOVERED_MAG_TYPE, sigma=0.2),
                 revealOrder=-1,
                 pickIds=[],
             )
@@ -171,6 +188,42 @@ def magnitude_events(section: RunSection, ctx: runs.RunContext) -> list[m.Seismi
 
 def calibration(loo_mae: float) -> m.MagCalibration:
     return m.MagCalibration(n=12, looMae=loo_mae, coefficients={"a": 1.0, "b": -1.5})
+
+
+def record_magnitude_stage(
+    ctx: runs.RunContext,
+    *,
+    mag_type: str = CATALOG_MAG_TYPE,
+    gate: float = 0.4,
+    null_model_mae: float | None = 0.5,
+) -> None:
+    """As H2's magnitude stage records itself (FYI-H2-7): the calibration type, the gate and
+    the leave-one-event-out null model under ``ProcessingRun.matching["magnitude"]``."""
+    params: dict[str, Any] = {
+        "calibrationMagType": mag_type,
+        "gate": {"maxLooMae": gate, "passed": True},
+    }
+    if null_model_mae is not None:
+        params["leaveOneEventOut"] = {"n": 12, "nullModelMae": null_model_mae}
+    ctx.record("magnitude", runtime_s=0.0, counts={}, params={"magnitude": params},
+               field="matching")  # fmt: skip
+
+
+def mixed_type_catalog(synthetic: SyntheticPicks, n_other: int) -> list[m.CatalogEvent]:
+    """The planted catalog plus ``n_other`` public events on another magnitude scale, placed
+    where no candidate matches them."""
+    extra = [
+        c.model_copy(
+            update={
+                "id": f"testpub-other{k + 1:03d}",
+                "t": c.t + 7.0 * (k + 1),
+                "mag": round(1.0 + 0.1 * k, 2),
+                "magType": OTHER_MAG_TYPE,
+            }
+        )
+        for k, c in enumerate(synthetic.catalog * (n_other // len(synthetic.catalog) + 1))
+    ][:n_other]
+    return [*synthetic.catalog, *extra]
 
 
 def run_rows(
@@ -189,6 +242,7 @@ def run_rows(
         ctx.config.seismology,
         ctx.config.run,
         cfg or ctx.config.validate.baseline,
+        thresholds=RUN_TIERING,
     )
 
 
@@ -203,6 +257,22 @@ def test_rows_reproduce_byte_identically_from_stored_tables(
     rows = run_rows(synthetic, stalta, ctx, api)
     assert api.calls == {"associate": 4, "locate": 4, "match": 4, "assign_tiers": 4}
     assert [(r.method, r.associationProfile) for r in rows] == ROW_ORDER
+    # REQ-H2-9: every rerun tiered with the run's bars, its arrivals and the stations table.
+    assert all(kw["thresholds"] is RUN_TIERING for kw in api.tier_kwargs)
+    assert all(kw["arrivals"] is not None and kw["stations"] is not None for kw in api.tier_kwargs)
+    reruns = baseline_reruns(
+        synthetic.picks_frame, to_frame(stalta, m.Pick), synthetic.stations_frame,
+        synthetic.catalog_frame, FakeSeismologyApi(), ctx.config.seismology, ctx.config.run,
+        ctx.config.validate.baseline, thresholds=RUN_TIERING,
+    )  # fmt: skip
+    assert [r.row for r in reruns] == rows
+    assert all(r.tiering is not None and r.tiering["thresholdSource"] == "supplied" for r in reruns)
+    with pytest.raises(ValidateError, match="baseline comparison.*'tier'.*H2 Seismology"):
+        run_baseline(
+            synthetic.picks_frame, to_frame(stalta, m.Pick), synthetic.stations_frame,
+            synthetic.catalog_frame, FakeSeismologyApi(), ctx.config.seismology, ctx.config.run,
+            ctx.config.validate.baseline, thresholds={},
+        )  # fmt: skip
     n_public = len(synthetic.catalog)
     for row in rows[:2]:  # PhaseNet: every station picks every event -> all Tier A
         assert (row.candidates, row.recoveredPublic) == (N_KEEP, n_public)
@@ -224,6 +294,7 @@ def test_rows_reproduce_byte_identically_from_stored_tables(
         ctx.config.seismology,
         ctx.config.run,
         ctx.config.validate.baseline,
+        thresholds=RUN_TIERING,
     )
     assert BASELINE.adapter.dump_json(again) == BASELINE.adapter.dump_json(rows)
     with pytest.raises(ValidateError, match="stalta picks name stations missing"):
@@ -340,9 +411,23 @@ def test_stage_writes_baseline_gr_and_validation_and_reproduces(
     assert gr.mcRecovered is not None and gr.bValue is not None and gr.bSigma is not None
     assert 0.6 < gr.bValue < 1.6 and 0.0 < gr.bSigma < 1.0  # a 40-event sample, loosely
     assert validation.magnitude == calibration(0.2)
+    notes = read_notes(ctx)
+    assert notes.baseline is not None and notes.baseline.reruns == 4
+    assert notes.baseline.rerunsTiered == 4 and notes.baseline.staticsApplied is False
+    assert notes.baseline.thresholds.nMatched == N_MATCHED
+    assert notes.baseline.associatorOverrides == {"p_only": {"nSPicks": 0, "nPAndSPicks": 0}}
+    assert notes.baseline.tieringRules is not None
+    assert notes.baseline.tieringRules.mapOnVolumeTopApplied is False
+    assert notes.gr is not None
+    assert (notes.gr.magType, notes.gr.magTypeSource) == (CATALOG_MAG_TYPE, PUBLIC_MAG_TYPE_KNOB)
+    assert notes.gr.publicIncluded == len(public_mags) and notes.gr.publicExcludedByType == {}
+    assert notes.gr.recoveredMagTypes == [RECOVERED_MAG_TYPE]
+    assert (notes.gr.maxLooMae, notes.gr.looMae) == (cfg.gr.maxLooMae, 0.2)
+    assert (notes.gr.nullModelMae, notes.gr.skill) == (None, None)  # no H2 record on this run
     counts = stage_counts(ctx)
     assert counts["baselineRows"] == 4 and counts["baselineGain"] == 1
     assert counts["publicMagnitudes"] == len(public_mags)
+    assert counts["publicMagnitudesExcluded"] == 0
     assert counts["recoveredMagnitudes"] == len(recovered_mags)
     assert counts["grBins"] == len(gr.magBins) and counts["hasMagnitude"] == 1
     assert counts["validationJson"] == 1 and counts["nullShuffles"] == NULL_SHUFFLES
@@ -355,7 +440,7 @@ def test_stage_writes_baseline_gr_and_validation_and_reproduces(
     # Same tables, same config: every file reproduces byte for byte.
     before = {
         name: ctx.path(name).read_bytes()
-        for name in (NULL_TEST_JSON, BASELINE_JSON, GR_JSON, VALIDATION_JSON)
+        for name in (NULL_TEST_JSON, BASELINE_JSON, GR_JSON, NOTES_JSON, VALIDATION_JSON)
     }
     validate_stage(ctx)
     assert {name: ctx.path(name).read_bytes() for name in before} == before
@@ -389,6 +474,8 @@ def test_stage_without_stalta_picks_or_magnitudes_names_the_owners(
     assert validation.baseline == [] and validation.gr is None and validation.magnitude is None
     assert BASELINE.read(ctx.run_dir, ValidateError) == []
     assert not ctx.path(GR_JSON).exists()
+    notes = read_notes(ctx)
+    assert notes.baseline is None and notes.gr is not None and notes.gr.looMae is None
     counts = stage_counts(ctx)
     assert (counts["baselineRows"], counts["baselineGain"], counts["grBins"]) == (0, 0, 0)
     assert counts["hasMagnitude"] == 0 and counts["recoveredMagnitudes"] == 0
@@ -401,3 +488,119 @@ def test_stage_without_stalta_picks_or_magnitudes_names_the_owners(
     ctx.path("magnitude.json").write_text('{"n": 1}')
     with pytest.raises(ValidateError, match="not a valid MagCalibration"):
         validate_stage(ctx)
+
+
+# --- G-R on one magnitude scale (REQ-H2-13) and H2's gate and null model (FYI-H2-7) -------------
+
+
+def test_gr_public_curve_uses_the_calibration_type_only(
+    ctx: runs.RunContext,
+    synthetic: SyntheticPicks,
+    section: RunSection,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A public catalog on two scales: publicCum counts the calibration type's magnitudes only,
+    the others are counted per type in the notes and the run record's type wins over the knob."""
+    caplog.set_level(logging.INFO, logger="hq.validate")
+    write_run_tables(ctx, synthetic)
+    n_other = 7
+    catalog = mixed_type_catalog(synthetic, n_other)
+    write_models(catalog, ctx.path("catalog.parquet"))
+    write_h2_validation_inputs(ctx)
+    events = magnitude_events(section, ctx)
+    write_models(events, ctx.path("events.parquet"))
+    MAGNITUDE.write(ctx.run_dir, calibration(0.2))
+    record_magnitude_stage(ctx, mag_type=CATALOG_MAG_TYPE, null_model_mae=0.5)
+    FakeSeismologyApi().install(monkeypatch)
+
+    runs.run_stage(ctx, "validate")
+
+    gr = GR.read(ctx.run_dir, ValidateError)
+    assert gr is not None
+    same_scale = [c.mag for c in catalog if c.magType == CATALOG_MAG_TYPE and c.mag is not None]
+    assert gr.publicCum[0] == len(same_scale) == len(synthetic.catalog)
+    assert gr.recoveredCum[0] == len(events)
+    notes = read_notes(ctx)
+    assert notes.gr is not None
+    assert (notes.gr.magType, notes.gr.magTypeSource) == (CATALOG_MAG_TYPE, CALIBRATION_TYPE_RECORD)
+    assert notes.gr.publicIncluded == len(same_scale)
+    assert notes.gr.publicExcludedByType == {OTHER_MAG_TYPE: n_other}
+    assert (notes.gr.maxLooMae, notes.gr.maxLooMaeSource) == (0.4, GATE_RECORD)
+    assert (notes.gr.looMae, notes.gr.nullModelMae, notes.gr.skill) == (0.2, 0.5, True)
+    counts = stage_counts(ctx)
+    assert counts["publicMagnitudes"] == len(same_scale)
+    assert counts["publicMagnitudesExcluded"] == n_other
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(f"{n_other} public magnitudes of other types left out" in msg for msg in messages)
+    assert any("looMae 0.200 is below" in msg for msg in messages)
+    assert not any("no skill" in msg for msg in messages)
+
+    # The other type as calibration type: the curve flips to it; the knob's type is a warning.
+    caplog.clear()
+    record_magnitude_stage(ctx, mag_type=OTHER_MAG_TYPE, null_model_mae=0.5)
+    out = validate_run(ctx)
+    assert out.gr is not None and out.gr.publicCum[0] == n_other
+    assert out.notes.gr is not None
+    assert out.notes.gr.publicExcludedByType == {CATALOG_MAG_TYPE: len(synthetic.catalog)}
+    assert (out.public_magnitudes, out.public_magnitudes_excluded) == (n_other, len(same_scale))
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(PUBLIC_MAG_TYPE_KNOB in w and "calibration type" in w for w in warnings)
+
+    # FYI-H2-7: a looMae not below H2's null model is a warning and skill false.
+    caplog.clear()
+    record_magnitude_stage(ctx, mag_type=CATALOG_MAG_TYPE, null_model_mae=0.15)
+    out = validate_run(ctx)
+    assert out.notes.gr is not None and out.notes.gr.skill is False
+    assert out.notes.gr.nullModelMae == 0.15 and out.gr is not None  # the gate still passes
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("not below H2's null-model MAE" in w and "no skill" in w for w in warnings)
+
+    # REQ-H2-13: H2's recorded gate is applied; a differing validate.yaml gate is a warning.
+    caplog.clear()
+    record_magnitude_stage(ctx, gate=0.1, null_model_mae=0.5)
+    out = validate_run(ctx)
+    assert out.gr is None and not ctx.path(GR_JSON).exists()
+    assert out.notes.gr is not None and out.notes.gr.maxLooMae == 0.1
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("differs from" in w and GATE_RECORD in w for w in warnings)
+    assert any("magnitude kill switch" in w and "0.100" in w for w in warnings)
+    assert not list(ctx.run_dir.glob("*.tmp"))
+
+
+def test_gr_without_a_public_magnitude_type_fails_naming_h2_and_the_knob(
+    ctx: runs.RunContext, synthetic: SyntheticPicks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_run_tables(ctx, synthetic)  # the planted catalog carries magnitudes
+    FakeSeismologyApi().install(monkeypatch)
+    cfg = ctx.config
+    no_knob = cfg.validate.model_copy(
+        update={"gr": cfg.validate.gr.model_copy(update={"publicMagType": None})}
+    )
+    bare = runs.RunContext(
+        ctx.run_id, ctx.run_dir, ctx.cache_dir,
+        RunConfig(run=cfg.run, signal=cfg.signal, seismology=cfg.seismology, export=cfg.export,
+                  validate=no_knob),
+    )  # fmt: skip
+    with pytest.raises(ValidateError, match=r"public magnitudes.*H2 Seismology.*gr\.publicMagType"):
+        validate_stage(bare)
+    # With H2's record the knob is not needed; without public magnitudes neither is.
+    assert public_mag_type({"calibrationMagType": "ml"}, GRConfig(), 3) == (
+        "ml", CALIBRATION_TYPE_RECORD,
+    )  # fmt: skip
+    assert public_mag_type(None, GRConfig(), 0) == (None, None)
+    assert public_mag_type({"failed": "boom"}, GRConfig(publicMagType="ml"), 3) == (
+        "ml", PUBLIC_MAG_TYPE_KNOB,
+    )  # fmt: skip
+    with pytest.raises(ValidateError, match="not a magnitude type"):
+        public_mag_type({"calibrationMagType": ""}, GRConfig(), 3)
+    with pytest.raises(ValidateError, match="not a number"):
+        effective_gr_config({"gate": {"maxLooMae": "0.4"}}, GRConfig())
+    assert effective_gr_config(None, GRConfig()) == (GRConfig(), "validate.yaml gr.maxLooMae")
+    # magnitude_sets: null magTypes are counted under "null"; no type selects nothing.
+    catalog = synthetic.catalog_frame
+    catalog.loc[0, "magType"] = None
+    sets = magnitude_sets(catalog, None, CATALOG_MAG_TYPE)
+    assert len(sets.public) == len(synthetic.catalog) - 1
+    assert sets.public_excluded_by_type == {"null": 1}
+    assert len(magnitude_sets(catalog, None, None).public) == 0

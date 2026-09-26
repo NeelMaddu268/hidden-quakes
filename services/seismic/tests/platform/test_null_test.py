@@ -1,9 +1,11 @@
 """VAL-02 acceptance: the null test reruns associate -> locate -> match -> assign_tiers on picks
 whose stations were shifted independently, finds fewer chance events than the coherent picks,
-is seeded and reproducible, and the ``validate`` stage writes ``null_test.json`` (always) and
-``validation.json`` (when H2's synthetic test exists) and records counts. Offline: picks come
-from a few planted synthetic events built here, and H2's four functions are a toy associator
-that clusters P arrival times, injected as a ``SeismologyApi`` or as fake ``hq.*`` modules."""
+is seeded and reproducible, and the ``validate`` stage writes ``null_test.json`` (always),
+``validation_notes.json`` (always) and ``validation.json`` (when H2's synthetic test exists) and
+records counts. Every rerun tiers against the run's own bars (REQ-H2-9) and locates with the
+run's cache dir and id (REQ-H2-8). Offline: picks come from a few planted synthetic events built
+here, and H2's four functions are a toy associator that clusters P arrival times, injected as a
+``SeismologyApi`` or as fake ``hq.*`` modules."""
 
 import json
 import logging
@@ -27,6 +29,7 @@ from hq import cli, runs
 from hq.config.run import RunSection
 from hq.config.validate import NullTestConfig, POnlyAssociatorConfig
 from hq.validate import (
+    NOTES_JSON,
     NULL_TEST_JSON,
     VALIDATION_JSON,
     LaneSeismologyApi,
@@ -35,14 +38,26 @@ from hq.validate import (
     run_null_test,
 )
 from hq.validate import run as validate_stage
+from hq.validate.notes import (
+    FOCAL_DEPTH_REFERENCE,
+    FOCAL_DEPTH_SENSOR,
+    MAP_ON_TOP_SKIPPED_NOTE,
+    NO_STATICS_NOTE,
+    ValidationNotes,
+    rerun_notes,
+)
 from hq.validate.null_test import (
+    Rerun,
     null_shuffles,
     profile_config,
+    profile_overrides,
+    require_thresholds,
     rerun_pipeline,
     select_profile,
     shift_picks,
     station_shifts,
 )
+from hq.validate.sidecars import NOTES
 
 pytestmark = pytest.mark.smoke
 
@@ -51,6 +66,7 @@ NOW = datetime(2026, 9, 10, 6, 7, tzinfo=UTC)
 SEED = 11
 STAGE_TEST_SHUFFLES = 4  # reruns the stage tests configure (the showcase config uses more)
 RUN_ID = "test-run"
+CATALOG_MAG_TYPE = "ML"  # the planted catalog's magType; the test config names it for G-R
 
 # --- synthetic picks (test-local; CLAUDE.md rule 5 allows small synthetic data in tests) ------
 N_STATIONS = 10
@@ -105,6 +121,9 @@ def config_dir(tmp_path: Path) -> Path:
     # statistics, and the lane's smoke suite must stay under 30 s (CLAUDE.md rule 10).
     validate = yaml.safe_load((target / "validate.yaml").read_text(encoding="utf-8"))
     validate["nullTest"]["nShuffles"] = STAGE_TEST_SHUFFLES
+    # The planted catalog carries magnitudes and these runs have no H2 magnitude record, so the
+    # public G-R scale comes from the knob (REQ-H2-13).
+    validate["gr"]["publicMagType"] = CATALOG_MAG_TYPE
     (target / "validate.yaml").write_text(yaml.safe_dump(validate), encoding="utf-8")
     return target
 
@@ -199,7 +218,7 @@ def build_picks(section: RunSection, seed: int = SEED) -> SyntheticPicks:
             depthDatum="sea level (test)",
             elevM=elev,
             mag=round(float(rng.uniform(0.5, 2.0)), 2),
-            magType="ML",
+            magType=CATALOG_MAG_TYPE,
             enu=m.Enu(e=0.0, n=0.0, u=elev - section.origin.elevM),
         )
         for j, idx in enumerate(CATALOG_EVENT_INDICES)
@@ -210,6 +229,62 @@ def build_picks(section: RunSection, seed: int = SEED) -> SyntheticPicks:
 @pytest.fixture
 def synthetic(section: RunSection) -> SyntheticPicks:
     return build_picks(section)
+
+
+# --- the run's bars (ProcessingRun.tiering["thresholds"], REQ-H2-9) ------------------------------
+
+# H2's seven tier metrics with their comparison (hq.tier.METRICS); the record mirrors
+# hq.tier.Thresholds.to_record (test_thresholds_record_round_trips_through_h2s_reader checks it).
+TIER_METRICS: tuple[tuple[str, str, float], ...] = (
+    ("nStations", ">=", 6.0),
+    ("nP", ">=", 6.0),
+    ("nS", ">=", 0.0),
+    ("rmsS", "<=", 0.08),
+    ("hErrM", "<=", 400.0),
+    ("vErrM", "<=", 800.0),
+    ("gapDeg", "<=", 180.0),
+)
+TIER_QUANTILES = {"A": 0.25, "B": 0.0}  # seismology.yaml tiering.quantiles
+N_MATCHED = 12
+
+
+def thresholds_record(n_matched: int = N_MATCHED) -> dict[str, Any]:
+    """A ``ProcessingRun.tiering["thresholds"]`` record shaped like H2's
+    ``Thresholds.to_record``: quantiles, nMatched, method and one bar per tier x metric."""
+    record: dict[str, Any] = {
+        "quantiles": dict(TIER_QUANTILES),
+        "nMatched": n_matched,
+        "method": "rank ceil((1 - q) * n) from the best (test)",
+    }
+    for tier, q in TIER_QUANTILES.items():
+        record[tier] = {
+            name: {
+                "op": op,
+                "value": value if tier == "A" else (value / 2 if op == ">=" else value * 2),
+                "excludesNothing": False,
+                "quantile": q if op == ">=" else 1.0 - q,
+                "label": f"p{100 * (q if op == '>=' else 1.0 - q):g} of matched",
+                "n": n_matched,
+                "nUsed": n_matched,
+                "nNull": 0,
+                "nMeeting": n_matched - 1,
+            }
+            for name, op, value in TIER_METRICS
+        }
+    return record
+
+
+RUN_TIERING: dict[str, Any] = {"thresholds": thresholds_record()}  # what ProcessingRun.tiering holds
+
+
+def record_tier_thresholds(ctx: runs.RunContext, record: dict[str, Any] | None = None) -> None:
+    """As H2's tier stage does: put the run's bars into ``ProcessingRun.tiering["thresholds"]``."""
+    ctx.record(
+        "tier",
+        runtime_s=0.0,
+        counts={},
+        params={"thresholds": thresholds_record() if record is None else record},
+    )
 
 
 # --- the toy seismology API ---------------------------------------------------------------------
@@ -254,6 +329,8 @@ class FakeSeismologyApi:
     )
     phases_seen: set[str] = field(default_factory=set)
     cfgs_seen: list[Any] = field(default_factory=list)  # the SeismologyConfig each associate got
+    locate_kwargs: list[dict[str, Any]] = field(default_factory=list)  # REQ-H2-8 per locate call
+    tier_kwargs: list[dict[str, Any]] = field(default_factory=list)  # REQ-H2-9 per assign_tiers
 
     def _tick(self, name: str) -> None:
         self.calls[name] += 1
@@ -317,8 +394,13 @@ class FakeSeismologyApi:
         stations: pd.DataFrame,
         cfg: Any,
         run: RunSection,
+        *,
+        cache_dir: Path | None = None,
+        run_id: str | None = None,
     ) -> FakeLocateResult:
+        """H2's ``locate`` shape: the docs/02 positional call plus the REQ-H2-8 keywords."""
         self._tick("locate")
+        self.locate_kwargs.append({"cache_dir": cache_dir, "run_id": run_id})
         known = set(picks["id"].astype(str))
         events: list[m.SeismicEvent] = []
         for k, row in enumerate(assoc.events.itertuples(index=False)):
@@ -388,9 +470,28 @@ class FakeSeismologyApi:
         )
 
     def assign_tiers(
-        self, events_located: pd.DataFrame, matches: pd.DataFrame, cfg: Any
+        self,
+        events_located: pd.DataFrame,
+        matches: pd.DataFrame,
+        cfg: Any,
+        *,
+        flags: pd.DataFrame | None = None,
+        thresholds: Any = None,
+        arrivals: pd.DataFrame | None = None,
+        stations: pd.DataFrame | None = None,
     ) -> FakeTierResult:
+        """H2's ``assign_tiers`` shape (REQ-H2-9 keywords). Like H2, a call without the run's
+        bars cannot tier a rerun (its matched set is too small) and raises; with them the tiers
+        come from the toy nStations rule and ``tiering`` carries H2's rules keys."""
         self._tick("assign_tiers")
+        self.tier_kwargs.append(
+            {"thresholds": thresholds, "arrivals": arrivals, "stations": stations, "flags": flags}
+        )
+        if thresholds is None or not isinstance(thresholds.get("thresholds"), dict):
+            raise ValueError("TierError (test stand-in): a rerun's matched set is too small to "
+                             "derive bars from; pass thresholds=")  # fmt: skip
+        if (arrivals is None) != (stations is None):
+            raise ValueError("TierError (test stand-in): pass arrivals= and stations= together")
         events = events_located.copy()
         n = events["quality_nStations"].to_numpy(dtype=np.int64)
         events["tier"] = np.where(
@@ -405,9 +506,21 @@ class FakeSeismologyApi:
         events["magnitude_type"] = None
         events["magnitude_sigma"] = None
         final = to_frame(from_frame(events, m.SeismicEvent), m.SeismicEvent)  # docs/02 §2 columns
-        return FakeTierResult(
-            final, {"tierA": {"nStations": TIER_A_MIN_STATIONS}, "tierB": {"nStations": 5}}
-        )
+        tiering = {
+            "thresholdSource": "supplied",
+            "rules": {
+                "A": {
+                    "mapOnVolumeTop": {"applied": flags is not None},
+                    "nearestStation": {
+                        "focalDepthBelow": FOCAL_DEPTH_SENSOR if arrivals is not None
+                        else FOCAL_DEPTH_REFERENCE,
+                    },
+                },
+            },
+            "thresholds": thresholds["thresholds"],
+            "toy": {"tierA": {"nStations": TIER_A_MIN_STATIONS}, "tierB": {"nStations": 5}},
+        }  # fmt: skip
+        return FakeTierResult(final, tiering)
 
     def as_lane_api(self) -> LaneSeismologyApi:
         return LaneSeismologyApi(self.associate, self.locate, self.match, self.assign_tiers)
@@ -431,16 +544,96 @@ def test_coherent_picks_give_one_event_per_planted_event(
     synthetic: SyntheticPicks, section: RunSection, ctx: runs.RunContext
 ) -> None:
     api = FakeSeismologyApi()
-    n_events, n_strict = rerun_pipeline(
+    rerun = rerun_pipeline(
         synthetic.picks_frame,
         synthetic.stations_frame,
         synthetic.catalog_frame,
         api,
         ctx.config.seismology,
         section,
+        thresholds=RUN_TIERING,
     )
-    assert (n_events, n_strict) == (N_EVENTS, N_EVENTS)  # every station picks every event
+    assert isinstance(rerun, Rerun)
+    assert (rerun.n_events, rerun.n_strict) == (N_EVENTS, N_EVENTS)  # every station picks every event
     assert api.calls == {"associate": 1, "locate": 1, "match": 1, "assign_tiers": 1}
+    assert rerun.tiering is not None and rerun.tiering["thresholdSource"] == "supplied"
+
+
+def test_reruns_tier_with_the_run_bars_arrivals_and_stations(
+    synthetic: SyntheticPicks, section: RunSection, ctx: runs.RunContext
+) -> None:
+    """REQ-H2-9: every rerun calls assign_tiers(events, matches, cfg, thresholds=<the run's
+    tiering>, arrivals=located.arrivals, stations=<the stations table it located with>)."""
+    api = FakeSeismologyApi()
+    stations = synthetic.stations_frame
+    run_null_test(
+        synthetic.picks_frame,
+        stations,
+        synthetic.catalog_frame,
+        api,
+        ctx.config.seismology,
+        section,
+        null_cfg(nShuffles=2, shiftS=0.001),  # tiny shifts: every rerun reaches assign_tiers
+        thresholds=RUN_TIERING,
+    )
+    assert len(api.tier_kwargs) == 2
+    for kw in api.tier_kwargs:
+        assert kw["thresholds"] is RUN_TIERING
+        assert kw["stations"] is stations
+        assert list(kw["arrivals"].columns) == list(ARRIVAL_COLUMNS)  # the rerun's LocateResult
+        assert kw["flags"] is None  # docs/02 locate() returns no flags (REQ-H2-9)
+    # The docs/02 keyword-free call is not made: without the run's bars the reruns stop.
+    with pytest.raises(ValidateError, match=r"tiering\['thresholds'\].*'tier'.*H2 Seismology"):
+        run_null_test(
+            synthetic.picks_frame, stations, synthetic.catalog_frame, FakeSeismologyApi(),
+            ctx.config.seismology, section, null_cfg(nShuffles=2), thresholds={},
+        )  # fmt: skip
+    with pytest.raises(ValidateError, match="never invented"):
+        require_thresholds({"thresholds": None}, "x")
+    with pytest.raises(ValidateError, match="never invented"):
+        require_thresholds(None, "x")
+    assert require_thresholds(RUN_TIERING, "x") is RUN_TIERING
+    # The notes read H2's rules back from the reruns' tiering records.
+    notes = rerun_notes(
+        [None, api.tier_kwargs and {"thresholdSource": "supplied", "rules": {"A": {
+            "mapOnVolumeTop": {"applied": False},
+            "nearestStation": {"focalDepthBelow": FOCAL_DEPTH_SENSOR}}}}],
+        RUN_TIERING["thresholds"], profile_overrides(("p_only",), POnlyAssociatorConfig()),
+        "test",
+    )  # fmt: skip
+    assert (notes.reruns, notes.rerunsTiered, notes.staticsApplied) == (2, 1, False)
+    assert notes.thresholds.nMatched == N_MATCHED and notes.thresholds.quantiles == TIER_QUANTILES
+    assert notes.tieringRules is not None
+    assert notes.tieringRules.focalDepthBelow == FOCAL_DEPTH_SENSOR
+    assert notes.tieringRules.mapOnVolumeTopApplied is False
+    assert notes.associatorOverrides == {"p_only": {"nSPicks": 0, "nPAndSPicks": 0}}
+    assert NO_STATICS_NOTE in notes.notes and MAP_ON_TOP_SKIPPED_NOTE in notes.notes
+    assert profile_overrides(("full",), POnlyAssociatorConfig()) == {}
+    with pytest.raises(ValidateError, match="rules.A.nearestStation.*H2 Seismology"):
+        rerun_notes([{"thresholdSource": "supplied"}], RUN_TIERING["thresholds"], {}, "test")
+    with pytest.raises(ValidateError, match="not a tiering thresholds record.*H2 Seismology"):
+        rerun_notes([None], {"quantiles": {}}, {}, "test")
+
+
+def test_thresholds_record_round_trips_through_h2s_reader() -> None:
+    """The record these tests write into run.json is what H2's ``Thresholds.from_record``
+    parses (so the stage tests exercise the shape the real tier stage records)."""
+    from hq.tier import Thresholds  # H2's module, on the same tree
+
+    record = thresholds_record()
+    parsed = Thresholds.from_record(record)
+    assert parsed.n_matched == N_MATCHED and parsed.quantiles == TIER_QUANTILES
+    # Every bar field from_record reads survives; "method" and "excludesNothing" are H2's own
+    # derived text and bound check (nS >= 0 sits on its bound), so they are not compared.
+    read_keys = ("op", "value", "quantile", "label", "n", "nUsed", "nNull", "nMeeting")
+    back = parsed.to_record()
+    assert back.keys() == record.keys()
+    for tier in TIER_QUANTILES:
+        assert back[tier].keys() == record[tier].keys() == {name for name, _, _ in TIER_METRICS}
+        for name in back[tier]:
+            assert {k: back[tier][name][k] for k in read_keys} == {
+                k: record[tier][name][k] for k in read_keys
+            }
 
 
 def test_null_test_finds_fewer_chance_events_than_the_coherent_picks(
@@ -456,6 +649,7 @@ def test_null_test_finds_fewer_chance_events_than_the_coherent_picks(
         ctx.config.seismology,
         section,
         cfg,
+        thresholds=RUN_TIERING,
     )
     assert isinstance(result, m.NullTest)
     assert result.nShuffles == cfg.nShuffles and result.shiftRangeS == cfg.shiftS
@@ -481,6 +675,7 @@ def test_shifts_are_shared_within_a_station_and_bounded(
         ctx.config.seismology,
         section,
         cfg,
+        thresholds=RUN_TIERING,
     )
     assert [o.index for o in outcomes] == [0, 1, 2]
     station_ids = sorted({s.id for s in synthetic.stations})
@@ -508,15 +703,22 @@ def test_same_seed_reproduces_and_a_different_seed_differs(
     args = (synthetic.picks_frame, synthetic.stations_frame, synthetic.catalog_frame)
 
     def outcomes(cfg: NullTestConfig) -> list[Any]:
-        return null_shuffles(*args, FakeSeismologyApi(), ctx.config.seismology, section, cfg)
+        return null_shuffles(
+            *args, FakeSeismologyApi(), ctx.config.seismology, section, cfg,
+            thresholds=RUN_TIERING,
+        )  # fmt: skip
 
     cfg = null_cfg(nShuffles=6)
     first, again = outcomes(cfg), outcomes(cfg)
     for a, b in zip(first, again, strict=True):
         pd.testing.assert_series_equal(a.shifts_s, b.shifts_s)
         assert (a.n_events, a.n_strict) == (b.n_events, b.n_strict)
-    result_a = run_null_test(*args, FakeSeismologyApi(), ctx.config.seismology, section, cfg)
-    result_b = run_null_test(*args, FakeSeismologyApi(), ctx.config.seismology, section, cfg)
+    result_a = run_null_test(
+        *args, FakeSeismologyApi(), ctx.config.seismology, section, cfg, thresholds=RUN_TIERING
+    )
+    result_b = run_null_test(
+        *args, FakeSeismologyApi(), ctx.config.seismology, section, cfg, thresholds=RUN_TIERING
+    )
     assert result_a == result_b
     other = outcomes(null_cfg(nShuffles=2, seed=4))
     assert not np.allclose(other[0].shifts_s.to_numpy(), first[0].shifts_s.to_numpy())
@@ -540,6 +742,7 @@ def test_p_only_profile_feeds_p_picks_only(
         ctx.config.seismology,
         section,
         null_cfg(nShuffles=2, profile="p_only"),
+        thresholds=RUN_TIERING,
     )
     assert api.phases_seen == {"P"}
     # REQ-H2-7: the p_only reruns carry the associator overrides; the run's config is untouched.
@@ -557,6 +760,7 @@ def test_p_only_profile_feeds_p_picks_only(
         ctx.config.seismology,
         section,
         null_cfg(nShuffles=2, profile="full"),
+        thresholds=RUN_TIERING,
     )
     assert all(c is ctx.config.seismology for c in full_api.cfgs_seen)
     with pytest.raises(ValidateError, match="associator"):
@@ -570,25 +774,26 @@ def test_api_errors_propagate_unchanged(
     with pytest.raises(RuntimeError, match="boom in associate"):
         run_null_test(
             *args, FakeSeismologyApi(fail_in="associate"), ctx.config.seismology, section,
-            null_cfg(nShuffles=2),
+            null_cfg(nShuffles=2), thresholds=RUN_TIERING,
         )  # fmt: skip
     # A rerun that associates nothing never reaches the later steps; shiftS far beyond the
     # window spread makes every rerun empty, and the summary is all zeros, not a failure.
     api = FakeSeismologyApi(fail_in="locate")
     result = run_null_test(
-        *args, api, ctx.config.seismology, section, null_cfg(nShuffles=2, shiftS=1.0e6)
-    )
+        *args, api, ctx.config.seismology, section, null_cfg(nShuffles=2, shiftS=1.0e6),
+        thresholds=RUN_TIERING,
+    )  # fmt: skip
     assert (result.meanChanceEvents, result.meanChanceStrict, result.stdChanceEvents) == (0, 0, 0)
     assert api.calls == {"associate": 2, "locate": 0, "match": 0, "assign_tiers": 0}
     with pytest.raises(ValidateError, match="picks lacks columns"):
         run_null_test(
             args[0].drop(columns=["stationId"]), *args[1:], FakeSeismologyApi(),
-            ctx.config.seismology, section, null_cfg(nShuffles=2),
+            ctx.config.seismology, section, null_cfg(nShuffles=2), thresholds=RUN_TIERING,
         )  # fmt: skip
     with pytest.raises(ValidateError, match="missing from stations table"):
         run_null_test(
             args[0], args[1].iloc[:2], args[2], FakeSeismologyApi(), ctx.config.seismology,
-            section, null_cfg(nShuffles=2),
+            section, null_cfg(nShuffles=2), thresholds=RUN_TIERING,
         )  # fmt: skip
 
 
@@ -596,9 +801,18 @@ def test_api_errors_propagate_unchanged(
 
 
 def write_run_tables(ctx: runs.RunContext, synthetic: SyntheticPicks) -> None:
+    """The stage's inputs: the three tables and, as H2's tier stage leaves it, the run's bars in
+    ``run.json`` (REQ-H2-9)."""
     write_models(synthetic.stations, ctx.path("stations.parquet"))
     write_models(synthetic.picks, ctx.path("picks.parquet"))
     write_models(synthetic.catalog, ctx.path("catalog.parquet"))
+    record_tier_thresholds(ctx)
+
+
+def read_notes(ctx: runs.RunContext) -> ValidationNotes:
+    notes = NOTES.read(ctx.run_dir, ValidateError)
+    assert isinstance(notes, ValidationNotes)
+    return notes
 
 
 def write_h2_validation_inputs(ctx: runs.RunContext) -> tuple[m.SyntheticTest, list[m.SweepPoint]]:
@@ -639,6 +853,34 @@ def test_stage_writes_validation_json_and_records_counts(
     null_test = m.NullTest.model_validate_json(ctx.path(NULL_TEST_JSON).read_text())
     assert (null_test.nShuffles, null_test.shiftRangeS) == (cfg.nShuffles, cfg.shiftS)
     assert null_test.meanChanceEvents < N_EVENTS
+    # REQ-H2-8: every rerun located with the run's cache dir and id, bound into locate.
+    assert api.locate_kwargs and all(
+        kw == {"cache_dir": ctx.cache_dir, "run_id": ctx.run_id} for kw in api.locate_kwargs
+    )
+    # REQ-H2-9: every tiered rerun used the run's own bars from run.json, with its arrivals and
+    # the stations table it located with.
+    run_tiering = ctx.read_run().tiering
+    assert run_tiering["thresholds"] == thresholds_record()
+    assert api.tier_kwargs and all(
+        kw["thresholds"]["thresholds"] == run_tiering["thresholds"]
+        and kw["arrivals"] is not None
+        and kw["stations"] is not None
+        and set(kw["stations"]["id"]) == {s.id for s in synthetic.stations}
+        for kw in api.tier_kwargs
+    )
+    notes = read_notes(ctx)
+    assert notes.nullTest.reruns == cfg.nShuffles
+    assert notes.nullTest.rerunsTiered == len(api.tier_kwargs)
+    assert notes.nullTest.thresholds.nMatched == N_MATCHED
+    assert notes.nullTest.staticsApplied is False and NO_STATICS_NOTE in notes.nullTest.notes
+    assert notes.nullTest.associatorOverrides == {}  # the full profile
+    assert notes.baseline is None  # no picks_stalta.parquet
+    assert notes.gr is not None and notes.gr.magType == CATALOG_MAG_TYPE
+    assert notes.gr.magTypeSource == "validate.yaml gr.publicMagType"
+    assert (notes.gr.looMae, notes.gr.nullModelMae, notes.gr.skill) == (None, None, None)
+    if notes.nullTest.tieringRules is not None:
+        assert notes.nullTest.tieringRules.focalDepthBelow == FOCAL_DEPTH_SENSOR
+        assert notes.nullTest.tieringRules.mapOnVolumeTopApplied is False
     validation = m.Validation.model_validate_json(ctx.path(VALIDATION_JSON).read_text())
     assert validation.nullTest == null_test
     assert validation.synthetic == synthetic_test
@@ -650,15 +892,43 @@ def test_stage_writes_validation_json_and_records_counts(
     assert counts["nullChanceEvents"] == round(null_test.meanChanceEvents * cfg.nShuffles)
     assert counts["nullChanceStrict"] == round(null_test.meanChanceStrict * cfg.nShuffles)
     assert counts["sweepPoints"] == len(sweep) and counts["validationJson"] == 1
+    assert counts["nullRerunsTiered"] == notes.nullTest.rerunsTiered
+    assert counts["publicMagnitudesExcluded"] == 0
     assert ctx.read_run().runtimeS["validate"] >= 0.0
     assert not list(ctx.run_dir.glob("*.tmp"))
     messages = [r.getMessage() for r in caplog.records]
     assert sum("null test: rerun" in msg for msg in messages) == cfg.nShuffles
     assert any(msg.startswith("null test: chance events") for msg in messages)
-    # Same seed, same file: the stage is reproducible byte for byte.
-    before = ctx.path(NULL_TEST_JSON).read_bytes()
+    assert any("reruns use" in msg and "cache_dir" in msg for msg in messages)
+    # Same seed, same files: the stage is reproducible byte for byte.
+    before = {n: ctx.path(n).read_bytes() for n in (NULL_TEST_JSON, NOTES_JSON)}
     validate_stage(ctx)
-    assert ctx.path(NULL_TEST_JSON).read_bytes() == before
+    assert {n: ctx.path(n).read_bytes() for n in before} == before
+
+
+def test_stage_without_the_run_bars_names_h2s_tier_stage(
+    ctx: runs.RunContext, synthetic: SyntheticPicks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-H2-9: no ProcessingRun.tiering["thresholds"] -> a loud error naming stage tier; the
+    reruns never invent bars, and nothing is rerun."""
+    write_models(synthetic.stations, ctx.path("stations.parquet"))
+    write_models(synthetic.picks, ctx.path("picks.parquet"))
+    write_models(synthetic.catalog, ctx.path("catalog.parquet"))
+    api = FakeSeismologyApi()
+    api.install(monkeypatch)
+    assert ctx.read_run().tiering == {}
+    with pytest.raises(ValidateError, match=r"tiering\['thresholds'\].*'tier'.*H2 Seismology"):
+        runs.run_stage(ctx, "validate")
+    assert api.calls["associate"] == 0
+    # H2's tier stage records thresholds: null when it had no located events: still no bars.
+    record_tier_thresholds(ctx, record=None)
+    ctx.record("tier", runtime_s=0.0, counts={}, params={"thresholds": None})
+    with pytest.raises(ValidateError, match="never invented"):
+        runs.run_stage(ctx, "validate")
+    assert api.calls["associate"] == 0
+    record_tier_thresholds(ctx)
+    runs.run_stage(ctx, "validate")
+    assert api.calls["associate"] == STAGE_TEST_SHUFFLES
 
 
 def test_stage_without_synthetic_json_writes_the_sidecar_and_names_h2(

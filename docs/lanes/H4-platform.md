@@ -167,6 +167,12 @@ This laptop runs the run of record. Around 10:30 PM, take H1's `data/cache/` fol
 | PhaseNet vs STA/LTA gain | `summary.baseline.gain` | Baseline ran and gain > 1 in both profiles |
 | Chance associations | `validation.nullTest.meanChanceEvents` | Null test ran |
 
+### Validation reruns and `validation_notes.json`
+
+The null test and the baseline table rerun H2's `associate -> locate -> match -> assign_tiers` (docs/02 §5) with two keyword extensions H2 asked for: `locate(..., cache_dir=ctx.cache_dir, run_id=ctx.run_id)` (REQ-H2-8, bound in `hq.validate.lanes.real_seismology_api`) and `assign_tiers(events, matches, cfg, thresholds=<the run's ProcessingRun.tiering>, arrivals=located.arrivals, stations=<the stations table the rerun located with>)` (REQ-H2-9). The bars are the run's own, from H2's tier stage; the stage fails naming stage `tier` when `run.json` has none, and never invents bars.
+
+What a rerun cannot do is written next to its numbers in `validation_notes.json` (`hq.validate.notes.ValidationNotes`, docs/02 §2): no station statics (`hq.locate.locate` has no match pass, FYI-H2-8, so rerun `rmsS` is larger and the run's bars are harder to meet), no locate flags (the `mapOnVolumeTop` rule is skipped, which only lets more rerun events into Tier A), how the nearest-station rule measured focal depth, and the `p_only` associator overrides. The G-R section records the one `magType` `publicCum` is drawn from (the calibration type H2 recorded, else `validate.yaml` `gr.publicMagType`; REQ-H2-13), the public magnitudes left out per type, the kill-switch gate applied (H2's recorded `gate.maxLooMae` when present) and `looMae` next to H2's `nullModelMae` (FYI-H2-7; a `looMae` not below it is logged as "no skill"). Panels that quote a null-test, baseline or G-R number should be able to show these notes beside it.
+
 ### Compliance
 
 The README states plainly what was pre-event research (which data exists, which methods work) and what was built during HackGT (everything in the repo). Git history starts at 8:00 PM.
