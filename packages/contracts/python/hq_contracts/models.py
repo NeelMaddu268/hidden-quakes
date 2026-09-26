@@ -22,9 +22,10 @@ DataMode = TypeAliasType("DataMode", Literal["mock", "showcase", "live", "snapsh
 
 
 class Model(BaseModel):
-    """Base for every contract model: unknown keys are an error, never silently dropped."""
+    """Base for every contract model: unknown keys are an error, never silently dropped, and
+    NaN/inf floats are rejected (a missing value is ``None``, never NaN; REQ-H2-3)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
 class Enu(Model):
@@ -42,7 +43,7 @@ class Station(Model):
     location: str = ""
     latitude: float
     longitude: float
-    surfaceElevM: float  # StationXML station elevation (wellhead for boreholes)
+    surfaceElevM: float  # site ground surface at the sensor (DEM-checked; wellhead for boreholes)
     sensorDepthM: float  # StationXML channel depth; 0 for surface sensors
     sensorElevM: float  # surfaceElevM - sensorDepthM
     kind: Literal["surface", "borehole", "strong_motion"]
