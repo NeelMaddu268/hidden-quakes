@@ -9,13 +9,11 @@ import { CameraRig } from "./camera/CameraRig";
 import { CAMERA_FOV_DEG } from "./camera/presets";
 import { depthKmToSceneY, verticalExaggerationOf } from "./coords";
 import { useBundle } from "./data";
-import {
-  candidateLayerOpacity,
-  candidateRevealUniform,
-  FILTER_TIER_OPACITY,
-  REVEALED_ELAPSED_S,
-} from "./events/driver";
+import { candidateRevealUniform, REVEALED_ELAPSED_S } from "./events/driver";
 import { EventsLayer } from "./events/EventsLayer";
+import type { HaloUniforms } from "./events/haloMaterial";
+import { buildHaloInstances } from "./events/halos";
+import { HalosLayer } from "./events/HalosLayer";
 import {
   buildCandidateInstances,
   buildPublicInstances,
@@ -24,6 +22,8 @@ import {
   TIER_INDEX,
 } from "./events/instances";
 import type { EventUniforms } from "./events/material";
+import { FilterDriver } from "./filters/FilterDriver";
+import { filterCountIssues } from "./filters/selectors";
 import { sceneFx } from "./fx";
 import { depthFogPerSceneUnit, LOOK } from "./look";
 import { Post } from "./post/Post";
@@ -32,20 +32,25 @@ import type { BundleState } from "./types";
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 
-/** Candidate (amber) layer: follows the reveal and the filter. Reads the store without re-rendering. */
+/** Candidate (amber) layer: follows the reveal clock and the eased filter look (scene/filters). */
 function driveCandidates(u: EventUniforms): void {
-  const s = useDemo.getState();
-  u.uRevealElapsed.value = candidateRevealUniform(s.phase, sceneFx.revealElapsedS);
-  const tiers = FILTER_TIER_OPACITY[s.filter];
-  u.uTierOpacity.value.set(tiers[0], tiers[1], tiers[2]);
-  u.uLayerOpacity.value = candidateLayerOpacity(s.filter);
+  const look = sceneFx.filterLook;
+  u.uRevealElapsed.value = candidateRevealUniform(useDemo.getState().phase, sceneFx.revealElapsedS);
+  u.uTierOpacity.value.set(look.tierA, look.tierB, look.tierC);
+  u.uLayerOpacity.value = look.candidates;
 }
 
-/** Public-catalog (cool white) layer: on screen from the first frame, at full weight. */
+/** Public-catalog (cool white) layer: on screen from the first frame; steps back under STRICT. */
 function drivePublic(u: EventUniforms): void {
   u.uRevealElapsed.value = REVEALED_ELAPSED_S;
   u.uTierOpacity.value.set(1, 1, 1);
-  u.uLayerOpacity.value = 1;
+  u.uLayerOpacity.value = sceneFx.filterLook.publicLayer;
+}
+
+/** Tier A halos: appear with their events, visible only under STRICT. */
+function driveHalos(u: HaloUniforms): void {
+  u.uRevealElapsed.value = candidateRevealUniform(useDemo.getState().phase, sceneFx.revealElapsedS);
+  u.uOpacity.value = sceneFx.filterLook.halos;
 }
 
 function BundleScene({ bundle }: { bundle: ReadyBundle }) {
@@ -68,10 +73,17 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
     [candidates, publicEvents, meta.scene],
   );
 
+  const halos = useMemo(() => buildHaloInstances(events, candidates, ve), [events, candidates, ve]);
+
   useEffect(() => {
     const issues = revealOrderIssues(events.map((e) => e.revealOrder));
     if (issues.length) console.error(`[scene] revealOrder was not assigned by the exporter: ${issues.join("; ")}`);
   }, [events]);
+
+  useEffect(() => {
+    const issues = filterCountIssues(events, meta.summary);
+    if (issues.length) console.error(`[scene] filter counts disagree with the summary: ${issues.join("; ")}`);
+  }, [events, meta.summary]);
 
   return (
     <>
@@ -101,6 +113,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         depthFog={depthFogPerSceneUnit(ve)}
         renderOrder={1}
       />
+      <HalosLayer halos={halos} drive={driveHalos} />
       <CameraRig bounds={bounds} />
     </>
   );
@@ -125,6 +138,7 @@ export function Scene() {
     >
       <color attach="background" args={[colors.bg]} />
       <RevealDriver />
+      <FilterDriver />
       <SceneContents />
       <Post />
     </Canvas>
