@@ -89,10 +89,12 @@
       "XX.M08",
       "XX.M09",
       "XX.M10",
+      "XX.M11",
       "XX.M12",
-      "XX.M13",
       "XX.M14",
-      "XX.M15"
+      "XX.M15",
+      "XX.M16",
+      "XX.M17"
     ],
     "tiering": {
       "method": "thresholds from quantiles of matched public events (synthetic values)",
@@ -150,7 +152,7 @@
   },
   "scene": {
     "depthLabel": "Depth below site surface (ref 1627.7 m ASL)",
-    "heroEventId": "hq-mock-13-000478",
+    "heroEventId": "hq-mock-13-000482",
     "isSynthetic": true,
     "originElevM": 1627.7,
     "originLat": 38.51,
@@ -175,7 +177,7 @@
       "strictStalta": 46
     },
     "candidateCount": 500,
-    "medianRmsS": 0.071,
+    "medianRmsS": 0.073,
     "medianStations": 8.0,
     "publicCatalogCount": 43,
     "recall": 0.8837,
@@ -184,11 +186,11 @@
     "strictAdditionalCount": 124,
     "strictQualityCount": 150,
     "unmatchedPublicIds": [
-      "mockpub011",
       "mockpub012",
-      "mockpub013",
-      "mockpub015",
-      "mockpub025"
+      "mockpub016",
+      "mockpub018",
+      "mockpub038",
+      "mockpub041"
     ]
   }
 }

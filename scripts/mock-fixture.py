@@ -9,7 +9,7 @@ validation number comes from a real catalog, a real run or pre-event outputs. Th
 What it produces (docs/01 -> Data bundle), every file validated by ``hq_contracts.models``::
 
     meta.json                BundleMeta   mode "mock", scene, run, summary recomputed from the data
-    stations.json            Station[]    12 surface stations on a ring + 3 borehole sensors
+    stations.json            Station[]    14 surface stations on a ring + 3 borehole sensors
     catalog.json             CatalogEvent[]  43 public points, 38 matched to a candidate
     events.json              SeismicEvent[]  ~500 candidates: Tier A cluster, B around it, C scattered
     features.json            GeoFeature[]  one synthetic well, one facility, one boundary; all unverified
@@ -82,7 +82,7 @@ class Knobs:
     n_matched: dict[str, int] = field(default_factory=lambda: {"A": 26, "B": 10, "C": 2})  # =38
     n_events: dict[str, int] = field(default_factory=lambda: {"A": 150, "B": 200, "C": 150})
     n_evidence: dict[str, int] = field(default_factory=lambda: {"A": 12, "B": 5, "C": 3})  # =20
-    n_surface_stations: int = 12
+    n_surface_stations: int = 14  # 13 used + 3 boreholes = 16 stations, so the hero gets 16 traces
     n_unused_surface_stations: int = 1  # usedInRun false (e.g. too many gaps), exercises the UI
     max_sample_attempts: int = 50  # redraws allowed before an event's tier is declared unreachable
 
@@ -100,7 +100,7 @@ class Knobs:
     well_name: str = "Synthetic well A"
 
     # --- station geometry (meters from the run.yaml origin) --------------------------------
-    ring_radius_m: float = 10_000.0  # 12 surface stations on a ~20 km diameter ring
+    ring_radius_m: float = 10_000.0  # surface stations on a ~20 km diameter ring
     ring_radius_jitter_m: float = 1_200.0
     ring_angle_jitter_deg: float = 8.0
     surface_elev_min_m: float = 1_500.0  # plausible ASL range for the ring stations
@@ -155,7 +155,7 @@ class Knobs:
 
     # --- per-tier quality ranges (sampled so each tier's thresholds hold by construction) --
     n_stations_range: dict[str, tuple[int, int]] = field(
-        default_factory=lambda: {"A": (8, 14), "B": (5, 11), "C": (4, 7)}
+        default_factory=lambda: {"A": (8, 16), "B": (5, 11), "C": (4, 7)}
     )
     s_dropout_max: dict[str, int] = field(default_factory=lambda: {"A": 3, "B": 4, "C": 3})
     rms_range_s: dict[str, tuple[float, float]] = field(

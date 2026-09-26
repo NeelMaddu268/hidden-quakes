@@ -3,7 +3,7 @@
     {
       "associationProfile": "full",
       "candidates": 500,
-      "medianRmsS": 0.071,
+      "medianRmsS": 0.073,
       "medianStations": 8.0,
       "method": "phasenet",
       "recoveredPublic": 38,
@@ -16,7 +16,7 @@
     {
       "associationProfile": "p_only",
       "candidates": 370,
-      "medianRmsS": 0.092,
+      "medianRmsS": 0.095,
       "medianStations": 7.2,
       "method": "phasenet",
       "recoveredPublic": 35,
@@ -29,7 +29,7 @@
     {
       "associationProfile": "full",
       "candidates": 205,
-      "medianRmsS": 0.114,
+      "medianRmsS": 0.117,
       "medianStations": 6.4,
       "method": "stalta",
       "recoveredPublic": 29,
@@ -42,7 +42,7 @@
     {
       "associationProfile": "p_only",
       "candidates": 150,
-      "medianRmsS": 0.135,
+      "medianRmsS": 0.139,
       "medianStations": 6.0,
       "method": "stalta",
       "recoveredPublic": 24,
@@ -54,8 +54,8 @@
     }
   ],
   "gr": {
-    "bSigma": 0.046,
-    "bValue": 0.858,
+    "bSigma": 0.038,
+    "bValue": 0.767,
     "magBins": [
       -0.5,
       -0.25,
@@ -77,28 +77,28 @@
       37,
       37,
       37,
-      33,
-      29,
-      21,
-      14,
-      7,
+      35,
+      32,
+      22,
+      20,
+      17,
+      13,
       5,
-      4,
-      3,
       1,
-      1
+      1,
+      0
     ],
     "recoveredCum": [
-      386,
-      217,
-      106,
-      59,
-      29,
-      15,
-      11,
-      7,
-      6,
+      406,
+      221,
+      129,
+      71,
+      45,
+      25,
+      16,
+      10,
       4,
+      2,
       2,
       1,
       0
@@ -111,8 +111,8 @@
       "c": 0.00189,
       "d": -2.09
     },
-    "looMae": 0.184,
-    "n": 33
+    "looMae": 0.238,
+    "n": 34
   },
   "nullTest": {
     "meanChanceEvents": 2.4,
