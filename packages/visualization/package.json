@@ -3,5 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "main": "tokens.ts",
-  "types": "tokens.ts"
+  "types": "tokens.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.2"
+  }
 }
