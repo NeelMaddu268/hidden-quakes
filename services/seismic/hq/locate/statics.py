@@ -155,16 +155,20 @@ def reference_pairs(
 
 def check_same_association(pairs: pd.DataFrame, assoc_picks: pd.DataFrame) -> None:
     """Raise unless every reference event's located picks that are in an association event
-    belong to its own association event in ``assoc_picks``: an association rerun since the match
-    renumbers or regroups events. Located picks in no association event are the pick harvest's
-    (LOC-10) and are left out of the check."""
+    belong to its own association event in ``assoc_picks``, and at least one does: an
+    association rerun since the match renumbers or regroups events. Located picks in no
+    association event are the pick harvest's (LOC-10) and are left out of the check."""
     groups: dict[str, set[str]] = {}
     for aid, pid in zip(assoc_picks["assocId"].astype(str), assoc_picks["pickId"].astype(str),
                         strict=True):
         groups.setdefault(aid, set()).add(pid)
     associated = set().union(*groups.values()) if groups else set()
-    bad = [str(r.catalogId) for r in pairs.itertuples(index=False)
-           if not set(map(str, r.pickIds)) & associated <= groups.get(str(r.assocId), set())]
+
+    def same(r: Any) -> bool:
+        own = set(map(str, r.pickIds)) & associated
+        return bool(own) and own <= groups.get(str(r.assocId), set())
+
+    bad = [str(r.catalogId) for r in pairs.itertuples(index=False) if not same(r)]
     if bad:
         raise ValueError(
             f"reference events {bad[:5]} were located from another association than "
