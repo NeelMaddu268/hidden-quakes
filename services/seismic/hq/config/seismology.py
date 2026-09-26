@@ -510,6 +510,81 @@ class TieringConfig(BaseModel):
     sweep: TierSweepConfig
 
 
+class MagnitudeWindowConfig(BaseModel):
+    """Where amplitudes are measured, relative to each station's P and S anchor times (s)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sPreS: float = Field(ge=0)  # the S window starts this long before the S anchor ...
+    sPostS: float = Field(gt=0)  # ... and ends this long after it
+    noiseLenS: float = Field(gt=0)  # noise window length, ending noiseGapS before the P anchor
+    noiseGapS: float = Field(ge=0)
+    # Data read beyond both windows on each side; cosine-tapered for the FFT, never measured.
+    padS: float = Field(gt=0)
+
+
+class ResponseRemovalConfig(BaseModel):
+    """Instrument response removal to ground displacement (ObsPy evalresp + water level)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # ObsPy pre_filt: cosine frequency taper, 0 below f1, 1 between f2 and f3, 0 above f4 (Hz).
+    preFiltHz: tuple[float, float, float, float]
+    waterLevelDb: float = Field(gt=0)  # ObsPy water_level, dB below the response maximum
+    # |response sample rate / data sample rate - 1| above this excludes the station.
+    rateRelTol: float = Field(gt=0)
+
+    @field_validator("preFiltHz")
+    @classmethod
+    def _increasing(cls, value: tuple[float, float, float, float]) -> tuple[float, ...]:
+        if not 0.0 < value[0] < value[1] < value[2] < value[3]:
+            raise ValueError(f"preFiltHz must be 0 < f1 < f2 < f3 < f4, got {list(value)}")
+        return value
+
+
+class WoodAndersonConfig(BaseModel):
+    """The simulated Wood-Anderson torsion seismometer (displacement in, trace amplitude out)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    periodS: float = Field(gt=0)  # free period
+    damping: float = Field(gt=0, lt=1)  # fraction of critical
+    gain: float = Field(gt=0)  # static magnification
+
+
+class MagnitudeFitConfig(BaseModel):
+    """Robust least squares for M_cat = a log10(A) + b log10(R) + c + station term."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    loss: Literal["linear", "soft_l1", "huber", "cauchy", "arctan"]  # scipy least_squares loss
+    fScaleMag: float = Field(gt=0)  # scipy f_scale: residual (magnitude units) where it turns
+    # null fits a; a number fixes it (1.0 is the Richter definition: M scales with log10 A).
+    amplitudeSlope: Annotated[float, Field(gt=0)] | None
+    # A station gets a term only with at least this many calibration observations; stations with
+    # fewer are left out of the fit and of every magnitude from it (logged).
+    minStationObs: int = Field(ge=1)
+
+
+class MagnitudeConfig(BaseModel):
+    """Local magnitude calibrated on matched public events (stage ``magnitude``, MAG-01)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    calibrationMagType: str = Field(min_length=1)  # the one CatalogEvent.magType calibrated on
+    maxLooMae: float = Field(gt=0)  # magnitudes are written only when the LOO MAE is at most this
+    # Usable station amplitudes (above minSnr, station with a term) an event needs for a
+    # magnitude; calibration events need as many.
+    minStations: int = Field(ge=1)
+    minCalibrationEvents: int = Field(ge=2)  # fewer calibration events: the stage fails
+    minSnr: float = Field(gt=0)  # S-window peak / noise-window peak, on the same processed trace
+    readChunkS: float = Field(gt=0)  # longest span read from the cache at once per station
+    window: MagnitudeWindowConfig
+    response: ResponseRemovalConfig
+    woodAnderson: WoodAndersonConfig
+    fit: MagnitudeFitConfig
+
+
 class SeismologyConfig(BaseModel):
     """Contents of ``seismology.yaml``."""
 
@@ -524,6 +599,7 @@ class SeismologyConfig(BaseModel):
     matching: MatchingConfig
     diagnostics: DiagnosticsConfig
     tiering: TieringConfig
+    magnitude: MagnitudeConfig
 
     @model_validator(mode="after")
     def _consistent(self) -> "SeismologyConfig":

@@ -405,3 +405,56 @@ tiering:
   # (its Tier A counts used that run's bars), as stage associate does.
   sweep:
     enabled: false
+
+# Local magnitude (stage "magnitude", hq.magnitude, MAG-01), calibrated on the matched public
+# regional catalog events of ONE magnitude type:
+#   station magnitude  M_ij = a log10(A_ij) + b log10(R_ij) + c + s_j
+#   event magnitude    median of its station magnitudes (type "ML_cal", docs/02)
+# A_ij: peak of the horizontal vector amplitude sqrt(h1^2 + h2^2) of the simulated Wood-Anderson
+# trace (mm) in the S window; rotation-invariant, so borehole 1/2 components of unknown azimuth
+# need no rotation. R_ij: hypocentral distance (km) from the located hypocentre to the sensor
+# (ENU, sensorElevM included). Fixed by design and recorded with every run, not knobs: response
+# removal to displacement (evalresp, output DISP) then the Wood-Anderson response; the S and P
+# anchors are the observed picks used in the final location, else the predicted times from
+# arrivals.parquet; station terms sum to zero over the stations in the fit (a hard constraint);
+# leave-one-event-out refits without each calibration event and predicts it; sigma is the
+# normalized MAD (1.4826 x MAD) of the event's station magnitudes.
+magnitude:
+  # The catalog carries ml (amplitude based) and md (duration based) on the showcase day; they are
+  # different scales and are never mixed. ml: more matched events, and it measures what this model
+  # measures (a peak amplitude). Every other type is left out of the calibration (counted).
+  calibrationMagType: ml
+  # docs/03 magnitude kill switch (~0.4): above this leave-one-event-out MAE the stage writes
+  # magnitude.json but leaves every events.parquet magnitude null (logged).
+  maxLooMae: 0.4
+  minStations: 3
+  minCalibrationEvents: 10
+  minSnr: 3.0
+  # Each station's windows are read from the cache in groups spanning at most this long, so a
+  # 1000 Hz station-day (about 1 GB in memory) is never loaded at once.
+  readChunkS: 3600.0
+  window:
+    sPreS: 0.5
+    sPostS: 3.0
+    noiseLenS: 3.0
+    noiseGapS: 0.5
+    padS: 2.0
+  response:
+    # Same band for every station, so amplitudes compare across 100/200/1000 Hz sensors; f4 must
+    # lie below the lowest Nyquist of a used station (checked per station).
+    preFiltHz: [0.5, 1.0, 35.0, 45.0]
+    waterLevelDb: 60.0
+    # H1's rate probe keeps the served rate; a StationXML epoch describing another rate (UU.FORU:
+    # 200 Hz response, 100 Hz data) cannot deconvolve the data, so the station is excluded.
+    rateRelTol: 1.0e-4
+  # Uhrhammer & Collins (1990) Wood-Anderson constants (T0 0.8 s, h 0.7, V 2080). The gain only
+  # shifts c; it is recorded so log10(A) values can be reproduced.
+  woodAnderson:
+    periodS: 0.8
+    damping: 0.7
+    gain: 2080.0
+  fit:
+    loss: soft_l1
+    fScaleMag: 0.3
+    amplitudeSlope: null
+    minStationObs: 5
