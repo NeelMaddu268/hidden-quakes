@@ -1,0 +1,138 @@
+[
+  {
+    "id": "well-synthetic-a",
+    "kind": "well",
+    "name": "Synthetic well A",
+    "path": [
+      {
+        "e": 1400.0,
+        "n": -900.0,
+        "u": 17.3
+      },
+      {
+        "e": 1402.9,
+        "n": -902.1,
+        "u": -268.6
+      },
+      {
+        "e": 1411.6,
+        "n": -908.6,
+        "u": -554.5
+      },
+      {
+        "e": 1426.0,
+        "n": -919.3,
+        "u": -840.4
+      },
+      {
+        "e": 1446.3,
+        "n": -934.4,
+        "u": -1126.3
+      },
+      {
+        "e": 1472.3,
+        "n": -953.7,
+        "u": -1412.2
+      },
+      {
+        "e": 1504.1,
+        "n": -977.4,
+        "u": -1698.1
+      },
+      {
+        "e": 1541.7,
+        "n": -1005.3,
+        "u": -1984.0
+      },
+      {
+        "e": 1585.1,
+        "n": -1037.5,
+        "u": -2270.0
+      },
+      {
+        "e": 1634.3,
+        "n": -1074.0,
+        "u": -2555.9
+      },
+      {
+        "e": 1689.3,
+        "n": -1114.9,
+        "u": -2841.8
+      },
+      {
+        "e": 1750.0,
+        "n": -1160.0,
+        "u": -3127.7
+      }
+    ],
+    "source": {
+      "citation": "synthetic well path (mock fixture)",
+      "url": "https://github.com/NeelMaddu268/hidden-quakes/blob/main/docs/lanes/H4-platform.md",
+      "verified": false
+    }
+  },
+  {
+    "id": "facility-synthetic-pad",
+    "kind": "facility",
+    "name": "Synthetic pad",
+    "path": [
+      {
+        "e": 1050.0,
+        "n": -450.0,
+        "u": 14.2
+      }
+    ],
+    "source": {
+      "citation": "synthetic facility point (mock fixture)",
+      "url": "https://github.com/NeelMaddu268/hidden-quakes/blob/main/docs/lanes/H4-platform.md",
+      "verified": false
+    }
+  },
+  {
+    "id": "boundary-synthetic-lease",
+    "kind": "boundary",
+    "name": "Synthetic lease outline",
+    "path": [
+      {
+        "e": 1700.0,
+        "n": 2100.0,
+        "u": 72.5
+      },
+      {
+        "e": 4471.3,
+        "n": 500.0,
+        "u": 125.0
+      },
+      {
+        "e": 4471.3,
+        "n": -2700.0,
+        "u": 105.1
+      },
+      {
+        "e": 1700.0,
+        "n": -4300.0,
+        "u": 24.8
+      },
+      {
+        "e": -1071.3,
+        "n": -2700.0,
+        "u": -30.4
+      },
+      {
+        "e": -1071.3,
+        "n": 500.0,
+        "u": -6.6
+      },
+      {
+        "e": 1700.0,
+        "n": 2100.0,
+        "u": 72.5
+      }
+    ],
+    "source": {
+      "citation": "synthetic outline (mock fixture)",
+      "url": "https://github.com/NeelMaddu268/hidden-quakes/blob/main/docs/lanes/H4-platform.md",
+      "verified": false
+    }
+  }
+]
