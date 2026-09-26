@@ -8,11 +8,28 @@
  *
  * The mode is read once per document (`window.location.search` after hydration). Switch modes
  * with `navigateToMode()` (a full navigation), not a soft route change.
+ *
+ * Live failover (API-05, docs/02 §6). In `live` mode the active provider is one of two:
+ *
+ *   live ──(any live request fails: refused, timed out, 503)──▶ snapshot (`live.fallback`)
+ *   snapshot ──(a heartbeat or poll of `/api/live/status` succeeds)──▶ live
+ *
+ * The live routes are polled every `LIVE_POLL_MS` (status + events, refreshing "updated n min
+ * ago") and probed every `LIVE_HEARTBEAT_MS` (status only), whichever provider is active, so a
+ * worker that goes away is noticed within one heartbeat plus the request timeout, and one that
+ * comes back is noticed the same way. Each switch loads the bundle from the new provider and
+ * swaps it in whole, so the label is always the active provider's own (`ModeInfo.label`); the
+ * bundle already on screen stays until then (no "loading" flash between live and snapshot, which
+ * are two views of one document), and the snapshot's files are warmed while live is healthy, so
+ * a failover needs no network at all. A live failure that is not a fetch failure (a schemaVersion
+ * mismatch, a bug) is a visible error, never a silent failover; a snapshot that fails to load
+ * after a failover is the visible error too.
  */
 import { createContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { DataMode, LiveStatus, Validation } from "@hq/contracts";
-import { EVIDENCE_PRELOAD_COUNT, LIVE_POLL_MS } from "./config";
-import { LiveProvider } from "./live";
+import { EVIDENCE_PRELOAD_COUNT, LIVE_HEARTBEAT_MS, LIVE_POLL_MS } from "./config";
+import { BundleFetchError } from "./fetch";
+import { LiveProvider, type LiveStatusSummary } from "./live";
 import { mockAllowed, parseMode } from "./mode";
 import { StaticBundleProvider } from "./static";
 import type { BundleState, SeismicDataProvider } from "./types";
@@ -25,6 +42,8 @@ export interface ProviderContextValue {
   bundle: BundleState;
   validation: Validation | null;
   liveStatus: LiveStatus | null;
+  /** True while `live` mode is showing the snapshot bundle because the worker is unreachable. */
+  failedOver: boolean;
 }
 
 export const ProviderContext = createContext<ProviderContextValue>({
@@ -34,6 +53,7 @@ export const ProviderContext = createContext<ProviderContextValue>({
   bundle: { status: "loading" },
   validation: null,
   liveStatus: null,
+  failedOver: false,
 });
 
 export class ModeDisabledError extends Error {
@@ -52,6 +72,16 @@ export function createProvider(mode: DataMode): SeismicDataProvider {
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Only a failed request to the live API itself (refused, timed out, non-2xx such as 503) fails
+ * over. Anything else surfaces as the visible error: a schemaVersion mismatch, a bug, or a
+ * snapshot file the live provider borrows that is missing (live cannot work without it either,
+ * so retrying live would only loop).
+ */
+export function isFailoverError(error: unknown, live: LiveProvider): boolean {
+  return error instanceof BundleFetchError && error.url.startsWith(live.apiBase);
 }
 
 /** `window.location.search` as an external store: null while prerendering/hydrating. */
@@ -91,7 +121,13 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
       return { provider: null, error: errorMessage(error) };
     }
   }, [resolvedMode, provider]);
-  const activeProvider = resolved.provider;
+
+  // The live provider of this document, if any, and whether it is currently failed over. Keyed
+  // by instance, so a provider switch never inherits the old one's failover.
+  const live = resolved.provider instanceof LiveProvider ? resolved.provider : null;
+  const [failedOverLive, setFailedOverLive] = useState<LiveProvider | null>(null);
+  const failedOver = live !== null && failedOverLive === live;
+  const activeProvider: SeismicDataProvider | null = failedOver ? live.fallback : resolved.provider;
 
   const [loadedBundle, setLoadedBundle] = useState<Loaded<BundleState> | null>(null);
   const [loadedValidation, setLoadedValidation] = useState<Loaded<Validation | null> | null>(null);
@@ -117,12 +153,18 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
         // Static providers memoize, so warming them is free; the live API is polled instead.
         if (!(activeProvider instanceof LiveProvider)) {
           preloadEvidence(activeProvider, meta.scene.heroEventId, events);
+        } else {
+          warmFallback(activeProvider.fallback);
         }
       })
       .catch((error: unknown) => {
-        if (!cancelled) {
-          setLoadedBundle({ provider: activeProvider, value: { status: "error", message: errorMessage(error) } });
+        if (cancelled) return;
+        if (activeProvider === live && isFailoverError(error, live)) {
+          console.warn("live bundle unavailable; showing the snapshot bundle:", errorMessage(error));
+          setFailedOverLive(live);
+          return;
         }
+        setLoadedBundle({ provider: activeProvider, value: { status: "error", message: errorMessage(error) } });
       });
     // validation.json is optional (P1): its failure never touches the bundle state.
     activeProvider
@@ -137,55 +179,97 @@ export function ProviderRoot({ mode, provider, children }: ProviderRootProps) {
     return () => {
       cancelled = true;
     };
-  }, [activeProvider]);
+  }, [activeProvider, live]);
 
+  // Poll and heartbeat the live worker for as long as this document is in live mode, failed over
+  // or not: the heartbeat is what notices the worker leaving and coming back.
   useEffect(() => {
-    if (!(activeProvider instanceof LiveProvider)) return;
-    const live = activeProvider;
+    if (!live) return;
     let cancelled = false;
+    let announced = false; // the failover is logged once per outage
+    const healthy = (status: LiveStatusSummary) => {
+      announced = false;
+      // Back to live if we were on the snapshot; the load effect reloads from the worker.
+      setFailedOverLive((current) => (current === live ? null : current));
+      // Keep "updated n min ago" honest. Same label, same bundle: nothing re-renders.
+      setLoadedBundle((previous) => {
+        if (!previous || previous.provider !== live || previous.value.status !== "ready") return previous;
+        const label = live.labelFor(status);
+        const { info } = previous.value;
+        if (info.label === label && info.generatedAt === status.updatedAt) return previous;
+        return { provider: live, value: { ...previous.value, info: { ...info, label, generatedAt: status.updatedAt } } };
+      });
+    };
+    const unhealthy = (what: string) => (error: unknown) => {
+      if (cancelled) return;
+      if (!isFailoverError(error, live)) {
+        console.warn(`live ${what} failed:`, errorMessage(error));
+        return;
+      }
+      if (!announced) {
+        announced = true;
+        console.warn(`live ${what} failed; showing the snapshot bundle:`, errorMessage(error));
+      }
+      setFailedOverLive(live);
+    };
     const poll = () =>
       Promise.all([live.getStatus(), live.getEvents()])
         .then(([status, events]) => {
           if (cancelled) return;
           setLoadedLive({ provider: live, value: { ...status, events } });
-          // Keep "updated n min ago" honest on every poll.
-          setLoadedBundle((previous) =>
-            previous && previous.provider === live && previous.value.status === "ready"
-              ? {
-                  provider: live,
-                  value: {
-                    ...previous.value,
-                    info: { ...previous.value.info, label: live.labelFor(status), generatedAt: status.updatedAt },
-                  },
-                }
-              : previous,
-          );
+          healthy(status);
         })
-        .catch((error: unknown) => {
-          // API-05 turns this into snapshot failover; until then the last status stays visible.
-          console.warn("live status poll failed:", errorMessage(error));
-        });
+        .catch(unhealthy("status poll"));
+    const heartbeat = () =>
+      live
+        .getStatus()
+        .then((status) => {
+          if (!cancelled) healthy(status);
+        })
+        .catch(unhealthy("heartbeat"));
     void poll();
-    const timer = setInterval(() => void poll(), LIVE_POLL_MS);
+    const pollTimer = setInterval(() => void poll(), LIVE_POLL_MS);
+    const heartbeatTimer = setInterval(() => void heartbeat(), LIVE_HEARTBEAT_MS);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      clearInterval(pollTimer);
+      clearInterval(heartbeatTimer);
     };
-  }, [activeProvider]);
+  }, [live]);
 
   const value = useMemo<ProviderContextValue>(() => {
+    // Live and its snapshot are two views of one document: while switching between them the
+    // bundle already loaded from the other one stays on screen until the new one is ready.
+    const liveFamily = (p: SeismicDataProvider) => live !== null && (p === live || p === live.fallback);
     const bundle: BundleState = resolved.error
       ? { status: "error", message: resolved.error }
       : loadedBundle && loadedBundle.provider === activeProvider
         ? loadedBundle.value
-        : { status: "loading" };
+        : loadedBundle && activeProvider && liveFamily(activeProvider) && liveFamily(loadedBundle.provider)
+          ? loadedBundle.value
+          : { status: "loading" };
     const validation =
       loadedValidation && loadedValidation.provider === activeProvider ? loadedValidation.value : null;
     const liveStatus = loadedLive && loadedLive.provider === activeProvider ? loadedLive.value : null;
-    return { mounted: true, mode: resolvedMode, provider: activeProvider, bundle, validation, liveStatus };
-  }, [resolvedMode, activeProvider, resolved.error, loadedBundle, loadedValidation, loadedLive]);
+    return {
+      mounted: true,
+      mode: resolvedMode,
+      provider: activeProvider,
+      bundle,
+      validation,
+      liveStatus,
+      failedOver,
+    };
+  }, [resolvedMode, activeProvider, live, resolved.error, loadedBundle, loadedValidation, loadedLive, failedOver]);
 
   return <ProviderContext.Provider value={value}>{children}</ProviderContext.Provider>;
+}
+
+/** Warm the snapshot's memo while live is healthy (the live load already fetched its meta,
+ *  stations, catalog and features), so a failover swaps bundles without a request. */
+function warmFallback(fallback: SeismicDataProvider): void {
+  fallback.getEvents().catch(() => undefined);
+  fallback.getValidation().catch(() => undefined);
 }
 
 /** Warm the provider's memo for the hero and the first events of the reveal. Errors are ignored

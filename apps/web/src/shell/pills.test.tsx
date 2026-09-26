@@ -1,10 +1,11 @@
 /**
  * Mode pills: SHOWCASE always, LIVE only behind the API-04 flag, MOCK only as the current mode,
- * never SNAPSHOT; a switch is a full navigation through `navigateToMode`.
+ * never SNAPSHOT; a switch is a full navigation through `navigateToMode`. API-05: during live
+ * failover the label says Snapshot while LIVE stays the pressed pill.
  */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ProviderRoot, StaticBundleProvider, navigateToMode, type StaticMode } from "@/providers";
+import { LiveProvider, ProviderRoot, StaticBundleProvider, navigateToMode, type StaticMode } from "@/providers";
 import { useDemo } from "@/state/demo";
 import { Shell } from "./Shell";
 import { bundleFiles, fakeFetch, type FixtureOptions } from "./test-fixture";
@@ -61,6 +62,41 @@ describe("mode pills", () => {
     expect(pills.map((b) => b.textContent)).toEqual(["showcase"]);
     expect(pills[0].getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByTestId("mode-label").textContent).toMatch(/^Snapshot/);
+  });
+
+  it("LIVE navigates to ?mode=live only when NEXT_PUBLIC_LIVE_ENABLED=1", async () => {
+    vi.stubEnv("NEXT_PUBLIC_LIVE_ENABLED", "1");
+    const pills = await mountReady("showcase", { isSynthetic: false });
+    fireEvent.click(pills[1]);
+    expect(navigateToMode).toHaveBeenCalledWith("live");
+    cleanup();
+    vi.stubEnv("NEXT_PUBLIC_LIVE_ENABLED", "");
+    const without = await mountReady("showcase", { isSynthetic: false });
+    expect(without.map((b) => b.textContent)).toEqual(["showcase"]);
+    expect(vi.mocked(navigateToMode)).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps LIVE pressed and shows the snapshot label while live is failed over", async () => {
+    vi.stubEnv("NEXT_PUBLIC_LIVE_ENABLED", "1");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // Every `/api/live/*` request 404s (the fixture serves only `/data/<mode>/`): a failed
+    // fetch, exactly like a killed worker, so the root fails over to the snapshot bundle.
+    const fetchImpl = fakeFetch({ snapshot: bundleFiles("snapshot-run", { isSynthetic: false }) });
+    const provider = new LiveProvider("/api/live", {
+      fetchImpl,
+      fallback: new StaticBundleProvider("snapshot", { fetchImpl }),
+    });
+    render(
+      <ProviderRoot mode="live" provider={provider}>
+        <Shell />
+      </ProviderRoot>,
+    );
+    await screen.findByTestId("counter-public");
+    await waitFor(() => expect(screen.getByTestId("mode-label").textContent).toMatch(/^Snapshot/));
+    expect(screen.getByTestId("mode-label").textContent).toContain("snapshot-run");
+    const pills = Array.from(screen.getByRole("group", { name: "Data mode" }).querySelectorAll("button"));
+    expect(pills.map((b) => b.textContent)).toEqual(["showcase", "live"]);
+    expect(pills.map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
   });
 
   it("navigates on a switch and does nothing on the current mode", async () => {
