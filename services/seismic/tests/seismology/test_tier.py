@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from hq_contracts.io import columns_for, dtypes_for, from_frame, read_models, to_frame, write_table
-from hq_contracts.models import Pick, SeismicEvent
+from hq_contracts.models import Pick, SeismicEvent, SweepPoint
 
 from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig
@@ -26,6 +26,7 @@ from hq.tier import (
     Thresholds,
     TierError,
     assign_tiers,
+    derive_thresholds,
 )
 from hq.tier.picks import event_picks
 
@@ -412,3 +413,98 @@ def test_stage_resolves_to_the_stage_function(first: str | None) -> None:
         importlib.import_module(first)
     fn = resolve_stage(stage_spec("tier"))
     assert fn is importlib.import_module("hq.tier.run").run
+
+
+# --- sweep ----------------------------------------------------------------------------------------
+
+
+def test_sweep_counts_tier_a_with_the_configured_runs_bars(
+    seismology_config: SeismologyConfig,
+) -> None:
+    from hq.associate.result import (
+        EVENT_DTYPES,
+        PICK_DTYPES,
+        AssocResult,
+        empty_result,
+        typed_frame,
+    )
+    from hq.associate.sweep import SweepRow
+    from hq.tier.sweep import SweepPipeline, score_sweep
+
+    events, _, matched_ids = seeded_world()
+    main = derive_thresholds(events[events["id"].isin(matched_ids)], seismology_config.tiering)
+
+    def assoc(n: int) -> AssocResult:
+        return AssocResult(
+            typed_frame({"assocId": [f"a{i}" for i in range(n)], "t": [T0] * n,
+                         "latitude": [38.5] * n, "longitude": [-112.9] * n,
+                         "elevM": [0.0] * n, "nPicks": [8] * n, "nP": [5] * n,
+                         "nS": [3] * n}, EVENT_DTYPES),
+            typed_frame(None, PICK_DTYPES),
+        )
+
+    def fake_locate(a: AssocResult) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+        return events.iloc[: len(a.events)].reset_index(drop=True), None
+
+    def fake_match(ev: pd.DataFrame) -> pd.DataFrame:  # only 3 matches: far below minMatched
+        return matches_for(ev, list(ev["id"].iloc[:3]))
+
+    grid = [{"minPickProb": 0.3, "nSPicks": 1, "minStations": s} for s in (4, 5, 6)]
+
+    def run_points(evaluate: Any) -> list[SweepRow]:
+        sizes = [len(events), 30, 0]
+        results = [assoc(n) if n else empty_result() for n in sizes]
+        return [SweepRow(params=p, candidates=len(r.events), counts={}, score=evaluate(r),
+                         runtime_s=0.5) for p, r in zip(grid, results, strict=True)]
+
+    points, record = score_sweep(run_points, SweepPipeline(fake_locate, fake_match),
+                                 seismology_config, main)
+    expected_a = [0 if n == 0 else int((assign_tiers(
+        events.iloc[:n], matches_for(events.iloc[:n], []), seismology_config, thresholds=main
+    ).events["tier"] == "A").sum()) for n in (len(events), 30, 0)]
+    assert [p.candidates for p in points] == [len(events), 30, 0]
+    assert [p.recoveredPublic for p in points] == [3, 3, 0]
+    assert [p.tierA for p in points] == expected_a and expected_a[0] > 0
+    assert [r["runtimeS"] for r in record] == [0.5, 0.5, 0.5]
+    frame = to_frame(points, SweepPoint)
+    assert from_frame(frame, SweepPoint) == points
+
+
+def test_sweep_without_loc04_names_it() -> None:
+    locate_pkg = importlib.import_module("hq.locate")
+    if hasattr(locate_pkg, "locate_detailed"):
+        pytest.skip("LOC-04 is merged: the real sweep driver is importable")
+    from hq.tier.sweep import real_pipeline
+
+    with pytest.raises(TierError, match="LOC-04"):
+        real_pipeline(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None,  # type: ignore[arg-type]
+                      None, run_id="x", cache_dir=Path("."))  # type: ignore[arg-type]
+
+
+def test_stage_writes_sweep_parquet_when_enabled(
+    make_ctx: Any, run_section: RunSection, seismology_config: SeismologyConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hq.associate.sweep import SweepRow, SweepScore
+
+    stage = importlib.import_module("hq.tier.run")
+    ctx = make_ctx(run_section, cfg_with(seismology_config, sweep={"enabled": True}))
+    write_run(ctx)
+    for name, model in (("stations.parquet", "Station"), ("catalog.parquet", "CatalogEvent")):
+        write_table(pd.DataFrame({"id": ["x"]}), ctx.path(name), model)
+    seen: list[Thresholds] = []
+
+    def fake_score(run_points: Any, pipeline: Any, cfg: Any, thresholds: Thresholds) -> Any:
+        seen.append(thresholds)
+        row = SweepRow(params={"minPickProb": 0.3, "nSPicks": 1, "minStations": 5},
+                       candidates=4, counts={}, score=SweepScore(3, 2, 1), runtime_s=1.0)
+        return [SweepPoint(params=row.params, candidates=3, recoveredPublic=2, tierA=1)], [
+            {"params": row.params, "tierA": 1}]
+
+    monkeypatch.setattr("hq.tier.sweep.real_pipeline", lambda *a, **k: (None, None))
+    monkeypatch.setattr("hq.tier.sweep.score_sweep", fake_score)
+    stage.run(ctx)
+    assert read_models(ctx.path("sweep.parquet"), SweepPoint)[0].tierA == 1
+    (rec,) = ctx.records
+    assert rec["counts"]["sweepPoints"] == 1 and rec["params"]["sweep"]["enabled"]
+    assert seen[0].to_record() == rec["params"]["thresholds"]
