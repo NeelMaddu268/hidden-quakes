@@ -22,6 +22,7 @@ SCRIPT = REPO_ROOT / "scripts" / "render-story.py"
 MOCK_BUNDLE = REPO_ROOT / "apps" / "web" / "public" / "data" / "mock"
 PITCH_DOC = REPO_ROOT / "docs" / "demo" / "pitch-and-qa.md"
 DEVPOST_DOC = REPO_ROOT / "docs" / "demo" / "devpost.md"
+SHOTS_DOC = REPO_ROOT / "docs" / "demo" / "video-shot-list.md"
 BANNER = "SYNTHETIC BUNDLE, NOT FOR SUBMISSION"
 
 
@@ -73,11 +74,13 @@ def test_every_placeholder_is_substituted_or_manual(
     by_doc = {
         "pitch": (PITCH_DOC, story.PITCH_FILLED_MD),
         "devpost": (DEVPOST_DOC, story.DEVPOST_FILLED_MD),
+        "pitch (shot list)": (SHOTS_DOC, story.SHOTS_FILLED_MD),
     }
     reported = {(r.doc, r.name) for r in rows}
     assert all(r.status in story.STATUSES for r in rows)
     literal_tokens = {r.name for r in rows if r.status == story.STATUS_LITERAL}
-    for kind, (doc, filled_name) in by_doc.items():
+    for label, (doc, filled_name) in by_doc.items():
+        kind = label.split(" ")[0]  # the token form: the shot list uses the pitch's
         source_tokens = {tok for _, tok in story.scan_tokens(doc.read_text(encoding="utf-8"), kind)}
         assert source_tokens, kind
         # Every token in the doc has a row (a context-dependent token like {n} has labelled rows).
@@ -92,7 +95,12 @@ def test_every_placeholder_is_substituted_or_manual(
     # The manual list is explicit: no bundle field, so the pitch says where to read it.
     manual = {r.name for r in rows if r.status == story.STATUS_MANUAL}
     assert "{depthBand}" in manual and "{latency}" in manual
-    assert {"<repo URL>", "<video URL>"} <= manual
+    assert "<video URL>" in manual
+    # The repository URL comes from the checkout's origin remote, in https form.
+    repo = next(r for r in rows if r.name == "<repo URL>")
+    assert repo.status in {story.STATUS_VALUE, story.STATUS_MANUAL}
+    if repo.status == story.STATUS_VALUE:
+        assert repo.text.startswith("https://github.com/") and not repo.text.endswith(".git")
     # The deployed URL is the public link docs/deploy.md names, never a team-internal alias.
     deployed = next(r for r in rows if r.name == "<deployed URL>")
     assert deployed.status == story.STATUS_VALUE
