@@ -1,5 +1,6 @@
 # Seismology lane config (H2). Parsed by hq.config.seismology.SeismologyConfig; unknown keys are an error.
 # Every seismology knob lives here and is recorded in ProcessingRun (docs/02 -> Config files).
+# The run window and bbox come from run.yaml; nothing here repeats them.
 
 velocity:
   # 1D layer model (LOC-01), relative to services/seismic. Its '#' header holds the source,
@@ -41,3 +42,42 @@ velocity:
     expectedBytes: 1161642687
     citation: "Nakata, N., Hopp, C., Wu, S., Robertson, M., & Dadi, S. (2025). Cape EGS and Utah FORGE: Empirical 3D Seismic Velocity Model [Data set]. Geothermal Data Repository, Lawrence Berkeley National Laboratory. https://gdr.openei.org/submissions/1800"
     license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+
+# Public regional catalog (stage "catalog", hq.match.catalog, MATCH-01).
+catalog:
+  # ObsPy FDSN client key. "USGS" is the ComCat FDSN event service at https://earthquake.usgs.gov,
+  # which carries the UUSS (network UU) solutions for this region.
+  provider: USGS
+  providerLabel: USGS ComCat          # CatalogEvent.source = "<contributor> via USGS ComCat"
+  timeoutS: 120
+  # QuakeML event types kept after the query; the raw QuakeML keeps everything served, and every
+  # dropped event is logged and counted by type. null keeps every type. A served type outside the
+  # QuakeML 1.2 enum (ObsPy cannot parse such an event) is a dropped type here, and fails with null.
+  eventTypes: [earthquake]
+  minMagnitude: null                  # no magnitude limit
+  maxMagnitude: null
+  # ComCat product carrying picks/arrivals (analyst picks only when the origin is manual). The stage
+  # only counts which window events have it (one extra query); it never downloads the picks.
+  # A misspelled type makes ComCat answer "no data", so zero matches with kept events logs a WARNING.
+  arrivalsProductType: phase-data
+  # Depth datum per contributor, keyed by the preferred origin's catalog:datasource. An origin from a
+  # contributor not listed here, or older than validFrom, fails the stage instead of being guessed.
+  datums:
+    uu:
+      # UUSS documents sea level as the depth datum since Oct 1, 2012 (Catalog Details page,
+      # "Format for Earthquake Summary Data", Depth column).
+      surfaceElevM: 0.0               # m ASL; elevM = surfaceElevM - depth
+      # UUSS gives the date without a time zone; start a day later so no ambiguous origin converts.
+      validFrom: "2012-10-02T00:00:00Z"
+      # CatalogEvent.depthDatum = "<label>; source: <first sourceUrl>" on every row.
+      label: km below sea level (UUSS catalog depth datum)
+      description: >-
+        km below sea level. UUSS Catalog Details, "Format for Earthquake Summary Data", Depth column:
+        the depth datum is sea level for earthquakes from Oct 1, 2012 on (1.5 km above sea level
+        before that in the Utah region). ComCat: the depth datum depends on the contributing
+        network. ComCat serves QuakeML 1.2, which defines Origin.depth relative to nominal sea
+        level (WGS84 geoid); UUSS's own statement above agrees.
+      sourceUrls:
+        - https://quake.utah.edu/resources/catalog-details/
+        - https://earthquake.usgs.gov/data/comcat/index.php#depth
+        - https://quake.ethz.ch/quakeml/Documents
