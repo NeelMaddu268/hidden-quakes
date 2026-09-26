@@ -2,7 +2,7 @@
 
 import { colors } from "@hq/visualization";
 import { Canvas } from "@react-three/fiber";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useDemo } from "../state/demo";
 import { computeBounds } from "./camera/bounds";
 import { CameraRig } from "./camera/CameraRig";
@@ -26,6 +26,9 @@ import { FilterDriver } from "./filters/FilterDriver";
 import { filterCountIssues } from "./filters/selectors";
 import { sceneFx } from "./fx";
 import { depthFogPerSceneUnit, LOOK } from "./look";
+
+import { Picker } from "./picking/Picker";
+import { selectedInstanceIndex } from "./picking/selection";
 import { Post } from "./post/Post";
 import { RevealDriver } from "./reveal/RevealDriver";
 import { References } from "./references";
@@ -35,11 +38,13 @@ import type { BundleState } from "./types";
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 
 /** Candidate (amber) layer: follows the reveal clock and the eased filter look (scene/filters). */
-function driveCandidates(u: EventUniforms): void {
+function driveCandidates(u: EventUniforms, indexById: ReadonlyMap<string, number>): void {
   const look = sceneFx.filterLook;
+  u.uSelected.value = selectedInstanceIndex(useDemo.getState().selectedEventId, indexById);
   u.uRevealElapsed.value = candidateRevealUniform(useDemo.getState().phase, sceneFx.revealElapsedS);
   u.uTierOpacity.value.set(look.tierA, look.tierB, look.tierC);
   u.uLayerOpacity.value = look.candidates;
+
 }
 
 /** Public-catalog (cool white) layer: on screen from the first frame; steps back under STRICT. */
@@ -62,9 +67,11 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
 
   const candidates = useMemo(() => buildCandidateInstances(events, ve, windowStart), [events, ve, windowStart]);
   const publicEvents = useMemo(() => buildPublicInstances(catalog, ve, windowStart), [catalog, ve, windowStart]);
+  const drive = useCallback((u: EventUniforms) => driveCandidates(u, candidates.indexById), [candidates]);
   // Frame the structure: Tier A and B candidates. Scattered Tier C events and the public regional
   // catalog (which spans the whole run bbox, tens of km) stay rendered but don't widen the shot. With
   // no candidates at all, the public catalog is framed instead.
+
   const surfaceY = depthKmToSceneY(0, meta.scene);
   const bounds = useMemo(
     () =>
@@ -118,14 +125,16 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         size={LOOK.candidates.sizeKm}
         minPx={LOOK.candidates.minPx}
         maxPx={LOOK.maxGlyphPx}
-        drive={driveCandidates}
+        drive={drive}
         glow={LOOK.candidates.glow}
+
         surfaceY={surfaceY}
         depthFog={depthFogPerSceneUnit(ve)}
         renderOrder={1}
       />
       <HalosLayer halos={halos} surfaceY={surfaceY} depthFog={depthFogPerSceneUnit(ve)} drive={driveHalos} />
       <CameraRig bounds={bounds} />
+      <Picker candidates={candidates} publicEvents={publicEvents} catalog={catalog} sizeKm={{ candidate: LOOK.candidates.sizeKm, public: LOOK.publicCatalog.sizeKm }} />
     </>
   );
 }
