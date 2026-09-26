@@ -53,15 +53,26 @@ function makeScratch(n: number): Scratch {
 }
 
 /**
- * 0–6 km below the site surface with 1 km ticks, just west of the framed data. Drawn on top of the
+ * From the site surface down to the deepest displayed event (1 km ticks), just west of the framed data. Drawn on top of the
  * terrain (no depth test) so it reads in every camera preset. The title is SceneMeta.depthLabel; it
  * sits at the top of the ruler and slides down the spine when the surface is out of frame, so the
  * label stays visible whenever the ruler is. Overlapping tick labels are hidden (plan view). Each frame
  * the shown title and tick-label boxes are written to `obstacles`, so the feature labels (placed after
  * this hook) keep clear of them; the list is empty while the ruler is hidden.
  */
-export function DepthRuler({ scene, bounds, obstacles }: { scene: SceneMeta; bounds: SceneBounds; obstacles?: RectList }) {
-  const layout = useMemo(() => rulerLayout(scene, rulerAnchor(bounds)), [scene, bounds]);
+export function DepthRuler({
+  scene,
+  bounds,
+  maxDepthKm,
+  obstacles,
+}: {
+  scene: SceneMeta;
+  bounds: SceneBounds;
+  /** The deepest displayed event, rounded up to a tick (ruler.ts → rulerMaxDepthKm). */
+  maxDepthKm: number;
+  obstacles?: RectList;
+}) {
+  const layout = useMemo(() => rulerLayout(scene, rulerAnchor(bounds), maxDepthKm), [scene, bounds, maxDepthKm]);
   // DOM labels: [0] is the title, [1 + i] is tick i. Sizes feed the obstacle boxes.
   const labels = useLabelElements();
   const title = useRef<Group>(null);
