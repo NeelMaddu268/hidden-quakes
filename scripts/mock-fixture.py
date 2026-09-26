@@ -8,12 +8,12 @@ validation number comes from a real catalog, a real run or pre-event outputs. Th
 
 What it produces (docs/01 -> Data bundle), every file validated by ``hq_contracts.models``::
 
-    meta.json                BundleMeta   mode "mock", scene, run, summary recomputed from the data
-    stations.json            Station[]    14 surface stations on a ring + 3 borehole sensors
-    catalog.json             CatalogEvent[]  43 public points, 38 matched to a candidate
-    events.json              SeismicEvent[]  ~500 candidates: Tier A cluster, B around it, C scattered
-    features.json            GeoFeature[]  one synthetic well, one facility, one boundary; all unverified
-    validation.json          Validation   baseline table, sweep, null test, G-R, calibration, synthetic
+    meta.json                BundleMeta     mode "mock"; scene, run, summary recomputed from data
+    stations.json            Station[]      14 surface stations on a ring + 3 borehole sensors
+    catalog.json             CatalogEvent[] 43 public points, 38 matched to a candidate
+    events.json              SeismicEvent[] ~500 candidates: Tier A cluster, B around it, C spread
+    features.json            GeoFeature[]   one synthetic well, facility and boundary, unverified
+    validation.json          Validation     baseline table, sweep, null test, G-R, calibration
     evidence/{eventId}.json  EventEvidence  20 events with synthetic wavelets at predicted times
 
 Usage (from ``services/seismic`` so ``hq`` and ``hq_contracts`` resolve)::
@@ -21,12 +21,16 @@ Usage (from ``services/seismic`` so ``hq`` and ``hq_contracts`` resolve)::
     uv run python ../../scripts/mock-fixture.py [--out DIR] [--seed N]
 
 The same seed gives byte-identical output: one seeded numpy generator drives every random draw,
-every float is rounded to a fixed number of decimals, and JSON keys are sorted.
+every float is rounded to a fixed number of decimals, and JSON keys are sorted. The random
+streams come from ``numpy.random.Generator``, so the bytes also depend on the numpy version
+pinned in ``services/seismic/uv.lock``; nothing else in the environment leaks into the output.
 
 Coordinates follow docs/01 -> Conventions: one vertical (``elevM``, m ASL); ``enu`` is offset
-from the run.yaml origin (a local equirectangular approximation stands in for UTM 12N here);
-``depthKm = (refSurfaceElevM - elevM) / 1000``. The window, bbox, origin and reference surface
-come from ``configs/showcase/run.yaml`` so the mock sits in the real region.
+from the run.yaml origin (a local equirectangular approximation stands in for UTM 12N here, and
+``SceneMeta.projection`` says so); ``depthKm = (refSurfaceElevM - elevM) / 1000``. The window,
+bbox, origin and reference surface come from ``configs/showcase/run.yaml`` so the mock sits in
+the real region. Evidence traces are placed by their own ``t0`` (each window opens
+``evidence_pre_p_s`` before that trace's predicted P); windows need not share an origin.
 """
 
 from __future__ import annotations
@@ -40,7 +44,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
-import pydantic
 import yaml
 from hq_contracts import models as m
 
@@ -81,16 +84,23 @@ class Knobs:
     n_public: int = 43  # public regional catalog rows (the ticket's "43 public points")
     n_matched: dict[str, int] = field(default_factory=lambda: {"A": 26, "B": 10, "C": 2})  # =38
     n_events: dict[str, int] = field(default_factory=lambda: {"A": 150, "B": 200, "C": 150})
-    n_evidence: dict[str, int] = field(default_factory=lambda: {"A": 12, "B": 5, "C": 3})  # =20
+    # Evidence files per tier (=20). A includes the hero (16 traces); C includes the Tier C event
+    # with the fewest stations (a 4-trace file), so the drawer sees both ends of the range.
+    n_evidence: dict[str, int] = field(default_factory=lambda: {"A": 12, "B": 5, "C": 3})
     n_surface_stations: int = 14  # 13 used + 3 boreholes = 16 stations, so the hero gets 16 traces
     n_unused_surface_stations: int = 1  # usedInRun false (e.g. too many gaps), exercises the UI
-    max_sample_attempts: int = 50  # redraws allowed before an event's tier is declared unreachable
+    max_sample_attempts: int = 50  # redraws allowed before a draw is declared unreachable
 
     # --- fixed identifiers ----------------------------------------------------------------
     network: str = "XX"  # clearly synthetic network code; never a real one
     station_prefix: str = "M"  # "XX.M01" ...
+    # runId and gitSha deliberately depart from the pipeline's "YYYYMMDD-HHMM-<gitsha7>" format:
+    # this is a mock, not a run of record, and the id should say so wherever it is displayed.
     run_id_prefix: str = "mock"  # runId = "mock-<seed>"
     git_sha: str = "mock0000"
+    projection: str = (
+        "local equirectangular minus origin (mock)"  # pipeline: EPSG:32612 minus origin
+    )
     created_at: str = "2026-09-11T01:00:00Z"  # fixed so output is byte-identical per seed
     picker_model: str = "seisbench.PhaseNet"
     picker_weights: str = "synthetic"  # picks are invented; picker id "phasenet:synthetic"
@@ -103,9 +113,13 @@ class Knobs:
     ring_radius_m: float = 10_000.0  # surface stations on a ~20 km diameter ring
     ring_radius_jitter_m: float = 1_200.0
     ring_angle_jitter_deg: float = 8.0
-    surface_elev_min_m: float = 1_500.0  # plausible ASL range for the ring stations
+    # Synthetic relief (not the real DEM): a bowl rising from the origin toward the ring plus a
+    # low-amplitude undulation. Ring elevations land strictly inside [surface_elev_min_m,
+    # surface_elev_max_m] by construction; make_stations raises if they don't (it never clips).
+    surface_elev_min_m: float = 1_500.0  # validity bounds for the ring stations, m ASL
     surface_elev_max_m: float = 2_200.0
-    terrain_amplitude_m: tuple[float, float, float] = (180.0, 140.0, 90.0)  # synthetic relief
+    terrain_bowl_m: float = 300.0  # rise at ring_radius_m, growing with (r / ring_radius_m) ** 2
+    terrain_amplitude_m: tuple[float, float, float] = (70.0, 50.0, 30.0)  # undulation
     terrain_wavelength_m: tuple[float, float, float] = (7_000.0, 5_500.0, 4_200.0)
     terrain_phase: tuple[float, float] = (0.4, -0.9)
     borehole_en_m: tuple[tuple[float, float], ...] = (
@@ -174,6 +188,9 @@ class Knobs:
     v_err_missing_frac: dict[str, float] = field(
         default_factory=lambda: {"A": 0.0, "B": 0.1, "C": 0.4}
     )
+    h_err_missing_frac: dict[str, float] = field(  # hErrM null: Tier C only
+        default_factory=lambda: {"A": 0.0, "B": 0.0, "C": 0.15}
+    )
     depth_on_edge_frac: dict[str, float] = field(
         default_factory=lambda: {"A": 0.0, "B": 0.15, "C": 0.5}
     )
@@ -208,7 +225,8 @@ class Knobs:
     mag_max: float = 2.4
     mag_b_value: float = 1.0
     mag_sigma_range: tuple[float, float] = (0.12, 0.30)
-    mag_missing_frac: float = 0.06
+    mag_missing_frac: float = 0.06  # magnitude null
+    mag_sigma_missing_frac: float = 0.1  # magnitude present but sigma null
     catalog_mag_type: str = "ML"
     catalog_mag_alt_type: str = "Md"
     catalog_mag_alt_frac: float = 0.15
@@ -237,6 +255,10 @@ class Knobs:
     evidence_max_traces: int = 16
     evidence_pre_p_s: float = 1.0  # window starts this long before the predicted P
     evidence_post_s_s: float = 0.8  # and must extend this long past the predicted S
+    # pickP and probP are always set on every trace (the drawer's anchor). The nullable trace
+    # fields are pickS/probS (stations beyond nS) and predP/predS (a share of the far half of
+    # each record section, blanked together so the drawer's missing-predicted path runs).
+    pred_missing_frac: float = 0.15
     filter_hz: tuple[float, float] = (2.0, 20.0)
     p_wavelet_hz: float = 10.0
     s_wavelet_hz: float = 6.0
@@ -262,12 +284,13 @@ class Knobs:
     boundary_points: int = 6
 
     # --- validation ------------------------------------------------------------------------
-    # Baseline rows as fractions of the phasenet/full row (candidates, recovered, A, B, C, rms, sta)
+    # Baseline rows as fractions of the phasenet/full row: (recovered, A, B, C, rms, stations).
+    # Each row's candidates = A + B + C after rounding, so the table is internally consistent.
     baseline_factors: dict[str, tuple[float, ...]] = field(
         default_factory=lambda: {
-            "phasenet/p_only": (0.74, 0.92, 0.68, 0.80, 0.85, 1.3, 0.9),
-            "stalta/full": (0.41, 0.76, 0.31, 0.45, 0.55, 1.6, 0.8),
-            "stalta/p_only": (0.30, 0.63, 0.22, 0.35, 0.45, 1.9, 0.75),
+            "phasenet/p_only": (0.92, 0.68, 0.80, 0.85, 1.3, 0.9),
+            "stalta/full": (0.76, 0.31, 0.45, 0.55, 1.6, 0.8),
+            "stalta/p_only": (0.63, 0.22, 0.35, 0.45, 1.9, 0.75),
         }
     )
     sweep_n_p_and_s_min: tuple[int, ...] = (4, 5, 6, 7, 8)
@@ -311,6 +334,14 @@ class Knobs:
     synthetic_median_depth_bias_m: float = -40.0
 
     # --- run metadata (plausible synthetic params; recorded verbatim) ----------------------
+    # Fixed strings, never read from the environment, so the bytes stay environment-independent.
+    software_versions: dict[str, str] = field(
+        default_factory=lambda: {
+            "mock-fixture": "synthetic",
+            "numpy": "synthetic (pinned in services/seismic/uv.lock)",
+            "pydantic": "synthetic (pinned in services/seismic/uv.lock)",
+        }
+    )
     runtime_s: dict[str, float] = field(
         default_factory=lambda: {
             "inventory": 4.2,
@@ -418,7 +449,7 @@ class Frame:
         return rnd((self.ref_surface_elev_m - self.elev(elev_m)) / 1000.0, self.k.dec_depth_km)
 
     def surface_elev_m(self, e: float, n: float) -> float:
-        """Smooth synthetic relief, equal to the reference surface at the origin."""
+        """Smooth synthetic relief (not the real DEM); equal to refSurfaceElevM at the origin."""
         amp = self.k.terrain_amplitude_m
         wl = self.k.terrain_wavelength_m
         ph = self.k.terrain_phase
@@ -430,7 +461,14 @@ class Frame:
                 + amp[2] * math.sin((x + y) / wl[2])
             )
 
-        return self.ref_surface_elev_m + relief(e, n) - relief(0.0, 0.0)
+        bowl = self.k.terrain_bowl_m * (math.hypot(e, n) / self.k.ring_radius_m) ** 2
+        return self.ref_surface_elev_m + bowl + relief(e, n) - relief(0.0, 0.0)
+
+
+def clip_to_window(t: float, run: RunSection, k: Knobs) -> float:
+    """Keep a time inside [windowStart, windowEnd) after rounding to ``dec_s`` decimals."""
+    last = run.window_end_s - 10.0**-k.dec_s
+    return min(max(t, run.window_start_s), last)
 
 
 def window_label(start: datetime, end: datetime) -> str:
@@ -621,9 +659,12 @@ def make_stations(rng: np.random.Generator, frame: Frame, k: Knobs) -> list[Stat
         angle = math.radians(360.0 * i / n_ring + jitter)
         radius = k.ring_radius_m + rng.uniform(-k.ring_radius_jitter_m, k.ring_radius_jitter_m)
         e, n = radius * math.sin(angle), radius * math.cos(angle)
-        elev = float(
-            np.clip(frame.surface_elev_m(e, n), k.surface_elev_min_m, k.surface_elev_max_m)
-        )
+        elev = frame.surface_elev_m(e, n)
+        if not k.surface_elev_min_m < elev < k.surface_elev_max_m:
+            raise RuntimeError(
+                f"ring station {i + 1} would sit at {elev:.1f} m ASL, outside "
+                f"({k.surface_elev_min_m}, {k.surface_elev_max_m}); adjust the terrain knobs"
+            )
         drafts.append(
             StationDraft(
                 id=f"{k.network}.{k.station_prefix}{i + 1:02d}",
@@ -742,7 +783,15 @@ def sample_times(
     weights = np.asarray(k.swarm_weight) / np.sum(k.swarm_weight)
     span = t_end - t_start
     out: list[float] = []
+    attempts = 0
     while len(out) < n:
+        attempts += 1
+        if attempts > k.max_sample_attempts:
+            raise RuntimeError(
+                f"sample_times: only {len(out)}/{n} Tier {tier} origin times after "
+                f"{k.max_sample_attempts} draws; the swarm centers/sigmas in Knobs fall outside "
+                "the run window"
+            )
         draw = 2 * (n - len(out))
         in_swarm = rng.random(draw) < k.swarm_fraction[tier]
         which = rng.choice(len(centers), size=draw, p=weights)
@@ -757,10 +806,11 @@ def sample_magnitude(rng: np.random.Generator, k: Knobs) -> m.Magnitude | None:
     if rng.random() < k.mag_missing_frac:
         return None
     value = k.mag_min - math.log10(rng.uniform(np.finfo(float).tiny, 1.0)) / k.mag_b_value
+    sigma = rnd(rng.uniform(*k.mag_sigma_range), k.dec_mag)
     return m.Magnitude(
         value=rnd(min(value, k.mag_max), k.dec_mag),
         type=k.mag_type,
-        sigma=rnd(rng.uniform(*k.mag_sigma_range), k.dec_mag),
+        sigma=None if rng.random() < k.mag_sigma_missing_frac else sigma,
     )
 
 
@@ -836,6 +886,7 @@ def sample_event(
     n_sta = int(rng.integers(lo_sta, hi_sta + 1))
     n_s = max(0, n_sta - int(rng.integers(0, k.s_dropout_max[tier] + 1)))
     missing_v = rng.random() < k.v_err_missing_frac[tier]
+    missing_h = rng.random() < k.h_err_missing_frac[tier]
     ev = EventDraft(
         tier=tier,
         e=e,
@@ -846,7 +897,7 @@ def sample_event(
         n_p=n_sta,
         n_s=n_s,
         rms_s=rnd(rng.uniform(*k.rms_range_s[tier]), k.dec_s),
-        h_err_m=rnd(rng.uniform(*k.h_err_range_m[tier]), k.dec_m),
+        h_err_m=None if missing_h else rnd(rng.uniform(*k.h_err_range_m[tier]), k.dec_m),
         v_err_m=None if missing_v else rnd(rng.uniform(*k.v_err_range_m[tier]), k.dec_m),
         depth_on_edge=depth_on_edge,
         magnitude=sample_magnitude(rng, k),
@@ -968,7 +1019,7 @@ def make_catalog(
                 mag = rng.uniform(*k.unmatched_mag_range)
             rows.append(
                 CatalogDraft(
-                    t=rnd(ev.t + dt, k.dec_s),
+                    t=rnd(clip_to_window(ev.t + dt, run, k), k.dec_s),
                     e=ev.e + dist * math.sin(angle),
                     n=ev.n + dist * math.cos(angle),
                     depth_km=rnd(-ev.elev_m / 1000.0 + depth_noise, k.catalog_depth_decimals),
@@ -984,7 +1035,10 @@ def make_catalog(
         depth_below = rng.uniform(*k.unmatched_depth_range_m)
         rows.append(
             CatalogDraft(
-                t=rnd(rng.uniform(run.window_start_s, run.window_end_s), k.dec_s),
+                t=rnd(
+                    clip_to_window(rng.uniform(run.window_start_s, run.window_end_s), run, k),
+                    k.dec_s,
+                ),
                 e=radius * math.sin(angle),
                 n=radius * math.cos(angle),
                 depth_km=rnd(
@@ -1093,10 +1147,18 @@ def make_features(frame: Frame, k: Knobs) -> list[m.GeoFeature]:
 def choose_evidence(
     rng: np.random.Generator, drafts: list[EventDraft], hero: EventDraft, k: Knobs
 ) -> list[EventDraft]:
-    chosen: list[EventDraft] = [hero]
+    """The hero, the Tier C event with the fewest stations (a 4-trace file), then random picks."""
+    smallest_c = min((d for d in drafts if d.tier == "C"), key=lambda d: (d.n_stations, d.id))
+    if smallest_c.n_stations != k.n_stations_range["C"][0]:
+        raise RuntimeError(
+            f"no Tier C event with {k.n_stations_range['C'][0]} stations; the smallest has "
+            f"{smallest_c.n_stations}, so the drawer's minimum-trace file would be missing"
+        )
+    forced = [hero, smallest_c]
+    chosen = list(forced)
     for tier in TIERS:
-        pool = [d for d in drafts if d.tier == tier and d is not hero]
-        want = k.n_evidence[tier] - (1 if tier == hero.tier else 0)
+        pool = [d for d in drafts if d.tier == tier and all(d is not f for f in forced)]
+        want = k.n_evidence[tier] - sum(1 for f in forced if f.tier == tier)
         idx = rng.choice(len(pool), size=want, replace=False)
         chosen.extend(pool[int(i)] for i in sorted(idx.tolist()))
     return chosen
@@ -1143,9 +1205,13 @@ def make_evidence(rng: np.random.Generator, ev: EventDraft, k: Knobs) -> m.Event
         needed_s += k.evidence_pre_p_s + k.evidence_post_s_s
         if needed_s * rate <= n_samples or len(stations) == 1:
             break
-        stations = stations[:-1]
+        dropped = stations.pop()
+        print(
+            f"  evidence {ev.id}: dropped farthest trace {dropped.id} "
+            f"({needed_s:.1f} s needed, {n_samples / rate:.1f} s window)"
+        )
     traces: list[m.WaveformSnippet] = []
-    for st in stations:
+    for index, st in enumerate(stations):
         picks = by_station[st.id]
         r_km = ev.hypo_dist_m(st) / 1000.0
         pred_p, pred_s = ev.t + r_km / k.vp_km_s, ev.t + r_km / k.vs_km_s
@@ -1153,6 +1219,8 @@ def make_evidence(rng: np.random.Generator, ev: EventDraft, k: Knobs) -> m.Event
         t = t0 + k.evidence_dt_s * np.arange(n_samples)
         p_pick, s_pick = picks["P"], picks.get("S")
         t_s = s_pick.t if s_pick is not None else pred_s
+        far_half = index >= len(stations) // 2
+        blank_pred = far_half and rng.random() < k.pred_missing_frac
         borehole = st.kind == "borehole"
         traces.append(
             m.WaveformSnippet(
@@ -1166,8 +1234,8 @@ def make_evidence(rng: np.random.Generator, ev: EventDraft, k: Knobs) -> m.Event
                 pickS=s_pick.t if s_pick is not None else None,
                 probP=p_pick.prob,
                 probS=s_pick.prob if s_pick is not None else None,
-                predP=rnd(pred_p, k.dec_s),
-                predS=rnd(pred_s, k.dec_s),
+                predP=None if blank_pred else rnd(pred_p, k.dec_s),
+                predS=None if blank_pred else rnd(pred_s, k.dec_s),
             )
         )
     return m.EventEvidence(eventId=ev.id, filterHz=k.filter_hz, traces=traces)
@@ -1204,17 +1272,18 @@ def baseline_rows(events: list[m.SeismicEvent], recovered: int, k: Knobs) -> lis
             medianStations=sta,
         )
     ]
-    for key, (f_cand, f_rec, f_a, f_b, f_c, f_rms, f_sta) in k.baseline_factors.items():
+    for key, (f_rec, f_a, f_b, f_c, f_rms, f_sta) in k.baseline_factors.items():
         method, profile = key.split("/")
+        row_tiers = m.TierCounts(
+            A=round(tiers.A * f_a), B=round(tiers.B * f_b), C=round(tiers.C * f_c)
+        )
         rows.append(
             m.BaselineRow(
                 method=method,
                 associationProfile=profile,
-                candidates=round(len(events) * f_cand),
+                candidates=row_tiers.A + row_tiers.B + row_tiers.C,
                 recoveredPublic=round(recovered * f_rec),
-                tiers=m.TierCounts(
-                    A=round(tiers.A * f_a), B=round(tiers.B * f_b), C=round(tiers.C * f_c)
-                ),
+                tiers=row_tiers,
                 medianRmsS=rnd(rms * f_rms, k.dec_s),
                 medianStations=rnd(sta * f_sta, 1),
             )
@@ -1249,7 +1318,8 @@ def sweep_points(events: list[m.SeismicEvent], recovered: int, k: Knobs) -> list
 
 def gr_curve(public_mags: np.ndarray, recovered_mags: np.ndarray, k: Knobs) -> m.GRCurve:
     """Cumulative counts per bin from the actual magnitudes; Mc by maximum curvature + offset;
-    Aki-Utsu b (with the half-bin correction) and Shi-Bolt sigma on the recovered set."""
+    Aki-Utsu b and Shi-Bolt sigma on the recovered set. The Aki-Utsu half-bin correction uses
+    the magnitude rounding step (10 ** -dec_mag), not the 0.25 curve bin used for Mc."""
     bins = np.round(np.arange(k.gr_min_mag, k.gr_max_mag + k.gr_bin / 2.0, k.gr_bin), k.dec_mag)
     eps = 10.0 ** -(k.dec_mag + 1)
 
@@ -1263,7 +1333,8 @@ def gr_curve(public_mags: np.ndarray, recovered_mags: np.ndarray, k: Knobs) -> m
     mc_rec = mc(recovered_mags)
     above = recovered_mags[recovered_mags >= mc_rec - eps]
     n = len(above)
-    b = math.log10(math.e) / (float(np.mean(above)) - (mc_rec - k.gr_bin / 2.0))
+    delta_m = 10.0**-k.dec_mag
+    b = math.log10(math.e) / (float(np.mean(above)) - (mc_rec - delta_m / 2.0))
     spread = float(np.sum((above - np.mean(above)) ** 2)) / (n * (n - 1))
     b_sigma = k.shi_bolt_factor * b * b * math.sqrt(spread)
     return m.GRCurve(
@@ -1374,12 +1445,7 @@ def make_run(run_id: str, run: RunSection, stations: list[m.Station], k: Knobs) 
         stationIds=[s.id for s in stations if s.usedInRun],
         pickerModel=k.picker_model,
         pickerWeights=k.picker_weights,
-        softwareVersions={
-            "mock-fixture": "synthetic",
-            "hq_contracts": m.SCHEMA_VERSION,
-            "numpy": np.__version__,
-            "pydantic": pydantic.VERSION,
-        },
+        softwareVersions={**k.software_versions, "hq_contracts": m.SCHEMA_VERSION},
         runtimeS=dict(k.runtime_s),
         picker={"model": k.picker_model, "weights": k.picker_weights, **k.picker_params},
         associator=dict(k.associator_params),
@@ -1401,14 +1467,14 @@ def make_run(run_id: str, run: RunSection, stations: list[m.Station], k: Knobs) 
     )
 
 
-def make_scene(run_id: str, run: RunSection, hero_id: str) -> m.SceneMeta:
+def make_scene(run_id: str, run: RunSection, hero_id: str, k: Knobs) -> m.SceneMeta:
     return m.SceneMeta(
         runId=run_id,
         originLat=run.origin.lat,
         originLon=run.origin.lon,
         originElevM=run.origin.elevM,
         refSurfaceElevM=run.refSurfaceElevM,
-        projection="EPSG:32612 minus origin",
+        projection=k.projection,
         verticalExaggeration=1.0,
         depthLabel=f"Depth below site surface (ref {run.refSurfaceElevM:g} m ASL)",
         heroEventId=hero_id,
@@ -1453,7 +1519,7 @@ def build_bundle(seed: int, run: RunSection, k: Knobs | None = None) -> MockBund
     validation = make_validation(events, catalog, k)
     meta = m.BundleMeta(
         mode="mock",
-        scene=make_scene(run_id, run, hero.id),
+        scene=make_scene(run_id, run, hero.id, k),
         run=make_run(run_id, run, stations, k),
         summary=make_summary(run_id, events, catalog, validation, k),
     )

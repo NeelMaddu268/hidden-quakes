@@ -110,10 +110,13 @@ def test_nothing_looks_real(bundle: Bundle) -> None:
 # --- counts and geometry ----------------------------------------------------------------
 
 
-def test_station_counts_and_kinds(bundle: Bundle) -> None:
+def test_station_counts_and_kinds(bundle: Bundle, mock_fixture: ModuleType) -> None:
     surface = [s for s in bundle.stations if s.kind == "surface"]
     borehole = [s for s in bundle.stations if s.kind == "borehole"]
     assert len(bundle.stations) == 17 and len(surface) == 14 and len(borehole) == 3
+    knobs = mock_fixture.Knobs()
+    for s in surface:  # the relief never clips: no station sits on a bound
+        assert knobs.surface_elev_min_m < s.surfaceElevM < knobs.surface_elev_max_m, s.id
     assert all(s.sensorDepthM == 0.0 for s in surface)
     assert all(s.sensorDepthM > 0.0 and s.sampleRateHz > 100.0 for s in borehole)
     assert all(s.channels[0].startswith("DP") for s in borehole)
@@ -148,7 +151,12 @@ def test_event_counts_and_conventions(bundle: Bundle) -> None:
     tier_c = [e for e in bundle.events if e.tier == "C"]
     assert any(e.quality.vErrM is None for e in tier_c)
     assert any(e.quality.depthOnEdge for e in tier_c)
+    # Nullable UI paths, each exercised at least once (and only where the tier allows it).
+    assert any(e.quality.hErrM is None for e in tier_c)
+    assert all(e.quality.hErrM is not None for e in bundle.events if e.tier != "C")
     assert any(e.magnitude is None for e in bundle.events)
+    assert any(e.magnitude is not None and e.magnitude.sigma is None for e in bundle.events)
+    assert any(e.magnitude is not None and e.magnitude.sigma is not None for e in bundle.events)
     assert all(e.magnitude.type == "ML_cal" for e in bundle.events if e.magnitude)
 
 
@@ -207,15 +215,53 @@ def test_summary_recomputes_from_events_and_catalog(bundle: Bundle) -> None:
     )
 
 
-def test_tiers_trace_to_recorded_thresholds(bundle: Bundle, mock_fixture: ModuleType) -> None:
+def derive_tier(q: m.LocationQuality, thresholds: dict) -> str:
+    """The tier rule as documented in meta.run.tiering, written out independently of the script."""
+    a, b = thresholds["A"], thresholds["B"]
+    is_a = (
+        q.nStations >= a["minStations"]
+        and q.rmsS <= a["maxRmsS"]
+        and q.hErrM is not None
+        and q.hErrM <= a["maxHErrM"]
+        and q.vErrM is not None
+        and q.vErrM <= a["maxVErrM"]
+        and q.gapDeg <= a["maxGapDeg"]
+        and not q.depthOnEdge
+    )
+    if is_a:
+        return "A"
+    is_b = (
+        q.nStations >= b["minStations"]
+        and q.rmsS <= b["maxRmsS"]
+        and q.hErrM is not None
+        and q.hErrM <= b["maxHErrM"]
+    )
+    return "B" if is_b else "C"
+
+
+def test_tiers_trace_to_recorded_thresholds(bundle: Bundle) -> None:
     thresholds = bundle.meta.run.tiering["thresholds"]
-    knobs = mock_fixture.Knobs()
-    assert thresholds == {"A": knobs.tier_a, "B": knobs.tier_b}
+    assert set(thresholds["A"]) == {"minStations", "maxRmsS", "maxHErrM", "maxVErrM", "maxGapDeg"}
+    assert set(thresholds["B"]) == {"minStations", "maxRmsS", "maxHErrM"}
     for e in bundle.events:
-        tier, reasons = mock_fixture.tier_of(e.quality, thresholds, knobs)
-        assert tier == e.tier, e.id
-        assert reasons == e.tierReasons, e.id
-        assert reasons, "every event explains its tier"
+        assert derive_tier(e.quality, thresholds) == e.tier, e.id
+        assert e.tierReasons, "every event explains its tier"
+        not_a = [r for r in e.tierReasons if r.startswith("not A:")]
+        not_b = [r for r in e.tierReasons if r.startswith("not B:")]
+        if e.tier == "A":
+            assert not not_a and not not_b, e.id
+        elif e.tier == "B":
+            assert not_a and not not_b, e.id
+        else:
+            assert not_a and not_b, e.id
+        # Every quoted limit is one of the recorded thresholds.
+        limits = {str(v) for t in thresholds.values() for v in t.values()}
+        limits |= {f"{float(v):.0f}" for t in thresholds.values() for v in t.values()}
+        for reason in e.tierReasons:
+            if "missing" in reason or "depthOnEdge" in reason:
+                continue
+            quoted = reason.split("(")[0].split()[-1]
+            assert quoted in limits, (e.id, reason)
 
 
 def test_hero_is_the_tier_a_event_with_most_stations(bundle: Bundle) -> None:
@@ -251,11 +297,15 @@ def test_evidence_files_only_for_the_chosen_events(bundle: Bundle) -> None:
     for event_id, ev in bundle.evidence.items():
         assert ev.eventId == event_id
         assert (bundle.dir / "evidence" / f"{event_id}.json").stat().st_size < MAX_EVIDENCE_BYTES
+    counts = [len(ev.traces) for ev in bundle.evidence.values()]
+    assert min(counts) == 4 and max(counts) == 16, "the drawer sees both a 4- and a 16-trace file"
+    smallest = min(bundle.evidence.values(), key=lambda ev: len(ev.traces))
+    assert bundle.events_by_id[smallest.eventId].tier == "C"
 
 
 def test_evidence_traces_are_well_formed(bundle: Bundle) -> None:
     used = {s.id for s in bundle.stations if s.usedInRun}
-    saw_missing_s = False
+    saw_missing_s = saw_missing_pred = False
     for ev in bundle.evidence.values():
         assert 1 <= len(ev.traces) <= 16
         assert ev.filterHz[0] < ev.filterHz[1]
@@ -268,17 +318,22 @@ def test_evidence_traces_are_well_formed(bundle: Bundle) -> None:
             assert 4.0 <= seconds <= 8.0 + 1e-9
             assert min(t.samples) >= -1.0 and max(t.samples) <= 1.0
             assert max(abs(x) for x in t.samples) == pytest.approx(1.0, abs=1e-3)
-            assert t.predP is not None and t.predS is not None and t.predP < t.predS
-            assert t.pickP is not None and t.probP is not None
+            assert t.pickP is not None and t.probP is not None, "pickP/probP are always set"
             assert t.t0 <= t.pickP < t.t0 + seconds
-            assert t.t0 <= t.predS < t.t0 + seconds
-            assert event.t < t.predP
+            assert event.t < t.pickP
+            if t.predP is None:
+                saw_missing_pred = True
+                assert t.predS is None, "predP and predS are blanked together"
+            else:
+                assert t.predS is not None and t.predP < t.predS
+                assert event.t < t.predP and t.t0 <= t.predS < t.t0 + seconds
             if t.pickS is None:
                 saw_missing_s = True
                 assert t.probS is None
             else:
                 assert t.probS is not None and t.t0 <= t.pickS < t.t0 + seconds
     assert saw_missing_s, "some traces have no S pick, so the drawer's null path is exercised"
+    assert saw_missing_pred, "some far traces have no predicted arrivals (WEB-05 null path)"
 
 
 # --- features and validation ------------------------------------------------------------
@@ -296,11 +351,14 @@ def test_features(bundle: Bundle) -> None:
     assert len(facility.path) == 1
 
 
-def test_validation_is_filled_and_consistent(bundle: Bundle) -> None:
+def test_validation_is_filled_and_consistent(bundle: Bundle, mock_fixture: ModuleType) -> None:
     v = bundle.validation
     assert v.nullTest is not None and v.gr is not None and v.magnitude is not None
     keys = {(r.method, r.associationProfile) for r in v.baseline}
     assert keys == {(mth, prof) for mth in ("phasenet", "stalta") for prof in ("full", "p_only")}
+    for r in v.baseline:  # every row is internally consistent
+        assert r.tiers.A + r.tiers.B + r.tiers.C == r.candidates, (r.method, r.associationProfile)
+        assert r.recoveredPublic <= r.candidates
     full = next(r for r in v.baseline if (r.method, r.associationProfile) == ("phasenet", "full"))
     assert full.candidates == len(bundle.events)
     assert full.recoveredPublic == bundle.meta.summary.recoveredCatalogCount
@@ -312,7 +370,9 @@ def test_validation_is_filled_and_consistent(bundle: Bundle) -> None:
     for i, b in enumerate(v.gr.magBins):
         assert v.gr.recoveredCum[i] == int(np.sum(recovered_mags >= b - 1e-9))
         assert v.gr.publicCum[i] == int(np.sum(public_mags >= b - 1e-9))
-    assert v.gr.bValue is not None and 0.5 < v.gr.bValue < 1.5
+    generating_b = mock_fixture.Knobs().mag_b_value
+    assert v.gr.bValue is not None and v.gr.bValue == pytest.approx(generating_b, abs=0.1)
+    assert v.gr.bSigma is not None and 0.0 < v.gr.bSigma < 0.2
     assert v.magnitude.n > 0 and v.magnitude.looMae > 0
     assert v.synthetic.medianVErrM > 0 and set(v.synthetic.pickSigmaS) == {"P", "S"}
 
@@ -332,9 +392,13 @@ def test_same_seed_gives_identical_bytes(
         assert (out_dir / rel).read_bytes() == (again / rel).read_bytes(), rel
 
 
-def test_different_seed_gives_different_events(tmp_path: Path, mock_fixture: ModuleType) -> None:
+def test_different_seed_gives_different_events(
+    out_dir: Path, tmp_path: Path, mock_fixture: ModuleType
+) -> None:
     other = tmp_path / "other"
     bundle = mock_fixture.generate(other, seed=OTHER_SEED)
     assert bundle.meta.run.id == f"mock-{OTHER_SEED}"
     assert len(bundle.events) == 500
     assert bundle.meta.scene.isSynthetic is True
+    assert (other / "events.json").read_bytes() != (out_dir / "events.json").read_bytes()
+    assert (other / "stations.json").read_bytes() != (out_dir / "stations.json").read_bytes()
