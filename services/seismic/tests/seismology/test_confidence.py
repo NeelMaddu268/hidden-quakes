@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -162,6 +164,7 @@ def test_cross_validate_scores_every_row_out_of_fold() -> None:
             "quality_nS": x[:, 1],
             "minPickProb": x[:, 2],
             "quality_nStations": np.where(y == 1, 8, 6),
+            "nPicksUsed": np.where(y == 1, 12, 9),
             "label": y,
             "shuffle": np.where(y == 1, -1, np.arange(200) % 10),
             "tier": "C",
@@ -174,36 +177,142 @@ def test_cross_validate_scores_every_row_out_of_fold() -> None:
     assert res.folds[0]["rocAuc"] > 0.8
 
 
-def test_choose_prefers_logistic_unless_mlp_clearly_better() -> None:
+def test_choose_keeps_the_simplest_unless_a_larger_model_is_clearly_better() -> None:
     def s(auc: float, matched: float) -> dict[str, list[float]]:
         return {"rocAuc": [auc], "matchedAucNSta": [matched]}
 
-    assert cf.choose({"logistic": s(0.95, 0.90), "mlp": s(0.955, 0.95)}) == "logistic"
-    assert cf.choose({"logistic": s(0.95, 0.90), "mlp": s(0.97, 0.92)}) == "mlp"
+    base = {"logisticCore": s(0.98, 0.95), "logistic": s(0.992, 0.949), "mlp": s(0.991, 0.948)}
+    assert cf.choose(base) == "logisticCore"
+    # better on one metric only is not enough
+    assert cf.choose({**base, "logistic": s(0.999, 0.955)}) == "logisticCore"
+    assert cf.choose({**base, "logistic": s(0.9999, 0.97)}) == "logistic"
+    # a later candidate must beat the current choice, not the first one
+    assert cf.choose({**base, "logistic": s(0.9999, 0.97), "mlp": s(0.9999, 0.975)}) == "logistic"
+    assert (
+        cf.choose(
+            {"logisticCore": s(0.95, 0.90), "logistic": s(0.955, 0.95), "mlp": s(0.97, 0.92)},
+            ("logisticCore", "mlp"),
+        )
+        == "mlp"
+    )
 
 
-def test_confidence_doc_format_and_wording() -> None:
-    report = {
-        "chosen": "logistic",
+def test_decoy_support_and_by_station_count() -> None:
+    assert cf.decoy_support(np.array([3] * 10 + [4] * 6 + [8] * 4 + [10])) == 4
+    assert cf.decoy_support(np.array([3, 4]), min_decoys=5) == 0
+    df = pd.DataFrame({"label": [1, 0, 0, 1, 1], "quality_nStations": [4, 4, 4, 9, 9]})
+    rows = cf.by_station_count(df, np.array([0.9, 0.1, 0.95, 0.8, 0.7]))
+    assert rows[0] == {"nStations": 4, "nReal": 1, "nDecoy": 2, "rocAuc": 0.5}
+    assert rows[1]["nDecoy"] == 0 and math.isnan(rows[1]["rocAuc"])
+
+
+def _report() -> dict:
+    def fs(auc: float, matched: float) -> dict[str, list[float]]:
+        return {
+            "rocAuc": [auc, 0.01, auc - 0.01, auc + 0.005],
+            "averagePrecision": [0.98, 0.01, 0.97, 0.99],
+            "matchedAucNSta": [matched, 0.03, matched - 0.02, matched + 0.02],
+        }
+
+    return {
+        "chosen": "logisticCore",
         "runId": "r1",
         "createdAt": "2026-09-26T00:00:00Z",
         "gitSha": "abc",
-        "data": {"features": ["quality_nP"], "real": 2, "decoys": 3, "shuffles": 1, "shiftS": 30.0},
+        "data": {
+            "features": list(cf.CORE_FEATURES),
+            "real": 2,
+            "decoys": 3,
+            "shuffles": 1,
+            "shiftS": 30.0,
+        },
         "folds": {"n": 5},
         "foldSummary(mean,std,min,max)": {
-            "logistic": {
-                "rocAuc": [0.99, 0.01, 0.98, 1.0],
-                "averagePrecision": [0.98, 0.01, 0.97, 0.99],
-                "matchedAucNSta": [0.95, 0.03, 0.9, 0.98],
-            }
+            "logisticCore": fs(0.99, 0.95),
+            "logistic": fs(0.992, 0.949),
+            "mlp": fs(0.991, 0.948),
+            "nStationsOnly": fs(0.95, 0.5),
+            "rmsOnly": fs(0.84, 0.93),
+        },
+        "sanity": {"decoySupport": {"maxStations": 8}},
+        "logisticWeights": {
+            "logisticCore": [
+                {"feature": "quality_nStations", "coef": 2.7},
+                {"feature": "quality_rmsS", "coef": -1.2},
+                {"feature": "meanPickProb", "coef": -1.1},
+            ]
         },
     }
+
+
+def test_confidence_doc_format_and_wording() -> None:
     real = pd.DataFrame({"eventId": ["e1", "e2"], "score": [0.12345, 1.0]})
-    doc = cf.confidence_doc(report, real)
+    doc = cf.confidence_doc(_report(), real)
     assert doc["schema"] == "hq.confidence/1" and doc["runId"] == "r1"
     assert doc["events"] == {"e1": 0.123, "e2": 1.0}
-    assert doc["model"]["heldOut"]["rocAuc"] == 0.99
+    held = doc["model"]["heldOut"]
+    assert held["rocAuc"] == 0.99 and held["rocAucEqualStationCount"] == 0.95
+    # the numbers must be read against the one-feature baselines, so they travel together
+    assert held["baselines"]["stationCountOnly"] == {"rocAuc": 0.95, "rocAucEqualStationCount": 0.5}
+    assert held["baselines"]["rmsOnly"]["rocAucEqualStationCount"] == 0.93
+    assert set(held["comparedWith"]) == {"logistic", "mlp"}
+    assert doc["model"]["coefPerSd"] == {
+        "quality_nStations": 2.7,
+        "quality_rmsS": -1.2,
+        "meanPickProb": -1.1,
+    }
+    assert doc["model"]["decoySupport"]["maxStations"] == 8
+    assert doc["model"]["features"] == list(cf.CORE_FEATURES)
     # docs/00 language rules (the exporter rejects these phrases in label/description)
     for text in (doc["label"], doc["description"]):
         for phrase in ("confirmed earthquake", "caused by", "predict", "official"):
             assert phrase not in text.lower()
+    assert "ai" not in doc["label"].lower().split()
+
+
+def _synthetic_training_dir(root: Path, run_id: str = "run-x") -> Path:
+    """positives/negatives/manifest in the shape hq.tier.confidence_data writes."""
+    rng = np.random.default_rng(0)
+    frames = []
+    for label, n in ((1, 60), (0, 200)):
+        nsta = rng.integers(8, 20, n) if label else rng.integers(3, 9, n)
+        cols: dict[str, object] = {}
+        for name in FEATURES:
+            cols[name] = rng.random(n)
+        cols.update(
+            {
+                "quality_nStations": nsta,
+                "quality_rmsS": np.exp(rng.normal(-3.0 if label else -2.0, 0.5, n)),
+                "nPicksUsed": 2 * nsta,
+                "quality_hErrM": np.where(rng.random(n) < 0.1, np.nan, 500.0 * rng.random(n)),
+                "pdfTruncated": rng.random(n) < 0.2,
+                "label": label,
+                "shuffle": -1 if label else rng.integers(0, 10, n),
+                "seed": 0,
+                "eventId": [f"{'r' if label else 'd'}{i:04d}" for i in range(n)],
+                "rerunEventId": "",
+                "assocId": np.arange(n),
+                "tier": "C",
+                "catalogMatched": False,
+            }
+        )
+        frames.append(pd.DataFrame(cols))
+    frames[0].to_parquet(root / "positives.parquet", index=False)
+    frames[1].to_parquet(root / "negatives.parquet", index=False)
+    manifest = {"runId": run_id, "nullTest": {"shiftS": 30.0}}
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    return root
+
+
+def test_cli_writes_confidence_json_for_every_real_event(tmp_path: Path) -> None:
+    data = _synthetic_training_dir(tmp_path)
+    out = tmp_path / "out" / "confidence.json"
+    cf.main(["--run", "run-x", "--data-dir", str(data), "--out", str(out)])
+    doc = json.loads(out.read_text())
+    assert doc["schema"] == "hq.confidence/1" and doc["runId"] == "run-x"
+    assert set(doc["events"]) == {f"r{i:04d}" for i in range(60)}
+    assert all(0.0 <= v <= 1.0 for v in doc["events"].values())
+    assert doc["model"]["heldOut"]["rocAuc"] > 0.8
+    assert (out.parent / "scores.parquet").is_file() and (out.parent / "report.json").is_file()
+    with pytest.raises(ValueError, match="run-x"):
+        cf.run(data, tmp_path / "other.json", run_id="run-y")
