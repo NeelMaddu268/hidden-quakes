@@ -125,6 +125,7 @@ export function EvidenceDrawer() {
                 evidence={evidence.status === "ready" ? evidence.evidence : undefined}
                 message={evidence.status === "error" ? evidence.message : undefined}
                 originT={event.t}
+                nStations={event.quality.nStations}
               />
               <Figures
                 event={event}
