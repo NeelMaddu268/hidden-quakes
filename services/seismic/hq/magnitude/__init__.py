@@ -9,8 +9,8 @@ leave-one-event-out MAE is at most ``magnitude.maxLooMae``.
 
 - ``hq.magnitude.amplitude``: windows, station screening, response removal + Wood-Anderson,
   chunked amplitude measurement;
-- ``hq.magnitude.calibrate``: robust fit with sum-to-zero station terms, event magnitudes,
-  leave-one-event-out;
+- ``hq.magnitude.calibrate``: robust fit with ridge-constrained station terms
+  (``fit.stationTermRidge``), event magnitudes, leave-one-event-out;
 - ``hq.magnitude.run``: the stage. ``run`` here is that stage function, because the stage
   registry (H4's ``hq.runs.STAGES``) resolves stage ``magnitude`` as the attribute
   ``hq.magnitude.run``.
