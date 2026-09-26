@@ -364,6 +364,10 @@ def test_bare_station_id_with_two_locations_is_ambiguous(tmp_path: Path) -> None
     assert {tr.stats.location for tr in read_window("XX.A.10", t0, t1, cache_dir=tmp_path)} == {
         "10"
     }
+    # gap accounting looks stations up by NET.STA.LOC, so a bare id is never ambiguous there
+    bare = StationRequest("XX.A", "XX", "A", "00", ("HHZ", "HHN", "HHE"))
+    rows, report = coverage([bare], t0, t1, cfg, cache_dir=tmp_path)
+    assert rows == [] and report[0].useful
 
 
 def test_nothing_cached_raises(tmp_path: Path) -> None:

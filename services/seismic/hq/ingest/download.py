@@ -668,8 +668,9 @@ def coverage(
     report: list[StationCoverage] = []
     span = t1 - t0
     for s in stations:
+        exact_id = f"{s.network}.{s.station}.{s.location}"  # never ambiguous across locations
         try:
-            segs = window_segments(s.id, t0, t1, cache_dir=cache_dir)
+            segs = window_segments(exact_id, t0, t1, cache_dir=cache_dir)
         except CacheMissError:
             segs = []
         fractions: dict[str, float] = {}
@@ -811,7 +812,7 @@ def run(ctx: Any) -> None:
     cfg: DownloadConfig = ctx.config.signal.download
     window = ctx.config.run
     rows = load_station_rows(ctx.path("stations.parquet"))
-    used = [r for r in rows if bool(r.get("usedInRun", True))]
+    used = [r for r in rows if bool(r["usedInRun"])]  # SEIS-01: station has data in the window
     log.info("download stage: %d station row(s), %d with usedInRun", len(rows), len(used))
     stations = station_requests(used)
     t0, t1 = window.window_start_s, window.window_end_s
