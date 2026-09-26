@@ -48,8 +48,9 @@ from hq_contracts.models import MagCalibration, SeismicEvent
 from hq.magnitude.amplitude import (
     AMPLITUDE_UNITS,
     DISTANCE_UNITS,
+    LOW_SNR,
+    NATIVE_OUTPUT,
     OK,
-    RESPONSE_OUTPUT,
     MagnitudeError,
     measure_amplitudes,
     plan_windows,
@@ -79,6 +80,7 @@ CATALOG_TABLE = "catalog.parquet"
 MAGNITUDE_JSON = "magnitude.json"
 PART_SUFFIX = ".part"
 MAG_COLUMNS: tuple[str, ...] = ("magnitude_value", "magnitude_type", "magnitude_sigma")
+CENSORING_BINS = 10  # ML_cal deciles in the record's censoring table (a summary, not a knob)
 INPUT_MODELS = {
     "events": "SeismicEvent",
     "arrivals": "Arrival",
@@ -157,6 +159,36 @@ def calibration_events(
             mag_type, by_type,
         )  # fmt: skip
     return use[["eventId", "catalogId", "mag"]].reset_index(drop=True), info
+
+
+def censoring_summary(mags: pd.DataFrame, table: pd.DataFrame) -> dict[str, Any]:
+    """Station support of the event magnitudes by ML_cal decile (``CENSORING_BINS`` equal-count
+    bins): usable station magnitudes per event (median, min) and the median share of the event's
+    measured windows (``ok`` + ``lowSnr``) that fell below ``minSnr``."""
+    have = mags[np.isfinite(mags["value"].to_numpy(dtype=np.float64))]
+    measured = table[table["status"].isin([OK, LOW_SNR])]
+    low_share = (measured["status"] == LOW_SNR).groupby(measured["eventId"]).mean()
+    rows: list[dict[str, Any]] = []
+    if len(have):
+        have = have.assign(lowSnrShare=have["eventId"].map(low_share).to_numpy(dtype=np.float64))
+        bins = pd.qcut(have["value"], CENSORING_BINS, labels=False, duplicates="drop")
+        for _, g in have.groupby(bins.to_numpy(), sort=True):
+            rows.append(
+                {
+                    "mlCal": [round(float(g["value"].min()), 3), round(float(g["value"].max()), 3)],
+                    "events": len(g),
+                    "nStationsMedian": float(g["nStations"].median()),
+                    "nStationsMin": int(g["nStations"].min()),
+                    "lowSnrShareMedian": round(float(g["lowSnrShare"].median()), 3),
+                }
+            )
+    return {
+        "note": "only windows with SNR >= minSnr give station magnitudes, so near the detection "
+        "limit an event's magnitude rests on the stations whose amplitude happened to clear the "
+        "noise: fewer stations, biased upward. Read belowCalibratedRange and the low-magnitude "
+        "end of any G-R curve or b-value with this table",
+        "byDecile": rows,
+    }
 
 
 def _with_magnitudes(events: pd.DataFrame, mags: pd.DataFrame | None) -> pd.DataFrame:
@@ -258,13 +290,26 @@ def _preprocessing_record(ctx: RunContext) -> dict[str, Any]:
         "noiseWindow": "[tP - noiseGapS - noiseLenS, tP - noiseGapS]",
         "snr": "S-window peak / noise-window peak of the same processed vector trace",
         "responseRemoval": {
-            "output": RESPONSE_OUTPUT,
+            "evalrespOutputByInputUnits": {u: out for u, (out, _) in NATIVE_OUTPUT.items()},
+            "integrationsToDisplacement": {u: k for u, (_, k) in NATIVE_OUTPUT.items()},
             "outputUnits": "m (ground displacement)",
             "method": "linear detrend, cosine taper over padS at each end, rfft (nfft = next "
             "power of two >= 2 npts), x ObsPy cosine_sac_taper(preFiltHz), x inverted evalresp "
-            "DISP response with ObsPy invert_spectrum(waterLevelDb), as Trace.remove_response",
+            "response in the sensor's own input units (ObsPy invert_spectrum(waterLevelDb): the "
+            "water level is waterLevelDb below that native-unit response's maximum), "
+            "/ (2 pi i f)^k to ground displacement",
+            "band": "flat between preFiltHz f2 and f3, cosine tapers to 0 at f1 and f4, then the "
+            "Wood-Anderson response (flat to displacement above 1/periodS, falling as f^2 below); "
+            "the same at every station except inside amplitudes.perStation.*.waterLevelClipHz, "
+            "where the water level caps the inverse response",
             "preFiltHz": list(cfg.response.preFiltHz),
             "waterLevelDb": cfg.response.waterLevelDb,
+        },
+        "saturation": {
+            "rule": "status clipped when the raw |counts| of either horizontal reach maxFraction "
+            "x fullScaleCounts anywhere in the processed span",
+            "fullScaleCounts": cfg.saturation.fullScaleCounts,
+            "maxFraction": cfg.saturation.maxFraction,
         },
         "woodAnderson": {
             "response": "gain * s^2 / (s^2 + 2 h w0 s + w0^2), w0 = 2 pi / periodS, applied to "
@@ -433,8 +478,16 @@ def run(ctx: RunContext) -> None:
             "aFixed": final.aFixed,
             "stationTermConstraint": f"ridge: stationTermRidge ({cfg.fit.stationTermRidge}) x "
             "sum of squared station terms, quadratic; with the free intercept c the terms also "
-            "sum to zero at the optimum. Not sum-to-zero alone: the calibration events cluster, "
-            "so free terms would absorb the distance dependence and leave b unconstrained",
+            "sum to zero at the optimum",
+            "bIdentification": {
+                **final.distanceSpread,
+                "note": "b is not identified by a clustered calibration set: with free station "
+                "terms only withinStationLogRSd informs it, and stationTermRidge decides how much "
+                "of betweenStationLogRSd is credited to b instead of to the terms, so b follows "
+                "that knob and the loss as much as the data. The leave-one-event-out MAE does not "
+                "test b (the held-out events share the others' source region); magnitudes of "
+                "events far from the calibration events depend on it",
+            },
             "coefficients": final.coefficients(),
             "stationTerms": final.stationTerms,
             "stationsWithoutTerm": final.stationsWithoutTerm,
@@ -474,6 +527,7 @@ def run(ctx: RunContext) -> None:
             "calibratedRange": list(cal_range),
             "belowCalibratedRange": below_range,
             "aboveCalibratedRange": above_range,
+            "censoring": censoring_summary(mags, table),
         },
         "preprocessing": _preprocessing_record(ctx),
         "stations": screens_record,

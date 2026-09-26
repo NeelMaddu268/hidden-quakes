@@ -40,6 +40,7 @@ from hq.config.run import RunSection
 from hq.config.seismology import SeismologyConfig, WoodAndersonConfig
 from hq.magnitude import (
     MagnitudeError,
+    StationScreen,
     event_magnitudes,
     fit_calibration,
     leave_one_event_out,
@@ -48,6 +49,7 @@ from hq.magnitude import (
     screen_station,
 )
 from hq.magnitude.amplitude import (
+    WINDOW_COLUMNS,
     nfft_for,
     read_groups,
     response_filter,
@@ -300,11 +302,53 @@ def test_response_removal_recovers_a_known_ground_displacement(
     r_disp = resp.get_evalresp_response_for_frequencies([f0], output="DISP")[0]
     t = np.arange(int(20 * SR)) / SR
     counts = np.real(r_disp * disp * np.exp(2j * np.pi * f0 * t))
-    filt = response_filter(resp, 1.0 / SR, nfft_for(len(t)), cfg)
+    filt, clip = response_filter(resp, 1.0 / SR, nfft_for(len(t)), cfg)
     wa_mm = to_wood_anderson(counts, filt, round(cfg.window.padS * SR))
     middle = wa_mm[int(6 * SR) : int(14 * SR)]
     expected = disp * np.abs(wood_anderson_response(np.array([f0]), cfg.woodAnderson))[0] * 1000.0
     assert np.abs(middle).max() == pytest.approx(expected, rel=0.01)
+    assert clip is None
+
+
+@pytest.mark.parametrize("above_f2", [1.25, 2.5])
+def test_accelerometer_at_1000_hz_is_not_high_passed_in_band(
+    seismology_config: SeismologyConfig, above_f2: float
+) -> None:
+    """A flat 1000 Hz accelerometer (M/S**2): as displacement its response peaks at Nyquist, 80 dB
+    above its 5 Hz value, so a 60 dB water level on the displacement response would pass a tenth
+    of a 5 Hz signal and 40% of a 10 Hz one. In native units nothing in the band is clipped: a
+    ground displacement low in the flat band [f2, f3] comes back at full amplitude."""
+    cfg = seismology_config.magnitude
+    f0 = above_f2 * cfg.response.preFiltHz[1]
+    rate = 1000.0
+    resp = Response.from_paz(
+        zeros=[], poles=[], stage_gain=4.0e5, input_units="M/S**2", output_units="COUNTS"
+    )
+    disp = 1.0e-7
+    r_disp = resp.get_evalresp_response_for_frequencies([f0], output="DISP")[0]
+    t = np.arange(int(12 * rate)) / rate
+    counts = np.real(r_disp * disp * np.exp(2j * np.pi * f0 * t))
+    filt, clip = response_filter(resp, 1.0 / rate, nfft_for(len(t)), cfg)
+    wa_mm = to_wood_anderson(counts, filt, round(cfg.window.padS * rate))
+    expected = disp * np.abs(wood_anderson_response(np.array([f0]), cfg.woodAnderson))[0] * 1000.0
+    assert np.abs(wa_mm[int(4 * rate) : int(8 * rate)]).max() == pytest.approx(expected, rel=0.01)
+    assert clip is None
+
+
+def test_water_level_clip_inside_the_band_is_reported(seismology_config: SeismologyConfig) -> None:
+    """A displacement sensor with four poles at 5 Hz falls 60 dB below its maximum at about
+    27.5 Hz: the water level clips from there to preFiltHz f3."""
+    cfg = seismology_config.magnitude
+    pole = -2.0 * np.pi * 5.0
+    resp = Response.from_paz(
+        zeros=[], poles=[pole] * 4, stage_gain=1.0e9, input_units="M", output_units="COUNTS",
+        normalization_frequency=0.0, normalization_factor=pole**4,
+    )  # fmt: skip
+    _, clip = response_filter(resp, 1.0 / SR, nfft_for(int(20 * SR)), cfg)
+    assert clip is not None
+    f_60db = 5.0 * math.sqrt(10.0**1.5 - 1.0)  # (1 + (f/5)^2)^2 = 10^3
+    assert clip[0] == pytest.approx(f_60db, abs=0.1)
+    assert clip[1] == pytest.approx(cfg.response.preFiltHz[2], abs=0.1)
 
 
 def test_measured_amplitudes_follow_the_truth_at_every_station(
@@ -349,10 +393,69 @@ def test_read_groups_span_at_most_the_chunk() -> None:
     assert len(read_groups(np.array([0.0]), np.array([1000.0]), 600.0)) == 1
 
 
+def test_window_statuses_gap_rate_flat_clipped(seismology_config: SeismologyConfig) -> None:
+    """One window per made-up station, each read returning a trace with one defect."""
+    cfg = seismology_config.magnitude
+    w, sat = cfg.window, cfg.saturation
+    t_p, t_s = T_DATA + 20.0, T_DATA + 23.0
+    row: dict[str, Any] = {
+        "eventId": "e0", "hypoDistM": 5000.0, "tP": t_p, "tS": t_s, "pAnchor": "observed",
+        "sAnchor": "observed", "noiseStart": t_p - w.noiseGapS - w.noiseLenS,
+        "noiseEnd": t_p - w.noiseGapS, "signalStart": t_s - w.sPreS, "signalEnd": t_s + w.sPostS,
+    }  # fmt: skip
+    row["readStart"], row["readEnd"] = row["noiseStart"] - w.padS, row["signalEnd"] + w.padS
+    kinds = {"T.OK": "ok", "T.GAP": "gap", "T.RATE": "rateMismatch", "T.FLAT": "flat",
+             "T.CLIP": "clipped"}  # fmt: skip
+    plan = pd.DataFrame([{**row, "stationId": sid} for sid in kinds])[list(WINDOW_COLUMNS)]
+    resp = _flat_response(SR)
+    screens = {
+        sid: StationScreen(stationId=sid, usable=True, reason=None, location="",
+                           channels=("HHN", "HHE"), dataRateHz=SR,
+                           responses={"HHN": resp, "HHE": resp})
+        for sid in kinds
+    }  # fmt: skip
+    n = int(60 * SR)
+    clean = np.random.default_rng(3).normal(0.0, 10.0, n)
+    clean += 1.0e4 * _wavelet(T_DATA + np.arange(n) / SR - (t_s + 0.5))
+
+    def reader(sid: str, t0: float, t1: float, *, cache_dir: Path) -> Stream:
+        data, rate = clean.copy(), SR
+        if sid == "T.FLAT":
+            data[:] = 0.0  # a dead channel
+        elif sid == "T.CLIP":
+            data[int((t_s + 0.5 - T_DATA) * SR)] = 0.96 * sat.fullScaleCounts
+        elif sid == "T.RATE":
+            rate = SR / 2.0  # served at another rate than Station.sampleRateHz
+        st = Stream()
+        for cha in ("HHN", "HHE"):
+            header = {"network": "T", "station": sid[2:], "location": "", "channel": cha,
+                      "sampling_rate": rate, "starttime": UTCDateTime(T_DATA)}  # fmt: skip
+            tr = Trace(data=np.round(data).astype(np.int32), header=header)
+            if sid == "T.GAP" and cha == "HHN":  # 1 s missing inside the S window
+                cut = int((t_s - T_DATA) * SR)
+                st += tr.copy().slice(endtime=UTCDateTime(T_DATA + (cut - 1) / SR))
+                st += tr.copy().slice(starttime=UTCDateTime(T_DATA + (cut + int(SR)) / SR))
+                continue
+            st += tr
+        return st
+
+    result = measure_amplitudes(plan, screens, cfg, cache_dir=Path("unused"), reader=reader)
+    status = dict(zip(result.table["stationId"], result.table["status"], strict=True))
+    assert status == kinds
+    per = result.record["perStation"]
+    assert per["T.CLIP"]["maxFullScaleFraction"] == pytest.approx(0.96, abs=1e-4)
+    assert per["T.OK"]["maxFullScaleFraction"] < sat.maxFraction
+    assert result.table.loc[result.table["stationId"] == "T.OK", "logA"].notna().all()
+    assert result.table.loc[result.table["stationId"] != "T.OK", "logA"].isna().all()
+    assert result.record["status"] == {v: 1 for v in kinds.values()}
+
+
 # --- windows and station screening --------------------------------------------------------------
 
 
-def test_plan_windows_anchors_and_distance(world: World, seismology_config: SeismologyConfig) -> None:
+def test_plan_windows_anchors_and_distance(
+    world: World, run_section: RunSection, seismology_config: SeismologyConfig
+) -> None:
     cfg = seismology_config.magnitude
     events = read_table(world.path("events.parquet"))
     arrivals = read_table(world.path("arrivals.parquet"))
@@ -372,6 +475,20 @@ def test_plan_windows_anchors_and_distance(world: World, seismology_config: Seis
     assert row["readEnd"] == pytest.approx(row["signalEnd"] + w.padS)
     with pytest.raises(MagnitudeError, match="no arrivals"):
         plan_windows(events, arrivals[arrivals["eventId"] != world.ids[3]], stations, cfg)
+    # a borehole sensor 1200 m down: R runs to the sensor's ENU (enu_u = sensorElevM - origin)
+    bore = stations.copy()
+    k = bore.index[bore["id"] == "T.A01"][0]
+    sensor_elev = bore.loc[k, "surfaceElevM"] - 1200.0
+    bore.loc[k, ["sensorDepthM", "sensorElevM", "enu_u"]] = [
+        1200.0, sensor_elev, sensor_elev - run_section.origin.elevM
+    ]  # fmt: skip
+    deep = plan_windows(events, arrivals, bore, cfg)
+    drow = deep[(deep["eventId"] == world.ids[0]) & (deep["stationId"] == "T.A01")].iloc[0]
+    expected = math.sqrt(
+        (e - 3000) ** 2 + (n - 1000) ** 2 + (u - (sensor_elev - run_section.origin.elevM)) ** 2
+    )
+    assert drow["hypoDistM"] == pytest.approx(expected)
+    assert drow["hypoDistM"] < row["hypoDistM"]  # the events sit below the sensor
 
 
 def test_screen_station_reasons(
@@ -527,6 +644,15 @@ def test_stage_writes_calibrated_magnitudes(
     assert params["magnitudes"]["belowCalibratedRange"] == below
     assert rec["counts"]["stationsExcluded"] == 2
     assert not list(world.run_dir.glob("*.part"))
+    censoring = params["magnitudes"]["censoring"]["byDecile"]
+    assert sum(r["events"] for r in censoring) == N_EVENTS
+    assert all(r["nStationsMin"] >= cfg.magnitude.minStations for r in censoring)
+    spread = params["fit"]["bIdentification"]
+    assert spread["withinStationLogRSd"] >= 0 and spread["betweenStationLogRSd"] > 0
+    assert params["preprocessing"]["saturation"]["maxFraction"] == cfg.magnitude.saturation.maxFraction
+    per = params["amplitudes"]["perStation"]
+    assert all(per[s]["waterLevelClipHz"] == {} for s in per)  # flat responses clip nowhere
+    assert all(per[s]["maxFullScaleFraction"] < 1e-3 for s in per)
 
 
 def test_stage_gate_leaves_magnitudes_null(
