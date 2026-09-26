@@ -4,7 +4,7 @@ One section per ticket, so parallel tickets edit separate classes and separate Y
 Every model rejects unknown keys (docs/02 -> Config files).
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Section(BaseModel):
@@ -36,6 +36,15 @@ class DownloadConfig(_Section):
     minGapSamples: float = Field(gt=1)  # spacing > this many sample intervals is a gap
     maxGapFraction: float = Field(gt=0, le=1)  # Check A: a useful station stays below this
     minUsefulStations: int = Field(ge=1)  # Check A: pass needs at least this many
+
+    @model_validator(mode="after")
+    def _backoff_ordered(self) -> "DownloadConfig":
+        if self.backoffMaxS < self.backoffBaseS:
+            raise ValueError(
+                f"download.backoffMaxS ({self.backoffMaxS}) is below backoffBaseS "
+                f"({self.backoffBaseS})"
+            )
+        return self
 
 
 # --- SEIS-02: known-event windows -------------------------------------------------------------------

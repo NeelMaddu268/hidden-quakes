@@ -38,13 +38,16 @@ from hq.ingest.download import (
     check_a_table,
     coverage,
     download_window,
+    main,
     plan_chunks,
     plan_units,
+    verify_cache,
 )
 
 pytestmark = pytest.mark.smoke
 
 RATE = 10.0  # Hz; small so a day-scale test stays fast
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs" / "showcase"
 T_MIDNIGHT = UTCDateTime("2026-09-10T00:00:00Z").timestamp
 HOUR = 3600.0
 
@@ -85,7 +88,8 @@ def value_at(times: np.ndarray) -> np.ndarray:
 
 class FakeClient:
     """Serves ``coverage[(sta, cha)]`` intervals, overhanging each request by 2 s like
-    whole miniSEED records do. ``errors`` is a queue of exceptions raised before serving."""
+    whole miniSEED records do. ``errors`` is a queue of exceptions raised before serving;
+    ``fail_at`` maps a request start time to an exception raised on every such request."""
 
     def __init__(
         self,
@@ -93,8 +97,10 @@ class FakeClient:
         errors: list[Exception] | None = None,
         fail_station: str | None = None,
         location: str = "00",
+        fail_at: dict[float, Exception] | None = None,
     ) -> None:
         self.coverage = coverage
+        self.fail_at = dict(fail_at or {})
         self.errors = list(errors or [])
         self.fail_station = fail_station
         self.location = location
@@ -115,6 +121,8 @@ class FakeClient:
             raise self.errors.pop(0)
         if station == self.fail_station:
             raise FDSNServiceUnavailableException("503 in test")
+        if a in self.fail_at:
+            raise self.fail_at[a]
         st = obspy.Stream()
         for cha in channel.split(","):
             for c, d in self.coverage.get((station, cha), []):
@@ -316,6 +324,181 @@ def test_provisional_chunks_are_refetched_and_replaced(tmp_path: Path) -> None:
     assert run_download([sta("A")], t0, t1, cfg, tmp_path, no_network).counts()["requests"] == 0
 
 
+def test_unexpected_error_is_retried_listed_and_resume_keeps_file_in_time_order(
+    tmp_path: Path,
+) -> None:
+    cfg = make_cfg(padS=0.0, maxRetries=2)
+    t0, t1 = T_MIDNIGHT, T_MIDNIGHT + 4 * HOUR
+    cov = full(["A"], t0, t1)
+    # ObsPy raises a bare Exception on a truncated response body: not an FDSN error
+    bad = FakeClient(cov, fail_at={t0 + 2 * HOUR: Exception("Cannot open file/files")})
+    sleeps: list[float] = []
+    with pytest.raises(DownloadIncompleteError) as err:
+        run_download([sta("A")], t0, t1, cfg, tmp_path, factory(bad), sleeps=sleeps)
+    failures = err.value.result.failures
+    assert [(f.start, f.end) for f in failures] == [(t0 + 2 * HOUR, t0 + 3 * HOUR)]
+    assert "after 3 attempts" in failures[0].error and len(sleeps) == 2
+    man = json.loads((tmp_path / "mseed" / "XX.A.00.HHZ.20260910.json").read_text())
+    assert [c["start"] for c in man["chunks"]] == [t0, t0 + HOUR, t0 + 3 * HOUR]  # kept
+
+    good = FakeClient(cov)
+    run_download([sta("A")], t0, t1, cfg, tmp_path, factory(good))
+    assert [c[2] for c in good.calls] == [t0 + 2 * HOUR]  # only the failed hour
+    heads = obspy.read(str(tmp_path / "mseed" / "XX.A.00.HHZ.20260910.mseed"), headonly=True)
+    starts = [tr.stats.starttime for tr in heads]
+    assert starts == sorted(starts)
+    st = read_window("XX.A", t0, t1 - 1.0 / RATE, cache_dir=tmp_path).select(channel="HHZ")
+    assert len(st) == 1 and st[0].stats.npts == int((t1 - t0) * RATE)
+    np.testing.assert_array_equal(st[0].data, value_at(st[0].times("timestamp")))
+
+
+def test_a_broken_unit_is_listed_and_the_others_still_commit(tmp_path: Path) -> None:
+    cfg = make_cfg(padS=0.0)
+    t0, t1 = T_MIDNIGHT, T_MIDNIGHT + HOUR
+    broken = tmp_path / "mseed" / "XX.B.00.HHZ.20260910.json"
+    broken.parent.mkdir(parents=True)
+    broken.write_text(json.dumps({"version": 99, "chunks": []}))
+    with pytest.raises(DownloadIncompleteError) as err:
+        run_download(
+            [sta("A"), sta("B")],
+            t0,
+            t1,
+            cfg,
+            tmp_path,
+            factory(FakeClient(full(["A", "B"], t0, t1))),
+        )
+    failures = err.value.result.failures
+    assert [f.stationId for f in failures] == ["XX.B"]
+    assert "unit aborted: ValueError" in failures[0].error
+    assert (tmp_path / "mseed" / "XX.A.00.HHZ.20260910.mseed").is_file()
+
+
+def test_missing_or_truncated_data_file_is_fetched_again(tmp_path: Path) -> None:
+    cfg = make_cfg(padS=0.0)
+    t0, t1 = T_MIDNIGHT, T_MIDNIGHT + 2 * HOUR
+    cov = full(["A"], t0, t1)
+    run_download([sta("A")], t0, t1, cfg, tmp_path, factory(FakeClient(cov)))
+    z = tmp_path / "mseed" / "XX.A.00.HHZ.20260910.mseed"
+    man = json.loads((tmp_path / "mseed" / "XX.A.00.HHZ.20260910.json").read_text())
+    assert man["fileBytes"] == z.stat().st_size
+
+    def z_is_complete() -> None:
+        st = read_window("XX.A", t0, t1 - 1.0 / RATE, cache_dir=tmp_path).select(channel="HHZ")
+        assert len(st) == 1 and st[0].stats.npts == int((t1 - t0) * RATE)
+
+    z.unlink()  # e.g. a partial copy of the cache
+    again = FakeClient(cov)
+    res = run_download([sta("A")], t0, t1, cfg, tmp_path, factory(again))
+    assert len(again.calls) == 2 and res.counts()["staleChannelDays"] == 1
+    z_is_complete()
+
+    z.write_bytes(z.read_bytes()[:-100])  # truncated
+    third = FakeClient(cov)
+    run_download([sta("A")], t0, t1, cfg, tmp_path, factory(third))
+    assert len(third.calls) == 2
+    z_is_complete()
+    assert run_download([sta("A")], t0, t1, cfg, tmp_path, no_network).counts()["requests"] == 0
+
+
+def test_verify_stamps_old_manifests_and_marks_short_files_stale(tmp_path: Path) -> None:
+    cfg = make_cfg(padS=0.0)
+    t0, t1 = T_MIDNIGHT, T_MIDNIGHT + HOUR
+    cov = full(["A"], t0, t1)
+    run_download([sta("A")], t0, t1, cfg, tmp_path, factory(FakeClient(cov)))
+    folder = tmp_path / "mseed"
+    for m in folder.glob("*.json"):  # manifests written before fileBytes existed
+        doc = json.loads(m.read_text())
+        del doc["fileBytes"]
+        m.write_text(json.dumps(doc))
+    z = folder / "XX.A.00.HHZ.20260910.mseed"
+    short = obspy.read(str(z))
+    short.trim(UTCDateTime(t0), UTCDateTime(t0 + 1800.0))
+    short.write(str(z), format="MSEED")  # valid miniSEED, but half the manifest's samples
+    (folder / "XX.A.00.HHZ.20260910.abc.part").write_bytes(b"x" * 10)
+
+    res = verify_cache(tmp_path)
+    assert res.channelDays == 3 and res.stamped == 2
+    assert list(res.stale) == ["XX.A.00.HHZ.20260910"] and "samples" in res.stale[z.stem]
+    assert res.stray == {"XX.A.00.HHZ.20260910.abc.part": 10}
+    assert (folder / "XX.A.00.HHZ.20260910.abc.part").is_file()  # listed, never deleted
+    hhn = json.loads((folder / "XX.A.00.HHN.20260910.json").read_text())
+    assert hhn["fileBytes"] == (folder / "XX.A.00.HHN.20260910.mseed").stat().st_size
+    assert main(["--cache-dir", str(tmp_path), "--verify"]) == 1
+
+    repair = FakeClient(cov)
+    run_download([sta("A")], t0, t1, cfg, tmp_path, factory(repair))
+    assert len(repair.calls) == 1
+    st = read_window("XX.A", t0, t1 - 1.0 / RATE, cache_dir=tmp_path).select(channel="HHZ")
+    assert st[0].stats.npts == int((t1 - t0) * RATE)
+    res = verify_cache(tmp_path)
+    assert not res.stale and res.stamped == 0
+
+
+def test_provisional_refetch_that_returns_less_keeps_the_cached_samples(tmp_path: Path) -> None:
+    cfg = make_cfg(padS=0.0, provisionalLagS=3600.0)
+    t0, t1 = T_MIDNIGHT, T_MIDNIGHT + 2 * HOUR
+    cov = full(["A"], t0, t1)
+    run_download([sta("A")], t0, t1, cfg, tmp_path, factory(FakeClient(cov)), now=t1 + 600.0)
+    empty = FakeClient({})  # a transient 204 on the refetch
+    run_download([sta("A")], t0, t1, cfg, tmp_path, factory(empty), now=t1 + 7200.0)
+    assert [c[2] for c in empty.calls] == [t0 + HOUR]
+    st = read_window("XX.A", t0, t1 - 1.0 / RATE, cache_dir=tmp_path).select(channel="HHZ")
+    assert st[0].stats.npts == int((t1 - t0) * RATE)
+    man = json.loads((tmp_path / "mseed" / "XX.A.00.HHZ.20260910.json").read_text())
+    assert man["chunks"][-1]["status"] == "ok" and man["chunks"][-1]["provisional"] is True
+
+    settled = FakeClient(cov)
+    run_download([sta("A")], t0, t1, cfg, tmp_path, factory(settled), now=t1 + 7200.0)
+    assert len(settled.calls) == 1
+    man = json.loads((tmp_path / "mseed" / "XX.A.00.HHZ.20260910.json").read_text())
+    assert man["chunks"][-1]["provisional"] is False
+
+
+def test_backoff_max_below_base_is_rejected() -> None:
+    with pytest.raises(ValueError, match="backoffMaxS"):
+        make_cfg(backoffBaseS=10.0, backoffMaxS=5.0)
+
+
+def test_cli_check_a_uses_used_in_run_like_the_stage(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = make_cfg(padS=0.0)
+    t0, t1 = T_MIDNIGHT, T_MIDNIGHT + HOUR
+    run_download([sta("A")], t0, t1, cfg, tmp_path, factory(FakeClient(full(["A"], t0, t1))))
+    row = {"id": "XX.A", "network": "XX", "station": "A", "location": "00"}
+    rows = [
+        {**row, "channels": ["HHZ", "HHN", "HHE"], "usedInRun": True},
+        {
+            **row,
+            "id": "XX.B",
+            "station": "B",
+            "channels": ["HHZ", "HHN", "HHE"],
+            "usedInRun": False,
+        },
+    ]
+    stations = tmp_path / "stations.json"
+    stations.write_text(json.dumps(rows))
+    code = main(
+        [
+            "--stations",
+            str(stations),
+            "--config-dir",
+            str(CONFIG_DIR),
+            "--cache-dir",
+            str(tmp_path),
+            "--start",
+            UTCDateTime(t0).isoformat(),
+            "--end",
+            UTCDateTime(t1).isoformat(),
+            "--report-only",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "1 usedInRun station(s) of 2 in stations.json" in out
+    assert "XX.A " in out and "XX.B " not in out
+
+
 # --- read API ---------------------------------------------------------------------------------
 
 
@@ -370,6 +553,19 @@ def test_bare_station_id_with_two_locations_is_ambiguous(tmp_path: Path) -> None
     assert rows == [] and report[0].useful
 
 
+def test_ambiguity_is_judged_within_the_window_days(tmp_path: Path) -> None:
+    cfg = make_cfg(padS=0.0)
+    later = T_MIDNIGHT + 5 * 86_400.0
+    cov = full(["A"], T_MIDNIGHT, later + HOUR)
+    for loc, t0 in (("00", T_MIDNIGHT), ("10", later)):
+        s = StationRequest(f"XX.A.{loc}", "XX", "A", loc, ("HHZ", "HHN", "HHE"))
+        run_download([s], t0, t0 + HOUR, cfg, tmp_path, factory(FakeClient(cov)))
+    st = read_window("XX.A", T_MIDNIGHT, T_MIDNIGHT + 600.0, cache_dir=tmp_path)
+    assert len(st) == 3 and {tr.stats.location for tr in st} == {"00"}
+    with pytest.raises(AmbiguousStationError):
+        read_window("XX.A", T_MIDNIGHT, later + 600.0, cache_dir=tmp_path)
+
+
 def test_nothing_cached_raises(tmp_path: Path) -> None:
     with pytest.raises(CacheMissError):
         read_window("XX.NOPE", T_MIDNIGHT, T_MIDNIGHT + 60.0, cache_dir=tmp_path)
@@ -411,10 +607,15 @@ def test_channel_gaps_leading_trailing_interior_and_jitter() -> None:
         [Segment("HHZ", 0, 59.9, dt), Segment("HHZ", 50, 99.9, dt)], 0, 100, 1.5
     )
     assert n_over == 1
+    # window start between two grid samples: a first sample 0.07 s in is not a gap ...
+    assert channel_gaps([Segment("HHZ", 0.07, 99.97, dt)], t0, t1, 1.5) == ([], 0)
+    # ... but one whole missing sample at the start is
+    gaps, _ = channel_gaps([Segment("HHZ", 0.13, 99.93, dt)], t0, t1, 1.5)
+    assert [(round(a, 2), round(b, 2)) for a, b in gaps] == [(0, 0.13)]
 
 
 def test_gap_rows_and_check_a_classification(tmp_path: Path) -> None:
-    cfg = make_cfg(padS=0.0, maxGapFraction=0.2, minUsefulStations=2)
+    cfg = make_cfg(padS=0.0, maxGapFraction=0.2, minUsefulStations=3)
     t0, t1 = T_MIDNIGHT, T_MIDNIGHT + 2 * HOUR
     cov = full(["GOOD", "FAR"], t0, t1)
     cov.update({(s, c): v for (s, c), v in full(["MISS"], t0, t1).items() if c != "HHE"})
@@ -436,7 +637,7 @@ def test_gap_rows_and_check_a_classification(tmp_path: Path) -> None:
     assert by_id["XX.GOOD"].useful and by_id["XX.GOOD"].inBbox is True
     assert by_id["XX.MISS"].componentsPresent == 2 and not by_id["XX.MISS"].useful
     assert by_id["XX.GAPPY"].maxGapFraction == pytest.approx(0.3) and not by_id["XX.GAPPY"].useful
-    assert by_id["XX.FAR"].inBbox is False and not by_id["XX.FAR"].useful
+    assert by_id["XX.FAR"].inBbox is False and by_id["XX.FAR"].useful  # reported, not scored
     assert by_id["XX.NEVER"].componentsPresent == 0 and by_id["XX.NEVER"].maxGapFraction == 1.0
 
     miss = [r for r in rows if r["stationId"] == "XX.MISS"]
@@ -447,7 +648,7 @@ def test_gap_rows_and_check_a_classification(tmp_path: Path) -> None:
     ]
     assert not [r for r in rows if r["stationId"] == "XX.GOOD"]
     table = check_a_table(report, cfg)
-    assert "useful stations: 1 (need >= 2) -> FAIL" in table
+    assert "useful stations: 2 (need >= 3) -> FAIL" in table
 
 
 def _exercise_stage(io, fake_ctx, monkeypatch) -> None:
@@ -456,6 +657,7 @@ def _exercise_stage(io, fake_ctx, monkeypatch) -> None:
     import hq.ingest.download as dl
 
     run = fake_ctx.config.run
+    cfg = fake_ctx.config.signal.download
     t0, t1 = run.window_start_s, run.window_end_s
     cov = full(["A"], t0 - HOUR, t1 + HOUR)
     del cov[("A", "HHE")]
@@ -482,7 +684,8 @@ def _exercise_stage(io, fake_ctx, monkeypatch) -> None:
     ]
     rec = fake_ctx.records["download"]
     assert rec["counts"]["usefulStations"] == 0 and rec["counts"]["gapRows"] == 1
-    assert rec["counts"]["requests"] == 26 and rec["params"]["chunkS"] == 3600
+    assert rec["counts"]["requests"] == len(plan_chunks(t0 - cfg.padS, t1 + cfg.padS, cfg.chunkS))
+    assert rec["params"] == cfg.model_dump(mode="json")
     report = json.loads(fake_ctx.path("download_report.json").read_text(encoding="utf-8"))
     assert report["pass"] is False and report["stations"][0]["componentsPresent"] == 2
 
