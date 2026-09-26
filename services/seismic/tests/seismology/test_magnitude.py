@@ -58,8 +58,6 @@ from hq.magnitude.amplitude import (
 )
 from hq.runs import resolve_stage, stage_spec
 
-pytestmark = pytest.mark.smoke
-
 SR = 100.0
 DAY = UTCDateTime("2026-09-10T00:00:00")
 T_DATA = DAY.timestamp + 3600.0  # first sample of every synthetic trace
@@ -275,6 +273,7 @@ def _stage_cfg(seismology_config: SeismologyConfig, **overrides: Any) -> Seismol
 # --- Wood-Anderson and response removal ---------------------------------------------------------
 
 
+@pytest.mark.smoke
 def test_wood_anderson_response_limits(seismology_config: SeismologyConfig) -> None:
     wa = seismology_config.magnitude.woodAnderson
     high = np.abs(wood_anderson_response(np.array([1000.0]), wa))[0]
@@ -284,6 +283,7 @@ def test_wood_anderson_response_limits(seismology_config: SeismologyConfig) -> N
     assert np.abs(wood_anderson_response(np.array([0.0]), wa))[0] == 0.0
 
 
+@pytest.mark.smoke
 def test_response_removal_recovers_a_known_ground_displacement(
     seismology_config: SeismologyConfig,
 ) -> None:
@@ -311,6 +311,7 @@ def test_response_removal_recovers_a_known_ground_displacement(
 
 
 @pytest.mark.parametrize("above_f2", [1.25, 2.5])
+@pytest.mark.smoke
 def test_accelerometer_at_1000_hz_is_not_high_passed_in_band(
     seismology_config: SeismologyConfig, above_f2: float
 ) -> None:
@@ -335,6 +336,7 @@ def test_accelerometer_at_1000_hz_is_not_high_passed_in_band(
     assert clip is None
 
 
+@pytest.mark.smoke
 def test_water_level_clip_inside_the_band_is_reported(seismology_config: SeismologyConfig) -> None:
     """A displacement sensor with four poles at 5 Hz falls 60 dB below its maximum at about
     27.5 Hz: the water level clips from there to preFiltHz f3."""
@@ -382,6 +384,7 @@ def test_measured_amplitudes_follow_the_truth_at_every_station(
     assert result.record["reads"] > 4
 
 
+@pytest.mark.smoke
 def test_read_groups_span_at_most_the_chunk() -> None:
     rng = np.random.default_rng(1)
     starts = np.sort(rng.uniform(0, 10000, 200))
@@ -393,6 +396,7 @@ def test_read_groups_span_at_most_the_chunk() -> None:
     assert len(read_groups(np.array([0.0]), np.array([1000.0]), 600.0)) == 1
 
 
+@pytest.mark.smoke
 def test_window_statuses_gap_rate_flat_clipped(seismology_config: SeismologyConfig) -> None:
     """One window per made-up station, each read returning a trace with one defect."""
     cfg = seismology_config.magnitude
@@ -453,6 +457,7 @@ def test_window_statuses_gap_rate_flat_clipped(seismology_config: SeismologyConf
 # --- windows and station screening --------------------------------------------------------------
 
 
+@pytest.mark.smoke
 def test_plan_windows_anchors_and_distance(
     world: World, run_section: RunSection, seismology_config: SeismologyConfig
 ) -> None:
@@ -531,6 +536,7 @@ def _synthetic_obs(rng: np.random.Generator, n_events: int, noise: float) -> pd.
     return pd.DataFrame(rows)
 
 
+@pytest.mark.smoke
 def test_fit_recovers_known_coefficients(seismology_config: SeismologyConfig) -> None:
     obs = _synthetic_obs(np.random.default_rng(7), 30, 0.0)
     fit = _cfg(seismology_config, fit={"amplitudeSlope": None, "stationTermRidge": 1e-9,
@@ -543,6 +549,7 @@ def test_fit_recovers_known_coefficients(seismology_config: SeismologyConfig) ->
     assert (robust.a, robust.b) == pytest.approx((0.9, 1.2), abs=1e-5)
 
 
+@pytest.mark.smoke
 def test_ridge_terms_sum_to_zero_and_robust_loss_resists_an_outlier(
     seismology_config: SeismologyConfig,
 ) -> None:
@@ -559,6 +566,7 @@ def test_ridge_terms_sum_to_zero_and_robust_loss_resists_an_outlier(
     assert shift_robust < shift_linear
 
 
+@pytest.mark.smoke
 def test_min_station_obs_and_event_magnitudes(seismology_config: SeismologyConfig) -> None:
     obs = _synthetic_obs(np.random.default_rng(9), 10, 0.0)
     sparse = pd.DataFrame([{"eventId": "e0", "stationId": "SX", "logA": 0.0, "logR": 1.0,
@@ -577,6 +585,7 @@ def test_min_station_obs_and_event_magnitudes(seismology_config: SeismologyConfi
     assert event_magnitudes(cal, obs, min_stations=6)["value"].isna().all()
 
 
+@pytest.mark.smoke
 def test_leave_one_event_out_refits_without_the_event(seismology_config: SeismologyConfig) -> None:
     obs = _synthetic_obs(np.random.default_rng(10), 12, 0.1)
     cfg = _cfg(seismology_config, minStations=3).magnitude
@@ -706,6 +715,7 @@ def test_stage_fails_loudly_without_enough_calibration_events(
     assert not list(world.run_dir.glob("*.part"))
 
 
+@pytest.mark.smoke
 def test_stage_rejects_stale_matches(
     world: World, make_ctx: Any, run_section: RunSection, seismology_config: SeismologyConfig
 ) -> None:
@@ -716,6 +726,7 @@ def test_stage_rejects_stale_matches(
         magnitude_pkg.run(_ctx(make_ctx, world, run_section, _stage_cfg(seismology_config)))
 
 
+@pytest.mark.smoke
 def test_resolve_stage_magnitude() -> None:
     fn = resolve_stage(stage_spec("magnitude"))
     assert fn is magnitude_pkg.run
