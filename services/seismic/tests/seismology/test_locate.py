@@ -268,9 +268,11 @@ def test_inputs_fail_loudly(world: dict[str, Any]) -> None:
 # --- stage and diagnostics ----------------------------------------------------------------------
 
 
-def _stage(world: dict[str, Any], make_ctx: Any) -> Any:
+def _stage(world: dict[str, Any], make_ctx: Any,
+           earlier: list[dict[str, Any]] | None = None) -> Any:
     # The session's LOC-02 table cache, so the stage loads the tables instead of solving them.
     ctx = dataclasses.replace(make_ctx(world["run"], world["cfg"]), cache_dir=world["cache"])
+    ctx.records.extend(earlier or [])  # records an earlier stage run left in run.json
     picks = world["picks"]
     write_table(picks, ctx.path(world["cfg"].associator.picksTable), "Pick")
     write_table(world["stations"], ctx.path("stations.parquet"), "Station")
@@ -284,7 +286,12 @@ def _stage(world: dict[str, Any], make_ctx: Any) -> Any:
 def test_stage_writes_tables_report_and_record(
     world: dict[str, Any], located: LocateDetails, make_ctx: Any
 ) -> None:
-    ctx = _stage(world, make_ctx)
+    # A grid3d locate ran in this run dir before: its 3D-only keys must not survive in run.json.
+    earlier = [{"stage": "locate", "runtime_s": 1.0, "counts": {}, "field": "velocityModel",
+                "params": {"name": "3D model", "crs": "EPSG:32612", "fallback1d": {}}},
+               {"stage": "locate", "runtime_s": 1.0, "counts": {}, "field": None,
+                "params": {"method": "grid3d", "tables3d": {"stations3d": []}, "old": 1}}]
+    ctx = _stage(world, make_ctx, earlier)
     models = {"events_located.parquet": "LocatedEvent", "arrivals.parquet": "Arrival",
               "statics.parquet": "StationStatic", "locate_flags.parquet": "LocateFlags"}
     for name, model in models.items():
@@ -293,11 +300,21 @@ def test_stage_writes_tables_report_and_record(
     ev = read_table(ctx.path("events_located.parquet"))
     pd.testing.assert_series_equal(ev["elevM"], located.result.events["elevM"])
     assert not list(ctx.run_dir.glob("*.part"))
-    assert [r["field"] for r in ctx.records] == ["velocityModel", None]
-    velocity, locator = ctx.records
+    assert [r["field"] for r in ctx.records] == ["velocityModel", None] * 2
+    velocity, locator = ctx.records[2:]
     assert velocity["params"]["name"] == located.velocity_model["name"]
+    # The earlier record's keys this one lacks become None (a method switch leaves none stale).
+    assert velocity["params"]["crs"] is None and velocity["params"]["fallback1d"] is None
+    assert locator["params"]["old"] is None and locator["params"]["tables3d"] is None
+    assert ctx.read_run().velocityModel["layers"] == located.velocity_model["layers"]
     assert locator["counts"]["events"] == len(EVENTS)
     assert locator["params"]["method"] == "grid1d" and "diagnostics" in locator["params"]
+    cfg = world["cfg"]
+    assert locator["params"]["tableConfig"] == {  # every table / model knob, verbatim
+        "velocity": cfg.velocity.model_dump(mode="json"),
+        "grids": cfg.grids.model_dump(mode="json"),
+        "grid3d": cfg.grid3d.model_dump(mode="json"),
+    }
 
     # synthetic.json: the docs/02 SyntheticTest, from the run's used stations and pick stats.
     synthetic = SyntheticTest.model_validate_json(ctx.path("synthetic.json").read_text("utf-8"))

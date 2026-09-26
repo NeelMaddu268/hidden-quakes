@@ -29,9 +29,11 @@ more locate pass, nothing of it written) for diagnostics.md's 1D vs 3D section, 
 run's report carries the 1D vs 3D depth-shift and residual comparison.
 
 ``ctx.record`` gets the counts, the runtime, the locator record (``ProcessingRun.locator``, with
-the stage's conventions under ``locate``, the synthetic test's params under ``synthetic`` and the
-diagnostics knobs) and the top-extended velocity model the tables were solved on
-(``ProcessingRun.velocityModel``).
+the stage's conventions under ``locate``, the synthetic test's params under ``synthetic``, the
+diagnostics knobs and the velocity, grids and grid3d sections under ``tableConfig``) and the
+top-extended velocity model the tables were solved on (``ProcessingRun.velocityModel``); keys
+an earlier locate wrote into either record and this one does not are set to None
+(``without_stale_keys``).
 
 The package attribute ``hq.locate.run`` is this module's ``run`` function (the stage registry
 resolves it there), so ``import hq.locate.run as m`` binds the function, not this module; reach
@@ -95,6 +97,8 @@ CATALOG_TABLE = "catalog.parquet"
 CATALOG_QUAKEML = "catalog.quakeml"
 MATCHES_TABLE = "matches.parquet"  # a prior match pass: the reference events (LOC-05)
 KNOWN_WINDOWS = KNOWN_WINDOWS_FILE
+# seismology.yaml sections recorded verbatim under ProcessingRun.locator["tableConfig"].
+TABLE_CONFIG_SECTIONS = ("velocity", "grids", "grid3d")
 PART_SUFFIX = ".part"
 # Model name each input's parquet metadata must carry (docs/02 §2; the assoc tables are LOC-03's,
 # matches MATCH-02's, events_located and locate_flags this stage's own).
@@ -233,6 +237,16 @@ def grid1d_comparison(
     return Comparison1d(details=outcome.details, statics=outcome.report, runtime_s=runtime)
 
 
+def without_stale_keys(previous: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    """``record`` plus every key of the stored ``previous`` record it lacks, set to None.
+
+    ``RunContext.record`` merges params one level deep, so a key this stage wrote before and
+    does not write now (a run dir that switched ``locator.method``: the 1D layers next to a 3D
+    model, or the 3D grid next to the 1D layers) would otherwise stay and misstate the model.
+    """
+    return {**dict.fromkeys(k for k in previous if k not in record), **record}
+
+
 def run(ctx: "RunContext") -> None:
     """Stage ``locate`` (docs/02 §4); see the module docstring."""
     started = time.perf_counter()
@@ -322,6 +336,10 @@ def run(ctx: "RunContext") -> None:
         },
         "outputs": [p.name for p in targets],
         "diagnostics": cfg.diagnostics.model_dump(mode="json"),
+        # The seismology.yaml sections the travel-time tables and velocity models come from,
+        # verbatim (the tables' and models' own records hold only what they derived from them).
+        "tableConfig": {key: getattr(cfg, key).model_dump(mode="json")
+                        for key in TABLE_CONFIG_SECTIONS},
         "statics": {"config": cfg.statics.model_dump(mode="json"), **rep.to_record()},
         "locateRuntimeS": details.runtime_s,
         "grid1dComparisonRuntimeS": None if grid1d is None else grid1d.runtime_s,
@@ -331,6 +349,9 @@ def run(ctx: "RunContext") -> None:
         log.warning("locate: pass 2 relocated every event; %s still holds the match of the "
                     "pass-1 locations: rerun stage match before tier (stage tier and a further "
                     "locate refuse it until then)", MATCHES_TABLE)
-    ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params=details.velocity_model,
+    stored = ctx.read_run()
+    ctx.record(STAGE, runtime_s=runtime_s, counts=counts,
+               params=without_stale_keys(stored.velocityModel, details.velocity_model),
                field="velocityModel")
-    ctx.record(STAGE, runtime_s=runtime_s, counts=counts, params=params)
+    ctx.record(STAGE, runtime_s=runtime_s, counts=counts,
+               params=without_stale_keys(stored.locator, params))
