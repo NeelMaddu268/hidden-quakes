@@ -13,10 +13,16 @@ Vercel's Git integration builds and deploys `main` on every merge. Nothing in th
 | Include source files outside of the Root Directory | on (the default) | The build needs `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `packages/contracts/ts` and `packages/visualization` from the repo root |
 | Production Branch (Settings → Git) | `main` | Only H4 merges into `main` |
 | Environment variable `NEXT_PUBLIC_ALLOW_MOCK` | `1` (Production and Preview) | **Gate M:** lets `?mode=mock` load the synthetic bundle on the public URL until the showcase bundle exists |
+| Environment variable `NEXT_PUBLIC_LIVE_ENABLED` | `1` only while the live worker runs | Shows the LIVE pill (API-04); unset is the kill switch (`docs/03`) |
+| Environment variable `NEXT_PUBLIC_LIVE_API_BASE` | `http://<worker host>:<port>/api/live` | Where `?mode=live` fetches from (API-05). Unset means same-origin `/api/live`, which a static export has no server for; the worker's `serve.corsOrigins` must list the site's origin |
 
 Everything else comes from `apps/web/vercel.json`: install `pnpm install --frozen-lockfile`, build `pnpm --filter web build`, output `out`, and an `ignoreCommand` that builds only `main` and `feat/*` (agent branches and PRs from them are skipped, so a push storm can't queue dozens of builds).
 
 `?mode=` picks the bundle: the default is `showcase`, which shows the provider's "Data unavailable" panel until API-02 commits `apps/web/public/data/showcase/`.
+
+### Live and its snapshot (API-05)
+
+`?mode=live` reads the live worker (`services/api`, its README has the drill). It fails over to `apps/web/public/data/snapshot/` when the worker is unreachable, and only the snapshot that is committed in git reaches the deployed site: freeze a good window with `make api ARGS='freeze-snapshot'` and commit `apps/web/public/data/snapshot/` through `main`. The build flags are inlined by `next build`, so changing `NEXT_PUBLIC_LIVE_ENABLED` or `NEXT_PUBLIC_LIVE_API_BASE` means a rebuild (a redeploy on Vercel, `make offline` locally).
 
 ### The one-line switch after the showcase bundle lands
 

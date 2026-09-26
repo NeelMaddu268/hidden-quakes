@@ -55,7 +55,9 @@ export function Shell() {
       <ValidationPanel />
       {ready && <RunDetailsPanel open={detailsOpen} onClose={() => setDetailsOpen(false)} />}
 
-      <ModePills current={ready ? bundle.info.mode : null} />
+      {/* The pressed pill is the mode chosen in the URL: during live failover the bundle says
+          "snapshot" while LIVE is still what the visitor picked, and the label carries the rest. */}
+      <ModePills current={ready ? (mode ?? bundle.info.mode) : null} />
     </div>
   );
 }

@@ -37,8 +37,9 @@ export function FilterPills() {
 }
 
 /**
- * Data-mode switch, bottom-left and small. SHOWCASE always; LIVE only when API-04 enabled it;
- * MOCK only while mock is the current mode. Never SNAPSHOT: failover changes the label alone.
+ * Data-mode switch, bottom-left and small. SHOWCASE always; LIVE only when the build set
+ * `NEXT_PUBLIC_LIVE_ENABLED=1` (API-04); MOCK only while mock is the current mode. Never
+ * SNAPSHOT: failover changes the label alone, and LIVE stays pressed while it lasts (API-05).
  * A switch is a full navigation (`navigateToMode`), so the demo restarts from its start frame.
  */
 export function ModePills({ current }: { current: DataMode | null }) {
