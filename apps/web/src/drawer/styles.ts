@@ -118,7 +118,6 @@ export const DRAWER_CSS = `
 .hqd-axis-track span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap; }
 .hqd-axis-title { text-align: right; color: ${colors.textDim}; font-size: 10.5px; margin-top: 1px; }
 .hqd-placeholder { grid-column: 1 / -1; border-top: 1px solid ${colors.contour}; opacity: 0.6; }
-.hqd-status { grid-column: 1 / -1; align-self: center; justify-self: center; color: ${colors.textDim}; font-size: 12px; }
 .hqd-error { color: ${colors.textDim}; font-size: 12px; margin-top: 10px; }
 .hqd-error b { color: ${colors.alert}; font-weight: 600; }
 

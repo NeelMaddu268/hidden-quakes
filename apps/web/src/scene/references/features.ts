@@ -23,7 +23,7 @@ export function featureStyle(f: Pick<GeoFeature, "kind" | "name" | "source">): F
     dashed: approximate,
     approximate,
     glow: f.kind !== "boundary",
-    label: approximate ? `${f.name} (${APPROXIMATE})` : f.name,
+    label: approximate ? `${f.name} · ${APPROXIMATE}` : f.name,
   };
 }
 
