@@ -227,6 +227,19 @@ def fold_of(pairs: pd.DataFrame, folds: int | None) -> pd.Series:
     return pd.Series(np.arange(len(pairs)) % max(k, 1), index=pairs["assocId"].astype(str))
 
 
+def held_out_terms(
+    res: pd.DataFrame, folds: pd.Series, **polish: Any
+) -> dict[str, dict[tuple[str, str], float]]:
+    """Per reference assocId: the statics map from ``polish_terms`` over every OTHER fold's
+    residuals, so no reference event is relocated with terms it contributed to."""
+    out: dict[str, dict[tuple[str, str], float]] = {}
+    for f in sorted(set(folds)):
+        held = set(folds.index[folds == f])
+        terms = statics_map(polish_terms(res[~res["assocId"].astype(str).isin(held)], **polish))
+        out.update({aid: terms for aid in held})
+    return out
+
+
 def statics_map(terms: pd.DataFrame) -> dict[tuple[str, str], float]:
     return {(str(s), str(p)): float(v)
             for s, p, v in zip(terms["stationId"], terms["phase"], terms["staticS"], strict=True)}
@@ -609,11 +622,7 @@ def locate_with_statics(
               "min_events": scfg.minReferenceEvents}
     terms = polish_terms(res, **polish)
     folds = fold_of(pairs, scfg.folds)
-    held_out: dict[str, dict[tuple[str, str], float]] = {}
-    for f in sorted(set(folds)):
-        out = set(folds.index[folds == f])
-        fold_terms = statics_map(polish_terms(res[~res["assocId"].isin(out)], **polish))
-        held_out.update({aid: fold_terms for aid in out})
+    held_out = held_out_terms(res, folds, **polish)
     ref_assoc = set(pairs["assocId"])
     subset = _Subset(events=assoc.events[assoc.events["assocId"].astype(str).isin(ref_assoc)],
                      picks=assoc.picks[assoc.picks["assocId"].astype(str).isin(ref_assoc)])
