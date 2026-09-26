@@ -309,6 +309,37 @@ def test_bad_borehole_depth_fails_row_one(world: dict[str, Any], located: Locate
     assert row.conclusion.startswith("FAIL") and "T.B01" in row.conclusion
 
 
+@pytest.mark.smoke
+def test_catalog_comparison_and_row_seven_at_catalog_hypocentres(
+    world: dict[str, Any], located: LocateDetails
+) -> None:
+    from hq.locate.diagnostics import DiagnosticsInputs, build_diagnostics
+
+    run = world["run"]
+    rows = []
+    for k, (e, n, z, dt, *_) in enumerate(EVENTS):
+        lat, lon, _ = from_enu(e, n, z - run.origin.elevM, run.origin)
+        rows.append({"id": f"pub{k}", "t": run.window_start_s + dt, "latitude": float(lat),
+                     "longitude": float(lon), "elevM": z, "depthKm": -z / 1000.0,
+                     "depthDatum": "km below sea level (test)", "mag": 1.0, "magType": "ml",
+                     "enu_e": e, "enu_n": n, "enu_u": z - run.origin.elevM})
+    far = {**rows[0], "id": "pub-far", "t": run.window_start_s + 50.0}  # no candidate
+    catalog = pd.DataFrame([*rows, far])
+    errors = pd.DataFrame({"id": ["pub0", "pub1"], "horizontalErrorM": [300.0, 300.0],
+                           "depthErrorM": [400.0, 400.0]})
+    report = build_diagnostics(DiagnosticsInputs(
+        RUN_ID, run, world["cfg"], world["stations"], located, world["assoc"].events,
+        catalog=catalog, catalog_errors=errors, known_ids=("pub0", "pub1")))
+    table = [line for line in report.splitlines() if line.startswith("| pub")]
+    assert [line.split("|")[1].strip() for line in table] == ["pub0", "pub1"]
+    assert all(line.rstrip(" |").endswith("True / True") for line in table)
+    assert "No located candidate within tolerance for 1 public event(s): pub-far" in report
+    assert "every compared event lies within the catalog's stated horizontal uncertainty" in report
+    row7 = next(line for line in report.splitlines() if line.startswith("| 7 |"))
+    assert "hypocentre fixed at the public regional catalog's for the 2 compared" in row7
+    assert "Lateral structure" not in row7  # truth hypocentres: noise-level residuals only
+
+
 # --- stage registry -------------------------------------------------------------------------------
 
 
