@@ -4,7 +4,7 @@ import { Line } from "@react-three/drei";
 import { SceneHtml as Html } from "./SceneHtml";
 import { useFrame, useThree } from "@react-three/fiber";
 import { colors } from "@hq/visualization";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AdditiveBlending, Color, Vector3, type ShaderMaterial } from "three";
 import { verticalExaggerationOf } from "../coords";
 import type { GeoFeature, SceneMeta } from "../types";
@@ -30,6 +30,7 @@ import {
   type RectList,
 } from "./labelPlacement";
 import { LABEL_Z_RANGE, labelStyle } from "./labels";
+import { OVERLAY_MEASURE_MS, OverlayObstacles } from "./overlayObstacles";
 import { useLabelElements } from "./useLabelElements";
 
 // The geothermal reference reads in every view, over the terrain and through it: an annotation
@@ -171,7 +172,7 @@ interface LabelFrameState {
   lastCamera: Float64Array;
 }
 
-/** `obstacleCapacity`: rects the ruler can publish; one more for the plan panel. */
+/** `obstacleCapacity`: rects the ruler can publish plus the overlay rects; one more for the plan panel. */
 function makeLabelFrameState(n: number, obstacleCapacity: number): LabelFrameState {
   return {
     placement: makeLabelPlacement(n),
@@ -207,15 +208,31 @@ function FeatureLabels({ labels, obstacles, planView }: FeatureLabelsProps) {
   const height = useThree((s) => s.size.height);
   const panel = useMemo(() => (planView ? sectionPanelRect(width, height) : null), [planView, width, height]);
   const frame = useRef<LabelFrameState | null>(null);
+  // DOM overlays (the shell's blocks, H3's panels) the labels keep clear of, re-measured a few times a
+  // second outside the frame loop.
+  const gl = useThree((s) => s.gl);
+  const [overlays] = useState(() => new OverlayObstacles());
+  useEffect(() => {
+    const canvasEl = gl.domElement;
+    const measure = () => overlays.measure(document, canvasEl);
+    measure();
+    const id = window.setInterval(measure, OVERLAY_MEASURE_MS);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("resize", measure);
+    };
+  }, [gl, overlays]);
 
   useFrame(({ camera, size }) => {
     if (!frame.current || frame.current.placement.n !== n) {
-      frame.current = makeLabelFrameState(n, obstacles ? obstacles.rects.length / 4 : 0);
+      frame.current = makeLabelFrameState(n, (obstacles ? obstacles.rects.length / 4 : 0) + overlays.list.rects.length / 4);
     }
     const st = frame.current;
     const { placement: p, fixed, v } = st;
     clearRects(fixed);
     if (obstacles) appendRects(fixed, obstacles);
+    appendRects(fixed, overlays.list);
     if (panel) pushRect(fixed, panel.left, panel.top, panel.width, panel.height);
     for (let i = 0; i < n; i++) {
       const a = labels[i].anchor;

@@ -32,6 +32,13 @@ export const LOOK = Object.freeze({
   halos: Object.freeze({ rimAlpha: 0.4, rimPower: 2.2, sphereDetail: 2 }),
   /** Public-catalog weight under STRICT (after the reveal): still there for reference, Tier A leads. */
   strictPublicWeight: 0.4,
+  /**
+   * Time mode (WEB-06). Playback runs at `playbackRate` data seconds per real second (1 h/s replays a
+   * day in 24 s). Events from the last `glowWindowS` of data time before tNow glow brighter and a little
+   * larger, decaying linearly to their settled look; the glow is warm (no whitening), so a recent amber
+   * event never reads as a white public one. The histogram bins are `binS` wide.
+   */
+  time: Object.freeze({ playbackRate: 3600, glowWindowS: 1800, glowBoost: 1.1, glowGrow: 0.6, binS: 600 }),
   /** MSAA samples: 4, dropping to 2 once the drawing buffer exceeds ~2560×1440 (half-float memory). */
   msaa: Object.freeze({ samples: 4, largeBufferSamples: 2, largeBufferPixels: 2560 * 1440 }),
 });

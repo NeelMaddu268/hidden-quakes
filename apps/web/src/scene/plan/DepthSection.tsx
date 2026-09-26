@@ -13,6 +13,8 @@ import {
   buildSectionModel,
   drawSection,
   sectionHit,
+  outsideText,
+  sectionOutside,
   sectionPlot,
   type SectionState,
   type SectionStyle,
@@ -20,15 +22,17 @@ import {
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 
-/** Header (title + projection note) and footer (axis captions) heights inside the panel, CSS px. */
-const HEADER_PX = 38;
+/** Header (title, projection and framing note, outside count) and footer (axis captions), CSS px. */
+const HEADER_PX = 52;
 const FOOTER_PX = 36;
 /** Click radius in the section, CSS px (the 3D picker's default). */
 const HIT_PX = 10;
 
 /**
- * The plan view's depth section (WEB-07): a docked panel beside the plan map that projects every event
- * onto grid east against depth below the site surface, at true scale. Mounted only in plan view. It
+ * The plan view's depth section (WEB-07): a docked panel beside the plan map that projects events onto
+ * grid east against depth below the site surface, at true scale, framed on the structure the plan
+ * camera frames (Tier A and B) from the surface down (WEB-08); the header states how many events lie
+ * outside that frame, so none are hidden without saying so. Mounted only in plan view. It
  * shares the scene's reveal clock, filter look and selection (clicks select through the store, so the
  * drawer opens exactly as from the map), and it never covers the shell or the evidence drawer.
  */
@@ -63,6 +67,7 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
   const cssW = rect ? rect.width - 2 : 0;
   const cssH = rect ? rect.height - headerPx - FOOTER_PX : 0;
   const plot = useMemo(() => (cssW > 0 && cssH > 0 ? sectionPlot(model, cssW, cssH) : null), [model, cssW, cssH]);
+  const outside = useMemo(() => (plot ? sectionOutside(model, plot) : null), [model, plot]);
 
   // Draw loop: redraws only when something visible changed (reveal clock, filter look, selection,
   // size), so a settled section costs nothing per frame.
@@ -88,10 +93,11 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
       phase: "public",
       filter: "public",
       revealElapsedS: 0,
+      timeNowRel: sceneFx.timeNowRel,
       look: { ...sceneFx.filterLook },
       selectedIndex: -1,
     };
-    const last = { phase: "", filter: "", clock: NaN, a: NaN, b: NaN, c: NaN, cand: NaN, pub: NaN, halos: NaN, sel: NaN };
+    const last = { phase: "", filter: "", clock: NaN, now: NaN, a: NaN, b: NaN, c: NaN, cand: NaN, pub: NaN, halos: NaN, sel: NaN };
     let raf = 0;
     const frame = () => {
       raf = requestAnimationFrame(frame);
@@ -101,15 +107,18 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
       const clock = sceneFx.revealElapsedS;
       if (
         s.phase === last.phase && s.filter === last.filter && clock === last.clock && sel === last.sel &&
+        sceneFx.timeNowRel === last.now &&
         look.tierA === last.a && look.tierB === last.b && look.tierC === last.c &&
         look.candidates === last.cand && look.publicLayer === last.pub && look.halos === last.halos
       ) return;
       last.phase = s.phase; last.filter = s.filter; last.clock = clock; last.sel = sel;
+      last.now = sceneFx.timeNowRel;
       last.a = look.tierA; last.b = look.tierB; last.c = look.tierC;
       last.cand = look.candidates; last.pub = look.publicLayer; last.halos = look.halos;
       state.phase = s.phase;
       state.filter = s.filter;
       state.revealElapsedS = clock;
+      state.timeNowRel = sceneFx.timeNowRel;
       state.selectedIndex = sel;
       Object.assign(state.look, look);
       drawSection(ctx, model, plot, state, style, cssW, cssH);
@@ -126,7 +135,7 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
     const id = sectionHit(
       model,
       plot,
-      { phase: s.phase, filter: s.filter, revealElapsedS: sceneFx.revealElapsedS },
+      { phase: s.phase, filter: s.filter, revealElapsedS: sceneFx.revealElapsedS, timeNowRel: sceneFx.timeNowRel },
       e.clientX - box.left,
       e.clientY - box.top,
       HIT_PX,
@@ -155,7 +164,12 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
         <div style={{ color: colors.text, fontSize: 11, fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase" }}>
           Depth section
         </div>
-        <div style={{ fontSize: 10.5 }}>Every event projected onto grid east · true scale (1 km = 1 km)</div>
+        <div style={{ fontSize: 10.5 }}>
+          Grid east · true scale (1 km = 1 km) · {plot?.framedOn === "all" ? "framed on every event" : "framed on Tier A and B"}
+        </div>
+        <div style={{ fontSize: 10.5, ...numeric }} data-testid="depth-section-outside">
+          {outsideText(outside)}
+        </div>
       </header>
       <canvas
         ref={canvas}

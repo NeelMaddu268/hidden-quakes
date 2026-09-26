@@ -4,7 +4,9 @@
 
 import { colors } from "@hq/visualization";
 import { Color, Vector3, type IUniform } from "three";
+import { LOOK } from "../look";
 import { TIMELINE } from "../reveal/timeline";
+import { TIME_ALL } from "../time/clock";
 
 export interface EventUniforms {
   [name: string]: IUniform;
@@ -39,6 +41,13 @@ export interface EventUniforms {
   uSelected: IUniform<number>;
   /** Color of the thin ring around the selected event. */
   uRingColor: IUniform<Color>;
+  /**
+   * Time mode (WEB-06): "now" in seconds since windowStart. Instances whose `aTime` is later are hidden;
+   * those from the last `uTimeGlowS` glow warmer and larger, decaying to their settled look. TIME_ALL
+   * (time mode off) shows every instance and lights none.
+   */
+  uTimeNow: IUniform<number>;
+  uTimeGlowS: IUniform<number>;
 }
 
 /** Room around the clamped glyph for the selection ring. */
@@ -60,6 +69,7 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
   attribute float aTier;
   attribute float aScale;
   attribute float aAppearAt;
+  attribute float aTime;
 
   uniform float uSize;
   uniform float uMinPx;
@@ -72,10 +82,13 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
   uniform vec3 uTierOpacity;
   uniform float uLayerOpacity;
   uniform float uSelected;
+  uniform float uTimeNow;
+  uniform float uTimeGlowS;
 
   varying vec2 vUv;
   varying float vAlpha;
   varying float vBoost;
+  varying float vWarm;
   varying float vSelected;
   varying float vCoreFrac;
 
@@ -90,9 +103,15 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
     float settle = 1.0 - pow(1.0 - pop, 3.0);
     vBoost = (1.0 - settle) * ${POP_FLASH.toFixed(3)};
 
+    // Time mode: shown once tNow reaches the event's origin time; the last uTimeGlowS of data time glow.
+    float tAge = uTimeNow - aTime;
+    float tShown = step(0.0, tAge);
+    float recent = tShown * clamp(1.0 - tAge / max(uTimeGlowS, 1e-6), 0.0, 1.0);
+    vWarm = recent * ${LOOK.time.glowBoost.toFixed(3)};
+
     float tierOpacity = aTier < 0.5 ? uTierOpacity.x : (aTier < 1.5 ? uTierOpacity.y : uTierOpacity.z);
     float fog = exp(-uDepthFog * max(0.0, uSurfaceY - worldCenter.y));
-    vAlpha = tierOpacity * uLayerOpacity * shown * fog;
+    vAlpha = tierOpacity * uLayerOpacity * shown * tShown * fog;
     // Selection identifies the event without overriding its filter opacity.
     vSelected = abs(float(gl_InstanceID) - uSelected) < 0.5 ? 1.0 : 0.0;
 
@@ -110,7 +129,7 @@ export const EVENT_VERTEX_SHADER = /* glsl */ `
     vCoreFrac = radius / quad;
     radius = quad;
     // Hidden instances collapse to a point: no fragments, no overdraw.
-    radius *= mix(${POP_SCALE.toFixed(3)}, 1.0, settle) * step(0.001, vAlpha);
+    radius *= mix(${POP_SCALE.toFixed(3)}, 1.0, settle) * (1.0 + ${LOOK.time.glowGrow.toFixed(3)} * recent) * step(0.001, vAlpha);
 
     mvCenter.xy += position.xy * 2.0 * radius;
     gl_Position = projectionMatrix * mvCenter;
@@ -126,6 +145,7 @@ export const EVENT_FRAGMENT_SHADER = /* glsl */ `
   varying vec2 vUv;
   varying float vAlpha;
   varying float vBoost;
+  varying float vWarm;
   varying float vSelected;
   varying float vCoreFrac;
 
@@ -143,7 +163,8 @@ export const EVENT_FRAGMENT_SHADER = /* glsl */ `
     // a settled glyph at uGlow = 1 is exactly the token color.
     float shape = min(core + halo, 1.0);
     vec3 color = mix(uColor, vec3(1.0), vBoost * ${(POP_WHITEN / POP_FLASH).toFixed(4)});
-    vec3 rgb = color * uGlow * (1.0 + vBoost);
+    // The time-mode glow brightens in the token hue only (no whitening): recent amber stays amber.
+    vec3 rgb = color * uGlow * (1.0 + vBoost + vWarm);
     float alpha = vAlpha * shape;
     if (vSelected > 0.5) {
       float ring = 1.0 - smoothstep(0.0, 1.5 * px, abs(rq - (1.0 - 2.0 * px)));
@@ -187,6 +208,8 @@ export function createEventUniforms(opts: EventMaterialOptions): EventUniforms {
     uGlow: { value: opts.glow ?? 1 },
     uSelected: { value: -1 },
     uRingColor: { value: new Color(colors.strictHalo) },
+    uTimeNow: { value: TIME_ALL },
+    uTimeGlowS: { value: LOOK.time.glowWindowS },
   };
 }
 

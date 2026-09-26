@@ -94,6 +94,21 @@ describe("presetPose", () => {
     expect(pose.position[1]).toBeLessThan(b.surfaceY); // below ground
   });
 
+  it("side frames the whole column from the site surface down, even for a compact deep cluster", () => {
+    // A tight cluster 4–5 km below the surface: the side view must still show the surface (0 km).
+    const deep: number[] = [];
+    for (let i = 0; i < 50; i++) deep.push(((i % 5) - 2) * 0.1, -4 - (i % 10) * 0.1, ((i % 7) - 3) * 0.1);
+    const db = computeBounds([new Float32Array(deep)], 0, 0);
+    for (const aspect of [16 / 9, 4 / 3]) {
+      const cam = cameraAt(presetPose("side", db, aspect), aspect);
+      const surface = ndc(cam, [db.center[0], db.surfaceY, db.center[2]]);
+      const bottom = ndc(cam, [db.center[0], db.min[1], db.center[2]]);
+      expect(Math.abs(surface.y)).toBeLessThan(1);
+      expect(Math.abs(bottom.y)).toBeLessThan(1);
+      expect(surface.y).toBeGreaterThan(bottom.y);
+    }
+  });
+
   it("side view shows depth as screen height: deeper points draw lower", () => {
     const cam = cameraAt(presetPose("side", b, 16 / 9), 16 / 9);
     const shallow = ndc(cam, [b.center[0], -2, b.center[2]]);

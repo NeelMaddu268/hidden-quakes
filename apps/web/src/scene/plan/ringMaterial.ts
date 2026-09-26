@@ -5,6 +5,7 @@
 
 import { Color, type IUniform } from "three";
 import { LOOK } from "../look";
+import { TIME_ALL } from "../time/clock";
 
 export interface RingUniforms {
   [name: string]: IUniform;
@@ -13,6 +14,8 @@ export interface RingUniforms {
   uOpacity: IUniform<number>;
   /** Reveal clock (s): a ring shows once it passes its event's appearance time. */
   uRevealElapsed: IUniform<number>;
+  /** Time mode "now" (s since windowStart): a ring shows only once its event does. TIME_ALL = off. */
+  uTimeNow: IUniform<number>;
 }
 
 /** Outline width in device pixels, and the faint fill's weight relative to the outline. */
@@ -21,13 +24,15 @@ export const RING_FILL = 0.18;
 
 export const RING_VERTEX_SHADER = /* glsl */ `
   attribute float aAppearAt;
+  attribute float aTime;
   uniform float uRevealElapsed;
+  uniform float uTimeNow;
   uniform float uOpacity;
   varying vec2 vUv;
   varying float vAlpha;
 
   void main() {
-    vAlpha = uOpacity * step(aAppearAt, uRevealElapsed);
+    vAlpha = uOpacity * step(aAppearAt, uRevealElapsed) * step(aTime, uTimeNow);
     vUv = uv;
     // The unit quad is authored in XY; lay it flat in the east/north (XZ) plane. Hidden rings
     // collapse onto their center: degenerate, but inside the clip volume.
@@ -59,6 +64,7 @@ export function createRingUniforms(color: string): RingUniforms {
     uColor: { value: new Color(color) },
     uOpacity: { value: 0 },
     uRevealElapsed: { value: -1 },
+    uTimeNow: { value: TIME_ALL },
   };
 }
 
