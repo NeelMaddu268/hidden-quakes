@@ -1,12 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { useBundle, useMode } from "@/providers";
 import { useDemo } from "@/state/demo";
 import { Counters } from "./Counters";
 import { FilterPills, ModePills } from "./Pills";
 import { RevealButton } from "./RevealButton";
+import { RunDetailsButton, RunDetailsPanel, useRunDetailsKey } from "./run-details/RunDetailsPanel";
 import styles from "./Shell.module.css";
 import { useKeyboard } from "./useKeyboard";
+import { ValidationPanel } from "./validation/ValidationPanel";
 
 /**
  * The overlay on top of the scene (docs/01 → Web app). Pointer-transparent, so the canvas keeps
@@ -20,6 +23,9 @@ export function Shell() {
   const phase = useDemo((s) => s.phase);
   const ready = bundle.status === "ready";
   useKeyboard({ heroEventId: ready ? bundle.meta.scene.heroEventId : null, ready });
+  // DEMO-02: the Run details overlay, toggled by its button under the mode label or by D.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  useRunDetailsKey(detailsOpen, setDetailsOpen, ready);
 
   const synthetic = ready && bundle.info.isSynthetic;
 
@@ -34,6 +40,7 @@ export function Shell() {
           {bundle.status === "loading" && (mode ? `Loading ${mode}…` : "Loading…")}
           {bundle.status === "error" && mode}
         </p>
+        {ready && <RunDetailsButton open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)} />}
       </header>
 
       <div className={styles.topRight}>
@@ -43,6 +50,10 @@ export function Shell() {
 
       {ready && phase === "public" && <RevealButton />}
       {bundle.status === "error" && <ErrorPanel message={bundle.message} />}
+
+      {/* DEMO-02 panels: validation (bottom-left, after the reveal) and the Run details overlay. */}
+      <ValidationPanel />
+      {ready && <RunDetailsPanel open={detailsOpen} onClose={() => setDetailsOpen(false)} />}
 
       <ModePills current={ready ? bundle.info.mode : null} />
     </div>
