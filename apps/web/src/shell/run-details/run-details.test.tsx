@@ -11,6 +11,7 @@ import mockMeta from "../../../public/data/mock/meta.json";
 import mockValidation from "../../../public/data/mock/validation.json";
 import { Shell } from "../Shell";
 import { bundleFiles, fakeFetch, pendingFetch, type FixtureOptions } from "../test-fixture";
+import { JsonNode } from "./RunDetailsPanel";
 import { sweptParam } from "./sweep";
 
 const validation = mockValidation as unknown as Validation;
@@ -52,6 +53,23 @@ function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
 const button = () => screen.getByRole("button", { name: "Run details" });
 
 describe("run details panel", () => {
+  it("moves focus into the dialog on open and back to the toggle on close, by button and by key", async () => {
+    await mountReady();
+    act(() => {
+      fireEvent.click(button());
+    });
+    expect(document.activeElement).toBe(screen.getByRole("dialog", { name: "Run details" }));
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    });
+    expect(document.activeElement).toBe(button());
+
+    press("d");
+    expect(document.activeElement).toBe(screen.getByRole("dialog", { name: "Run details" }));
+    press("Escape");
+    expect(document.activeElement).toBe(button());
+  });
+
   it("is closed until its button is pressed, and Close hides it again", async () => {
     await mountReady();
     expect(screen.queryByTestId("run-details")).toBeNull();
@@ -122,6 +140,15 @@ describe("run details panel", () => {
     expect(plot.textContent).toContain("candidates");
     expect(plot.textContent).toContain("tierA");
     expect(plot.textContent).toContain("recoveredPublic");
+  });
+
+  it("prints null, empty objects and empty arrays as leaves", () => {
+    render(<JsonNode name="root" value={{ a: null, b: {}, c: [] }} depth={0} />);
+    const root = screen.getByText("root").closest("details")!;
+    expect(root.open).toBe(true);
+    expect(root.querySelectorAll("details")).toHaveLength(0);
+    const leaves = Array.from(root.querySelectorAll("div > div")).map((leaf) => leaf.textContent);
+    expect(leaves).toEqual(["anull", "b{}", "c[]"]);
   });
 
   it("hides the sweep block when the sweep is empty or validation.json is missing", async () => {

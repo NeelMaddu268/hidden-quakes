@@ -25,7 +25,7 @@ export function Shell() {
   useKeyboard({ heroEventId: ready ? bundle.meta.scene.heroEventId : null, ready });
   // DEMO-02: the Run details overlay, toggled by its button under the mode label or by D.
   const [detailsOpen, setDetailsOpen] = useState(false);
-  useRunDetailsKey(detailsOpen, setDetailsOpen, ready);
+  useRunDetailsKey(setDetailsOpen, ready);
 
   const synthetic = ready && bundle.info.isSynthetic;
 

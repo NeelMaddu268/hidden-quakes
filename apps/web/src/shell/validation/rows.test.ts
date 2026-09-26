@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AnalysisSummary, BaselineRow, Validation } from "@/providers";
-import { gainHoldsInBothProfiles, rows, type RowId, type SummaryInput, type ValidationInput } from "./rows";
+import { baselineRan, rows, type RowId, type SummaryInput, type ValidationInput } from "./rows";
 
 const SUMMARY: AnalysisSummary = {
   runId: "t",
@@ -108,41 +108,36 @@ describe("rows()", () => {
     expect(rows(undefined, null)).toEqual([]);
   });
 
-  describe("the gain row needs gain > 1 in both profiles, computed from the baseline table", () => {
+  describe("the gain row: summary.baseline.gain > 1 and the baseline ran (all four rows present)", () => {
     const withoutGain = ALL.filter((id) => id !== "gain");
+
+    it("shows with summary.baseline and the full baseline table", () => {
+      expect(ids(SUMMARY, VALIDATION)).toContain("gain");
+      expect(baselineRan(VALIDATION.baseline)).toBe(true);
+    });
 
     it("hides when summary.baseline.gain is not above one", () => {
       expect(ids({ ...SUMMARY, baseline: { ...SUMMARY.baseline!, gain: 1 } }, VALIDATION)).toEqual(withoutGain);
       expect(ids({ ...SUMMARY, baseline: { ...SUMMARY.baseline!, gain: 0.8 } }, VALIDATION)).toEqual(withoutGain);
     });
 
-    it("hides when the second profile is missing from the table", () => {
+    it("hides when a profile's row is missing from the table, or validation is missing", () => {
       const onlyFull = VALIDATION.baseline.filter((r) => r.associationProfile === "full");
       expect(ids(SUMMARY, { ...VALIDATION, baseline: onlyFull })).toEqual(withoutGain);
+      const noStaltaPOnly = VALIDATION.baseline.filter((r) => !(r.method === "stalta" && r.associationProfile === "p_only"));
+      expect(ids(SUMMARY, { ...VALIDATION, baseline: noStaltaPOnly })).toEqual(withoutGain);
       expect(ids(SUMMARY, { ...VALIDATION, baseline: [] })).toEqual(withoutGain);
       expect(ids(SUMMARY, { ...VALIDATION, baseline: null })).toEqual(withoutGain);
+      expect(ids(SUMMARY, null)).not.toContain("gain");
+      expect(baselineRan(null)).toBe(false);
     });
 
-    it("hides when one profile's gain is not above one", () => {
+    it("never recomputes the ratio from the table: the exporter owns 'both profiles'", () => {
       const tied = VALIDATION.baseline.map((r) =>
         r.method === "stalta" && r.associationProfile === "p_only" ? { ...r, tiers: { ...r.tiers, A: 70 } } : r,
       );
-      expect(ids(SUMMARY, { ...VALIDATION, baseline: tied })).toEqual(withoutGain);
-      const worse = VALIDATION.baseline.map((r) =>
-        r.method === "phasenet" && r.associationProfile === "full" ? { ...r, tiers: { ...r.tiers, A: 10 } } : r,
-      );
-      expect(ids(SUMMARY, { ...VALIDATION, baseline: worse })).toEqual(withoutGain);
-    });
-
-    it("hides when the STA/LTA strict count is zero (an unbounded ratio is not a gain)", () => {
-      const zero = VALIDATION.baseline.map((r) => (r.method === "stalta" ? { ...r, tiers: { ...r.tiers, A: 0 } } : r));
-      expect(ids(SUMMARY, { ...VALIDATION, baseline: zero })).toEqual(withoutGain);
-      expect(gainHoldsInBothProfiles(zero)).toBe(false);
-    });
-
-    it("holds on the complete table", () => {
-      expect(gainHoldsInBothProfiles(VALIDATION.baseline)).toBe(true);
-      expect(gainHoldsInBothProfiles(null)).toBe(false);
+      expect(ids(SUMMARY, { ...VALIDATION, baseline: tied })).toEqual(ALL);
+      expect(rows(SUMMARY, { ...VALIDATION, baseline: tied }).find((r) => r.id === "gain")!.value).toBe("2.5×");
     });
   });
 });

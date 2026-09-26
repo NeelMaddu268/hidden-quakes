@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useBundle, useValidation } from "@/providers";
 import shell from "../Shell.module.css";
+import { isTextInput } from "../useKeyboard";
 import styles from "./RunDetails.module.css";
 import { SweepPlot } from "./SweepPlot";
 
@@ -10,36 +11,37 @@ import { SweepPlot } from "./SweepPlot";
 export const RUN_DETAILS_KEY = "d";
 const PANEL_ID = "run-details";
 
-/** Small text button under the mode label, top-left; the overlay opens from it or from D. */
+/**
+ * Small text button under the mode label, top-left; the overlay opens from it or from D. When
+ * the overlay closes (Close button or Esc), focus returns here, so keyboard users land where
+ * they left.
+ */
 export function RunDetailsButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (wasOpen.current && !open) ref.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
   return (
     <button
+      ref={ref}
       type="button"
       className={`${shell.pill} ${shell.modePill} ${styles.button}`}
       aria-expanded={open}
       aria-controls={PANEL_ID}
-      onClick={(event) => {
-        event.currentTarget.blur();
-        onToggle();
-      }}
+      onClick={onToggle}
     >
       Run details
     </button>
   );
 }
 
-function isTextInput(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-}
-
 /**
  * D toggles the panel (only while the bundle is ready); Esc closes it. Esc is also the store's
  * `select(null)` in `useKeyboard`, which already prevented default, so it is honoured regardless.
  */
-export function useRunDetailsKey(open: boolean, setOpen: (open: boolean) => void, enabled: boolean): void {
+export function useRunDetailsKey(setOpen: Dispatch<SetStateAction<boolean>>, enabled: boolean): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -48,30 +50,44 @@ export function useRunDetailsKey(open: boolean, setOpen: (open: boolean) => void
       if (key === RUN_DETAILS_KEY && !event.defaultPrevented) {
         if (!enabled) return;
         event.preventDefault();
-        setOpen(!open);
-      } else if (key === "escape" && open) {
+        setOpen((open) => !open);
+      } else if (key === "escape") {
         setOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, setOpen, enabled]);
+  }, [setOpen, enabled]);
 }
 
 /**
  * The overlay: `ProcessingRun` verbatim as a folded key/value tree, then the association sweep.
  * Uses only `useBundle()` and `useValidation()`; renders nothing while closed or before the
- * bundle is ready.
+ * bundle is ready. Takes focus when it opens (the dialog itself, so the tree is scrollable and
+ * Tab reaches Close first).
  */
 export function RunDetailsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const bundle = useBundle();
   const validation = useValidation();
-  if (!open || bundle.status !== "ready") return null;
+  const ref = useRef<HTMLElement>(null);
+  const visible = open && bundle.status === "ready";
+  useEffect(() => {
+    if (visible) ref.current?.focus();
+  }, [visible]);
+  if (!visible) return null;
   const run = bundle.meta.run;
   const sweep = validation?.sweep ?? [];
 
   return (
-    <section id={PANEL_ID} className={styles.panel} role="dialog" aria-label="Run details" data-testid="run-details">
+    <section
+      ref={ref}
+      id={PANEL_ID}
+      className={styles.panel}
+      role="dialog"
+      aria-label="Run details"
+      tabIndex={-1}
+      data-testid="run-details"
+    >
       <header className={styles.panelHeader}>
         <div>
           <h2 className={styles.panelTitle}>Run details</h2>
