@@ -355,11 +355,11 @@ def literal(what: str) -> Resolver:
     return resolve
 
 
-def baseline_strict(method: str) -> Resolver:
+def baseline_field(method: str, path: str, *, decimals: int | None = None) -> Resolver:
     """``validation.baseline`` row with this method and ``associationProfile: "full"`` →
-    ``tiers.A``; only when both ``full`` rows exist (the Validation card's "Strict events,
-    PhaseNet vs STA/LTA" row)."""
-    source = f"{VALIDATION_JSON} → baseline[method={method}, associationProfile=full].tiers.A"
+    ``path``; only when both ``full`` rows exist (the Validation card's "Strict events,
+    PhaseNet vs STA/LTA" row), so the two methods are only ever quoted together."""
+    source = f"{VALIDATION_JSON} → baseline[method={method}, associationProfile=full].{path}"
     gate = f"{VALIDATION_JSON} → baseline[] full rows for both phasenet and stalta"
 
     def resolve(bundle: Bundle) -> Resolved:
@@ -372,9 +372,39 @@ def baseline_strict(method: str) -> Resolver:
         }
         if "phasenet" not in rows or "stalta" not in rows:
             return _condition_not_met(source, gate)
-        return Resolved(
-            fmt(rows[method]["tiers"]["A"]), f"{source} (only with {gate})", STATUS_VALUE
-        )
+        node: Any = rows[method]
+        for key in path.split("."):
+            node = node.get(key) if isinstance(node, dict) else None
+        if node is None:
+            return _not_available(bundle, VALIDATION_JSON, source)
+        return Resolved(fmt(node, decimals), f"{source} (only with {gate})", STATUS_VALUE)
+
+    return resolve
+
+
+def baseline_strict(method: str) -> Resolver:
+    """The strict (Tier A) count of that method's ``full`` baseline row."""
+    return baseline_field(method, "tiers.A")
+
+
+def matched_min_stations() -> Resolver:
+    """The fewest stations any recovered public event was located on: the Tier B
+    ``nStations`` bar, which is the worst matched event's value only while
+    ``tiering.thresholds.quantiles.B`` is 0 ("worst of matched"); any other quantile omits
+    the clause."""
+    source = f"{META_JSON} → run.tiering.thresholds.B.nStations.value"
+    gate = f"{META_JSON} → run.tiering.thresholds.quantiles.B == 0"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        value, _ = _lookup(bundle, META_JSON, "run.tiering.thresholds.B.nStations.value")
+        quantile, _ = _lookup(bundle, META_JSON, "run.tiering.thresholds.quantiles.B")
+        if value is None or quantile is None:
+            return _not_available(bundle, META_JSON, source)
+        if quantile != 0:
+            return Resolved(
+                f"[condition not met: {gate} is false; omit this clause]", source, STATUS_CONDITION
+            )
+        return Resolved(fmt(value, 0), f"{source} (only with {gate})", STATUS_VALUE)
 
     return resolve
 
@@ -521,6 +551,18 @@ PITCH_SPECS: tuple[Spec, ...] = (
     Spec("{strictStalta}", baseline_strict("stalta")),
     Spec("{staltaCandidates}", baseline_candidates("stalta")),
     Spec("{heldOutRocAuc}", confidence_auc()),
+    Spec("{staltaRecoveredPublic}", baseline_field("stalta", "recoveredPublic")),
+    Spec("{phasenetMedianRmsS}", baseline_field("phasenet", "medianRmsS", decimals=3)),
+    Spec("{staltaMedianRmsS}", baseline_field("stalta", "medianRmsS", decimals=3)),
+    Spec("{phasenetMedianStations}", baseline_field("phasenet", "medianStations")),
+    Spec("{staltaMedianStations}", baseline_field("stalta", "medianStations")),
+    Spec("{strictMatchedCount}", meta_field("run.tiering.counts.matched.A")),
+    Spec("{medianStations}", meta_field("summary.medianStations")),
+    Spec("{minMatchedStations}", matched_min_stations()),
+    Spec(
+        "{heldOutMedianAbsDzM}",
+        meta_field("run.locator.statics.crossValidatedOffsets.after.medianAbsDzM", decimals=0),
+    ),
     Spec(
         "{meanChanceEvents}",
         gated(
