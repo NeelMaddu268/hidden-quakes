@@ -29,6 +29,160 @@ evidence:
   # Evidence files the web app fetches up front: the hero plus the first N in reveal order.
   preloadCount: 20
 
-# Geothermal reference features (wells, facilities, boundaries), each with a cited SourceRef.
-# Empty until FEAT-01 sources a verified reference; the exporter then writes features.json from it.
-features: []
+# Geothermal reference features (FEAT-01): wells, a well pad and site outlines near the region,
+# context only. Each entry keeps its coordinates in the datum and unit it was published in, with
+# a "# source:" comment naming the page every number was read from, and a `source` block that
+# becomes the bundle's SourceRef. `verified: true` is allowed only when the numbers were read
+# from `source.url` itself; every entry below was read from a public copy because the primary
+# hosts (gdr.openei.org, osti.gov, openei.org, utahforge.com, geology.utah.gov) were unreachable
+# from the build network on 2026-09-26, so every entry is `verified: false` and H3 renders it as
+# approximate. Flip one to true only after reading its numbers from the primary publication.
+# None of this says anything about what causes seismicity in the region.
+features:
+  # Deep deviated well 16A(78)-32: 422-station directional survey (COMPASS Design Report,
+  # 19-Dec-20), rebuilt with minimum curvature and checked against the report's own positions.
+  - kind: well
+    id: well-16a-78-32
+    name: "Well 16A(78)-32 (Utah FORGE)"
+    verified: false
+    crs: EPSG:26912  # NAD83 / UTM 12N; the 16A report names no datum, the 16B report (same pad) says NAD83 (HARN)
+    unit: usft  # the report prints "usft" for every length
+    # source: https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/well_data/16A_survey.csv
+    # "Platform reference point: Latitude (+N/S-) 13987645.19 usft, Departure (+E/W-) 1097896.92 usft"
+    headX: 1097896.92
+    headY: 13987645.19
+    # source: same page. "GL above permanent: 5414 usft; KB above permanent: 5444 usft;
+    # Permanent datum: Mean Sea Level; Depth reference: GE + RKB (5414' + 30')"
+    depthRefElev: 5444
+    groundElev: 5414
+    northRef: grid  # "Total az corr (+E/W-) = magnetic dec - grid conv" is applied in the report
+    maxSurveyMismatchM: 0.5
+    surveyCsv: configs/showcase/features/16A_78-32_survey.csv
+    source:
+      citation: >-
+        Energy and Geoscience Institute, University of Utah. Utah FORGE: Well 16A(78)-32
+        Drilling Data (directional survey, COMPASS Design Report dated 19-Dec-20). DOE Geothermal
+        Data Repository, submission 1283.
+      url: https://gdr.openei.org/submissions/1283
+      accessedOn: 2026-09-26
+      readFrom: https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/well_data/16A_survey.csv
+      note: >-
+        The copy carries the full report header (client, field, well, survey count, reference
+        point, depth references, calculation method). The wellhead agrees with independent public
+        copies of the 16A(78)-32 wellhead position. Datum taken from the 16B(78)-32 report for
+        the same pad; the 16A report prints UTM zone 12N US-survey-foot coordinates without
+        naming it.
+
+  # Deep deviated well 16B(78)-32: "16B(78)-32 Final Surveys" listing dated 6/26/2023.
+  - kind: well
+    id: well-16b-78-32
+    name: "Well 16B(78)-32 (Utah FORGE)"
+    verified: false
+    crs: EPSG:3742  # "MAP SYSTEM: Universal Transverse Mercator (US Survey Feet); GEODIC DATUM: NAD83 Utah - HARN; MAP ZONE: Zone 12N"
+    unit: usft
+    # source: https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/well_data/16B_survey.csv
+    # "WELL EASTING: 1097907.09ft; WELL NORTHING: 13987765.96ft"
+    headX: 1097907.09
+    headY: 13987765.96
+    # source: same page. "KB ELEV: 5447.65ft; GL ELEV: 5415.65ft"
+    depthRefElev: 5447.65
+    groundElev: 5415.65
+    northRef: grid  # "NORTH REF: Grid"
+    maxSurveyMismatchM: 0.5
+    surveyCsv: configs/showcase/features/16B_78-32_survey.csv
+    source:
+      citation: >-
+        Energy and Geoscience Institute, University of Utah. Utah FORGE: Well 16B(78)-32
+        Drilling Data (well survey, "16B(78)-32 Final Surveys" listing dated 6/26/2023). DOE
+        Geothermal Data Repository, submission 1516, DOI 10.15121/1998591.
+      url: https://gdr.openei.org/submissions/1516
+      accessedOn: 2026-09-26
+      readFrom: https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/well_data/16B_survey.csv
+      note: >-
+        The copy carries the listing header (map system, datum, zone, north reference, wellhead
+        easting/northing, KB and GL elevations, calculation method). In the copy the last decimal
+        digit of MD had spilled into the INC column for the deepest rows; repaired as described in
+        the CSV header and checked against the listing's own NORTHING, EASTING and SSTVD columns.
+
+  # Wellhead of pilot well 58-32 from a Utah Geological Survey regional-wells GIS layer
+  # (attribute Certainty "GPS"). A point, since the layer holds no trajectory.
+  - kind: facility
+    id: wellhead-58-32
+    name: "Well 58-32 wellhead (Utah FORGE)"
+    verified: false
+    crs: EPSG:26912  # Utah_FORGE_Regional_wells.prj: NAD_1983_UTM_Zone_12N, metres
+    unit: m
+    # source: https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/Utah_FORGE_regional_wells/Utah_FORGE_Regional_wells.dbf
+    # record HOLE_NAME "58-32": UTME_NAD83 335445, UTMN_NAD83 4263045, ELEV___m_ 1687, Certainty "GPS"
+    x: 335445
+    y: 4263045
+    elevM: 1687
+    source:
+      citation: >-
+        Utah Geological Survey, Utah_FORGE_Regional_wells (shapefile of wells in the Milford /
+        Roosevelt Hot Springs area; its ArcGIS metadata records edits dated 2018-02-22), record
+        "58-32", location certainty "GPS".
+      url: https://github.com/d-chambers/forgery/tree/main/src/forgery/data/Utah_FORGE_regional_wells
+      accessedOn: 2026-09-26
+      note: >-
+        Read from a copy of the UGS layer re-hosted in a public GitHub repository; the UGS
+        publication it was exported from was not located, so the location is approximate.
+
+  # Utah FORGE project area: the inner polygon of a Utah Geological Survey extent shapefile
+  # ("Milford_FORGE_extent", created 2016-03-07, author Jay Hill, UGS, per its ArcGIS metadata).
+  - kind: boundary
+    id: boundary-forge-project-area
+    name: "Utah FORGE project area (UGS extent layer, 2016)"
+    verified: false
+    crs: EPSG:26912  # FORGE_extent.prj: NAD_1983_UTM_Zone_12N, metres
+    unit: m
+    elevM: null  # drawn at the run's refSurfaceElevM
+    # source: https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/FORGE_Extent/FORGE_extent.shp
+    # ring 2, Descrip "FORGE project area", vertices in file order (closing vertex dropped)
+    vertices:
+      - [332851.6, 4263809.6]
+      - [332868.4, 4264610.7]
+      - [336097.4, 4264561.2]
+      - [336083.9, 4262942.9]
+      - [335279.8, 4262959.4]
+      - [335250.7, 4261253.9]
+      - [334847.2, 4261259.7]
+      - [334853.0, 4261659.6]
+      - [334451.8, 4261668.2]
+      - [334483.4, 4263767.5]
+    source:
+      citation: >-
+        Utah Geological Survey (Jay Hill), Milford_FORGE_extent shapefile, 2016-03-07, polygon
+        "FORGE project area". Metadata abstract: "This map shows the extent of the FORGE
+        laboratory study area in Milford, UT."
+      url: https://github.com/d-chambers/forgery/tree/main/src/forgery/data/FORGE_Extent
+      accessedOn: 2026-09-26
+      note: >-
+        Read from a copy of the 2016 UGS layer re-hosted in a public GitHub repository; the UGS
+        publication it was exported from was not located and the outline may predate later site
+        changes, so it is approximate.
+
+  # Utah FORGE study area: the outer polygon of the same 2016 UGS extent shapefile.
+  - kind: boundary
+    id: boundary-forge-study-area
+    name: "Utah FORGE study area (UGS extent layer, 2016)"
+    verified: false
+    crs: EPSG:26912  # FORGE_extent.prj: NAD_1983_UTM_Zone_12N, metres
+    unit: m
+    elevM: null
+    # source: https://raw.githubusercontent.com/d-chambers/forgery/main/src/forgery/data/FORGE_Extent/FORGE_extent.shp
+    # ring 1, Descrip "FORGE study area", vertices in file order (closing vertex dropped)
+    vertices:
+      - [328343.3, 4256586.3]
+      - [328556.8, 4266334.0]
+      - [343505.7, 4266042.9]
+      - [343294.1, 4256226.9]
+    source:
+      citation: >-
+        Utah Geological Survey (Jay Hill), Milford_FORGE_extent shapefile, 2016-03-07, polygon
+        "FORGE study area".
+      url: https://github.com/d-chambers/forgery/tree/main/src/forgery/data/FORGE_Extent
+      accessedOn: 2026-09-26
+      note: >-
+        Read from a copy of the 2016 UGS layer re-hosted in a public GitHub repository; the UGS
+        publication it was exported from was not located, so the outline is approximate.
