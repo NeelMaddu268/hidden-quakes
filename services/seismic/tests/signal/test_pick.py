@@ -949,8 +949,12 @@ def test_stage_run_returns_none_and_records(fake_ctx: Any, monkeypatch: pytest.M
     monkeypatch.setattr(ab, "default_io", lambda: fx.io)
     monkeypatch.setattr(ab, "plot_record_section", lambda *args: 0)  # drawn by the test above
     assert ab.run(fake_ctx) is None
-    record = fake_ctx.records["pick_known"]
-    assert record["counts"]["checkBEventsPassed"] == 3 and record["runtime_s"] > 0
+    assert "pick_known" not in fake_ctx.records  # a sub-step, not a registered stage
+    record = json.loads(
+        (fake_ctx.path("known") / "pick_known.record.json").read_text(encoding="utf-8")
+    )
+    assert record["counts"]["checkBEventsPassed"] == 3 and record["runtimeS"] > 0
+    assert record["params"]["candidateWeights"]
 
 
 # --- contracts I/O (runs once CONTRACT-01 lands) --------------------------------------------------
