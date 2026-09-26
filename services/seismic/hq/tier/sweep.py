@@ -8,9 +8,14 @@ public regional catalog and tiered, and becomes one docs/02 ``SweepPoint``: ``ca
 configured run's own matched set (``thresholds``), so points compare on one scale: a point's own
 matched set would move the bars with the point.
 
-The configured point is re-evaluated through the same driver (a fresh association, located with
-the run's ``statics.parquet``, the statics ``events_located.parquet`` carries) so it compares with
-the other points. The stage logs its Tier A next to the one in ``events.parquet``.
+The configured point is re-evaluated through the same driver (a fresh association, every event
+located with the run's ``statics.parquet``) so it compares with the other points. The stage logs
+its Tier A next to the one in ``events.parquet``. ``statics.parquet`` holds the terms
+``events_located.parquet`` applied to its unmatched events; with ``statics.mode`` referenceEvents
+(LOC-05) they were estimated from the public events the sweep then matches, while
+``events_located.parquet`` relocated each of those reference events with terms computed without
+it. Every point's ``recoveredPublic`` and matched-event Tier A are therefore in-sample; the stage
+warns and records it (``sweep.statics.inSample``).
 
 ``locate`` is LOC-04's ``hq.locate.locate_detailed``, imported only when the sweep runs
 (``real_pipeline``); a branch without it fails with a message naming LOC-04. Tests inject a

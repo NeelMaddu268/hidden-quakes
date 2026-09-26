@@ -287,6 +287,61 @@ class DiagnosticsConfig(BaseModel):
     tableErrorFlagS: float = Field(gt=0)
 
 
+class WellConstrainedConfig(BaseModel):
+    """Events whose residuals estimate selfConsistent statics (``hq.locate.statics``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    minStations: int = Field(ge=1)  # quality.nStations at least this
+    minS: int = Field(ge=0)  # quality.nS at least this
+    maxGapDeg: float = Field(gt=0, le=360)  # quality.gapDeg at most this
+
+
+class StaticsExplainConfig(BaseModel):
+    """Evidence rules for the written explanation of every static above the flag threshold."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # The median term of a station's nearest other stations (same phase, at most
+    # neighbourMaxDistM away) explains its term as lateral structure when it has the term's sign
+    # and at least this fraction of its size.
+    neighbours: int = Field(ge=1)
+    neighbourMaxDistM: float = Field(gt=0)
+    lateralFraction: float = Field(gt=0, le=1)
+    # S term / P term of one station (same sign), compared only when |P term| is at least this.
+    minRatioTermS: float = Field(gt=0)
+    # S/P within a factor ratioBand of the model's Vp/Vs at the sensor: a path (velocity) anomaly;
+    # above it: the local Vp/Vs differs from the model's; within a factor ratioBand of 1: equal P
+    # and S delays, a timing offset is possible.
+    ratioBand: float = Field(gt=1)
+    # An early term at a station farther than this (m) from the events' median epicentre: rays
+    # bottoming in the model's deepest (extrapolated) layers; a hypothesis, contradicted (and then
+    # not a verdict) when another station that far has a late term above the flag.
+    farStationM: float = Field(gt=0)
+
+
+class StaticsConfig(BaseModel):
+    """Station statics (LOC-05, ``hq.locate.statics``)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["selfConsistent", "referenceEvents"]
+    # selfConsistent: median residual per station-phase over well-constrained events, subtracted,
+    # events relocated; ``iterations`` times, each static capped at +/- capS.
+    iterations: int = Field(ge=1)
+    capS: float = Field(gt=0)
+    minEvents: int = Field(ge=1)  # fewer well-constrained events on a station-phase: static 0
+    wellConstrained: WellConstrainedConfig
+    # referenceEvents: terms at the public-catalog hypocentres of the matched events.
+    minReferenceEvents: int = Field(ge=1)  # fewer reference events on a station-phase: term 0
+    referenceCapS: float = Field(gt=0)  # every term capped at +/- this
+    folds: Annotated[int, Field(ge=2)] | None  # null: leave-one-out; k: k-fold
+    polishIterations: int = Field(ge=1)  # origin-time / term alternations (median polish)
+    explain: StaticsExplainConfig
+    # Robust residual sigma above this multiple of locator.pickSigmaS is reported as well above.
+    sigmaFlagRatio: float = Field(gt=1)
+
+
 class CatalogDatum(BaseModel):
     """Depth datum of one catalog contributor (keyed by its QuakeML ``catalog:datasource``)."""
 
@@ -614,6 +669,7 @@ class SeismologyConfig(BaseModel):
     associator: AssociatorConfig
     matching: MatchingConfig
     diagnostics: DiagnosticsConfig
+    statics: StaticsConfig
     tiering: TieringConfig
     magnitude: MagnitudeConfig
 

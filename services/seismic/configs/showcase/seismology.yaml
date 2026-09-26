@@ -185,6 +185,61 @@ diagnostics:
   # below shallow interfaces).
   tableErrorFlagS: 0.005
 
+# Station statics (LOC-05, hq.locate.statics): one additive term per station and phase, applied in
+# the locator (tPred = origin time + table time + static). Every static above
+# diagnostics.stationResidualFlagS gets a written explanation in diagnostics.md.
+statics:
+  # selfConsistent: the lane doc's method, inside locate(). referenceEvents: terms at the public
+  # regional catalog's hypocentres of the matched events (needs matches.parquet in the run dir:
+  # locate -> match -> locate -> match -> tier); without it locate runs with no statics.
+  mode: referenceEvents
+  # selfConsistent: median residual per station-phase over the used picks of well-constrained
+  # events, subtracted, every event relocated; iterations times; each static capped at +/- capS.
+  iterations: 3
+  capS: 0.3
+  minEvents: 5
+  wellConstrained: # depthOnEdge events and truncated PDFs (null hErrM) never count
+    minStations: 8
+    minS: 3
+    maxGapDeg: 180.0
+  # referenceEvents: residuals at each reference hypocentre (the catalog's, fixed; origin time by
+  # the locator's weighted median), term = median over reference events, alternated with the
+  # origin times polishIterations times (median polish). A station-phase with fewer than
+  # minReferenceEvents reference events gets 0 (nEvents in statics.parquet shows it). Every
+  # reference event is relocated with terms computed without it: folds null = leave-one-out,
+  # k = k-fold (folds dealt round-robin in catalog origin-time order). Unmatched candidate events
+  # use the terms from every reference event.
+  minReferenceEvents: 3
+  # The lateral-structure terms exceed selfConsistent's 0.3 s cap by design (LOC-04 row 7: S
+  # delays near 1 s at the catalog hypocentres), so this cap is set from the data: above the
+  # largest consistent term (small MAD over its events), so it clips none of the lateral
+  # structure, and still bounding a term from a station with systematically wrong picks.
+  # diagnostics.md reports, per run, the largest uncapped term, its MAD, the largest MAD of any
+  # term and how many terms the cap clips; recheck the value there when the data change.
+  # Provenance of 1.0 s (LOC-05, full-day run of 2026-09-26): largest uncapped term 0.875 s,
+  # largest term MAD 0.083 s, none clipped.
+  referenceCapS: 1.0
+  folds: null
+  polishIterations: 3
+  # Evidence rules for the written explanation of each static above
+  # diagnostics.stationResidualFlagS (hq.locate.statics.explain_terms).
+  explain:
+    neighbours: 3 # nearest other stations whose median term is compared (same phase)
+    # ...counting only stations at most this far (m, epicentral) from the station: a station
+    # farther away samples other near-surface structure and can't stand in for this one's.
+    neighbourMaxDistM: 8000.0
+    lateralFraction: 0.5 # same sign and at least this share of the term: lateral structure
+    minRatioTermS: 0.05 # S/P term ratio only when |P term| >= this (s)
+    ratioBand: 1.3 # factor around the model's Vp/Vs (path) and around 1 (equal delays)
+    # An early term at a station farther than this (m) from the events' median epicentre: the
+    # sources sit in the layer model's half-space (top -610 m ASL), so the ray length in it grows
+    # with distance, and the layer file marks the half-space as extrapolation. About 4x the
+    # synthetic zone's deepest point below the half-space top. A hypothesis: another station that
+    # far with a same-phase term later than diagnostics.stationResidualFlagS contradicts it, and
+    # the term then counts as unexplained unless other evidence holds.
+    farStationM: 15000.0
+  sigmaFlagRatio: 1.5
+
 # Public regional catalog (stage "catalog", hq.match.catalog, MATCH-01).
 catalog:
   # ObsPy FDSN client key. "USGS" is the ComCat FDSN event service at https://earthquake.usgs.gov,

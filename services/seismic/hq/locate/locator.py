@@ -900,14 +900,17 @@ def locate_many(
     events: Sequence[pd.DataFrame],
     *,
     statics: Statics | None = None,
+    event_statics: Sequence[Statics | None] | None = None,
     locator: Locator | None = None,
 ) -> list[EventLocation]:
     """Locate every event (one picks frame each), in order.
 
-    With ``locator.nWorkers > 1`` the events are split over spawned processes that load the
-    same cached tables; each event is located independently, so results do not depend on the
-    worker count. ``locator`` (built from ``setup``) is reused for the serial path; one built
-    from another config or station set raises, since the workers rebuild from ``setup``.
+    ``statics`` applies to every event; ``event_statics`` (one entry per event, not with
+    ``statics``) gives each event its own. With ``locator.nWorkers > 1`` the events are split
+    over spawned processes that load the same cached tables; each event is located
+    independently, so results do not depend on the worker count. ``locator`` (built from
+    ``setup``) is reused for the serial path; one built from another config or station set
+    raises, since the workers rebuild from ``setup``.
     """
     started = time.perf_counter()
     if locator is not None and (
@@ -915,10 +918,13 @@ def locate_many(
         or list(locator._index) != setup.stations["id"].astype(str).tolist()
     ):
         raise ValueError("locator was not built from setup (config or stations differ)")
+    if event_statics is not None and (statics is not None or len(event_statics) != len(events)):
+        raise ValueError("event_statics needs one entry per event and no shared statics")
+    per_event = list(event_statics) if event_statics is not None else [statics] * len(events)
     n_workers = min(setup.config.locator.nWorkers, len(events))
     if n_workers <= 1:
         loc = locator if locator is not None else build_locator(setup)
-        out = [loc.locate(ev, statics=statics) for ev in events]
+        out = [loc.locate(ev, statics=st) for ev, st in zip(events, per_event, strict=True)]
     else:
         if locator is None:
             build_locator(setup)  # build and cache the tables once, before the workers load them
@@ -926,7 +932,7 @@ def locate_many(
         chunk = max(1, math.ceil(len(events) / (4 * n_workers)))
         with ProcessPoolExecutor(n_workers, mp_context=ctx, initializer=_init_worker,
                                  initargs=(setup,)) as pool:
-            out = list(pool.map(_locate_in_worker, [(ev, statics) for ev in events],
+            out = list(pool.map(_locate_in_worker, list(zip(events, per_event, strict=True)),
                                 chunksize=chunk))
     elapsed = time.perf_counter() - started
     log.info(
