@@ -22,7 +22,7 @@ describe("featureStyle (acceptance: unverified renders dashed with 'approximate'
     const s = featureStyle(feature({ kind: "well" }, false));
     expect(s.dashed).toBe(true);
     expect(s.approximate).toBe(true);
-    expect(s.label).toBe(`Test well (${APPROXIMATE})`);
+    expect(s.label).toBe(`Test well · ${APPROXIMATE}`);
     expect(APPROXIMATE).toBe("approximate");
   });
 

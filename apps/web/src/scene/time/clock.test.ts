@@ -11,6 +11,8 @@ import {
   shownAt,
   sortedTimes,
   stepTime,
+  type TimeStateLike,
+  type TimeStep,
   TIME_ALL,
   timeActive,
   timeNowRel,
@@ -84,31 +86,37 @@ describe("playback", () => {
   });
 });
 
+/** stepTime writes into a caller-owned step; the tests compare a copy (or null for "nothing to do"). */
+function step(...args: [TimeStateLike & { playing: boolean }, number, number, number, number]): TimeStep | null {
+  const out: TimeStep = { tNow: NaN, playing: false };
+  return stepTime(...args, out) ? { ...out } : null;
+}
+
 describe("stepTime (the TimeDriver's per-frame rule)", () => {
   const revealed = { phase: "revealed" as const, timeMode: true, tNow: null, playing: false };
 
   it("entering time mode after the reveal replays the window from its start", () => {
     expect(shouldStartReplay(revealed)).toBe(true);
-    expect(stepTime(revealed, 1 / 60, START, END, RATE)).toEqual({ tNow: START, playing: true });
+    expect(step(revealed, 1 / 60, START, END, RATE)).toEqual({ tNow: START, playing: true });
   });
 
   it("T before or during the reveal waits: nothing happens until the reveal has finished", () => {
     for (const phase of ["public", "revealing"] as const) {
-      expect(stepTime({ ...revealed, phase }, 1 / 60, START, END, RATE)).toBeNull();
-      expect(stepTime({ ...revealed, phase, playing: true }, 1 / 60, START, END, RATE)).toBeNull();
+      expect(step({ ...revealed, phase }, 1 / 60, START, END, RATE)).toBeNull();
+      expect(step({ ...revealed, phase, playing: true }, 1 / 60, START, END, RATE)).toBeNull();
     }
   });
 
   it("advances while playing, stops at the end, and leaves a paused or finished replay alone", () => {
     const playing = { ...revealed, tNow: START + 100, playing: true };
-    expect(stepTime(playing, 0.1, START, END, RATE)).toEqual({ tNow: START + 460, playing: true });
-    expect(stepTime({ ...playing, tNow: END - 1 }, 0.1, START, END, RATE)).toEqual({ tNow: END, playing: false });
-    expect(stepTime({ ...playing, playing: false }, 0.1, START, END, RATE)).toBeNull();
-    expect(stepTime({ ...revealed, tNow: END }, 0.1, START, END, RATE)).toBeNull();
+    expect(step(playing, 0.1, START, END, RATE)).toEqual({ tNow: START + 460, playing: true });
+    expect(step({ ...playing, tNow: END - 1 }, 0.1, START, END, RATE)).toEqual({ tNow: END, playing: false });
+    expect(step({ ...playing, playing: false }, 0.1, START, END, RATE)).toBeNull();
+    expect(step({ ...revealed, tNow: END }, 0.1, START, END, RATE)).toBeNull();
   });
 
   it("does nothing with time mode off", () => {
-    expect(stepTime({ ...revealed, timeMode: false }, 0.1, START, END, RATE)).toBeNull();
+    expect(step({ ...revealed, timeMode: false }, 0.1, START, END, RATE)).toBeNull();
   });
 });
 
@@ -156,5 +164,16 @@ describe("clock labels", () => {
     expect(hourTicks(START, END).map((t) => (t - START) / 3600)).toEqual([0, 6, 12, 18, 24]);
     expect(hourTicks(START + 1800, START + 1800 + 4 * 3600).map((t) => (t - START) / 3600)).toEqual([1, 2, 3, 4]);
     expect(hourTicks(START, START)).toEqual([START]);
+  });
+});
+
+describe("stepTime allocation", () => {
+  it("writes into the caller's step and reuses it (no per-frame object)", () => {
+    const out: TimeStep = { tNow: 0, playing: false };
+    const s = { phase: "revealed" as const, timeMode: true, tNow: START + 100, playing: true };
+    expect(stepTime(s, 0.05, START, END, RATE, out)).toBe(true);
+    expect(out).toEqual({ tNow: START + 280, playing: true });
+    expect(stepTime({ ...s, playing: false }, 0.05, START, END, RATE, out)).toBe(false);
+    expect(out.tNow).toBe(START + 280); // untouched when there's nothing to do
   });
 });

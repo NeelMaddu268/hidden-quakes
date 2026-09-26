@@ -87,11 +87,10 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
   const candidates = useMemo(() => buildCandidateInstances(events, ve, windowStart), [events, ve, windowStart]);
   const publicEvents = useMemo(() => buildPublicInstances(catalog, ve, windowStart), [catalog, ve, windowStart]);
   const drive = useCallback((u: EventUniforms) => driveCandidates(u, candidates.indexById), [candidates]);
-  // Frame the structure: Tier A and B candidates. Scattered Tier C events and the public regional
-  // catalog (which spans the whole run bbox, tens of km) stay rendered but don't widen the shot. With
-  // no candidates at all, the public catalog is framed instead.
-
   const surfaceY = depthKmToSceneY(0, meta.scene);
+  // Frame Tier A and B candidates. Scattered Tier C events and the public regional catalog (which spans
+  // the whole run bbox, tens of km) stay rendered but don't widen the shot. With no candidates at all,
+  // the public catalog is framed instead.
   const bounds = useMemo(
     () =>
       computeBounds(

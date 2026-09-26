@@ -1,12 +1,12 @@
 "use client";
 
 import { useFrame } from "@react-three/fiber";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useDemo } from "../../state/demo";
 import { sceneFx } from "../fx";
 import { LOOK } from "../look";
 import { REVEAL_FRAME_PRIORITY } from "../reveal/RevealDriver";
-import { stepTime, TIME_ALL, timeNowRel } from "./clock";
+import { stepTime, TIME_ALL, timeNowRel, type TimeStep } from "./clock";
 
 /**
  * Time mode's clock (WEB-06), inside the canvas so playback advances with rendered frames. Each frame,
@@ -24,10 +24,12 @@ export function TimeDriver({ windowStart, windowEnd }: { windowStart: number; wi
     [],
   );
 
+  const step = useRef<TimeStep>({ tNow: 0, playing: false });
+
   useFrame((_, delta) => {
     const s = useDemo.getState();
-    const next = stepTime(s, delta, windowStart, windowEnd, LOOK.time.playbackRate);
-    if (next) {
+    const next = step.current;
+    if (stepTime(s, delta, windowStart, windowEnd, LOOK.time.playbackRate, next)) {
       if (next.tNow !== s.tNow) s.setTNow(next.tNow);
       if (next.playing !== s.playing) s.setPlaying(next.playing);
     }
