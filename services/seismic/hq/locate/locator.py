@@ -5,7 +5,8 @@ Search volume (ENU metres around the run origin, elevM): ``e`` and ``n`` in
 (null: ``run.refSurfaceElevM``, the ground at the origin, because a 1D search has no DEM). Every
 grid is anchored at the volume's lower corner; the top is snapped down onto the fine lattice, so
 no hypocentre lies above the configured top. Where the ground in the volume lies below that top,
-hypocentres can still land above the local ground; LOC-04 checks them against a DEM.
+hypocentres can still land above the local ground: this locator does not check them against a DEM
+(that check is LOC-04's and does not exist yet).
 
 Misfit at a node, over the picks in use:
     d_i = t_obs_i - T_i(node) - static_i
@@ -35,9 +36,12 @@ hold less than exp(-pdfCutoff) of the peak node's PDF mass):
    the evaluated region that is not the volume's top or bottom still holds a node within
    ``cutoff``; lateral volume faces count too. A truncated PDF gives hErrM = vErrM = None and
    ``pdfTruncated`` in the search record (docs/02 allows None). The volume's top and bottom are
-   the prior's bounds, not truncation: ``depthOnEdge`` reports them.
-5. The hypocentre is the fine node with the least misfit (MAP); the PDF gives the formal errors
-   and ``depthOnEdge`` (``hq.locate.uncertainty``).
+   the prior's bounds, not truncation. ``depthOnEdge`` (docs/02) fires only when more than
+   ``depthOnEdgeMassFraction`` of the mass sits on the top or bottom face row, so a broad PDF
+   pinned at the volume top can leave it false; ``map_on_volume_top`` / ``map_on_volume_bottom``
+   (MAP within ``mapOnVolumeFaceBandM`` of the volume top / bottom) report that case.
+5. The hypocentre is the fine node with the least misfit (MAP); the PDF gives the formal errors,
+   ``depthOnEdge`` and the MAP-on-volume-face flags (``hq.locate.uncertainty``).
 6. Outlier pass: residuals at the MAP node; picks with ``|residual| > max(madK * MAD, floorS)``
    (MAD = median of |r - median(r)|, unscaled, over every phase) are dropped and the event is
    relocated once from step 1. If dropping would leave fewer than ``minPicks`` picks, nothing is
@@ -259,7 +263,11 @@ class EventLocation:
     min_epi_dist_m: float
     h_err_m: float | None  # None when the PDF is truncated (pdf_truncated)
     v_err_m: float | None
-    depth_on_edge: bool
+    depth_on_edge: bool  # docs/02: > depthOnEdgeMassFraction of the PDF on the top or bottom face
+    # Not docs/02 fields: MAP within mapOnVolumeFaceBandM of the volume top / bottom (the depth
+    # gate's z = 0 collapse, including broad PDFs that leave depth_on_edge false).
+    map_on_volume_top: bool
+    map_on_volume_bottom: bool
     statics_applied: bool  # at least one pick used in the location carries a non-zero static
     pdf: PdfSummary  # computed even when truncated, for the record
     pdf_truncated: bool
@@ -636,8 +644,9 @@ class Locator:
             spacing_h_m=vol.fine_m,
             spacing_z_m=vol.fine_m,
             misfit_scale=cfg.pdfMisfitScale,
-            top_is_volume_top=at_volume[0][1],
-            bottom_is_volume_bottom=at_volume[0][0],
+            volume_top_elev_m=vol.top_elev_m,
+            volume_bottom_elev_m=vol.bottom_elev_m,
+            map_face_band_m=cfg.mapOnVolumeFaceBandM,
             confidence=cfg.errConfidence,
             edge_fraction=cfg.depthOnEdgeMassFraction,
         )
@@ -770,6 +779,8 @@ class Locator:
             h_err_m=None if s.pdf_truncated else s.pdf.h_err_m,
             v_err_m=None if s.pdf_truncated else s.pdf.v_err_m,
             depth_on_edge=s.pdf.depth_on_edge,
+            map_on_volume_top=s.pdf.map_on_volume_top,
+            map_on_volume_bottom=s.pdf.map_on_volume_bottom,
             statics_applied=bool(np.any(p.static[used] != 0.0)),
             pdf=s.pdf,
             pdf_truncated=s.pdf_truncated,
@@ -806,7 +817,10 @@ class Locator:
             "statics": "additive per (stationId, phase), default 0; LocationQuality.statics is "
             "true when a pick used in the location carries a non-zero static",
             "uncertainty": conventions(
-                self.cfg.errConfidence, self.cfg.depthOnEdgeMassFraction, self.cfg.pdfMisfitScale
+                self.cfg.errConfidence,
+                self.cfg.depthOnEdgeMassFraction,
+                self.cfg.pdfMisfitScale,
+                self.cfg.mapOnVolumeFaceBandM,
             ),
             "tables": self.tables.to_record(),
         }

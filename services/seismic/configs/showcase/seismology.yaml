@@ -113,9 +113,13 @@ locator:
   # hErrM = 68% semi-major axis of the horizontal marginal. docs/02 fixes 68% (vErrM is the vertical
   # 1-sigma), so any other value is rejected.
   errConfidence: 0.68
-  # depthOnEdge: > this PDF mass on the fine grid's top or bottom face. MAP boundary positions
-  # remain separate search diagnostics (hq.locate.uncertainty).
+  # depthOnEdge (docs/02): > this PDF mass on the fine grid's top or bottom face.
   depthOnEdgeMassFraction: 0.05
+  # Separate from depthOnEdge: mapOnVolumeTop / mapOnVolumeBottom (EventLocation fields and the
+  # search record) are set when the MAP node lies within this distance (m) of the search volume's
+  # top / bottom, so a broad PDF pinned at the top is caught even when its face row holds < 5%.
+  # One fineStageSpacingM; 0 would mean the face row only.
+  mapOnVolumeFaceBandM: 100.0
   nWorkers: 8 # processes for locate_many (spawned); results do not depend on it
   evalChunkNodes: 65536 # nodes per misfit block (memory only)
   enuConsistencyTolM: 0.01 # stations: |enu_u + origin elevM - sensorElevM| must be below this

@@ -26,8 +26,11 @@ Conventions (also returned by ``conventions()`` for the run record):
 - **Face masses.** The PDF mass on each of the six faces of the evaluated fine region (one node
   layer each).
 - **depthOnEdge** is set when more than ``depthOnEdgeMassFraction`` of the mass lies on the fine
-  grid's top face or on its bottom face (each face checked on its own; docs/02). MAP positions
-  on a volume boundary are recorded separately, including broad PDFs with small face mass.
+  grid's top face or on its bottom face (each face checked on its own; docs/02).
+- **mapOnVolumeTop / mapOnVolumeBottom** (separate from depthOnEdge) are set when the MAP node lies
+  within ``mapOnVolumeFaceBandM`` of the search volume's top / bottom. They catch a broad PDF
+  pinned at the volume top (the depth gate's "z = 0 collapse") whose face row holds too little
+  mass for depthOnEdge; its formal errors come from a PDF cut off by the volume-top prior.
 - **Truncation.** The locator grows the evaluated region until no face that is not the volume's top
   or bottom face holds a node within ``pdfCutoff`` of the minimum. If a lateral volume face or the
   node budget (``maxPdfNodes``) stops it first, the PDF is truncated there: the locator reports
@@ -109,15 +112,17 @@ def summarize_pdf(
     spacing_h_m: float,
     spacing_z_m: float,
     misfit_scale: float,
-    top_is_volume_top: bool,
-    bottom_is_volume_bottom: bool,
+    volume_top_elev_m: float,
+    volume_bottom_elev_m: float,
+    map_face_band_m: float,
     confidence: float,
     edge_fraction: float,
 ) -> PdfSummary:
     """PDF summary of a misfit box of shape ``(len(z_axis), len(n_axis), len(e_axis))``.
 
-    The box is the evaluated fine region; its faces are the fine grid's faces. ``top_is_volume_top``
-    / ``bottom_is_volume_bottom`` say whether its top / bottom face is the search volume's.
+    The box is the evaluated fine region; its faces are the fine grid's faces.
+    ``volume_top_elev_m`` / ``volume_bottom_elev_m`` are the search volume's top and bottom: the
+    MAP node within ``map_face_band_m`` of one sets ``map_on_volume_top`` / ``_bottom``.
     """
     misfit = np.asarray(misfit, dtype=np.float64)
     shape = (z_axis.size, n_axis.size, e_axis.size)
@@ -127,6 +132,10 @@ def summarize_pdf(
         raise ValueError("misfit has non-finite values")
     if not misfit_scale > 0:
         raise ValueError(f"misfit_scale must be positive, got {misfit_scale}")
+    if not map_face_band_m >= 0:
+        raise ValueError(f"map_face_band_m must be >= 0, got {map_face_band_m}")
+    if not volume_bottom_elev_m <= z_axis[0] <= z_axis[-1] <= volume_top_elev_m:
+        raise ValueError("the box's elevations must lie within the volume's top and bottom")
     mass = np.exp(-misfit_scale * (misfit - misfit.min()))
     mass /= mass.sum()
 
@@ -170,8 +179,9 @@ def summarize_pdf(
         "east": float(m_e[-1]),
         "west": float(m_e[0]),
     }
-    on_top = bool(top_is_volume_top and iz == shape[0] - 1)
-    on_bottom = bool(bottom_is_volume_bottom and iz == 0)
+    z_map = float(z_axis[iz])
+    on_top = bool(volume_top_elev_m - z_map <= map_face_band_m)
+    on_bottom = bool(z_map - volume_bottom_elev_m <= map_face_band_m)
     depth_on_edge = (
         face_mass["top"] > edge_fraction
         or face_mass["bottom"] > edge_fraction
@@ -194,7 +204,9 @@ def summarize_pdf(
     )
 
 
-def conventions(confidence: float, edge_fraction: float, misfit_scale: float) -> dict[str, Any]:
+def conventions(
+    confidence: float, edge_fraction: float, misfit_scale: float, map_face_band_m: float
+) -> dict[str, Any]:
     """The uncertainty conventions as recorded in ``ProcessingRun.locator``."""
     return {
         "pdf": "node mass proportional to exp(-pdfMisfitScale * misfit); pdfMisfitScale 1 is the "
@@ -213,8 +225,13 @@ def conventions(confidence: float, edge_fraction: float, misfit_scale: float) ->
         "chi2_2": chi2_2(confidence),
         "gridFloor": "lambda_max and the vertical variance are floored at spacing^2 / 12 (flagged)",
         "depthOnEdge": f"> {edge_fraction} of the mass on the evaluated fine grid's top face or on "
-        "its bottom face; MAP boundary positions are separate diagnostics",
+        "its bottom face (docs/02)",
         "depthOnEdgeMassFraction": edge_fraction,
+        "mapOnVolumeFace": "separate from depthOnEdge: EventLocation.map_on_volume_top / "
+        "map_on_volume_bottom and search['mapOnVolumeTop'] / search['mapOnVolumeBottom'] are true "
+        "when the MAP node lies within mapOnVolumeFaceBandM of the search volume's top / bottom "
+        "(a PDF pinned there by the volume prior; its formal errors are cut off by it)",
+        "mapOnVolumeFaceBandM": map_face_band_m,
         "truncation": "the evaluated region grows until no face other than the volume's top or "
         "bottom holds a node within pdfCutoff of the minimum; if a lateral volume face or "
         "maxPdfNodes stops it, hErrM and vErrM are None and the search record says pdfTruncated",
