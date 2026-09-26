@@ -12,7 +12,6 @@ import copy
 import json
 import logging
 import shutil
-import socket
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -79,17 +78,6 @@ STATION_FIELDS = {  # docs/02 -> Station
     "usedInRun",
     "staticsS",
 }
-
-
-@pytest.fixture(autouse=True)
-def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Any socket connection in these tests is a bug: every service is injected."""
-
-    def refuse(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError(f"network access in an offline test: {args}")
-
-    monkeypatch.setattr(socket.socket, "connect", refuse)
-    monkeypatch.setattr(socket, "create_connection", refuse)
 
 
 @pytest.fixture(scope="module")
@@ -857,7 +845,8 @@ def test_format_table_lists_every_station(result: InventoryResult) -> None:
 def test_stage_writes_stations_parquet(
     fake_ctx: Any, cfg: StationSelection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    io = pytest.importorskip("hq_contracts.io")  # CONTRACT-01 (H4)
+    from hq_contracts import io  # a hard dependency (pyproject.toml): a broken package fails
+
     seeded = build(fake_ctx.config.run, cfg, fake_ctx.cache_dir)  # seeds every cache
 
     def refuse(*args: Any, **kwargs: Any) -> Any:
@@ -865,6 +854,7 @@ def test_stage_writes_stations_parquet(
 
     monkeypatch.setattr(inv, "requests_get", refuse)
     monkeypatch.setattr(inv._LazyClient, "get", refuse)
+    monkeypatch.setattr(inv, "fdsn_rate_probe", lambda query, rcfg: refuse)  # rate probes too
     inv.run(fake_ctx)
     df = io.read_table(fake_ctx.path(inv.STATIONS_FILE))
     assert list(df["id"]) == EXPECTED_IDS

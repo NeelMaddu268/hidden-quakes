@@ -3,8 +3,8 @@
 Offline and fast: a fake model with PhaseNet's ``classify`` interface (it honours ``blinding``)
 stands in for seisbench, and chunks come either from a fake iterator (exact control over keep
 intervals, data edges and the TimeMap) or from the real ``iter_model_chunks`` over a fake
-``read_window``. Tests that write parquet need ``hq_contracts`` (H4's CONTRACT-01) and skip
-without it. One test starts a real spawned process pool (about 1.5 s on the dev laptop).
+``read_window``. Tests that write parquet use the real ``hq_contracts`` (a hard dependency: a
+broken package fails, never skips). One test starts a real spawned process pool (about 1.5 s on the dev laptop).
 """
 
 import copy
@@ -988,7 +988,6 @@ def test_cli_times_must_be_explicit_utc(tmp_path: Path) -> None:
 
 @pytest.mark.smoke
 def test_empty_and_full_picks_tables_round_trip(fake_ctx: Any) -> None:
-    pytest.importorskip("hq_contracts.io")
     from hq_contracts.io import from_frame, read_table
     from hq_contracts.models import Pick
 

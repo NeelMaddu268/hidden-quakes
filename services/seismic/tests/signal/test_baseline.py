@@ -1,7 +1,7 @@
 """STA/LTA baseline (SEIS-07). Offline and seeded: synthetic noise plus impulsive arrivals at known
 times, served through a fake read_window. Stage tests run once against the real ``hq_contracts``
-(skipped until CONTRACT-01 is on this branch) and once against a parquet stand-in for it built
-here from docs/02 sections 1-2."""
+(a hard dependency: a broken package fails, never skips) and once against a parquet stand-in for
+it built here from docs/02 sections 1-2."""
 
 import copy
 import dataclasses
@@ -668,8 +668,8 @@ class TableIO:
 @pytest.fixture(params=["hq_contracts", "stand-in"])
 def table_io(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> TableIO:
     if request.param == "hq_contracts":
-        io = pytest.importorskip("hq_contracts.io")  # CONTRACT-01 (H4) is not on this branch yet
-        pytest.importorskip("hq_contracts.models")
+        io = importlib.import_module("hq_contracts.io")  # a hard dependency: fails, never skips
+        importlib.import_module("hq_contracts.models")
         return TableIO(io=io, written=None)
     written: dict[str, str] = {}
     io_stub = types.ModuleType("hq_contracts.io")
