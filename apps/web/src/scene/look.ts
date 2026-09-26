@@ -24,6 +24,14 @@ export const LOOK = Object.freeze({
   depthFogPerKm: 0.05,
   bloom: Object.freeze({ intensity: 1.35, luminanceThreshold: 0.3, luminanceSmoothing: 0.12, radius: 0.72 }),
   vignette: Object.freeze({ offset: 0.3, darkness: 0.45 }),
+  /**
+   * Tier A uncertainty halos (WEB-04). Overlapping halos combine with MAX blending, so a dense cluster
+   * is never brighter than one rim; the rim peak (rimAlpha × strictHalo luminance ~0.68 ≈ 0.27) stays
+   * under the bloom threshold, so halos never glow and never outshine their events.
+   */
+  halos: Object.freeze({ rimAlpha: 0.4, rimPower: 2.2, sphereDetail: 2 }),
+  /** Public-catalog weight under STRICT (after the reveal): still there for reference, Tier A leads. */
+  strictPublicWeight: 0.4,
   /** MSAA samples: 4, dropping to 2 once the drawing buffer exceeds ~2560×1440 (half-float memory). */
   msaa: Object.freeze({ samples: 4, largeBufferSamples: 2, largeBufferPixels: 2560 * 1440 }),
 });

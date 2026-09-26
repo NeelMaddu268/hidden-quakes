@@ -2,20 +2,18 @@
 
 import { colors } from "@hq/visualization";
 import { Canvas } from "@react-three/fiber";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useDemo } from "../state/demo";
 import { computeBounds } from "./camera/bounds";
 import { CameraRig } from "./camera/CameraRig";
 import { CAMERA_FOV_DEG } from "./camera/presets";
 import { depthKmToSceneY, verticalExaggerationOf } from "./coords";
 import { useBundle } from "./data";
-import {
-  candidateLayerOpacity,
-  candidateRevealUniform,
-  FILTER_TIER_OPACITY,
-  REVEALED_ELAPSED_S,
-} from "./events/driver";
+import { candidateRevealUniform, REVEALED_ELAPSED_S } from "./events/driver";
 import { EventsLayer } from "./events/EventsLayer";
+import type { HaloUniforms } from "./events/haloMaterial";
+import { buildHaloInstances } from "./events/halos";
+import { HalosLayer } from "./events/HalosLayer";
 import {
   buildCandidateInstances,
   buildPublicInstances,
@@ -24,28 +22,42 @@ import {
   TIER_INDEX,
 } from "./events/instances";
 import type { EventUniforms } from "./events/material";
+import { FilterDriver } from "./filters/FilterDriver";
+import { filterCountIssues } from "./filters/selectors";
 import { sceneFx } from "./fx";
 import { depthFogPerSceneUnit, LOOK } from "./look";
+
+import { Picker } from "./picking/Picker";
+import { selectedInstanceIndex } from "./picking/selection";
 import { Post } from "./post/Post";
 import { RevealDriver } from "./reveal/RevealDriver";
+import { References } from "./references";
+import { Terrain } from "./terrain";
 import type { BundleState } from "./types";
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 
-/** Candidate (amber) layer: follows the reveal and the filter. Reads the store without re-rendering. */
-function driveCandidates(u: EventUniforms): void {
-  const s = useDemo.getState();
-  u.uRevealElapsed.value = candidateRevealUniform(s.phase, sceneFx.revealElapsedS);
-  const tiers = FILTER_TIER_OPACITY[s.filter];
-  u.uTierOpacity.value.set(tiers[0], tiers[1], tiers[2]);
-  u.uLayerOpacity.value = candidateLayerOpacity(s.filter);
+/** Candidate (amber) layer: follows the reveal clock and the eased filter look (scene/filters). */
+function driveCandidates(u: EventUniforms, indexById: ReadonlyMap<string, number>): void {
+  const look = sceneFx.filterLook;
+  u.uSelected.value = selectedInstanceIndex(useDemo.getState().selectedEventId, indexById);
+  u.uRevealElapsed.value = candidateRevealUniform(useDemo.getState().phase, sceneFx.revealElapsedS);
+  u.uTierOpacity.value.set(look.tierA, look.tierB, look.tierC);
+  u.uLayerOpacity.value = look.candidates;
+
 }
 
-/** Public-catalog (cool white) layer: on screen from the first frame, at full weight. */
+/** Public-catalog (cool white) layer: on screen from the first frame; steps back under STRICT. */
 function drivePublic(u: EventUniforms): void {
   u.uRevealElapsed.value = REVEALED_ELAPSED_S;
   u.uTierOpacity.value.set(1, 1, 1);
-  u.uLayerOpacity.value = 1;
+  u.uLayerOpacity.value = sceneFx.filterLook.publicLayer;
+}
+
+/** Tier A halos: appear with their events, visible only under STRICT. */
+function driveHalos(u: HaloUniforms): void {
+  u.uRevealElapsed.value = candidateRevealUniform(useDemo.getState().phase, sceneFx.revealElapsedS);
+  u.uOpacity.value = sceneFx.filterLook.halos;
 }
 
 function BundleScene({ bundle }: { bundle: ReadyBundle }) {
@@ -55,9 +67,11 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
 
   const candidates = useMemo(() => buildCandidateInstances(events, ve, windowStart), [events, ve, windowStart]);
   const publicEvents = useMemo(() => buildPublicInstances(catalog, ve, windowStart), [catalog, ve, windowStart]);
+  const drive = useCallback((u: EventUniforms) => driveCandidates(u, candidates.indexById), [candidates]);
   // Frame the structure: Tier A and B candidates. Scattered Tier C events and the public regional
   // catalog (which spans the whole run bbox, tens of km) stay rendered but don't widen the shot. With
   // no candidates at all, the public catalog is framed instead.
+
   const surfaceY = depthKmToSceneY(0, meta.scene);
   const bounds = useMemo(
     () =>
@@ -68,13 +82,29 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
     [candidates, publicEvents, meta.scene],
   );
 
+  const halos = useMemo(() => buildHaloInstances(events, candidates, ve), [events, candidates, ve]);
+
   useEffect(() => {
     const issues = revealOrderIssues(events.map((e) => e.revealOrder));
     if (issues.length) console.error(`[scene] revealOrder was not assigned by the exporter: ${issues.join("; ")}`);
   }, [events]);
 
+  useEffect(() => {
+    console.info(
+      `[scene] ${events.length} candidate events, ${halos.count} Tier A halos` +
+        (halos.tierAWithoutHalo ? `, ${halos.tierAWithoutHalo} Tier A without a 68% error (no halo)` : ""),
+    );
+  }, [events.length, halos]);
+
+  useEffect(() => {
+    const issues = filterCountIssues(events, meta.summary);
+    if (issues.length) console.error(`[scene] filter counts disagree with the summary: ${issues.join("; ")}`);
+  }, [events, meta.summary]);
+
   return (
     <>
+      <Terrain scene={meta.scene} bounds={bounds} />
+      <References bundle={bundle} bounds={bounds} />
       <EventsLayer
         name="public-events"
         instances={publicEvents}
@@ -95,13 +125,16 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
         size={LOOK.candidates.sizeKm}
         minPx={LOOK.candidates.minPx}
         maxPx={LOOK.maxGlyphPx}
-        drive={driveCandidates}
+        drive={drive}
         glow={LOOK.candidates.glow}
+
         surfaceY={surfaceY}
         depthFog={depthFogPerSceneUnit(ve)}
         renderOrder={1}
       />
+      <HalosLayer halos={halos} surfaceY={surfaceY} depthFog={depthFogPerSceneUnit(ve)} drive={driveHalos} />
       <CameraRig bounds={bounds} />
+      <Picker candidates={candidates} publicEvents={publicEvents} catalog={catalog} sizeKm={{ candidate: LOOK.candidates.sizeKm, public: LOOK.publicCatalog.sizeKm }} />
     </>
   );
 }
@@ -125,6 +158,7 @@ export function Scene() {
     >
       <color attach="background" args={[colors.bg]} />
       <RevealDriver />
+      <FilterDriver />
       <SceneContents />
       <Post />
     </Canvas>
