@@ -9,14 +9,15 @@ registry (H4's ``hq.runs.STAGES``) resolves stage ``tier`` as the attribute ``hq
 Tiers come from the data, never from textbook values
     The matched set M is the located events that ``matches`` pairs with a public regional catalog
     event. For every metric (``METRICS``: nStations, nP, nS higher is better; rmsS, hErrM, vErrM,
-    gapDeg lower is better) and tier, the bar is an actual matched event's value: sort M from best
-    to worst on that metric and take the ``ceil((1 - q) * n)``-th, with ``q`` the tier's
-    ``tiering.quantiles`` entry. At least ``(1 - q)`` of M therefore meets or beats every bar,
-    and a bar is ``p(100 q)`` of M for higher-is-better metrics and ``p(100 (1 - q))`` for
-    lower-is-better ones (numpy's ``inverted_cdf`` at ``1 - q`` on the lower-is-better side, its
-    mirror ``-inverted_cdf(-v, 1 - q)`` on the higher-is-better side). With the showcase
-    ``A: 0.25`` that is ">= p25" and "<= p75": at least as good as the 25th-percentile-worst
-    matched event. ``B: 0.0`` is the worst matched event. Boundary equality passes.
+    gapDeg lower is better) and tier, the bar is an actual matched event's value: sort the events
+    of M with a value on that metric from best to worst and take the ``ceil((1 - q) * n)``-th,
+    with ``n`` their count and ``q`` the tier's ``tiering.quantiles`` entry. At least ``(1 - q)``
+    of them therefore meets or beats the bar, and a bar is ``p(100 q)`` for higher-is-better
+    metrics and ``p(100 (1 - q))`` for lower-is-better ones (numpy's ``inverted_cdf`` at
+    ``1 - q`` on the lower-is-better side, its mirror ``-inverted_cdf(-v, 1 - q)`` on the
+    higher-is-better side). With the showcase ``A: 0.25`` that is ">= p25" and "<= p75": at least
+    as good as the 25th-percentile-worst matched event. ``B: 0.0`` is the worst matched event.
+    Boundary equality passes.
 
     A (Strict): every A bar, ``quality.depthOnEdge`` false, ``mapOnVolumeTop`` false when a
     ``flags`` table (``locate_flags.parquet``) is given, and a station with a pick used in the
@@ -26,8 +27,11 @@ Tiers come from the data, never from textbook values
     B (Good): every B bar. C (Candidate): associated and located, outside those ranges.
 
     A null ``hErrM`` or ``vErrM`` (the contract allows it: a truncated PDF) fails A and B on that
-    metric. Inside M it counts as the worst value; when a bar's rank lands on a null, the bar is
-    unbounded (``value`` null in the record): any finite value meets it, a null still fails.
+    metric. The bars on those metrics are drawn from the matched events with a value (``nUsed``
+    of ``n``, ``nNull`` recorded), so a null in M never loosens a bar; fewer than ``minMatched``
+    matched events with a value fails loudly like a small M. ``matchedSet.meetingEveryBar``
+    counts the matched events that meet every bar of a tier at once (the per-metric shares above
+    do not add up to a joint share).
 
     Fewer matched events than ``tiering.minMatched`` fails loudly (``TierError``): the bars are
     never invented. A caller that must tier a rerun whose M is small (the association sweep, H4's
@@ -47,7 +51,7 @@ Outputs
 import logging
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from typing import Any, Literal
 
@@ -75,10 +79,11 @@ FLAG_COLUMNS: tuple[str, ...] = ("eventId", "mapOnVolumeTop")
 REVEAL_ORDER_UNSET = -1  # docs/02: H2 writes -1, the exporter assigns the real order
 
 DEFINITION = (
-    "Per metric and tier, the bar is an actual matched event's value: sort the matched set M "
-    "from best to worst and take the ceil((1 - q) * n)-th, q = tiering.quantiles[tier]; at "
-    "least (1 - q) of M meets or beats every bar (boundary equality passes). A (Strict): every A "
-    "bar, depthOnEdge false, mapOnVolumeTop false when locate flags are given, and "
+    "Per metric and tier, the bar is an actual matched event's value: sort the events of the "
+    "matched set M with a value on the metric from best to worst and take the ceil((1 - q) * n)-th, "
+    "n = their count, q = tiering.quantiles[tier]; at least (1 - q) of them meets or beats the bar "
+    "(boundary equality passes). A (Strict): every A bar, depthOnEdge false, mapOnVolumeTop "
+    "false when locate flags are given, and "
     "quality.minEpiDistM <= strictNearestStationFactor * focal depth. B (Good): every B bar. "
     "C (Candidate): associated and located, outside those ranges."
 )
@@ -91,8 +96,12 @@ FOCAL_DEPTH = (
     "surface (run.yaml refSurfaceElevM), the depth the scene shows"
 )
 NULL_RULE = (
-    "a null hErrM or vErrM fails A and B on that metric; in M it counts as the worst value, and a "
-    "bar whose rank lands on a null is unbounded (value null: any finite value meets it)"
+    "a null hErrM or vErrM fails A and B on that metric; bars on those metrics are drawn from the "
+    "matched events with a value (nUsed of n; nNull recorded), so a null never loosens a bar"
+)
+MEETING_EVERY_BAR = (
+    "matched events meeting every metric bar of the tier at once (the A rules are not applied "
+    "here; counts.matched has the matched events' tiers)"
 )
 QUANTILE_METHOD = (
     "rank ceil((1 - q) * n) from the best: numpy inverted_cdf at 1 - q for lower-is-better "
@@ -105,8 +114,9 @@ def claim(q_a: float) -> str:
     """What Strict means, in words, for ``tiering.quantiles.A`` = ``q_a``."""
     share = float(1 - Fraction(repr(q_a)))
     return (
-        f"Strict (Tier A): on every metric, at least as good as a bar that at least {share:.0%} "
-        "of the recovered public regional catalog events meet or beat."
+        f"Strict (Tier A): on each metric separately, at least as good as a bar that at least "
+        f"{share:.0%} of the recovered public regional catalog events with a value on that metric "
+        "meet or beat."
     )
 
 
@@ -153,30 +163,31 @@ class Bar:
     """One tier's bar on one metric, with where it came from."""
 
     metric: str
-    value: float | None  # None: unbounded (the rank landed on a null in M)
-    level: float  # percentile level of M, 0-1: q (higher is better) or 1 - q (lower is better)
+    value: float
+    level: float  # percentile level, 0-1: q (higher is better) or 1 - q (lower is better)
     label: str  # "p75 of matched" / "worst of matched"
     n: int  # size of M
-    n_null: int  # matched events with a null value on this metric
-    n_meeting: int  # matched events meeting this bar
+    n_used: int  # matched events with a value on this metric: the bar is drawn from these
+    n_null: int  # matched events with a null value on this metric (hErrM, vErrM)
+    n_meeting: int  # matched events meeting this bar (a null never does)
 
     def passes(self, value: float | None) -> bool:
-        if value is None:
-            return False
-        if self.value is None:
-            return True
+        return value is not None and bool(self.meets(np.array([value], dtype=np.float64))[0])
+
+    def meets(self, values: np.ndarray) -> np.ndarray:
+        """Elementwise ``passes`` on float64 values, NaN (null) never meeting the bar."""
         if METRIC_BY_NAME[self.metric].better == "higher":
-            return value >= self.value
-        return value <= self.value
+            return values >= self.value
+        return values <= self.value
 
     def to_record(self) -> dict[str, Any]:
         return {
             "op": METRIC_BY_NAME[self.metric].op,
             "value": self.value,
-            "unbounded": self.value is None,
             "quantile": self.level,
             "label": self.label,
             "n": self.n,
+            "nUsed": self.n_used,
             "nNull": self.n_null,
             "nMeeting": self.n_meeting,
         }
@@ -214,15 +225,15 @@ class Thresholds:
                     rec = record[tier][metric.name]
                     if rec["op"] != metric.op:
                         raise TierError(f"{tier}.{metric.name}: op {rec['op']!r} != {metric.op}")
-                    value = rec["value"]
-                    if value is None and not metric.nullable:
-                        raise TierError(f"{tier}.{metric.name}: only hErrM/vErrM bars may be null")
+                    if rec["value"] is None:
+                        raise TierError(f"{tier}.{metric.name}: a bar value is never null")
                     bars[tier][metric.name] = Bar(
                         metric=metric.name,
-                        value=None if value is None else float(value),
+                        value=float(rec["value"]),
                         level=float(rec["quantile"]),
                         label=str(rec["label"]),
                         n=int(rec["n"]),
+                        n_used=int(rec["nUsed"]),
                         n_null=int(rec["nNull"]),
                         n_meeting=int(rec["nMeeting"]),
                     )
@@ -338,25 +349,18 @@ def _level_label(q: float, metric: Metric) -> tuple[float, str]:
 
 
 def derive_bar(values: np.ndarray, metric: Metric, q: float) -> Bar:
-    """The bar at worst-side share ``q`` of the matched values (NaN = null = worst)."""
-    n = int(values.size)
-    if n == 0:
-        raise TierError("cannot derive a bar from an empty matched set")
-    badness = np.where(np.isnan(values), np.inf, values if metric.better == "lower" else -values)
-    rank = max(1, math.ceil((1 - Fraction(repr(q))) * n))  # exact for the decimal q in the yaml
-    worst_allowed = float(np.sort(badness)[rank - 1])
-    value = None if math.isinf(worst_allowed) else (
-        worst_allowed if metric.better == "lower" else -worst_allowed
-    )
+    """The bar at worst-side share ``q`` of the matched values with a value (NaN = null)."""
+    finite = values[~np.isnan(values)]
+    n, n_used = int(values.size), int(finite.size)
+    if n_used == 0:
+        raise TierError(f"cannot derive a {metric.name} bar: no matched event has a value")
+    badness = np.sort(finite if metric.better == "lower" else -finite)
+    rank = max(1, math.ceil((1 - Fraction(repr(q))) * n_used))  # exact for the yaml's decimal q
+    worst_allowed = float(badness[rank - 1])
+    value = worst_allowed if metric.better == "lower" else -worst_allowed
     level, label = _level_label(q, metric)
-    n_null = int(np.isnan(values).sum())
-    if value is None:
-        meeting = n - n_null  # any finite value meets an unbounded bar; a null never does
-    elif metric.better == "lower":
-        meeting = int(np.sum(values <= value))  # NaN compares false: a null never meets it
-    else:
-        meeting = int(np.sum(values >= value))
-    return Bar(metric.name, value, level, label, n, n_null, meeting)
+    bar = Bar(metric.name, value, level, label, n, n_used, n - n_used, 0)
+    return replace(bar, n_meeting=int(bar.meets(values).sum()))
 
 
 def derive_thresholds(matched: pd.DataFrame, tcfg: TieringConfig) -> Thresholds:
@@ -369,20 +373,35 @@ def derive_thresholds(matched: pd.DataFrame, tcfg: TieringConfig) -> Thresholds:
             "Pass thresholds= (a Thresholds, or the ProcessingRun.tiering of a run whose matched "
             "set was large enough) to apply that run's bars instead."
         )
+    values = {m.name: _metric_values(matched, m) for m in METRICS}
+    for m in METRICS:
+        n_used = int(np.count_nonzero(~np.isnan(values[m.name])))
+        if n_used < tcfg.minMatched:
+            raise TierError(
+                f"only {n_used} of the {n} matched events have a {m.name} value (the others are "
+                f"null: truncated PDF) and tiering.minMatched is {tcfg.minMatched}: no bar is "
+                "derived from so few values. Pass thresholds= to apply another run's bars."
+            )
+        if n_used < n:
+            log.info("tier: bars on %s are drawn from the %d of %d matched events with a value "
+                     "(%d null; a null fails A and B)", m.name, n_used, n, n - n_used)
     quantiles = {"A": tcfg.quantiles.A, "B": tcfg.quantiles.B}
     bars = {
-        tier: {m.name: derive_bar(_metric_values(matched, m), m, q) for m in METRICS}
+        tier: {m.name: derive_bar(values[m.name], m, q) for m in METRICS}
         for tier, q in quantiles.items()
     }
-    for tier in BARRED_TIERS:
-        for bar in bars[tier].values():
-            if bar.value is None:
-                log.warning(
-                    "tier: %s bar on %s is unbounded: %d of %d matched events lack it (any finite "
-                    "value meets the bar; a null still fails)",
-                    tier, bar.metric, bar.n_null, n,
-                )
     return Thresholds(quantiles=quantiles, bars=bars, n_matched=n)
+
+
+def meeting_every_bar(matched: pd.DataFrame, thresholds: Thresholds) -> dict[str, int]:
+    """Per tier, the matched events that meet every metric bar at once (rules not applied)."""
+    out: dict[str, int] = {}
+    for tier in BARRED_TIERS:
+        meets = np.ones(len(matched), dtype=bool)
+        for m in METRICS:
+            meets &= thresholds.bars[tier][m.name].meets(_metric_values(matched, m))
+        out[tier] = int(meets.sum())
+    return out
 
 
 def supplied_thresholds(
@@ -428,13 +447,10 @@ def _metric_reason(metric: Metric, value: float | None, bars: dict[str, Bar]) ->
     parts: list[str] = []
     for tier in BARRED_TIERS:
         bar = bars[tier]
-        if bar.value is None:
-            parts.append(f"passes ({tier}: {bar.label} is null, any value meets it)")
-        else:
-            op = metric.op if bar.passes(value) else metric.fail_op
-            bar_text = _fmt(bar.value, value, metric.decimals)
-            source = f"{tier}: {bar.label}" + (f", n={bar.n}" if tier == "A" else "")
-            parts.append(f"{op} {bar_text} ({source})")
+        op = metric.op if bar.passes(value) else metric.fail_op
+        bar_text = _fmt(bar.value, value, metric.decimals)
+        source = f"{tier}: {bar.label}" + (f", n={bar.n_used}" if tier == "A" else "")
+        parts.append(f"{op} {bar_text} ({source})")
         if bar.passes(value):
             break
     value_text = _fmt(value, next((b.value for b in bars.values()), None), metric.decimals)
@@ -566,6 +582,7 @@ def assign_tiers(
             "n": int(is_matched.sum()),
             "definition": "located candidate events with a public regional catalog match "
             "(matches eventId not null)",
+            "meetingEveryBarNote": MEETING_EVERY_BAR,
         },
     }
 
@@ -574,6 +591,7 @@ def assign_tiers(
         log.info("tier: no located events; nothing to tier")
         empty = to_frame([], SeismicEvent)
         zero = {tier: 0 for tier in TIERS}
+        base["matchedSet"]["meetingEveryBar"] = {tier: 0 for tier in BARRED_TIERS}
         return TierResult(
             events=empty,
             tiering={
@@ -588,6 +606,7 @@ def assign_tiers(
         bars = derive_thresholds(events_located[is_matched], tcfg)
     else:
         bars = supplied_thresholds(thresholds, tcfg)
+    base["matchedSet"]["meetingEveryBar"] = meeting_every_bar(events_located[is_matched], bars)
 
     rule_set = _Rules(factor=tcfg.strictNearestStationFactor, map_on_top=map_on_top)
     rows = events_located[list(LOCATED_COLUMNS)].to_dict("records")
