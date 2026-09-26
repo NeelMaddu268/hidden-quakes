@@ -138,16 +138,18 @@ def reference_pairs(
 
 
 def catalog_residuals(
-    locator: Locator, pairs: pd.DataFrame, frames: Mapping[str, pd.DataFrame]
+    locator: Locator, stations: pd.DataFrame, pairs: pd.DataFrame,
+    frames: Mapping[str, pd.DataFrame],
 ) -> tuple[pd.DataFrame, list[str]]:
     """``d = t_obs - T`` of each reference event's associated picks at the catalog hypocentre.
 
-    Returns (``assocId, stationId, phase, d, w`` with ``w = prob / sigma``, the catalog ids left
-    out because their hypocentre lies outside the travel-time grid).
+    ``stations``: the locator's stations (``enu_e``, ``enu_n``). Returns (``assocId, stationId,
+    phase, d, w`` with ``w = prob / sigma``, the catalog ids left out because their hypocentre
+    lies outside the travel-time grid).
     """
     grid = locator.tables.grid
-    st_e = locator._e
-    st_n = locator._n
+    st_e = stations["enu_e"].to_numpy(dtype=np.float64)
+    st_n = stations["enu_n"].to_numpy(dtype=np.float64)
     parts, skipped = [], []
     for r in pairs.itertuples(index=False):
         reach = float(np.max(np.hypot(st_e - r.catalogE, st_n - r.catalogN)))
@@ -616,8 +618,12 @@ def locate_with_statics(
     )
     locator = build_locator(setup)
     order, frames = event_picks(assoc, picks, cfg.locator.minPicks)
-    res, skipped = catalog_residuals(locator, reference, dict(zip(order, frames, strict=True)))
+    res, skipped = catalog_residuals(locator, setup.stations, reference,
+                                     dict(zip(order, frames, strict=True)))
     pairs = reference[~reference["catalogId"].isin(skipped)].reset_index(drop=True)
+    if pairs.empty:
+        raise ValueError(f"every reference event's catalog hypocentre lies outside the "
+                         f"travel-time grid ({skipped}): no station terms can be estimated")
     polish = {"iterations": scfg.polishIterations, "cap_s": scfg.referenceCapS,
               "min_events": scfg.minReferenceEvents}
     terms = polish_terms(res, **polish)

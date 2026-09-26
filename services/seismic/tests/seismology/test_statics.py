@@ -424,3 +424,7 @@ def test_catalog_hypocentres_off_the_grid_are_left_out(world: dict[str, Any]) ->
                               world["run"], cache_dir=world["cache"], reference=pairs)
     assert out.report.skipped == ("cat0",)
     assert len(out.report.reference) == len(pairs) - 1
+    with pytest.raises(ValueError, match="outside the travel-time grid"):
+        locate_with_statics(world["assoc"], world["picks"], world["stations"], world["cfg"],
+                            world["run"], cache_dir=world["cache"],
+                            reference=pairs.assign(catalogElevM=-50000.0))
