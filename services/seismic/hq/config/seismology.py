@@ -67,6 +67,10 @@ class VelocityConfig(BaseModel):
         return SEISMIC_ROOT / self.layerFile
 
 
+# docs/02 LocationQuality: hErrM is the "68% horizontal semi-major axis", vErrM "68% vertical".
+DOCS02_ERR_CONFIDENCE = 0.68
+
+
 def _is_multiple(value: float, step: float) -> bool:
     """True when ``value`` is an integer multiple of ``step`` (to float rounding)."""
     ratio = value / step
@@ -90,6 +94,10 @@ class GridsConfig(BaseModel):
     # times, and the eikonal solve starts from an isochron inside that region.
     seedRadiusM: float = Field(gt=0)
     fmmOrder: Literal[1, 2]  # scikit-fmm stencil order
+    # After each solve, the table is compared with the exact 1D layered times at every elevation
+    # node and every accuracyCheckStrideR-th distance node; the max error per model layer is kept
+    # in the table's sidecar and in the run record (the check never changes the table).
+    accuracyCheckStrideR: int = Field(ge=1)
 
     @model_validator(mode="after")
     def _check(self) -> "GridsConfig":
@@ -139,25 +147,47 @@ class LocatorConfig(BaseModel):
     volume: SearchVolumeConfig
     coarseSpacingM: float = Field(gt=0)  # full-volume grid search
     fineSpacingM: float = Field(gt=0)  # the reported PDF lives on this lattice
-    fineHalfWidthM: float = Field(gt=0)  # fine box: +/- this around the best coarse node, clipped
-    # Inside the fine box the misfit is first evaluated every fineStageSpacingM; the fine nodes are
-    # then evaluated over the region within pdfCutoff of the minimum, grown until every face of
-    # that region clears pdfCutoff or meets the fine box (see locator.py).
+    # First fine box: +/- this around the best coarse node, clipped to the volume. It is only where
+    # the search starts: the PDF region grows past it until it covers the mass (see locator.py).
+    fineHalfWidthM: float = Field(gt=0)
+    # The misfit is first evaluated every fineStageSpacingM, from the first fine box outward until
+    # the region within pdfCutoff of the minimum clears every face that is not a volume face; the
+    # fine nodes are then evaluated over that region and grown the same way (see locator.py).
     fineStageSpacingM: float = Field(gt=0)
-    # Nodes whose misfit exceeds the minimum by more than this carry less than exp(-pdfCutoff) of
-    # the peak node's mass and are treated as zero mass.
+    # Nodes whose PDF exponent (pdfMisfitScale * misfit) exceeds its minimum by more than this carry
+    # less than exp(-pdfCutoff) of the peak node's mass and are treated as zero mass.
     pdfCutoff: float = Field(gt=0)
+    # PDF = exp(-pdfMisfitScale * misfit). 1.0 is the Laplace likelihood with scale sigma / prob;
+    # it changes the formal errors only, never the hypocentre (see hq.locate.uncertainty).
+    pdfMisfitScale: float = Field(gt=0)
+    # Most fine nodes one PDF may cover. A PDF whose region needs more is truncated: hErrM and vErrM
+    # become None and the search record says pdfTruncated (see locator.py).
+    maxPdfNodes: int = Field(ge=1)
     # Pick sigma per phase (s) for every preprocessing profile, and per-profile overrides keyed by
     # Station.preprocessProfile (empty: every profile uses pickSigmaS).
     pickSigmaS: PhaseSigma
     profilePickSigmaS: dict[str, PhaseSigma]
     outlier: OutlierConfig
     minPicks: int = Field(ge=4)  # fewer picks cannot constrain (e, n, elevM, t0)
-    errConfidence: float = Field(gt=0, lt=1)  # hErrM is the semi-major axis at this level
-    depthOnEdgeMassFraction: float = Field(gt=0, lt=1)  # PDF mass on the fine top/bottom face
+    # hErrM is the semi-major axis at this level. docs/02 defines hErrM and vErrM as 68%, and vErrM
+    # is the 1-sigma of the vertical marginal, so only 0.68 keeps the two consistent (checked).
+    errConfidence: float
+    # depthOnEdge: more than this PDF mass on the fine grid's top or bottom face (or the MAP node on
+    # the search volume's top or bottom face; see hq.locate.uncertainty)
+    depthOnEdgeMassFraction: float = Field(gt=0, lt=1)
     nWorkers: int = Field(ge=1)  # processes for locate_many; results do not depend on it
     evalChunkNodes: int = Field(ge=1)  # nodes per misfit block (memory only; results unchanged)
     enuConsistencyTolM: float = Field(gt=0)  # |enu_u + origin elevM - sensorElevM| must be below
+
+    @field_validator("errConfidence")
+    @classmethod
+    def _docs02_confidence(cls, value: float) -> float:
+        if value != DOCS02_ERR_CONFIDENCE:
+            raise ValueError(
+                f"errConfidence must be {DOCS02_ERR_CONFIDENCE}: docs/02 defines hErrM and vErrM "
+                f"as 68% and vErrM is the vertical 1-sigma, got {value}"
+            )
+        return value
 
     @model_validator(mode="after")
     def _check(self) -> "LocatorConfig":
@@ -171,6 +201,11 @@ class LocatorConfig(BaseModel):
                 raise ValueError(f"{label} {value} must be a multiple of fineSpacingM {fine}")
         if not _is_multiple(self.volume.halfWidthM, self.coarseSpacingM):
             raise ValueError("volume.halfWidthM must be a multiple of coarseSpacingM")
+        first_box = (2 * round(self.fineHalfWidthM / fine) + 1) ** 3
+        if self.maxPdfNodes < first_box:
+            raise ValueError(
+                f"maxPdfNodes {self.maxPdfNodes} must hold the first fine box ({first_box} nodes)"
+            )
         top = self.volume.topElevM
         if top is not None and top - self.volume.bottomElevM < self.coarseSpacingM:
             raise ValueError("the search volume must be at least one coarse cell tall")

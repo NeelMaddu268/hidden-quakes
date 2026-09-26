@@ -2,21 +2,25 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
+import pydantic
 import pytest
-from loc02_helpers import make_test_config, showcase_raw, toy_model
 
 from hq.config.seismology import GridsConfig, SeismologyConfig
 from hq.locate.tt_grid import (
     CACHE_SUBDIR,
+    SOURCE_SHA256,
     GridSpec,
+    Phase,
     TravelTimeTable,
     build_station_tables,
     layered_first_arrival,
     make_grid,
     solve_table,
+    table_accuracy,
     table_key,
 )
 from hq.locate.velocity import LayerModel, load_configured_model
@@ -24,11 +28,12 @@ from hq.locate.velocity import LayerModel, load_configured_model
 pytestmark = pytest.mark.smoke
 
 MAX_ERR_S = 0.005  # ticket acceptance: < 5 ms against analytic over the whole table
+FloatArray = np.ndarray
 
 
 @pytest.fixture(scope="module")
-def loc_cfg() -> SeismologyConfig:
-    return make_test_config()
+def loc_cfg(loc02: Any) -> SeismologyConfig:
+    return loc02.test_config()
 
 
 @pytest.fixture(scope="module")
@@ -37,16 +42,19 @@ def forge_model(loc_cfg: SeismologyConfig) -> LayerModel:
 
 
 @pytest.fixture(scope="module")
-def grids() -> GridsConfig:
-    """The showcase grid knobs (25 m, 40 km)."""
-    return GridsConfig.model_validate(showcase_raw()["grids"])
+def grids(loc02: Any) -> GridsConfig:
+    """The showcase grid knobs (25 m, 52 km)."""
+    return GridsConfig.model_validate(loc02.showcase_raw()["grids"])
 
 
-def _mesh(grid: GridSpec) -> tuple[np.ndarray, np.ndarray]:
-    return np.meshgrid(grid.r_nodes(), grid.z_nodes())
+def _mesh(grid: GridSpec) -> tuple[FloatArray, FloatArray]:
+    rr, zz = np.meshgrid(grid.r_nodes(), grid.z_nodes())
+    return rr, zz
 
 
-def _solve(model: LayerModel, phase: str, receiver: float, grid: GridSpec, cfg: GridsConfig):
+def _solve(
+    model: LayerModel, phase: Phase, receiver: float, grid: GridSpec, cfg: GridsConfig
+) -> tuple[LayerModel, FloatArray]:
     extended = model.with_top_extended_to(grid.top_elev_m, max_extension_m=5000.0)
     times = solve_table(
         extended, phase, receiver, grid, seed_radius_m=cfg.seedRadiusM, fmm_order=cfg.fmmOrder
@@ -55,17 +63,19 @@ def _solve(model: LayerModel, phase: str, receiver: float, grid: GridSpec, cfg: 
 
 
 @pytest.mark.parametrize("vs", [1163.0, 3374.0])  # slowest and fastest S in the FORGE model
-def test_homogeneous_half_space_matches_analytic(grids: GridsConfig, vs: float) -> None:
+def test_homogeneous_half_space_matches_analytic(loc02: Any, grids: GridsConfig, vs: float) -> None:
     receiver = 1700.0
     grid = make_grid(grids, receiver)
-    _, times = _solve(toy_model([2000.0], [1.8 * vs], [vs]), "S", receiver, grid, grids)
+    _, times = _solve(loc02.toy_model([2000.0], [1.8 * vs], [vs]), "S", receiver, grid, grids)
     rr, zz = _mesh(grid)
     err = np.abs(times - np.hypot(rr, zz - receiver) / vs)
     assert grid.r_max_m == grids.rMaxM
     assert err.max() < MAX_ERR_S, f"max error {err.max() * 1e3:.2f} ms"
 
 
-def _two_layer_analytic(rr, zz, receiver, interface, v1, v2):
+def _two_layer_analytic(
+    rr: FloatArray, zz: FloatArray, receiver: float, interface: float, v1: float, v2: float
+) -> tuple[FloatArray, FloatArray]:
     """First arrival in the upper layer: direct or head wave along the interface."""
     direct = np.hypot(rr, zz - receiver) / v1
     cos_c = np.sqrt(1.0 - (v1 / v2) ** 2)
@@ -75,10 +85,10 @@ def _two_layer_analytic(rr, zz, receiver, interface, v1, v2):
     return np.where(rr >= x_crit, np.minimum(direct, head), direct), head < direct
 
 
-def test_two_layer_head_wave_matches_analytic(grids: GridsConfig) -> None:
+def test_two_layer_head_wave_matches_analytic(loc02: Any, grids: GridsConfig) -> None:
     v1, v2, interface, receiver = 3000.0, 5000.0, 1012.5, 1600.0  # interface between nodes
     grid = make_grid(grids, receiver)
-    _, times = _solve(toy_model([2000.0, interface], [v1, v2], [v1 / 1.8, v2 / 1.8]), "P",
+    _, times = _solve(loc02.toy_model([2000.0, interface], [v1, v2], [v1 / 1.8, v2 / 1.8]), "P",
                       receiver, grid, grids)
     rr, zz = _mesh(grid)
     analytic, head_first = _two_layer_analytic(rr, zz, receiver, interface, v1, v2)
@@ -90,15 +100,15 @@ def test_two_layer_head_wave_matches_analytic(grids: GridsConfig) -> None:
     assert err[head_zone].max() < MAX_ERR_S
 
 
-def test_borehole_receiver(grids: GridsConfig) -> None:
+def test_borehole_receiver(loc02: Any, grids: GridsConfig) -> None:
     # Homogeneous: the table is right above and below a receiver 300 m down.
     receiver = 1400.0
     grid = make_grid(grids, 1700.0)
-    _, times = _solve(toy_model([2000.0], [3500.0], [2000.0]), "P", receiver, grid, grids)
+    _, times = _solve(loc02.toy_model([2000.0], [3500.0], [2000.0]), "P", receiver, grid, grids)
     rr, zz = _mesh(grid)
     assert np.abs(times - np.hypot(rr, zz - receiver) / 3500.0).max() < MAX_ERR_S
     # Two layers, receiver below the interface: upgoing transmitted rays reach the slow layer.
-    model = toy_model([2000.0, 1512.5], [3000.0, 5000.0], [1700.0, 2900.0])
+    model = loc02.toy_model([2000.0, 1512.5], [3000.0, 5000.0], [1700.0, 2900.0])
     extended, times = _solve(model, "P", receiver, grid, grids)
     sub = (slice(None, None, 3), slice(None, None, 8))
     exact = layered_first_arrival(extended, "P", receiver, rr[sub], zz[sub])
@@ -108,9 +118,9 @@ def test_borehole_receiver(grids: GridsConfig) -> None:
                                rtol=0, atol=1e-9)
 
 
-def test_layered_solver_matches_closed_forms() -> None:
+def test_layered_solver_matches_closed_forms(loc02: Any) -> None:
     v1, v2, interface = 3000.0, 5000.0, 1000.0
-    model = toy_model([2000.0, interface], [v1, v2], [1700.0, 2900.0])
+    model = loc02.toy_model([2000.0, interface], [v1, v2], [1700.0, 2900.0])
     rng = np.random.default_rng(1)
     # Upper layer: direct or head wave.
     r = rng.uniform(0.0, 30000.0, 500)
@@ -127,7 +137,7 @@ def test_layered_solver_matches_closed_forms() -> None:
         got = float(layered_first_arrival(model, "P", zs, x, zr))
         assert got == pytest.approx(t, abs=1e-9)
     # Homogeneous and a horizontal ray at the source elevation.
-    homog = toy_model([2000.0], [4000.0], [2300.0])
+    homog = loc02.toy_model([2000.0], [4000.0], [2300.0])
     assert float(layered_first_arrival(homog, "S", 500.0, 3000.0, -3500.0)) == pytest.approx(
         5000.0 / 2300.0, abs=1e-12)
     assert float(layered_first_arrival(model, "P", 1500.0, 700.0, 1500.0)) == pytest.approx(
@@ -145,7 +155,9 @@ def test_reciprocity_between_surface_and_borehole(
     # Tolerances: reciprocity compares two tables' grid errors. Against the exact solver, the
     # shallow S table peaks near 13 ms around a head-wave onset (the eikonal smooths the kink at
     # the critical distance of the 1227 m ASL interface); elsewhere it stays near 3-4 ms.
-    for phase, tol, tol_exact in (("P", MAX_ERR_S, MAX_ERR_S), ("S", 2 * MAX_ERR_S, 0.015)):
+    phases: tuple[tuple[Phase, float, float], ...] = (
+        ("P", MAX_ERR_S, MAX_ERR_S), ("S", 2 * MAX_ERR_S, 0.015))
+    for phase, tol, tol_exact in phases:
         ext, t_surface = _solve(forge_model, phase, surface, grid, grids)
         _, t_borehole = _solve(forge_model, phase, borehole, grid, grids)
         tab_s = TravelTimeTable(phase, surface, grid, _ro(t_surface), "a")
@@ -160,7 +172,7 @@ def test_reciprocity_between_surface_and_borehole(
             float(layered_first_arrival(ext, phase, surface, 0.0, -3000.0)), abs=MAX_ERR_S)
 
 
-def _ro(a: np.ndarray) -> np.ndarray:
+def _ro(a: FloatArray) -> FloatArray:
     a = np.array(a)
     a.setflags(write=False)
     return a
@@ -200,12 +212,15 @@ def test_cache_keys_sharing_and_determinism(
     files = sorted((tmp_path / CACHE_SUBDIR).glob("*.npy"))
     assert len(files) == 4
     sidecar = json.loads(files[0].with_suffix(".json").read_text())
-    assert {"velocityModel", "phase", "receiverElevM", "grid", "seedRadiusM"} <= set(sidecar)
+    assert {"velocityModel", "phase", "receiverElevM", "grid", "seedRadiusM",
+            "solverSourceSha256", "accuracyVsExact"} <= set(sidecar)
+    assert sidecar["solverSourceSha256"] == SOURCE_SHA256
     second = build_station_tables(stations, forge_model, small, **kwargs)
     assert (second.n_built, second.n_loaded) == (0, 4)
     for key, table in first.tables.items():
         np.testing.assert_array_equal(table.times_s, second.tables[key].times_s)
         assert not second.tables[key].times_s.flags.writeable
+        assert second.tables[key].accuracy == table.accuracy  # read back from the sidecar
     # Identical inputs give identical tables, solved from scratch.
     grid = first.grid
     again = solve_table(first.model, "S", 1400.0, grid, seed_radius_m=small.seedRadiusM,
@@ -222,6 +237,40 @@ def test_cache_keys_sharing_and_determinism(
                   "P", 1400.0, grid, seed_radius_m=500.0, fmm_order=2)[0],
     }
     assert base not in changed and len(changed) == 5
+
+
+def test_accuracy_record_matches_the_exact_solver(
+    loc_cfg: SeismologyConfig, forge_model: LayerModel, tmp_path: Path
+) -> None:
+    small = loc_cfg.grids.model_copy(update={"rMaxM": 3000.0, "bottomElevM": -1000.0})
+    tables = build_station_tables(_stations([1642.0]), forge_model, small, cache_dir=tmp_path,
+                                  max_extension_m=loc_cfg.velocity.maxTopExtensionM)
+    grid = tables.grid
+    table = tables.table("X.0", "S")
+    rr, zz = np.meshgrid(grid.r_nodes()[::small.accuracyCheckStrideR], grid.z_nodes())
+    exact = layered_first_arrival(tables.model, "S", 1642.0, rr, zz)
+    err = np.abs(table.times_s[:, ::small.accuracyCheckStrideR] - exact)
+    acc = table.accuracy
+    assert acc is not None and acc["maxErrS"] == pytest.approx(float(err.max()), abs=1e-12)
+    assert acc == table_accuracy(tables.model, "S", 1642.0, grid, table.times_s,
+                                 stride_r=small.accuracyCheckStrideR)
+    layer = tables.model.layer_index(grid.z_nodes())
+    for row in acc["byLayer"]:
+        k = int(np.flatnonzero(tables.model.top_elev_m == row["topElevM"])[0])
+        assert row["maxErrS"] == pytest.approx(float(err[layer == k].max()), abs=1e-12)
+    record = tables.to_record()
+    by_layer = record["accuracyVsExactByLayer"]
+    assert set(by_layer) == {"P", "S"} and by_layer["S"] == [
+        {"topElevM": r["topElevM"], "maxErrS": r["maxErrS"]} for r in acc["byLayer"]]
+    assert {t["maxErrVsExactS"] for t in record["tables"] if t["phase"] == "S"} == {acc["maxErrS"]}
+    # A sidecar that no longer matches its key's inputs fails loudly.
+    sidecar = tmp_path / CACHE_SUBDIR / f"{table.key}.json"
+    data = json.loads(sidecar.read_text())
+    data["receiverElevM"] = 0.0
+    sidecar.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="does not match"):
+        build_station_tables(_stations([1642.0]), forge_model, small, cache_dir=tmp_path,
+                             max_extension_m=loc_cfg.velocity.maxTopExtensionM)
 
 
 def test_top_extension_is_explicit_and_recorded(
@@ -268,13 +317,40 @@ def test_bad_inputs_raise(loc_cfg: SeismologyConfig, forge_model: LayerModel,
                              max_extension_m=1000.0)
 
 
-def test_grid_config_guards() -> None:
-    raw = showcase_raw()["grids"]
+def test_grid_config_guards(loc02: Any) -> None:
+    raw = loc02.showcase_raw()["grids"]
     with pytest.raises(ValueError, match="multiple of drM"):
         GridsConfig.model_validate({**raw, "rMaxM": 40010.0})
     with pytest.raises(ValueError, match="4 grid cells"):
         GridsConfig.model_validate({**raw, "seedRadiusM": 50.0})
-    full = showcase_raw()
+    full = loc02.showcase_raw()
     full["grids"] = {**raw, "bottomElevM": full["locator"]["volume"]["bottomElevM"]}
     with pytest.raises(ValueError, match="below"):
         SeismologyConfig.model_validate(full)
+    full = loc02.showcase_raw()
+    full["locator"]["errConfidence"] = 0.9
+    with pytest.raises(ValueError, match="errConfidence must be 0.68"):
+        SeismologyConfig.model_validate(full)
+
+
+# Every nested LOC-02 config section rejects unknown keys (LOC-01's test covers the top level).
+NESTED_SECTIONS = ("grids", "locator", "locator.volume", "locator.pickSigmaS", "locator.outlier",
+                   "synthetic", "synthetic.zone")
+
+
+@pytest.mark.parametrize("where", NESTED_SECTIONS)
+def test_unknown_nested_config_keys_fail(loc02: Any, where: str) -> None:
+    raw = loc02.showcase_raw()
+    target = raw
+    for key in where.split("."):
+        target = target[key]
+    target["tpyo"] = 1.0
+    with pytest.raises(pydantic.ValidationError, match="tpyo"):
+        SeismologyConfig.model_validate(raw)
+
+
+def test_unknown_profile_sigma_keys_fail(loc02: Any) -> None:
+    raw = loc02.showcase_raw()
+    raw["locator"]["profilePickSigmaS"] = {"borehole-B": {"P": 0.03, "S": 0.05, "tpyo": 1.0}}
+    with pytest.raises(pydantic.ValidationError, match="tpyo"):
+        SeismologyConfig.model_validate(raw)

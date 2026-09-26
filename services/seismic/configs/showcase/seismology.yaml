@@ -50,8 +50,10 @@ grids:
   drM: 25.0
   dzM: 25.0
   # Largest epicentral distance in a table (m). Must cover every station-to-search-node distance;
-  # the locator raises if a station is farther from the search volume than this.
-  rMaxM: 40000.0
+  # the locator raises if a station is farther from a search-volume corner than this. The run bbox
+  # corners lie about 36.6 km from the origin and the volume's half diagonal is 14.1 km, so a
+  # station anywhere in the bbox needs about 50.7 km.
+  rMaxM: 52000.0
   # Grid top = highest receiver sensorElevM (or the search-volume top, if higher) + topMarginM,
   # snapped up onto the dzM lattice. The model's top layer is extended up to it (recorded).
   topMarginM: 100.0
@@ -61,6 +63,10 @@ grids:
   # eikonal solve starts from an isochron inside it. At least 4 cells (checked).
   seedRadiusM: 500.0
   fmmOrder: 2
+  # Each new table is compared with the exact 1D layered times at every elevation node and every
+  # Nth distance node; the max error per model layer goes to the sidecar and the run record.
+  # Cell-mean slowness makes the tables slow by up to ~14 ms (S) just below shallow interfaces.
+  accuracyCheckStrideR: 4
 
 # Grid-search locator (LOC-02, hq.locate.locator and hq.locate.uncertainty).
 locator:
@@ -72,14 +78,27 @@ locator:
     bottomElevM: -7000.0
   coarseSpacingM: 200.0 # full-volume grid
   fineSpacingM: 25.0 # the reported PDF lives on this lattice
-  fineHalfWidthM: 1000.0 # fine box: +/- this around the best coarse node, clipped to the volume
-  # Inside the fine box the misfit is first evaluated every fineStageSpacingM; fine nodes are then
-  # evaluated over the region within pdfCutoff of the minimum, grown until every face of that
-  # region clears pdfCutoff or meets the fine box (locator.py).
+  # First fine box: +/- this around the best coarse node, clipped to the volume. The search
+  # starts there; the PDF region grows past it until it covers the mass (locator.py).
+  fineHalfWidthM: 1000.0
+  # The misfit is first evaluated every fineStageSpacingM, from the first fine box outward until the
+  # region within pdfCutoff of the minimum clears every face that is not a volume face; fine nodes
+  # are then evaluated over that region and grown the same way (locator.py).
   fineStageSpacingM: 100.0
-  # Nodes more than this above the minimum misfit hold < exp(-pdfCutoff) of the peak node's mass;
-  # they count as zero mass.
-  pdfCutoff: 20.0
+  # Nodes whose PDF exponent (pdfMisfitScale * misfit) is more than this above its minimum hold
+  # < exp(-pdfCutoff) of the peak node's mass; they count as zero mass. The misfit is L1, so PDF
+  # tails are near-exponential and the region within the cutoff grows about linearly with it.
+  # Measured on weak test events (6 P + 2 S picks, prob 0.5, PDF sd 200-340 m): 12 leaves ~2e-4 of
+  # the mass outside and the PDF sd within 0.3% of the untruncated value, on 1.5-2.1M fine nodes
+  # (20 would need 6-9M).
+  pdfCutoff: 12.0
+  # PDF = exp(-pdfMisfitScale * misfit). 1.0 is the ticket's exp(-misfit): the Laplace likelihood
+  # with scale sigma / prob. With Gaussian pick noise it gives ~63% coverage for the "68%" errors;
+  # sqrt(2/pi) = 0.798 would calibrate that (lead decision). Formal errors only; never the MAP.
+  pdfMisfitScale: 1.0
+  # Most fine nodes one PDF may cover (misfit cost ~27 ns per node and pick). A PDF that needs more
+  # is truncated: hErrM and vErrM become None and the search record says pdfTruncated.
+  maxPdfNodes: 3000000
   # Pick sigma (s): weight = pick probability / sigma. The Laplace scale of the L1 likelihood.
   pickSigmaS:
     P: 0.02
@@ -91,8 +110,12 @@ locator:
     madK: 3.0
     floorS: 0.15
   minPicks: 4
-  errConfidence: 0.68 # hErrM = 68% semi-major axis of the horizontal marginal
-  depthOnEdgeMassFraction: 0.05 # depthOnEdge: > this PDF mass on the fine top or bottom face
+  # hErrM = 68% semi-major axis of the horizontal marginal. docs/02 fixes 68% (vErrM is the vertical
+  # 1-sigma), so any other value is rejected.
+  errConfidence: 0.68
+  # depthOnEdge: > this PDF mass on the fine grid's top or bottom face, or the MAP node on the search
+  # volume's top or bottom face (hq.locate.uncertainty).
+  depthOnEdgeMassFraction: 0.05
   nWorkers: 8 # processes for locate_many (spawned); results do not depend on it
   evalChunkNodes: 65536 # nodes per misfit block (memory only)
   enuConsistencyTolM: 0.01 # stations: |enu_u + origin elevM - sensorElevM| must be below this
@@ -110,8 +133,10 @@ synthetic:
     radiusM: 2000.0
     topElevM: -1000.0
     bottomElevM: -4500.0
-  # Each station's S pick is kept with this probability (the real nS distribution from
-  # association replaces it later).
+  # PLACEHOLDERS until LOC-04 has association output: each station's S pick is kept with this
+  # probability (the real nS distribution replaces it), and every synthetic pick gets pickProb (the
+  # real pick-probability distribution replaces it). Every station gets a P pick. Both make the
+  # synthetic picks optimistic for weak events; the params record says so.
   sKeepProb: 0.6
   pickProb: 1.0
 

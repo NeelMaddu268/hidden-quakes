@@ -4,7 +4,8 @@ Search volume (ENU metres around the run origin, elevM): ``e`` and ``n`` in
 ``[-halfWidthM, +halfWidthM]`` and elevM from ``volume.bottomElevM`` up to ``volume.topElevM``
 (null: ``run.refSurfaceElevM``, the ground at the origin, because a 1D search has no DEM). Every
 grid is anchored at the volume's lower corner; the top is snapped down onto the fine lattice, so
-no hypocentre lies above the configured top.
+no hypocentre lies above the configured top. Where the ground in the volume lies below that top,
+hypocentres can still land above the local ground; LOC-04 checks them against a DEM.
 
 Misfit at a node, over the picks in use:
     d_i = t_obs_i - T_i(node) - static_i
@@ -15,24 +16,35 @@ Misfit at a node, over the picks in use:
 ``pickSigmaS[phase]`` unless the station's ``preprocessProfile`` has an entry in
 ``profilePickSigmaS``.
 
-Search, per event:
+Search, per event (``cutoff`` = ``pdfCutoff / pdfMisfitScale`` in misfit units, so nodes beyond it
+hold less than exp(-pdfCutoff) of the peak node's PDF mass):
 1. Coarse: every ``coarseSpacingM`` node of the volume (travel times cached across events).
-2. Fine box: ``+/- fineHalfWidthM`` around the best coarse node on the ``fineSpacingM`` lattice,
-   clipped to the volume. The misfit is first evaluated every ``fineStageSpacingM`` in the box;
-   the fine nodes are then evaluated over the bounding box of the stage nodes within
-   ``pdfCutoff`` of the stage minimum, grown by one stage step. That region keeps growing by a
-   stage step on any face that is not on the fine-box boundary and still holds a node within
-   ``pdfCutoff`` of the minimum. So the reported PDF lives on fine nodes and covers the whole
-   connected region within ``pdfCutoff`` of the minimum; nodes outside hold less than
-   exp(-pdfCutoff) of the peak node's mass and count as zero. (A separate basin inside the fine
-   box, missed by the stage pass and cut off by a ridge higher than ``pdfCutoff``, is not
-   covered.)
-3. The hypocentre is the fine node with the least misfit (MAP); the PDF gives the formal errors
+2. Stage pass: the misfit every ``fineStageSpacingM`` over a box that starts at
+   ``+/- fineHalfWidthM`` around the best coarse node (clipped to the volume). While the stage
+   nodes within ``cutoff`` of the stage minimum reach a face of the box that is not a volume face,
+   that face moves out by the box's width on that axis (at least ``fineHalfWidthM``).
+3. Fine region: the fine (``fineSpacingM``) nodes over the bounding box of those stage nodes plus
+   one stage step, clipped to the volume. It grows by a stage step on any face that is not a volume
+   face and still holds a fine node within ``cutoff`` of the minimum. So the reported PDF lives on
+   fine nodes and covers the whole region within ``cutoff`` of the minimum, however far that
+   reaches, up to the search volume. (A separate basin missed by the stage pass and cut off by a
+   ridge higher than ``cutoff`` is not covered.)
+4. Node budget: if the stage region's bounding box, or a grown fine region, would exceed
+   ``maxPdfNodes`` fine nodes, growth stops. After a stage-pass stop the fine region is
+   ``+/- fineHalfWidthM`` around the best stage node. The PDF is then truncated wherever a face of
+   the evaluated region that is not the volume's top or bottom still holds a node within
+   ``cutoff``; lateral volume faces count too. A truncated PDF gives hErrM = vErrM = None and
+   ``pdfTruncated`` in the search record (docs/02 allows None). The volume's top and bottom are
+   the prior's bounds, not truncation: ``depthOnEdge`` reports them.
+5. The hypocentre is the fine node with the least misfit (MAP); the PDF gives the formal errors
    and ``depthOnEdge`` (``hq.locate.uncertainty``).
-4. Outlier pass: residuals at the MAP node; picks with ``|residual| > max(madK * MAD, floorS)``
-   (MAD = median of |r - median(r)|, unscaled) are dropped and the event is relocated once from
-   step 1. If dropping would leave fewer than ``minPicks`` picks, nothing is dropped and the
-   result says so.
+6. Outlier pass: residuals at the MAP node; picks with ``|residual| > max(madK * MAD, floorS)``
+   (MAD = median of |r - median(r)|, unscaled, over every phase) are dropped and the event is
+   relocated once from step 1. If dropping would leave fewer than ``minPicks`` picks, nothing is
+   dropped and the result says so.
+
+Callers pass only the stations in use (``usedInRun``); every station passed must lie within
+``grids.rMaxM`` of every search-volume corner, or the Locator raises.
 """
 
 import logging
@@ -64,6 +76,8 @@ STATION_COLUMNS = ("id", "enu_e", "enu_n", "enu_u", "sensorElevM")
 FloatArray = NDArray[np.float64]
 IntArray = NDArray[np.intp]
 Statics = Mapping[tuple[str, str], float]
+# Face names of a (z, n, e) box per axis: (low index side, high index side).
+AXIS_FACES = (("bottom", "top"), ("south", "north"), ("west", "east"))
 
 
 def weighted_median(values: ArrayLike, weights: ArrayLike) -> float:
@@ -135,14 +149,19 @@ class SearchVolume:
     def n_max_m(self) -> float:
         return self.n_min_m + (self.n_n - 1) * self.fine_m
 
-    def e_at(self, idx: IntArray) -> FloatArray:
+    def e_at(self, idx: int | IntArray) -> FloatArray:
         return self.e_min_m + np.asarray(idx, dtype=np.float64) * self.fine_m
 
-    def n_at(self, idx: IntArray) -> FloatArray:
+    def n_at(self, idx: int | IntArray) -> FloatArray:
         return self.n_min_m + np.asarray(idx, dtype=np.float64) * self.fine_m
 
-    def z_at(self, idx: IntArray) -> FloatArray:
+    def z_at(self, idx: int | IntArray) -> FloatArray:
         return self.bottom_elev_m + np.asarray(idx, dtype=np.float64) * self.fine_m
+
+    @property
+    def upper(self) -> IntArray:
+        """Largest fine index along (z, n, e)."""
+        return np.array([self.n_z - 1, self.n_n - 1, self.n_e - 1], dtype=np.intp)
 
     def coarse_axes(self) -> tuple[IntArray, IntArray, IntArray]:
         """Fine indices of the coarse nodes along e, n and z."""
@@ -208,10 +227,18 @@ class _Search:
     t0_rel: float
     misfit: float
     pdf: PdfSummary
+    pdf_truncated: bool
     box: dict[str, Any]
-    n_coarse: int
-    n_stage: int
-    n_fine: int
+
+
+def _stage_axis(center: int, lo: int, hi: int, step: int) -> IntArray:
+    """Stage-lattice fine indices in ``[lo, hi]``: every ``step``-th from ``center``, both ends."""
+    first = center - ((center - lo) // step) * step
+    return np.unique(np.concatenate(([lo], np.arange(first, hi + 1, step), [hi]))).astype(np.intp)
+
+
+def _n_nodes(lo: IntArray, hi: IntArray) -> int:
+    return int(np.prod(hi - lo + 1))
 
 
 @dataclass(frozen=True, eq=False)
@@ -230,17 +257,19 @@ class EventLocation:
     rms_s: float
     gap_deg: float
     min_epi_dist_m: float
-    h_err_m: float
-    v_err_m: float
+    h_err_m: float | None  # None when the PDF is truncated (pdf_truncated)
+    v_err_m: float | None
     depth_on_edge: bool
-    statics_applied: bool
-    pdf: PdfSummary
+    statics_applied: bool  # at least one pick used in the location carries a non-zero static
+    pdf: PdfSummary  # computed even when truncated, for the record
+    pdf_truncated: bool
     misfit: float
     dropped_pick_ids: tuple[str, ...]
+    outlier_mad_s: float  # MAD of the first-pass residuals (unscaled)
     outlier_threshold_s: float
     relocated: bool
     outlier_note: str | None  # set when the outlier pass was skipped
-    search: dict[str, Any]  # fine box, clipping, node counts
+    search: dict[str, Any]  # evaluated region, faces, truncation, node counts
 
     def quality(self) -> dict[str, Any]:
         return {
@@ -269,12 +298,16 @@ ARRIVAL_COLUMNS = (
     "residualS",
     "sigmaS",
     "weight",
-    "used",
+    "usedInLocation",  # docs/02 arrivals.parquet column name
 )
 
 
 class Locator:
-    """Locates events for one station set. Coarse-grid travel times are cached across events."""
+    """Locates events for one station set. Coarse-grid travel times are cached across events.
+
+    ``stations`` must hold only the stations in use (``usedInRun``), with columns id, enu_e,
+    enu_n, enu_u, sensorElevM (and preprocessProfile when ``profilePickSigmaS`` is set).
+    """
 
     def __init__(
         self,
@@ -318,6 +351,12 @@ class Locator:
             if "preprocessProfile" in stations.columns
             else [""] * len(ids)
         )
+        unused = sorted(set(cfg.profilePickSigmaS) - set(self._profile))
+        if unused:
+            log.warning(
+                "profilePickSigmaS keys %s match no station's preprocessProfile (typo?); those "
+                "overrides apply to no station", unused,
+            )
         self._check_reach(ids)
         vol = self.volume
         self._coarse_cache: dict[tuple[str, Phase], FloatArray] = {}
@@ -361,6 +400,29 @@ class Locator:
         sig = override if override is not None else self.cfg.pickSigmaS
         return float(sig.P if phase == "P" else sig.S)
 
+    def pick_sigma(self, station_id: str, phase: Phase) -> float:
+        """Pick sigma (s) the locator uses for ``station_id`` and ``phase``."""
+        if phase not in PHASES:
+            raise ValueError(f"unknown phase {phase!r}")
+        return self._sigma(self._index[station_id], phase)
+
+    def _check_statics(self, statics: Statics) -> None:
+        bad = sorted(
+            f"{key!r}"
+            for key in statics
+            if not (
+                isinstance(key, tuple)
+                and len(key) == 2
+                and key[0] in self._index
+                and key[1] in PHASES
+            )
+        )
+        if bad:
+            raise ValueError(
+                f"statics keys must be (stationId, phase) with a known station and phase P or S; "
+                f"got {bad}"
+            )
+
     def _prepare(self, picks: pd.DataFrame, statics: Statics | None) -> _Picks:
         missing = [c for c in PICK_COLUMNS if c not in picks.columns]
         if missing:
@@ -383,6 +445,8 @@ class Locator:
         prob = picks["prob"].to_numpy(dtype=np.float64)
         if not (np.all(np.isfinite(t)) and np.all((prob > 0) & (prob <= 1))):
             raise ValueError("pick times must be finite and probabilities in (0, 1]")
+        if statics is not None:
+            self._check_statics(statics)
         idx = [self._index[s] for s in station_ids]
         sigma = np.array([self._sigma(i, p) for i, p in zip(idx, phases, strict=True)])
         static = np.array([float((statics or {}).get(pair, 0.0)) for pair in pairs])
@@ -481,46 +545,89 @@ class Locator:
     def _search(self, p: _Picks, used: NDArray[np.bool_]) -> _Search:
         cfg = self.cfg
         vol = self.volume
-        cz, cn, ce = self._coarse_best(p, used)
+        cutoff = cfg.pdfCutoff / cfg.pdfMisfitScale  # in misfit units
+        budget = cfg.maxPdfNodes
+        upper = vol.upper
+        center = np.array(self._coarse_best(p, used), dtype=np.intp)
         half = round(cfg.fineHalfWidthM / vol.fine_m)
-        lo = np.array([max(cz - half, 0), max(cn - half, 0), max(ce - half, 0)])
-        hi = np.array(
-            [min(cz + half, vol.n_z - 1), min(cn + half, vol.n_n - 1), min(ce + half, vol.n_e - 1)]
-        )
-        # Stage lattice inside the fine box, far edges included.
         step = round(cfg.fineStageSpacingM / vol.fine_m)
-        stage = [
-            np.unique(np.append(np.arange(a, b + 1, step), b)) for a, b in zip(lo, hi, strict=True)
-        ]
-        m_stage, _ = self._box_misfit(p, used, stage[2], stage[1], stage[0])
-        region = m_stage <= m_stage.min() + cfg.pdfCutoff
-        sub_lo = np.empty(3, dtype=np.intp)
-        sub_hi = np.empty(3, dtype=np.intp)
-        for axis in range(3):
-            other = tuple(a for a in range(3) if a != axis)
-            hit = np.flatnonzero(region.any(axis=other))
-            sub_lo[axis] = max(stage[axis][hit[0]] - step, lo[axis])
-            sub_hi[axis] = min(stage[axis][hit[-1]] + step, hi[axis])
-        # Grow the fine region until every face is on the fine-box boundary or holds only nodes
-        # more than pdfCutoff above the minimum.
-        n_grow = 0
+        lo = np.maximum(center - half, 0)
+        hi = np.minimum(center + half, upper)
+        first_box = (lo.copy(), hi.copy())
+
+        # Stage pass: grow the box until the stage nodes within cutoff clear every face that is
+        # not a volume face, or their bounding box would exceed the node budget.
+        n_stage = 0
+        n_stage_grow = 0
+        over_budget = False
+        while True:
+            axes = [_stage_axis(int(center[a]), int(lo[a]), int(hi[a]), step) for a in range(3)]
+            m_stage, _ = self._box_misfit(p, used, axes[2], axes[1], axes[0])
+            n_stage += int(m_stage.size)
+            region = m_stage <= m_stage.min() + cutoff
+            sub_lo = np.empty(3, dtype=np.intp)
+            sub_hi = np.empty(3, dtype=np.intp)
+            new_lo, new_hi = lo.copy(), hi.copy()
+            for a in range(3):
+                hit = np.flatnonzero(region.any(axis=tuple(b for b in range(3) if b != a)))
+                sub_lo[a] = max(axes[a][hit[0]] - step, 0)
+                sub_hi[a] = min(axes[a][hit[-1]] + step, upper[a])
+                grow = max(int(hi[a] - lo[a]), half)
+                if hit[0] == 0 and lo[a] > 0:
+                    new_lo[a] = max(lo[a] - grow, 0)
+                if hit[-1] == axes[a].size - 1 and hi[a] < upper[a]:
+                    new_hi[a] = min(hi[a] + grow, upper[a])
+            if _n_nodes(sub_lo, sub_hi) > budget:
+                over_budget = True
+                kz, kn, ke = np.unravel_index(int(np.argmin(m_stage)), m_stage.shape)
+                best = np.array([axes[0][kz], axes[1][kn], axes[2][ke]], dtype=np.intp)
+                sub_lo = np.maximum(best - half, 0)
+                sub_hi = np.minimum(best + half, upper)
+                break
+            if np.array_equal(new_lo, lo) and np.array_equal(new_hi, hi):
+                break
+            lo, hi = new_lo, new_hi
+            n_stage_grow += 1
+
+        # Fine region: grow by a stage step on every non-volume face that still holds a node
+        # within cutoff, unless that would exceed the node budget.
+        n_fine_grow = 0
         while True:
             iz = np.arange(sub_lo[0], sub_hi[0] + 1)
             i_n = np.arange(sub_lo[1], sub_hi[1] + 1)
             ie = np.arange(sub_lo[2], sub_hi[2] + 1)
             misfit, t0 = self._box_misfit(p, used, ie, i_n, iz)
-            level = misfit.min() + cfg.pdfCutoff
-            grew = False
-            for axis in range(3):
-                if sub_lo[axis] > lo[axis] and misfit.take(0, axis=axis).min() < level:
-                    sub_lo[axis] = max(sub_lo[axis] - step, lo[axis])
-                    grew = True
-                if sub_hi[axis] < hi[axis] and misfit.take(-1, axis=axis).min() < level:
-                    sub_hi[axis] = min(sub_hi[axis] + step, hi[axis])
-                    grew = True
-            if not grew:
+            level = misfit.min() + cutoff
+            touch = [
+                (
+                    bool(misfit.take(0, axis=a).min() <= level),
+                    bool(misfit.take(-1, axis=a).min() <= level),
+                )
+                for a in range(3)
+            ]
+            if over_budget:
                 break
-            n_grow += 1
+            new_lo, new_hi = sub_lo.copy(), sub_hi.copy()
+            for a in range(3):
+                if touch[a][0] and sub_lo[a] > 0:
+                    new_lo[a] = max(sub_lo[a] - step, 0)
+                if touch[a][1] and sub_hi[a] < upper[a]:
+                    new_hi[a] = min(sub_hi[a] + step, upper[a])
+            if np.array_equal(new_lo, sub_lo) and np.array_equal(new_hi, sub_hi):
+                break
+            if _n_nodes(new_lo, new_hi) > budget:
+                over_budget = True
+                break
+            sub_lo, sub_hi = new_lo, new_hi
+            n_fine_grow += 1
+
+        at_volume = [(bool(sub_lo[a] == 0), bool(sub_hi[a] == upper[a])) for a in range(3)]
+        truncated = [
+            AXIS_FACES[a][side]
+            for a in range(3)
+            for side in (0, 1)
+            if touch[a][side] and not (a == 0 and at_volume[a][side])
+        ]
         pdf = summarize_pdf(
             misfit,
             vol.e_at(ie),
@@ -528,24 +635,37 @@ class Locator:
             vol.z_at(iz),
             spacing_h_m=vol.fine_m,
             spacing_z_m=vol.fine_m,
-            top_face_level=int(hi[0] - sub_lo[0]) if sub_hi[0] == hi[0] else None,
-            bottom_face_level=0 if sub_lo[0] == lo[0] else None,
+            misfit_scale=cfg.pdfMisfitScale,
+            top_is_volume_top=at_volume[0][1],
+            bottom_is_volume_bottom=at_volume[0][0],
             confidence=cfg.errConfidence,
             edge_fraction=cfg.depthOnEdgeMassFraction,
         )
         kz, kn, ke = np.unravel_index(int(np.argmin(misfit)), misfit.shape)
+        f_lo, f_hi = first_box
         box = {
-            "fineBoxElevM": [float(vol.z_at(lo[0])), float(vol.z_at(hi[0]))],
-            "fineBoxEM": [float(vol.e_at(lo[2])), float(vol.e_at(hi[2]))],
-            "fineBoxNM": [float(vol.n_at(lo[1])), float(vol.n_at(hi[1]))],
-            "clippedTop": bool(hi[0] == vol.n_z - 1 and cz + half > vol.n_z - 1),
-            "clippedBottom": bool(lo[0] == 0 and cz - half < 0),
-            "mapOnTopFace": bool(iz[kz] == hi[0]),
-            "mapOnBottomFace": bool(iz[kz] == lo[0]),
+            "firstFineBoxElevM": [float(vol.z_at(f_lo[0])), float(vol.z_at(f_hi[0]))],
+            "firstFineBoxNM": [float(vol.n_at(f_lo[1])), float(vol.n_at(f_hi[1]))],
+            "firstFineBoxEM": [float(vol.e_at(f_lo[2])), float(vol.e_at(f_hi[2]))],
             "evaluatedElevM": [float(vol.z_at(iz[0])), float(vol.z_at(iz[-1]))],
-            "evaluatedEM": [float(vol.e_at(ie[0])), float(vol.e_at(ie[-1]))],
             "evaluatedNM": [float(vol.n_at(i_n[0])), float(vol.n_at(i_n[-1]))],
-            "nGrow": n_grow,
+            "evaluatedEM": [float(vol.e_at(ie[0])), float(vol.e_at(ie[-1]))],
+            "atVolumeTop": at_volume[0][1],
+            "atVolumeBottom": at_volume[0][0],
+            "volumeFaces": [
+                AXIS_FACES[a][side] for a in range(3) for side in (0, 1) if at_volume[a][side]
+            ],
+            "faceMass": dict(pdf.face_mass),
+            "mapOnVolumeTop": pdf.map_on_volume_top,
+            "mapOnVolumeBottom": pdf.map_on_volume_bottom,
+            "pdfTruncated": bool(truncated),
+            "truncatedFaces": truncated,
+            "nodeBudgetHit": over_budget,
+            "nStageGrow": n_stage_grow,
+            "nFineGrow": n_fine_grow,
+            "nCoarse": self._n_coarse,
+            "nStage": n_stage,
+            "nFine": int(misfit.size),
         }
         return _Search(
             iz=int(iz[kz]),
@@ -554,10 +674,8 @@ class Locator:
             t0_rel=float(t0[kz, kn, ke]),
             misfit=float(misfit[kz, kn, ke]),
             pdf=pdf,
+            pdf_truncated=bool(truncated),
             box=box,
-            n_coarse=self._n_coarse,
-            n_stage=int(m_stage.size),
-            n_fine=int(misfit.size),
         )
 
     def _travel_times(self, p: _Picks, e: float, n: float, z: float) -> FloatArray:
@@ -594,21 +712,21 @@ class Locator:
             else:
                 used = ~drop
                 final = self._search(p, used)
-        return self._result(p, final, used, threshold, note, statics is not None)
+        return self._result(p, final, used, mad, threshold, note)
 
     def _residuals(self, p: _Picks, s: _Search) -> FloatArray:
         vol = self.volume
-        tt = self._travel_times(p, float(vol.e_at(s.ie)), float(vol.n_at(s.i_n)), float(vol.z_at(s.iz)))
-        return p.t_rel - tt - p.static - s.t0_rel
+        e, n, z = float(vol.e_at(s.ie)), float(vol.n_at(s.i_n)), float(vol.z_at(s.iz))
+        return p.t_rel - self._travel_times(p, e, n, z) - p.static - s.t0_rel
 
     def _result(
         self,
         p: _Picks,
         s: _Search,
         used: NDArray[np.bool_],
+        mad: float,
         threshold: float,
         note: str | None,
-        statics_applied: bool,
     ) -> EventLocation:
         vol = self.volume
         e, n, z = float(vol.e_at(s.ie)), float(vol.n_at(s.i_n)), float(vol.z_at(s.iz))
@@ -627,7 +745,7 @@ class Locator:
                 "residualS": residual,
                 "sigmaS": p.sigma,
                 "weight": p.w,
-                "used": used,
+                "usedInLocation": used,
             },
             columns=list(ARRIVAL_COLUMNS),
         )
@@ -649,36 +767,53 @@ class Locator:
             rms_s=float(np.sqrt(np.mean(residual[used] ** 2))),
             gap_deg=azimuthal_gap_deg(de, dn),
             min_epi_dist_m=float(np.min(np.hypot(de, dn))),
-            h_err_m=s.pdf.h_err_m,
-            v_err_m=s.pdf.v_err_m,
+            h_err_m=None if s.pdf_truncated else s.pdf.h_err_m,
+            v_err_m=None if s.pdf_truncated else s.pdf.v_err_m,
             depth_on_edge=s.pdf.depth_on_edge,
-            statics_applied=statics_applied,
+            statics_applied=bool(np.any(p.static[used] != 0.0)),
             pdf=s.pdf,
+            pdf_truncated=s.pdf_truncated,
             misfit=s.misfit,
             dropped_pick_ids=tuple(p.ids[j] for j in np.flatnonzero(~used)),
+            outlier_mad_s=mad,
             outlier_threshold_s=threshold,
             relocated=bool((~used).any()),
             outlier_note=note,
-            search={**s.box, "nCoarse": s.n_coarse, "nStage": s.n_stage, "nFine": s.n_fine},
+            search=dict(s.box),
         )
 
     def to_record(self) -> dict[str, Any]:
-        """Locator parameters and conventions for ``ProcessingRun.locator``."""
+        """Locator parameters and conventions for ``ProcessingRun.locator``.
+
+        ``tables.velocityModel`` is the top-extended model the tables were solved on (with its
+        ``topExtension``); ``ProcessingRun.velocityModel`` must be that record
+        (``velocity_model_record()``), not the source model's.
+        """
         return {
             "method": METHOD,
             "config": self.cfg.model_dump(mode="json"),
             "volume": self.volume.to_record(),
+            "stationIds": list(self._index),
             "misfit": "sum_i w_i |t_obs_i - T_i - static_i - t0|, w_i = prob_i / sigma_i; t0 = "
             "lower weighted median of (t_obs_i - T_i - static_i) (eliminated analytically)",
-            "search": "coarse grid over the volume; fine grid within fineHalfWidthM of the best "
-            "coarse node, evaluated over the connected region within pdfCutoff of the minimum "
-            "(seeded by a fineStageSpacingM pass, grown until every face clears pdfCutoff or "
-            "meets the fine box); hypocentre = fine MAP node",
-            "outliers": "drop |residual| > max(madK * MAD, floorS), MAD unscaled; relocate once",
-            "statics": "additive per (stationId, phase), default 0",
-            "uncertainty": conventions(self.cfg.errConfidence, self.cfg.depthOnEdgeMassFraction),
-            "tables": {k: v for k, v in self.tables.to_record().items() if k != "velocityModel"},
+            "search": "coarse grid over the volume; a fineStageSpacingM pass from the first fine "
+            "box (fineHalfWidthM around the best coarse node) grown until the region within "
+            "pdfCutoff clears every non-volume face; fine nodes over that region, grown the same "
+            "way; both stop at maxPdfNodes (then hErrM/vErrM are None, pdfTruncated); hypocentre "
+            "= fine MAP node",
+            "outliers": "drop |residual| > max(madK * MAD, floorS), MAD unscaled over both "
+            "phases; relocate once",
+            "statics": "additive per (stationId, phase), default 0; LocationQuality.statics is "
+            "true when a pick used in the location carries a non-zero static",
+            "uncertainty": conventions(
+                self.cfg.errConfidence, self.cfg.depthOnEdgeMassFraction, self.cfg.pdfMisfitScale
+            ),
+            "tables": self.tables.to_record(),
         }
+
+    def velocity_model_record(self) -> dict[str, Any]:
+        """``ProcessingRun.velocityModel``: the top-extended model the tables were solved on."""
+        return self.tables.model.to_record()
 
 
 @dataclass(frozen=True)
@@ -739,9 +874,15 @@ def locate_many(
 
     With ``locator.nWorkers > 1`` the events are split over spawned processes that load the
     same cached tables; each event is located independently, so results do not depend on the
-    worker count. ``locator`` (built from ``setup``) is reused for the serial path.
+    worker count. ``locator`` (built from ``setup``) is reused for the serial path; one built
+    from another config or station set raises, since the workers rebuild from ``setup``.
     """
     started = time.perf_counter()
+    if locator is not None and (
+        locator.cfg != setup.config.locator
+        or list(locator._index) != setup.stations["id"].astype(str).tolist()
+    ):
+        raise ValueError("locator was not built from setup (config or stations differ)")
     n_workers = min(setup.config.locator.nWorkers, len(events))
     if n_workers <= 1:
         loc = locator if locator is not None else build_locator(setup)
