@@ -8,7 +8,7 @@ import type { Enu, SceneMeta } from "./types";
 export const METERS_PER_UNIT = 1000;
 
 /** SceneMeta.verticalExaggeration, defaulting to 1.0 when the bundle omits it (docs/02 default). */
-export function verticalExaggerationOf(scene: Pick<SceneMeta, "verticalExaggeration">): number {
+export function verticalExaggerationOf(scene: { verticalExaggeration?: SceneMeta["verticalExaggeration"] }): number {
   const ve = scene.verticalExaggeration ?? 1;
   if (!(ve > 0) || !Number.isFinite(ve)) {
     throw new Error(`SceneMeta.verticalExaggeration must be a positive number, got ${ve}`);
