@@ -375,6 +375,18 @@ def test_harvest_recovers_the_withheld_picks_with_statics(
     assert all(loc.n_s == 11 for loc in rep.before.values())
 
 
+def test_harvest_does_not_depend_on_the_worker_count(
+    hworld: dict[str, Any], harvested: Any
+) -> None:
+    cfg = hworld["on"]
+    two = cfg.model_copy(update={"locator": cfg.locator.model_copy(update={"nWorkers": 2})})
+    parallel = _call(hworld, two, statics=hworld["planted"], harvest=True)
+    for name in ("events", "arrivals", "statics"):
+        pd.testing.assert_frame_equal(getattr(parallel.result, name),
+                                      getattr(harvested.result, name))
+    pd.testing.assert_frame_equal(parallel.harvest.added, harvested.harvest.added)
+
+
 def test_harvest_off_changes_nothing(hworld: dict[str, Any]) -> None:
     kw = {"statics": hworld["planted"]}
     flag_off = _call(hworld, hworld["off"], harvest=True, **kw)  # asked, but not enabled
