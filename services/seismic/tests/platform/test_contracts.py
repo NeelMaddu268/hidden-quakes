@@ -2,6 +2,8 @@
 through to_frame/from_frame and parquet. All data here is tiny and built inside the test."""
 
 import json
+import re
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -412,3 +414,21 @@ def test_schema_exports_every_model_by_name() -> None:
     names = set(schema["$defs"])
     assert {model.__name__ for model in m.ALL_MODELS if model is not m.Bundle} <= names
     assert {"Tier", "Phase", "DataMode"} <= names, "Literal aliases must export as named TS types"
+
+
+REPO = Path(__file__).resolve().parents[4]
+
+
+def test_committed_schema_json_is_current() -> None:
+    """`make contracts` was run after the last model change."""
+    committed = json.loads((REPO / "packages/contracts/schema.json").read_text())
+    assert committed == bundle_schema(), "run `make contracts` and commit the result"
+
+
+def test_provider_types_reexport_every_model() -> None:
+    text = (REPO / "apps/web/src/providers/types.ts").read_text()
+    block = re.search(r"export type \{([^}]*)\} from \"@hq/contracts\";", text)
+    assert block is not None
+    exported = {name.strip() for name in block.group(1).split(",") if name.strip()}
+    expected = {model.__name__ for model in m.ALL_MODELS} | {"Tier", "Phase", "DataMode"}
+    assert expected <= exported, f"missing from types.ts: {sorted(expected - exported)}"
