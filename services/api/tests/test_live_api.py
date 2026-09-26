@@ -2,12 +2,15 @@
 stores ``latencyS``, answers an empty window with an empty event list and an ok status, keeps
 serving the previous window when a run fails (naming the missing stage's owner), restores the
 last window after a restart, skips an overlapping tick, writes a snapshot bundle that passes
-``check_bundle(mode="snapshot")`` and rejects unknown config keys. Offline and fast."""
+``check_bundle(mode="snapshot")`` and rejects unknown config keys. API-05: shutdown abandons a
+running window promptly, and ``hq-api freeze-snapshot`` copies the last good live bundle into
+the snapshot directory. Offline and fast."""
 
 import json
 import math
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -17,9 +20,11 @@ from hq_contracts.models import SCHEMA_VERSION, BundleMeta, EventEvidence, LiveS
 from pydantic import ValidationError
 
 from hq.export import check_bundle
+from hq_api import __main__ as cli
 from hq_api.app import create_app
 from hq_api.config import DEFAULT_CONFIG_FILE, LiveConfig, LiveConfigError, load_live_config
 from hq_api.runner import LiveWindow, window_run_section
+from hq_api.snapshot import FreezeError, freezable_window, freeze_snapshot
 from hq_api.state import LiveState, LiveStatusSummary, read_state
 from hq_api.worker import LiveWorker
 from tests.conftest import (
@@ -408,3 +413,170 @@ def test_scheduler_runs_a_window_at_startup(
         assert health["worker"]["attempts"] == 1 and health["worker"]["nextRunAt"] is not None
         assert health["worker"]["nextRunAt"] == pytest.approx(T_START + live_config.window.everyS)
     assert worker.next_run_at is None  # the ticker stopped with the app
+
+
+# --- API-05: shutdown abandons a running window ---------------------------------------------------
+
+
+def test_shutdown_abandons_a_running_window_promptly(
+    live_config: LiveConfig,
+    clock: FakeClock,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Ctrl-C mid-window: stop() returns at once, the tick task is gone, the window is logged
+    as abandoned and, when its thread finally finishes, it is not committed."""
+    gate = threading.Event()
+    runner = FakeRunner(live_config, n_events=1, block=gate)
+    worker = make_worker(live_config, runner, clock, tmp_path)
+    app = create_app(live_config, runner, worker=worker, scheduler=True)
+    caplog.set_level("WARNING", logger="hq_api.worker")
+    with TestClient(app):
+        assert runner.started.wait(SCHEDULER_WAIT_S)
+        assert worker.running
+        t0 = time.perf_counter()
+    stop_s = time.perf_counter() - t0
+    assert stop_s < SCHEDULER_WAIT_S / 4, f"stop() waited {stop_s:.1f} s for the window"
+    assert worker.abandoned and worker.running  # the thread is still blocked on the gate
+    assert not worker._tasks and not worker._pending and worker.next_run_at is None
+    assert any("abandoned" in r.getMessage() for r in caplog.records)
+    gate.set()
+    for _ in range(int(SCHEDULER_WAIT_S * 20)):
+        if not worker.running:
+            break
+        threading.Event().wait(0.05)
+    assert not worker.running
+    assert worker.current() is None  # finished after shutdown: not served ...
+    assert read_state(worker.state_file).history == []  # ... and not in the state file
+    assert any("not committed" in r.getMessage() for r in caplog.records)
+
+
+def test_stop_without_a_running_window_is_clean_and_idempotent(
+    live_config: LiveConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    runner = FakeRunner(live_config, n_events=1)
+    worker = make_worker(live_config, runner, clock, tmp_path)
+    app = create_app(live_config, runner, worker=worker, scheduler=True)
+    with TestClient(app):
+        for _ in range(int(SCHEDULER_WAIT_S * 20)):
+            if worker.current() is not None and not worker._tasks:
+                break
+            threading.Event().wait(0.05)
+    assert not worker.abandoned and not worker.running
+    assert worker.current() is not None and len(read_state(worker.state_file).history) == 1
+    import asyncio
+
+    asyncio.run(worker.stop())  # a second stop is a no-op
+    assert not worker.abandoned
+
+
+# --- API-05: freeze-snapshot ---------------------------------------------------------------------
+
+
+def without_runtime_snapshot(config: LiveConfig) -> LiveConfig:
+    """The worker's own snapshot write off, so what lands in snapshotDir is the command's."""
+    return config.model_copy(
+        update={"snapshot": config.snapshot.model_copy(update={"enabled": False})}
+    )
+
+
+def test_freeze_snapshot_copies_the_last_good_window_with_events(
+    live_config: LiveConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    config = without_runtime_snapshot(live_config)
+    runner = FakeRunner(config, n_events=3)
+    worker = make_worker(config, runner, clock, tmp_path)
+    good = worker.run_window_now()
+    assert good is not None and good.outcome == "ok" and good.bundleDir is not None
+    assert not worker.snapshot_dir.exists()
+
+    # A later empty window is served live but is not what gets frozen by default.
+    clock.advance(config.window.everyS)
+    runner.n_events = 0
+    empty = worker.run_window_now()
+    assert empty is not None and empty.outcome == "empty"
+    assert worker.current() is not None and worker.current().record.runId == empty.runId
+
+    result = freeze_snapshot(config, tmp_path)
+    assert result.record.runId == good.runId and result.target == worker.snapshot_dir
+    assert result.counts["events"] == 3
+    counts = check_bundle(worker.snapshot_dir, mode="snapshot")
+    assert counts["events"] == 3
+    meta = BundleMeta.model_validate_json((worker.snapshot_dir / "meta.json").read_text())
+    assert meta.mode == "snapshot" and meta.run.id == good.runId
+    live_dir = Path(good.bundleDir)
+    assert (worker.snapshot_dir / "events.json").read_bytes() == (
+        live_dir / "events.json"
+    ).read_bytes()
+    live_evidence = sorted(p.name for p in (live_dir / "evidence").iterdir())
+    assert sorted(p.name for p in (worker.snapshot_dir / "evidence").iterdir()) == live_evidence
+    # The live bundle is untouched (still mode live, still served).
+    assert check_bundle(live_dir, mode="live")["events"] == 3
+    assert not [p for p in worker.snapshot_dir.parent.iterdir() if p.name.startswith(".")]
+
+    # --allow-empty freezes the newest good window even without candidate events.
+    result = freeze_snapshot(config, tmp_path, allow_empty=True)
+    assert result.record.runId == empty.runId
+    assert check_bundle(worker.snapshot_dir, mode="snapshot")["events"] == 0
+
+
+def test_freeze_snapshot_refuses_without_a_freezable_window(
+    live_config: LiveConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    config = without_runtime_snapshot(live_config)
+    with pytest.raises(FreezeError, match="no good live window"):
+        freeze_snapshot(config, tmp_path)  # no state file at all
+    runner = FakeRunner(config, n_events=2)
+    worker = make_worker(config, runner, clock, tmp_path)
+    record = worker.run_window_now()
+    assert record is not None and record.bundleDir is not None
+    shutil.rmtree(record.bundleDir)  # pruned or lost: skipped, with nothing else to freeze
+    assert freezable_window(read_state(worker.state_file)) is None
+    with pytest.raises(FreezeError, match="no good live window"):
+        freeze_snapshot(config, tmp_path)
+    assert not worker.snapshot_dir.exists()
+
+
+def test_freeze_snapshot_keeps_the_previous_snapshot_when_the_copy_fails(
+    live_config: LiveConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    config = without_runtime_snapshot(live_config)
+    runner = FakeRunner(config, n_events=2)
+    worker = make_worker(config, runner, clock, tmp_path)
+    first = worker.run_window_now()
+    assert first is not None
+    freeze_snapshot(config, tmp_path)
+    before = (worker.snapshot_dir / "meta.json").read_bytes()
+    clock.advance(config.window.everyS)
+    second = worker.run_window_now()
+    assert second is not None and second.bundleDir is not None
+    (Path(second.bundleDir) / "events.json").write_text("[]")  # corrupt the newest live bundle
+    with pytest.raises(FreezeError, match="does not check"):
+        freeze_snapshot(config, tmp_path)
+    assert (worker.snapshot_dir / "meta.json").read_bytes() == before
+    assert not [p for p in worker.snapshot_dir.parent.iterdir() if p.name.startswith(".")]
+
+
+def test_cli_parses_serve_by_default_and_freeze_snapshot(
+    live_config: LiveConfig, clock: FakeClock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.parse_args([]).command == "serve"
+    args = cli.parse_args(["--port", "8001", "--no-scheduler"])
+    assert args.command == "serve" and args.port == 8001 and args.no_scheduler
+    args = cli.parse_args(["freeze-snapshot", "--allow-empty"])
+    assert args.command == "freeze-snapshot" and args.allow_empty
+    with pytest.raises(SystemExit):
+        cli.parse_args(["bogus-command"])
+
+    config = without_runtime_snapshot(live_config)
+    config_yaml = tmp_path / "live.yaml"
+    config_yaml.write_text(yaml.safe_dump(config.dump()))
+    assert cli.main(["freeze-snapshot", "--config", str(config_yaml)]) == 1  # nothing to freeze
+    runner = FakeRunner(config, n_events=1)
+    worker = make_worker(config, runner, clock, tmp_path)
+    assert worker.run_window_now() is not None
+    assert cli.main(["freeze-snapshot", "--config", str(config_yaml)]) == 0
+    out = capsys.readouterr().out
+    assert "snapshot bundle written" in out and "1 candidate events" in out
+    assert check_bundle(worker.snapshot_dir, mode="snapshot")["events"] == 1
+    assert cli.main(["freeze-snapshot", "--config", str(tmp_path / "missing.yaml")]) == 1
