@@ -12,8 +12,8 @@ export interface HaloInstances {
   eventIndex: Int32Array;
   /** Column-major 4×4 per halo: scale (h, v·VE, h) in km, then translation to the event. */
   matrices: Float32Array;
-  /** The event's reveal slot, so a halo never shows before its event has appeared. */
-  revealAt: Float32Array;
+  /** The event's appearance time on the reveal clock, so a halo never shows before its event. */
+  appearAt: Float32Array;
 }
 
 /** Tier A events with both 68% errors present and positive. */
@@ -24,11 +24,11 @@ export function haloEligible(ev: Pick<SeismicEvent, "tier" | "quality">): boolea
 
 /**
  * Builds halo instances aligned with the candidate layer's instances (same order, same positions and
- * reveal slots), so halos and glyphs can never disagree about where an event is.
+ * appearance times), so halos and glyphs can never disagree about where or when an event is.
  */
 export function buildHaloInstances(
   events: readonly Pick<SeismicEvent, "tier" | "quality">[],
-  candidates: Pick<EventInstances, "positions" | "revealAt" | "count">,
+  candidates: Pick<EventInstances, "positions" | "appearAt" | "count">,
   verticalExaggeration: number,
 ): HaloInstances {
   if (events.length !== candidates.count) {
@@ -38,7 +38,7 @@ export function buildHaloInstances(
   for (const ev of events) if (haloEligible(ev)) count++;
   const eventIndex = new Int32Array(count);
   const matrices = new Float32Array(count * 16);
-  const revealAt = new Float32Array(count);
+  const appearAt = new Float32Array(count);
   let j = 0;
   for (let i = 0; i < events.length; i++) {
     const ev = events[i];
@@ -54,8 +54,8 @@ export function buildHaloInstances(
     matrices[m + 13] = candidates.positions[i * 3 + 1];
     matrices[m + 14] = candidates.positions[i * 3 + 2];
     eventIndex[j] = i;
-    revealAt[j] = candidates.revealAt[i];
+    appearAt[j] = candidates.appearAt[i];
     j++;
   }
-  return { count, eventIndex, matrices, revealAt };
+  return { count, eventIndex, matrices, appearAt };
 }
