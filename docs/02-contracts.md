@@ -284,6 +284,7 @@ CONTRACT-01 also ships `packages/contracts/python/hq_contracts/io.py`:
 - `to_frame(models: list[BaseModel]) -> pd.DataFrame` and `from_frame(df, Model) -> list[Model]`
 - `write_table(df, path, model_name)` / `read_table(path) -> pd.DataFrame`: parquet with `schemaVersion` and `model` in the file metadata
 - **Flattening rule:** nested models become prefixed columns joined by `_` (`enu_e`, `quality_nStations`, `catalogMatch_dtS`). Lists stay list columns. `None` stays null. Times stay float64 epoch seconds. `dict`-typed fields (`Station.staticsS`, `SweepPoint.params`) are one JSON-text column, because a parquet struct can't hold a row-dependent key set; build frames with `to_frame` and read them with `from_frame` and you never see it.
+- **Dtype rule (CONTRACT-02, REQ-H2-3):** `to_frame` sets every column's dtype from the model annotation, so an empty table or an all-null column has the same type as a full one: `float` → `float64` (NaN for null), `int` → `int64` (`Int64` when optional or inside an optional nested model), `bool` → `bool` (`boolean` when optional), `str` / `Literal` / dict-as-JSON → `string`, lists → `object`. `dtypes_for(Model)` returns the map. Parquet then carries real Arrow types (`double`, `int64`, `bool`, `large_string`), never `null`. `Model` also sets `allow_inf_nan=False`, so a NaN in a required float fails at write time, not in the exporter.
 
 Every lane reads and writes run tables only through these helpers, so a column rename can't silently break a neighbor.
 
