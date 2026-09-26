@@ -4,6 +4,7 @@ serving the previous window when a run fails (naming the missing stage's owner),
 last window after a restart, skips an overlapping tick, writes a snapshot bundle that passes
 ``check_bundle(mode="snapshot")`` and rejects unknown config keys. Offline and fast."""
 
+import asyncio
 import json
 import math
 import shutil
@@ -388,6 +389,35 @@ def test_old_bundles_are_pruned_but_never_the_served_one(
     kept = sorted(p.name for p in worker.bundles_dir.iterdir())
     assert kept == sorted(ids[1:])
     assert worker.current() is not None and worker.current().record.runId == ids[-1]
+
+
+def test_stop_clears_next_run_at_on_every_python(
+    live_config: LiveConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    """The ticker's ``next_run_at`` is None after ``stop()`` whether the loop ends on the stop
+    event or through cancellation. On Python 3.12+ a cancel issued right after the stop event
+    wins the race inside ``asyncio.wait_for``, which used to skip the reset (REQ-H2-4)."""
+    runner = FakeRunner(live_config, n_events=1)
+
+    async def clean_stop() -> float | None:
+        worker = make_worker(live_config, runner, clock, tmp_path / "clean")
+        worker.start()
+        await asyncio.sleep(0.05)
+        assert worker.next_run_at == pytest.approx(T_START + live_config.window.everyS)
+        await worker.stop()
+        return worker.next_run_at
+
+    async def cancel_first() -> float | None:
+        worker = make_worker(live_config, runner, clock, tmp_path / "cancel")
+        worker.start()
+        await asyncio.sleep(0.05)
+        assert worker._ticker is not None
+        worker._ticker.cancel()  # the worst case: cancellation reaches the loop before the event
+        await worker.stop()
+        return worker.next_run_at
+
+    assert asyncio.run(clean_stop()) is None
+    assert asyncio.run(cancel_first()) is None
 
 
 def test_scheduler_runs_a_window_at_startup(
