@@ -1,6 +1,7 @@
 "use client";
 
-import { Html, Line } from "@react-three/drei";
+import { Line } from "@react-three/drei";
+import { SceneHtml as Html } from "./SceneHtml";
 import { useFrame } from "@react-three/fiber";
 import { colors } from "@hq/visualization";
 import { useLayoutEffect, useMemo, useRef } from "react";
