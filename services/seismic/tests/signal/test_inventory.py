@@ -16,8 +16,9 @@ import socket
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
+import numpy as np
 import pytest
 import requests
 import yaml
@@ -152,10 +153,34 @@ def no_http(url: str, params: Any, timeout_s: float) -> HttpResult:
     raise AssertionError(f"HTTP called on a cache hit: {url} {params}")
 
 
+_FIXTURE_INV = read_inventory(str(CHANNELS_XML))
+
+
+def metadata_rate_probe(
+    net: str, sta: str, loc: str, channels: Any, t0: float, t1: float
+) -> dict[str, float] | None:
+    """Serves each channel at its StationXML rate: the data agree with the metadata."""
+    out: dict[str, float] = {}
+    for cha in channels:
+        sel = _FIXTURE_INV.select(
+            network=net, station=sta, location=loc, channel=cha, time=UTCDateTime(t0)
+        )
+        for n in sel:
+            for st in n:
+                for ch in st:
+                    out[ch.code] = float(ch.sample_rate)
+    return out or None
+
+
+def no_probe(net: str, sta: str, loc: str, channels: Any, t0: float, t1: float) -> None:
+    raise AssertionError(f"rate probe called on a cache hit: {net}.{sta}.{loc}")
+
+
 def build(run: RunSection, cfg: StationSelection, cache: Path, **kw: Any) -> InventoryResult:
     kw.setdefault("client", FixtureClient())
     kw.setdefault("dem", fixture_dem)
     kw.setdefault("http_get", mustang_http)
+    kw.setdefault("rate_probe", metadata_rate_probe)
     return build_inventory(run, cfg, cache, **kw)
 
 
@@ -841,3 +866,217 @@ def test_missing_contracts_package_fails_loudly(
     with pytest.raises(inv.InventoryError, match="CONTRACT-01"):
         inv.write_stations_parquet(result.rows, tmp_path / inv.STATIONS_FILE)
     assert not list(tmp_path.glob(inv.STATIONS_FILE + "*"))
+
+
+# --- sample-rate check (data vs StationXML) ------------------------------------------------------
+
+
+def serving(overrides: dict[str, float | None]) -> Any:
+    """A probe that serves StationXML rates except for the stations in ``overrides``
+    (NET.STA -> served rate, or None for no data)."""
+    calls: list[tuple[str, float]] = []
+
+    def probe(net: str, sta: str, loc: str, channels: Any, t0: float, t1: float) -> Any:
+        calls.append((f"{net}.{sta}", t0))
+        key = f"{net}.{sta}"
+        if key in overrides:
+            rate = overrides[key]
+            return None if rate is None else {cha: rate for cha in channels}
+        return metadata_rate_probe(net, sta, loc, channels, t0, t1)
+
+    probe.calls = calls  # type: ignore[attr-defined]
+    return probe
+
+
+def with_rate(cfg: StationSelection, **update: Any) -> StationSelection:
+    return cfg.model_copy(update={"rateCheck": cfg.rateCheck.model_copy(update=update)})
+
+
+@pytest.mark.smoke
+def test_rate_mismatch_uses_served_rate_and_its_profile(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    res = build(run_section, cfg, tmp_path / "cache", rate_probe=serving({"UU.FOR2": 100.0}))
+    row = by_id(res)["UU.FOR2"]
+    assert row["sampleRateHz"] == 100.0
+    assert row["preprocessProfile"] == "surface-100"
+    det = {d["id"]: d for d in res.report["stations"]}["UU.FOR2"]
+    assert det["rateCheck"]["status"] == "mismatch"
+    assert det["rateCheck"]["metadataHz"] == 200.0 and det["rateCheck"]["dataHz"] == 100.0
+    assert any("serves 100 Hz" in f for f in flags_of(res, "UU.FOR2"))
+    assert res.counts["rateMismatch"] == 1
+    baseline = by_id(build(run_section, cfg, tmp_path / "baseline"))
+    assert baseline["UU.FOR2"]["preprocessProfile"] == "surface-hi"
+    for r in res.rows:
+        if r["id"] != "UU.FOR2":
+            assert r == baseline[r["id"]]
+
+
+@pytest.mark.smoke
+def test_rate_mismatch_skip_and_error_policies(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    probe = serving({"UU.FOR2": 100.0})
+    res = build(run_section, with_rate(cfg, onMismatch="skip"), tmp_path / "a", rate_probe=probe)
+    assert "UU.FOR2" not in by_id(res)
+    assert any(s["site"] == "UU.FOR2" for s in res.report["skippedSites"])
+    with pytest.raises(InventoryError, match="serves 100 Hz"):
+        build(run_section, with_rate(cfg, onMismatch="error"), tmp_path / "b", rate_probe=probe)
+
+
+@pytest.mark.smoke
+def test_rate_unverified_keeps_metadata_or_raises(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    probe = serving({"UU.FOR2": None})
+    res = build(run_section, cfg, tmp_path / "a", rate_probe=probe)
+    assert by_id(res)["UU.FOR2"]["sampleRateHz"] == 200.0
+    assert any("unverified" in f for f in flags_of(res, "UU.FOR2"))
+    assert res.counts["rateUnverified"] == 1
+    tried = [t0 for sid, t0 in probe.calls if sid == "UU.FOR2"]
+    assert len(tried) == len(cfg.rateCheck.probeOffsetsS)  # every in-window offset was tried
+    with pytest.raises(InventoryError, match="no data at any rate probe"):
+        build(run_section, with_rate(cfg, onNoData="error"), tmp_path / "b", rate_probe=probe)
+
+
+@pytest.mark.smoke
+def test_rate_probe_uses_every_in_window_offset(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    first = run_section.window_start_s + cfg.rateCheck.probeOffsetsS[0]
+
+    def probe(net: str, sta: str, loc: str, channels: Any, t0: float, t1: float) -> Any:
+        if f"{net}.{sta}" == "UU.FOR2" and t0 == first:
+            return None
+        return serving({"UU.FOR2": 100.0})(net, sta, loc, channels, t0, t1)
+
+    res = build(run_section, cfg, tmp_path / "cache", rate_probe=probe)
+    det = detail(res, "UU.FOR2")
+    starts = inv.probe_starts(run_section, cfg.rateCheck)
+    assert det["rateCheck"]["probeTimes"] == starts[1:]
+    assert det["rateCheck"]["dataHz"] == 100.0
+
+
+@pytest.mark.smoke
+def test_rate_change_inside_the_window_is_an_error(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    last = inv.probe_starts(run_section, cfg.rateCheck)[-1]
+
+    def probe(net: str, sta: str, loc: str, channels: Any, t0: float, t1: float) -> Any:
+        rate = 100.0 if f"{net}.{sta}" == "UU.FOR2" and t0 == last else None
+        if rate is not None:
+            return {cha: rate for cha in channels}
+        return metadata_rate_probe(net, sta, loc, channels, t0, t1)
+
+    with pytest.raises(InventoryError, match="changes inside the window"):
+        build(run_section, cfg, tmp_path / "cache", rate_probe=probe)
+
+
+@pytest.mark.smoke
+def test_no_data_replies_are_not_cached(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    cache = tmp_path / "cache"
+    build(run_section, cfg, cache, rate_probe=serving({"UU.FOR2": None}))
+    again = serving({})
+    res = build(run_section, cfg, cache, rate_probe=again)
+    assert [sid for sid, _ in again.calls] == ["UU.FOR2"] * len(
+        inv.probe_starts(run_section, cfg.rateCheck)
+    )
+    assert detail(res, "UU.FOR2")["rateCheck"]["status"] == "match"
+
+
+@pytest.mark.smoke
+def test_station_measured_empty_is_not_probed(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    probe = serving({})
+    res = build(run_section, cfg, tmp_path / "cache", rate_probe=probe)
+    unprobed = [d["id"] for d in res.report["stations"] if d["rateCheck"]["status"] == "unprobed"]
+    assert unprobed and all(not by_id(res)[sid]["usedInRun"] for sid in unprobed)
+    assert not any(sid in unprobed for sid, _ in probe.calls)
+
+
+@pytest.mark.smoke
+def test_no_probe_offset_inside_the_window_is_an_error(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    span = run_section.window_end_s - run_section.window_start_s
+    bad = with_rate(cfg, probeOffsetsS=(span,))
+    with pytest.raises(InventoryError, match="fits inside"):
+        build(run_section, bad, tmp_path / "cache")
+
+
+class _FakeFdsn:
+    """Stands in for obspy's FDSN Client in the default probe."""
+
+    script: ClassVar[list[Any]] = []
+    made: ClassVar[int] = 0
+
+    def __init__(self, base: str, timeout: float) -> None:
+        type(self).made += 1
+
+    def get_waveforms(self, *args: Any) -> Any:
+        step = type(self).script.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+
+def _stream(rates: dict[str, list[float]]) -> Any:
+    from obspy import Stream, Trace
+
+    traces = []
+    for cha, rs in rates.items():
+        for r in rs:
+            tr = Trace(data=np.zeros(10, dtype=np.float64))
+            tr.stats.channel = cha
+            tr.stats.sampling_rate = r
+            traces.append(tr)
+    return Stream(traces)
+
+
+@pytest.mark.smoke
+def test_default_probe_retries_parses_and_rejects_mixed_rates(
+    cfg: StationSelection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from obspy.clients import fdsn
+
+    monkeypatch.setattr(fdsn, "Client", _FakeFdsn)
+    monkeypatch.setattr(inv.time, "sleep", lambda s: None)
+    probe = inv.fdsn_rate_probe(cfg.query, cfg.rateCheck)
+    _FakeFdsn.script = [FDSNException("timeout"), _stream({"HHZ": [100.0], "HHN": [100.0]})]
+    assert probe("UU", "X", "01", ["HHZ", "HHN"], 0.0, 5.0) == {"HHZ": 100.0, "HHN": 100.0}
+    _FakeFdsn.script = [FDSNNoDataException("204")]
+    assert probe("UU", "X", "01", ["HHZ"], 0.0, 5.0) is None
+    _FakeFdsn.script = [_stream({"HHZ": [100.0, 200.0]})]
+    with pytest.raises(InventoryError, match="mixed rates"):
+        probe("UU", "X", "01", ["HHZ"], 0.0, 5.0)
+    _FakeFdsn.script = [FDSNException("down")] * (cfg.rateCheck.retries + 1)
+    with pytest.raises(InventoryError, match="failed after"):
+        probe("UU", "X", "01", ["HHZ"], 0.0, 5.0)
+
+
+@pytest.mark.smoke
+def test_rate_probe_results_are_cached(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    cache = tmp_path / "cache"
+    first = build(run_section, cfg, cache, rate_probe=serving({"UU.FOR2": 100.0}))
+    second = build(run_section, cfg, cache, rate_probe=no_probe)
+    assert first.rows == second.rows
+
+
+@pytest.mark.smoke
+def test_components_serving_different_rates_is_an_error(
+    run_section: RunSection, cfg: StationSelection, tmp_path: Path
+) -> None:
+    def probe(net: str, sta: str, loc: str, channels: Any, t0: float, t1: float) -> Any:
+        rates = metadata_rate_probe(net, sta, loc, channels, t0, t1)
+        if f"{net}.{sta}" == "UU.FOR2" and rates:
+            rates[channels[0]] = 100.0
+        return rates
+
+    with pytest.raises(InventoryError, match="different rates"):
+        build(run_section, cfg, tmp_path / "cache", rate_probe=probe)
