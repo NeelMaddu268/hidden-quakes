@@ -8,17 +8,28 @@ import { LABEL_Z_RANGE, numericLabelStyle } from "./labels";
 
 const CANVAS_ORIGIN_PX: [number, number] = [0, 0];
 const pinToCanvasOrigin = () => CANVAS_ORIGIN_PX;
-/** Inset from the canvas's bottom-left corner, and the height of one stacked note (CSS px). */
-const INSET_PX = 16;
-const SLOT_PX = 28;
+/**
+ * Inset from the canvas's bottom-RIGHT corner (the shell's --shell-inset), and the height of one stacked
+ * note (CSS px). Bottom-right because H4's shell owns bottom-left (mode pills, validation panel); the
+ * evidence drawer covers this corner only while it is open, when it covers the canvas anyway.
+ */
+export const CORNER_INSET_PX = 24;
+export const CORNER_SLOT_PX = 28;
+
+/** The note's anchor (its bottom-right corner) in canvas CSS px, for a canvas of `width × height`. */
+export function cornerNoteAnchor(width: number, height: number, slot: number): { right: number; bottom: number } {
+  return { right: width - CORNER_INSET_PX, bottom: height - CORNER_INSET_PX - slot * CORNER_SLOT_PX };
+}
 
 /**
- * A small permanent note pinned to the canvas's bottom-left corner, whatever the camera does.
+ * A small permanent note pinned to the canvas's bottom-right corner, whatever the camera does.
  * Notes stack upward by `slot` (0 = bottom), so the scene's notes never overlap:
  * slot 0 = "Vertical ×N" (references), slot 1 = the abstract-surface note (terrain).
  */
 export function CornerNote({ slot, testId, children }: { slot: number; testId: string; children: ReactNode }) {
+  const width = useThree((s) => s.size.width);
   const height = useThree((s) => s.size.height);
+  const anchor = cornerNoteAnchor(width, height, slot);
   return (
     <Html calculatePosition={pinToCanvasOrigin} zIndexRange={LABEL_Z_RANGE} pointerEvents="none">
       <div
@@ -26,9 +37,10 @@ export function CornerNote({ slot, testId, children }: { slot: number; testId: s
         style={{
           ...numericLabelStyle,
           position: "absolute",
-          left: INSET_PX,
-          top: height - INSET_PX - slot * SLOT_PX,
-          transform: "translateY(-100%)",
+          left: anchor.right,
+          top: anchor.bottom,
+          transform: "translate(-100%, -100%)",
+          whiteSpace: "nowrap",
           color: colors.text,
           padding: "3px 7px",
           border: `1px solid ${colors.contour}`,
