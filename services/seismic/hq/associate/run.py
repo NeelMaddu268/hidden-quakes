@@ -50,7 +50,7 @@ def run(ctx: "RunContext", *, evaluate: Evaluate | None = None) -> None:
 
     with prepared(stations, seis, ctx.config.run, cache_dir=ctx.cache_dir) as setup:
         result, counts = associate_setup(picks, setup, acfg)
-        params: dict[str, Any] = record(acfg, setup)
+        params: dict[str, Any] = record(acfg, setup, picks)
         rows = run_sweep(picks, setup, acfg, evaluate) if acfg.sweep.enabled else []
 
     outputs = {

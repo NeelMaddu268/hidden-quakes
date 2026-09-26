@@ -23,6 +23,7 @@ from hq_contracts.models import Pick, SweepPoint
 
 from hq.associate import AssocResult, associate, associate_detailed
 from hq.associate.core import (
+    drop_outside_window,
     finish,
     merge_duplicates,
     pick_counts,
@@ -516,6 +517,11 @@ def test_record_holds_every_pyocto_argument(world: dict[str, Any]) -> None:
     assert rec["picks"]["minPickProb"] == acfg.minPickProb
     assert "no per-pick weight" in rec["picks"]["weights"]
     assert rec["config"] == acfg.model_dump(mode="json")
+    run = world["run"]
+    assert (rec["window"]["startS"], rec["window"]["endS"]) == (run.window_start_s, run.window_end_s)
+    assert rec["picks"]["nIn"] == len(world["picks"])
+    assert rec["picks"]["tMinS"] == world["picks"]["t"].min()
+    assert rec["picks"]["tMaxS"] == world["picks"]["t"].max()
     import json
 
     json.dumps(rec)  # ProcessingRun.associator is JSON
@@ -594,7 +600,7 @@ def test_duplicates_from_pyocto_are_merged_in_finish(world: dict[str, Any]) -> N
     with prepared(world["stations"], world["cfg"], world["run"], model=HOMOGENEOUS,
                   cache_dir=world["cache"]) as setup:
         raw = run_pyocto(world["picks"], setup, cfg)
-        clean, clean_counts = finish(raw, cfg, setup.origin)
+        clean, clean_counts = finish(raw, cfg, setup)
         first = int(raw.events["eid"].iloc[0])
         dup_rows = raw.assignments[raw.assignments["eid"] == first].iloc[1:]
         dup_eid = int(raw.events["eid"].max()) + 1
@@ -605,10 +611,36 @@ def test_duplicates_from_pyocto_are_merged_in_finish(world: dict[str, Any]) -> N
                                   ignore_index=True),
             picks_in=raw.picks_in, picks_used=raw.picks_used, runtime_s=raw.runtime_s,
         )
-        merged, counts = finish(doubled, cfg, setup.origin)
+        merged, counts = finish(doubled, cfg, setup)
     assert counts["mergedDuplicates"] == clean_counts["mergedDuplicates"] + 1
     pd.testing.assert_frame_equal(merged.events, clean.events)
     pd.testing.assert_frame_equal(merged.picks, clean.picks)
+
+
+@pytest.mark.smoke
+def test_events_outside_the_run_window_are_dropped(world: dict[str, Any]) -> None:
+    """In-window picks of an event whose origin precedes windowStart form no candidate event."""
+    run = world["run"]
+    events = world["events"].head(1).assign(t=run.window_start_s - 1.0, elevM=-3000.0)
+    picks, _ = make_picks(world["stations"], events, n_false=0)
+    inside = picks[picks["t"] >= run.window_start_s].reset_index(drop=True)
+    assert len(inside) >= 2 * world["cfg"].associator.minStations
+    cfg = world["cfg"]
+    with prepared(world["stations"], cfg, run, model=HOMOGENEOUS,
+                  cache_dir=world["cache"]) as setup:
+        raw = run_pyocto(inside, setup, cfg.associator)
+        assert len(raw.events) >= 1 and float(raw.events["t"].min()) < run.window_start_s
+        result, counts = finish(raw, cfg.associator, setup)
+    assert len(result.events) == 0
+    assert counts["droppedOutsideWindow"] == len(raw.events)
+    # [start, end): an origin exactly at windowStart stays, one exactly at windowEnd goes
+    ev = _events([(0, run.window_start_s), (1, run.window_end_s), (2, run.window_end_s - 1e-3)])
+    assign = _assign([(0, "A:P:1", 0.0), (1, "B:P:1", 0.0), (2, "C:P:1", 0.0)])
+    kept, kept_assign, dropped = drop_outside_window(
+        ev, assign, (run.window_start_s, run.window_end_s)
+    )
+    assert kept["eid"].tolist() == [0, 2] and kept_assign["eid"].tolist() == [0, 2]
+    assert dropped == 1
 
 
 # --- input checks and config -------------------------------------------------------------------

@@ -77,7 +77,7 @@ def run_sweep(
         key = (cfg.minPickProb, cfg.nSPicks)  # everything PyOcto sees that the sweep varies
         if key not in raw_cache:
             raw_cache[key] = run_pyocto(picks, setup, cfg)
-        result, counts = finish(raw_cache[key], cfg, setup.origin)
+        result, counts = finish(raw_cache[key], cfg, setup)
         score = evaluate(result) if evaluate is not None else None
         rows.append(SweepRow(params=params, candidates=len(result.events), counts=counts,
                              score=score))

@@ -11,6 +11,12 @@ Flow for one setting of the knobs:
    least ``mergeMinSharedFraction`` of the smaller event's picks become one (transitively). The
    member with the most picks (then the earlier, then the lower PyOcto index) keeps its origin;
    the others add the picks of station-phases it lacks.
+3b. Run window: events whose origin time lies outside ``[windowStart, windowEnd)`` (run.yaml; the
+   public catalog uses the same bounds) are dropped and counted. PyOcto places an origin before
+   its first arrival, so in-window picks can form an event up to one S travel time before
+   ``windowStart``. Their picks are then free for the other events in step 4. The bbox is not
+   applied here (the search volume extends ``volume.horizontalMarginM`` beyond it); association
+   locations are preliminary, so that bound belongs after location.
 4. Shared picks: a pick still in two events stays with the one where its PyOcto residual is
    smallest in magnitude (ties: more picks, earlier, lower index).
 5. Minimums: every event is recounted and must meet PyOcto's pick minimums and ``minStations``.
@@ -86,6 +92,7 @@ class Setup:
     volume: SearchVolume
     tables: TableSet
     origin: Origin
+    window_s: tuple[float, float]  # run window [start, end), epoch s UTC
     velocity_model: dict[str, Any]  # LayerModel.to_record() of the (extended) model used
     station_note: dict[str, Any]
 
@@ -213,6 +220,7 @@ def prepared(
             volume=volume,
             tables=tables,
             origin=run.origin,
+            window_s=(run.window_start_s, run.window_end_s),
             velocity_model=extended.to_record(),
             station_note=note,
         )
@@ -423,6 +431,16 @@ def resolve_shared_picks(
     ) - len(kept)
 
 
+def drop_outside_window(
+    events: pd.DataFrame, assign: pd.DataFrame, window_s: tuple[float, float]
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Drop events whose origin time is outside ``[start, end)`` (module docstring, step 3b)."""
+    start, end = window_s
+    inside = (events["t"] >= start) & (events["t"] < end)
+    kept = events[inside].reset_index(drop=True)
+    return kept, assign[assign["eid"].isin(kept["eid"])].reset_index(drop=True), int((~inside).sum())
+
+
 def pick_counts(assign: pd.DataFrame) -> pd.DataFrame:
     """Per event: nPicks, nP, nS (stations with that phase), nPS (stations with both), nStations."""
     if assign.empty:
@@ -506,22 +524,24 @@ def to_result(events: pd.DataFrame, assign: pd.DataFrame, origin: Origin) -> Ass
 
 
 def finish(
-    raw: RawAssociation, acfg: AssociatorConfig, origin: Origin
+    raw: RawAssociation, acfg: AssociatorConfig, setup: Setup
 ) -> tuple[AssocResult, dict[str, int]]:
     """Steps 3-6 on PyOcto's output; returns the result and its counts."""
     started = time.perf_counter()
     events, assign, merged = merge_duplicates(
         raw.events, raw.assignments, acfg.mergeWithinS, acfg.mergeMinSharedFraction
     )
+    events, assign, outside = drop_outside_window(events, assign, setup.window_s)
     assign, shared = resolve_shared_picks(events, assign)
     events, assign, low_pyocto, low_stations = apply_minimums(events, assign, acfg)
-    result = to_result(events, assign, origin)
+    result = to_result(events, assign, setup.origin)
     counts = {
         "picksIn": raw.picks_in,
         "picksAboveMinProb": raw.picks_used,
         "pyoctoEvents": len(raw.events),
         "pyoctoAssignments": len(raw.assignments),
         "mergedDuplicates": merged,
+        "droppedOutsideWindow": outside,
         "sharedPicksRemoved": shared,
         "droppedBelowPickMinimums": low_pyocto,
         "droppedBelowMinStations": low_stations,
@@ -530,10 +550,10 @@ def finish(
     }
     log.info(
         "associate: %d events (%d picks) at minStations %d, nSPicks %d, minPickProb %s: "
-        "%d duplicates merged, %d shared picks removed, %d below pick minimums, "
-        "%d below minStations (%.2f s)",
+        "%d duplicates merged, %d outside the run window, %d shared picks removed, "
+        "%d below pick minimums, %d below minStations (%.2f s)",
         counts["events"], counts["assocPicks"], acfg.minStations, acfg.nSPicks, acfg.minPickProb,
-        merged, shared, low_pyocto, low_stations, time.perf_counter() - started,
+        merged, outside, shared, low_pyocto, low_stations, time.perf_counter() - started,
     )
     return result, counts
 
@@ -543,12 +563,16 @@ def associate_setup(
 ) -> tuple[AssocResult, dict[str, int]]:
     """One association run on a prepared setup."""
     raw = run_pyocto(picks, setup, acfg)
-    return finish(raw, acfg, setup.origin)
+    return finish(raw, acfg, setup)
 
 
-def record(acfg: AssociatorConfig, setup: Setup) -> dict[str, Any]:
-    """The ``ProcessingRun.associator`` params: every PyOcto argument and how inputs were built."""
+def record(acfg: AssociatorConfig, setup: Setup, picks: pd.DataFrame) -> dict[str, Any]:
+    """The ``ProcessingRun.associator`` params: every PyOcto argument and how inputs were built.
+
+    ``picks``: the input picks (docs/02 ``Pick`` rows), whose count and time span are recorded.
+    """
     assoc_args = associator_kwargs(acfg, setup)
+    t = picks["t"].to_numpy(dtype=np.float64) if "t" in picks.columns else np.empty(0)
     return {
         "pyoctoVersion": pyocto.__version__,
         "pyocto": {
@@ -572,6 +596,15 @@ def record(acfg: AssociatorConfig, setup: Setup) -> dict[str, Any]:
         "picks": {
             "minPickProb": acfg.minPickProb,
             "weights": "none: PyOcto 0.2.0 has no per-pick weight; prob is only the threshold",
+            "nIn": len(picks),
+            "tMinS": float(t.min()) if t.size else None,
+            "tMaxS": float(t.max()) if t.size else None,
+        },
+        "window": {
+            "startS": setup.window_s[0],
+            "endS": setup.window_s[1],
+            "rule": "events with origin time outside [startS, endS) are dropped after the "
+            "duplicate merge (counts.droppedOutsideWindow); the bbox is not applied here",
         },
         "postprocess": {
             "mergeWithinS": acfg.mergeWithinS,
