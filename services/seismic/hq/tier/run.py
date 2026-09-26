@@ -10,9 +10,11 @@ the nearest-station rule measures depth below the nearest used station's sensor)
 ``event_picks.parquet`` (docs/02 §2).
 
 With ``tiering.sweep.enabled`` it also runs the association sweep (``hq.tier.sweep``, with the
-bars just derived) and writes ``sweep.parquet``; disabled, it removes a ``sweep.parquet`` left by
-an earlier tier run, whose Tier A counts used that run's bars. Every output is written under a
-``.part`` name first and moved into place only after all of them were written.
+bars just derived and the run's ``statics.parquet``) and writes ``sweep.parquet``; disabled, it
+removes a ``sweep.parquet`` left by an earlier tier run, whose Tier A counts used that run's bars
+and rules, so ``Validation.sweep`` stays empty until a tier run with the sweep enabled (logged and
+recorded). Every output is written under a ``.part`` name first and moved into place only after
+all of them were written.
 
 ``ctx.record`` gets the counts (tiers for all, additional and matched events, event picks, sweep
 points) and ``ProcessingRun.tiering``: every bar with its source quantile and the size of the
@@ -49,6 +51,7 @@ MATCHES_TABLE = "matches.parquet"
 ARRIVALS_TABLE = "arrivals.parquet"
 FLAGS_TABLE = "locate_flags.parquet"
 STATIONS_TABLE = "stations.parquet"
+STATICS_TABLE = "statics.parquet"
 CATALOG_TABLE = "catalog.parquet"
 EVENTS_TABLE = "events.parquet"
 EVENT_PICKS_TABLE = "event_picks.parquet"
@@ -63,7 +66,9 @@ INPUT_MODELS = {
     "picks": "Pick",
     "stations": "Station",
     "catalog": "CatalogEvent",
+    "statics": "StationStatic",
 }
+STATIC_COLUMNS: tuple[str, ...] = ("stationId", "phase", "staticS")
 
 
 def _part(path: Path) -> Path:
@@ -98,6 +103,22 @@ def check_depth(events: pd.DataFrame, run: RunSection, tol_m: float) -> None:
         )
 
 
+def run_statics(ctx: "RunContext") -> dict[tuple[str, str], float]:
+    """The run's ``statics.parquet`` as ``{(stationId, phase): staticS}`` (LOC-04's statics hook),
+    so sweep points are located with the statics ``events_located.parquet`` was located with."""
+    frame = _read(ctx.path(STATICS_TABLE), "statics")
+    missing = [c for c in STATIC_COLUMNS if c not in frame.columns]
+    if missing:
+        raise TierError(f"{STATICS_TABLE} lacks columns {missing}")
+    keys = list(zip(frame["stationId"].astype(str), frame["phase"].astype(str), strict=True))
+    if len(set(keys)) != len(keys):
+        raise TierError(f"{STATICS_TABLE}: a station-phase appears twice")
+    values = frame["staticS"].to_numpy(dtype=np.float64)
+    if not np.isfinite(values).all():
+        raise TierError(f"{STATICS_TABLE}: non-finite staticS")
+    return dict(zip(keys, values.tolist(), strict=True))
+
+
 def _sweep(
     ctx: "RunContext",
     picks: pd.DataFrame,
@@ -109,8 +130,10 @@ def _sweep(
 
     cfg = ctx.config.seismology
     catalog = _read(ctx.path(CATALOG_TABLE), "catalog")
+    statics = run_statics(ctx)
     run_points, pipeline = real_pipeline(
-        picks, stations, catalog, cfg, ctx.config.run, run_id=ctx.run_id, cache_dir=ctx.cache_dir
+        picks, stations, catalog, cfg, ctx.config.run, run_id=ctx.run_id, cache_dir=ctx.cache_dir,
+        statics=statics,
     )
     started = time.perf_counter()
     points, per_point = score_sweep(run_points, pipeline, cfg, thresholds)
@@ -123,7 +146,8 @@ def _sweep(
     if at_configured:
         log.info(
             "tier sweep: configured point %s gives %d Tier A through the sweep driver; "
-            "events.parquet has %d (they differ when the locate stage applied statics)",
+            "events.parquet has %d (a fresh association of the same picks, located with the "
+            "same statics)",
             configured, at_configured[0]["tierA"], tier_a,
         )
     return points, {
@@ -132,8 +156,14 @@ def _sweep(
         "tierABars": "the bars in 'thresholds' (derived from this run's matched set)",
         "configuredPoint": configured,
         "configuredPointTierAInEvents": tier_a,
-        "note": "each point: associate -> locate (no station statics) -> match -> tiers; "
-        "candidates = located candidate events",
+        "note": "each point: associate -> locate (with the run's statics.parquet) -> match -> "
+        "tiers; candidates = located candidate events",
+        "statics": {
+            "table": STATICS_TABLE,
+            "stationPhases": len(statics),
+            "nonZero": sum(1 for v in statics.values() if v != 0.0),
+            "maxAbsS": max((abs(v) for v in statics.values()), default=0.0),
+        },
         "points": per_point,
         "runtimeS": round(time.perf_counter() - started, 3),
     }
@@ -175,7 +205,7 @@ def run(ctx: "RunContext") -> None:
             ctx, picks, stations, Thresholds.from_record(tiering["thresholds"]), n_a
         )
     else:
-        sweep_record = {"enabled": False}
+        sweep_record = {"enabled": False, "removedEarlierSweep": sweep_path.exists()}
 
     tables: dict[Path, tuple[pd.DataFrame, str]] = {
         ctx.path(EVENTS_TABLE): (result.events, SeismicEvent.__name__),
@@ -193,8 +223,9 @@ def run(ctx: "RunContext") -> None:
             _part(path).unlink(missing_ok=True)
     if sweep_points is None and sweep_path.exists():
         sweep_path.unlink()
-        log.warning("tier: removed %s from an earlier tier run (tiering.sweep.enabled is false; "
-                    "its Tier A counts used that run's bars)", sweep_path)
+        log.warning("tier: removed %s from an earlier tier run: tiering.sweep.enabled is false and "
+                    "its Tier A counts used that run's bars and rules. Validation.sweep stays "
+                    "empty until a tier run with tiering.sweep.enabled true", sweep_path)
 
     counts = result.tiering["counts"]
     stage_counts = {
