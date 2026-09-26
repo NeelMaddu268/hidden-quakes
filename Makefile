@@ -4,7 +4,7 @@ RUN ?=
 .PHONY: help check check-copy check-py check-web contracts check-contracts mock run export api dev build offline publish-run fetch-run runs
 
 help:
-	@echo "make check                  typecheck + lint + smoke tests (run before every PR)"
+	@echo "make check                  typecheck + lint + smoke tests + copy check (run before every PR)"
 	@echo "make check-copy             flag numbers-as-facts and forbidden phrases in README, docs/demo and the shell"
 	@echo "make contracts              regenerate TS from the Python contracts"
 	@echo "make check-contracts        regenerate and fail if the committed TS/schema differ"
@@ -23,7 +23,7 @@ help:
 check: check-py check-web check-copy
 
 check-py:
-	@cd services/seismic && uv run ruff check . ../../packages/contracts/python ../../scripts/mock-fixture.py && { uv run pytest -q -m smoke; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 5 ]; }
+	@cd services/seismic && uv run ruff check . ../../packages/contracts/python ../../scripts/mock-fixture.py && uv run pytest -q -m smoke
 	@cd services/api && uv run ruff check . && uv run pytest -q -m smoke
 
 check-web:
@@ -62,17 +62,7 @@ offline:
 	bash scripts/serve-offline.sh $(if $(NO_BUILD),--no-build,)
 
 publish-run:
-	@set -e; \
-	test -n "$(RUN)" || { echo "usage: make publish-run RUN=<runId>"; exit 1; }; \
-	test -d "data/showcase/runs/$(RUN)" || { echo "no such run: data/showcase/runs/$(RUN)"; exit 1; }; \
-	tarball="$${TMPDIR:-/tmp}/run-$(RUN).tgz"; \
-	tar -czf "$$tarball" -C data/showcase/runs "$(RUN)"; \
-	if gh release view "run-$(RUN)" >/dev/null 2>&1; then \
-	  gh release upload "run-$(RUN)" "$$tarball" --clobber; \
-	else \
-	  gh release create "run-$(RUN)" "$$tarball" --prerelease --title "run $(RUN)" --notes "Pipeline run tables. Fetch with: make fetch-run RUN=$(RUN)"; \
-	fi; \
-	echo "published run-$(RUN)"
+	@bash scripts/publish-run.sh "$(RUN)" $(if $(FORCE),--force,)
 
 fetch-run:
 	@set -e; \
