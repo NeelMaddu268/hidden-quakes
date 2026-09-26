@@ -289,9 +289,15 @@ def test_reveal_order_is_a_permutation_ordered_a_b_c_then_time(bundle: Bundle) -
 
 
 def test_evidence_files_only_for_the_chosen_events(bundle: Bundle) -> None:
-    assert len(bundle.evidence) == 20
+    assert len(bundle.evidence) == 29
     assert set(bundle.evidence) <= set(bundle.events_by_id)
-    assert bundle.meta.scene.heroEventId in bundle.evidence
+    hero_id = bundle.meta.scene.heroEventId
+    assert hero_id in bundle.evidence
+    # The provider preloads the hero plus the first 20 events in reveal order (API-01,
+    # EVIDENCE_PRELOAD_COUNT); every one of those has a file, so mock mode never 404s a preload.
+    by_reveal = sorted(bundle.events, key=lambda e: e.revealOrder)
+    preload = [hero_id, *[e.id for e in by_reveal if e.id != hero_id][:20]]
+    assert set(preload) <= set(bundle.evidence)
     tiers = {bundle.events_by_id[i].tier for i in bundle.evidence}
     assert tiers == {"A", "B", "C"}, "evidence exercises every tier"
     for event_id, ev in bundle.evidence.items():

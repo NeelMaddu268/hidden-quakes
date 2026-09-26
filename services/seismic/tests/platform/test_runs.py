@@ -266,8 +266,17 @@ def test_record_params_field_mapping(config_dir: Path, data_dir: Path) -> None:
     assert run.matching == {"provider": "USGS"}
     assert run.locator == {"grid": "1d"}
     assert run.velocityModel == {"name": "v1"}
+    # H1's stages share `picker` and nest under their own key (REQ-H1-2), like catalog -> matching.
+    ctx.record("inventory", runtime_s=0.5, counts={"stations": 12}, params={"inventory": {"q": 1}})
+    ctx.record("pick", runtime_s=9.0, counts={"picks": 100}, params={"profile": "surface"})
+    ctx.record("baseline", runtime_s=1.0, counts={}, params={"baseline": {"sta": 0.5}})
+    assert ctx.read_run().picker == {
+        "inventory": {"q": 1},
+        "profile": "surface",
+        "baseline": {"sta": 0.5},
+    }
     with pytest.raises(runs.RunError, match="no ProcessingRun field"):
-        ctx.record("download", runtime_s=1.0, counts={}, params={"x": 1})
+        ctx.record("validate", runtime_s=1.0, counts={}, params={"x": 1})
     with pytest.raises(runs.RunError, match="not a ProcessingRun params dict"):
         ctx.record("pick", runtime_s=1.0, counts={}, params={"x": 1}, field="pickerModel")
     with pytest.raises(runs.UnknownStageError, match="bogus"):
@@ -275,7 +284,7 @@ def test_record_params_field_mapping(config_dir: Path, data_dir: Path) -> None:
     for bad in ({"n": "many"}, {"n": 3.0}, {"n": True}):
         with pytest.raises(runs.RunError, match="counts"):
             ctx.record("download", runtime_s=1.0, counts=bad)  # type: ignore[arg-type]
-    assert set(ctx.read_run().runtimeS) == {"catalog", "locate"}  # bad calls wrote nothing
+    assert set(ctx.read_run().runtimeS) == {"catalog", "locate", "inventory", "pick", "baseline"}
 
 
 def test_update_run_allowlist(config_dir: Path, data_dir: Path) -> None:
