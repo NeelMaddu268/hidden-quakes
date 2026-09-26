@@ -34,7 +34,7 @@ class KnownEventsConfig(_Section):
     nEvents: int = Field(ge=1)  # largest public events by magnitude to window
     preS: float = Field(ge=0.0)  # s of data before the catalog origin time
     postS: float = Field(gt=0.0)  # s of data after the catalog origin time
-    minGapS: float = Field(gt=0.0)  # missing coverage shorter than this is jitter, not a gap
+    minGapSamples: float = Field(ge=1.0)  # hole > (minGapSamples - 1) sample intervals is a gap
     maxGapFraction: float = Field(ge=0.0, le=1.0)  # usable only if the gappiest component <= this
     minStations: int = Field(ge=1)  # usable three-component stations a window needs to PASS
     usedInRunOnly: bool  # consider only stations.parquet rows with usedInRun = true
