@@ -215,3 +215,202 @@ mapping exactly, no hard-coded numbers in rendered text, no per-frame allocation
 docs/02, paths stay in-lane. List concrete findings with file:line, most serious first. Don't
 rewrite the code yourself.
 ```
+
+## WEB-07 implementation plan · prepared before the 1–5 AM sleep window
+
+Status (04:10 EDT Sat): implemented and accepted on `agent/WEB-07` (headed Chrome 153 + WebKit 26.5); see
+"WEB-07 completion checkpoint" at the end. Merge after the 1–5 AM no-merge window. Gate S (the depth call) is
+still undecided; plan view is ready to become the hero view if it fails, with no code change.
+
+### Starting point and invariant
+
+WEB-02, WEB-04, the WEB-01 provider cleanup and WEB-05 are integrated into `feat/web`. The scene and
+drawer share H4's provider; the existing shell already maps P to `setView("plan")`, E to the hero,
+and R to reset. `reveal()` preserves a selected plan view. Camera-director tests already cover
+starting the reveal top-down and interrupting a dolly with a view change.
+
+Build a first-class grid-north-up plan view plus a coordinated east-versus-depth section. Both views
+must show exactly the same population, appearance times, filter state and selection as the 3D scene.
+They must consume `useBundle` with no additional fetching or new store/contract fields. Every event
+position comes from ENU; every displayed depth comes from `(refSurfaceElevM - elevM) / 1000`.
+Never use catalog published depth as display depth, rotate to true north, snap sensors to terrain,
+or change inclusion because the depth gate failed.
+
+### Implementation order
+
+1. Fetch origin and inspect the integration state. If main advanced, merge it into feat/web before
+   merging the refreshed lane baseline into this branch. Read the Gate S outcome and current
+   requests; use the real showcase bundle through `?mode=showcase` when it exists. A missing bundle
+   remains an explicit provider error. Keep the synthetic banner for mock data.
+2. Add pure projection/layout helpers and tests under `scene/plan/`. Fit the plan to the same framed
+   candidate population as the 3D view with a data-derived scale bar; include the selected event
+   without silently changing membership. Define the depth section as all events projected onto east
+   versus site depth, explicitly labelled as a projection (no invented slice width or spatial cutoff).
+   Include borehole wellhead-to-sensor lines and finite error extents when fitting it.
+3. Add an orthographic plan camera under `scene/plan/`, wired from H3's Canvas. Use east right and
+   grid north up, exact top-down orientation, and equal horizontal scales. Reuse the existing
+   instanced glyphs, filter driver, selection and reveal clock. Give the plan camera explicit
+   ownership while active; update the H3 camera rig seam so its perspective preset/dolly and orbit
+   momentum cannot overwrite the plan framing. Pan/zoom remain available, rotation does not.
+   Restore the perspective camera and controls cleanly on P/reset, including rapid repeated toggles.
+4. Render the coordinated depth section in a compact, labelled Canvas2D panel in `scene/plan/`.
+   Precompute typed position/error arrays on bundle changes. Its frame callback reads existing
+   appearance times, filter look and selected id, reuses scratch state, and allocates nothing.
+   Use the same token colors and opacity rules as the event material; public points begin visible,
+   candidates appear on the shared reveal clock, and STRICT keeps B/C at background weight.
+   Give the panel a true-scale default; if a deliberate exaggeration is needed to fit, label its
+   numerical factor permanently and independently of the 3D scene's factor. Use SceneMeta.depthLabel
+   verbatim, data-derived ticks, grid-east distance and a visible explanation of the projection.
+5. Plan halos must convey horizontal error whenever hErrM is usable, even if vErrM is null. Do not
+   reuse the 3D ellipsoid's requirement for both errors. Missing uncertainty has no invented halo;
+   the depth section omits only the unavailable vertical error. Implement the plan halo instances in
+   H3 paths and preserve the existing 3D halo behavior. Use MAX blending so overlaps never brighten
+   the uncertainty into event-like signals.
+6. Coordinate picking from both views through `select(id)`. Keep the drawer's E/Escape behavior and
+   the existing ring; use stable ids and the renderer's appearance/filter gates. Reserve space for
+   shell controls and move/size the section so it never covers the evidence drawer or capture its
+   pointer events. Datum, scale, synthetic warning and any exaggeration must remain readable at
+   1280×720 and 4K. Use the stable scene label portal introduced by WEB-01 for 3D HTML labels.
+
+### Acceptance and review before a PR
+
+- Pure tests: grid-north/east orientation, equal plan scale, elevation-derived depths despite a
+  conflicting depthKm, true borehole sensor positions, zero/null uncertainty, degenerate extents,
+  aspect changes and deterministic framing. No contract changes or new synthetic bundle generator.
+- State/browser sequences: P before reveal; P then Space; S then P then Space; P during the reveal;
+  repeated P; resize in plan; E and click from both views; Escape; R while revealing; R after pan/zoom.
+  Counts and appearance times must agree with the same providers/selector used in 3D. Reset restores
+  the initial oblique frame and releases all camera/control ownership.
+- Validate the insurance use case explicitly: missing vErrM still permits honest plan uncertainty;
+  depth-on-edge flags and large/null vertical errors remain visible in evidence without asserting
+  that depth is constrained. Gate S failure changes presentation priority, not data or scientific claims.
+- Headed Chrome and Safari checks at 1280×720 and 4K: readable axes/datum, no panel/drawer overlap,
+  no shader or page exceptions, no new network requests during reveal, and at least 60 fps with
+  2,000 generator-produced events plus terrain/bloom while the depth panel runs. Record actual
+  browser/device, DPR, median fps and slow-frame measurements. If the second view exceeds budget,
+  optimize its drawing batches before reducing visual detail; do not silently thin events.
+- Run `make check`, ticket acceptance and a full self-review against coordinates, frozen store,
+  lane boundaries, determinism and allocation budget. Push and open the template PR into feat/web
+  with Closes #27 only when the implementation is ready; manually close #27 after its approved merge.
+
+### Handoffs to preserve
+
+Main 2803a8a includes all four lanes, VAL-01, API-05 and the scheduler shutdown fix. H4 completed drawer mounting (REQ-H3-5), mock evidence
+preload coverage (REQ-H3-3), and ENU-to-geographic UTM conversion with the matching DEM projection
+(REQ-H3-4). The stock mock can now render the real terrain; retain `?terrain=slab` as the explicit
+fallback. FEAT-01 reference features remain honestly unverified and must stay dashed.
+
+The public Gate M check still needs the one-time Vercel connection and a deployment URL. Offline
+static-export acceptance is distinct from that deployed gate. The refreshed shared run
+`20260926-0210-a04c611` was fetched successfully on this laptop. Its 04:05:21 UTC archive includes
+full-run picks and baseline outputs, but still lacks events, arrivals and matches. An actual export
+fails on missing events.parquet. H2 must publish the completed event tables (REQ-H3-8); H1's waveform
+cache is also absent locally (REQ-H3-9). The default make export invocation has a macOS Bash 3.2
+empty-array failure (REQ-H3-7); passing the script's explicit --data-dir reaches Python safely.
+The user authorized committing a validated generated showcase bundle directly to feat/platform,
+but there is no generated bundle to commit yet. Use /Users/snp/hq-worktrees/platform-export for it.
+
+After WEB-07, WEB-06 remains scheduled after Gate E and WEB-08 retains the full ten-run, two-browser
+hardening checklist. The 1–5 AM no-merge window remains in force.
+
+### Integrated baseline verification after main 544c869
+
+H3 independently built the static export and tested it in headed Chrome at 1280×720, DPR 2: all
+21 evidence preloads succeeded; core bundle files each loaded once; real terrain rendered without
+fallback; reveal and STRICT counts matched provider/selector values; E opened the mounted hero
+drawer (21.3 ms trace paint); validation, Run details and reset worked. There were zero external
+requests, HTTP failures or page/console errors during the tested flow. Explicit `?terrain=slab`
+also displayed its label. This verifies the local production export, not a Vercel deployment.
+
+The web gate passes (404 web tests, 12 token tests, lint and typecheck). Full `make check` on this
+laptop reports seismic 453 passed / 2 skipped and API 18 passed / 1 failed. The scheduler shutdown
+failure reproduces alone and is reported to H4 in REQ-H3-6; do not mark the aggregate gate green.
+
+### Latest integration and export checkpoint · 2026-09-26 01:03 EDT
+
+Supersedes the failing 544c869 test result above. feat/web is synchronized and pushed at 2803a8a;
+agent/WEB-07 merged that baseline before 1 AM. Full make check passes: seismic 465 passed / 2 skipped,
+API 26, web 420, visualization tokens 12, with lint/typecheck/copy checks clean. The production build
+passes. Headed Chrome offline acceptance again passed at 1280×720 DPR 2: 21 evidence preloads,
+one fetch per core bundle file, actual terrain, monotonic reveal and exact STRICT count, E hero
+(19.9 ms trace paint), panels and reset. No external requests, HTTP failures or page/console errors.
+Explicit slab fallback is labelled. Dense feature-label overlap remains a WEB-08 polish item.
+This is mock/local verification; the real showcase and public deployment are still unverified.
+
+The failed export left feat/platform clean at 2803a8a. No source changes outside the H3 lane and no
+bundle commit. The detailed next-agent handoff in the task's outputs directory includes release
+identity, precise export errors, workaround, shared-data/worktree layout and retry steps. Browser
+and local server were stopped after acceptance. WEB-07 remains plan-only; preserve 1–5 AM no merges.
+
+### WEB-07 foundation checkpoint · 2026-09-26 03:34 EDT
+
+The user asked to use the remaining usage and stop fully with saved work before the limit. H3 began
+bounded implementation ahead of the original ~5 AM estimate; no merges occurred during 1–5 AM.
+
+- `scene/plan/geometry.ts`: tested orthographic framing, independent untrimmed depth clipping,
+  site-elevation depth projection, true-scale fitting of all candidates/catalog events/errors and
+  borehole endpoints. It preserves input order and never uses published catalog depth for display.
+- `scene/plan/halos.ts`: typed horizontal uncertainty instances use hErrM alone, preserve exact
+  candidate positions/appearance times, and remain valid when vErrM is null. No invented error radius.
+- `scene/picking/pick.ts`: orthographic stacked-event ties use NDC depth, because clip w is constant;
+  perspective picking retains its original distance key. Three regression tests use a real camera.
+- Full `make check` PASS: seismic 465 passed / 2 skipped, API 26 passed, web 453 passed, token tests 12;
+  lint/typecheck/copy checks clean. New foundation coverage is 33 tests. Third-party SeisBench emitted
+  one Python 3.14 invalid-escape SyntaxWarning during fresh environment import; checks still pass.
+- Self-review fixed an edge-tolerance assertion, narrowed geometry input types to the fields read,
+  and separated camera composition from full-data clipping so pan/zoom does not discard deep outliers.
+
+This is a tested foundation, not a completed WEB-07. No PlanCamera, PlanHalos renderer or depth-section
+panel is mounted yet, and no browser/performance acceptance is claimed for these new modules. Next:
+explicit camera ownership, stable plan portal/panel layout, MAX-blended horizontal rings, allocation-free
+Canvas2D depth projection, shared selection/filter/reveal, and the previously documented full acceptance.
+Retain the existing SceneHtml portal and exact glyph clamp; the event shader already supports orthographic
+projection. The current CameraRig assumes perspective preset ownership, so do not simply replace its
+camera without suspending its director and OrbitControls. Test P/Space/R, rapid toggles and resize.
+
+The release was replaced again at 07:27:29 UTC (03:27 EDT): 945,879 bytes, SHA-256
+`8de669484030182f1efe650e3297619f82486abeaa7f69d75262300f3284d432`. It adds synthetic.json but drops
+root picks and baseline outputs that were in the earlier 04:05 archive; events/arrivals/matches remain
+absent. Scratch inspection did not extract over the earlier fetched run. REQ-H3-8 has an appended FYI.
+Do not overlay versions into a misleading mixed run or infer a real-data depth gate from synthetic.json.
+
+### WEB-07 completion checkpoint · 2026-09-26 04:10 EDT
+
+Implemented on `agent/WEB-07` (6bd8d93 → 7e64650) on top of the 3038c14 foundation:
+
+- **Camera ownership.** `plan/PlanCamera.tsx`: orthographic, straight down, grid north up (`up = [0,0,-1]`),
+  MapControls pan/zoom, no rotation. Canvas mounts it *instead of* CameraRig when `view === "plan"`, so
+  presets, the reveal dolly and orbit momentum can't touch it; drei restores the perspective camera and
+  OrbitControls on P/reset. The pose is declarative (props): drei rebuilds MapControls for whichever camera
+  is default at render time, and a one-shot effect had set the target on the stale perspective-bound
+  instance (plan tilted ~7.4°). `PlanInvariant` now console.errors on entry unless the live camera is
+  orthographic, straight down and grid-north-up; a probe build of the old code proved it fires.
+- **Framing.** `plan/view.ts`: R3F's pixel frustum → zoom = px/km; the framed structure is centered in the
+  region right of the depth-section panel (`plan/layout.ts`); clipping covers every event.
+- **Horizontal uncertainty.** `plan/PlanRingsLayer.tsx` + `ringMaterial.ts`: hErrM-only rings (valid when
+  vErrM is null; none without a usable hErrM), MAX blending, under the bloom threshold, same reveal/STRICT
+  gates as the 3D halos; the 3D ellipsoids are hidden in plan.
+- **Depth section.** `plan/section.ts` + `DepthSection.tsx`: docked Canvas2D panel, every event projected
+  onto grid east vs `(refSurfaceElevM − elevM)/1000`, true scale, SceneMeta.depthLabel verbatim, boreholes at
+  sensorElevM with wellhead lines, STRICT uncertainty arms only where errors exist, shared reveal clock,
+  filter look and selection; click selects with the 3D picker's gates; redraws only on change. It carries
+  the abstract-surface note in plan (the 3D ruler, a point seen end-on, and the stacked slices are hidden).
+- **Layout.** The panel clears the drawer, title/Run details, counters and filter pills, REVEAL, and the
+  bottom-left validation panel + mode pills at 1280×720 → 4K (unit tests + real DOM boxes in the browser).
+- **Safari terrain (found here).** WebKit altered the grayscale `hillshade.png` on decode (non-deterministic
+  checksum), so Safari fell back to the slab. The bake now stores the hillshade in R = G = B of an RGB PNG;
+  height.png byte-identical, checksums unchanged; both engines load the real terrain.
+
+Acceptance (static export, `NEXT_PUBLIC_ALLOW_MOCK=1`; 2,000 events from `scripts/mock-fixture.py` knobs,
+local only): P before the reveal (public only in the section), Space from plan (section fills on the reveal
+clock), STRICT (rings, B/C to background, arms), E hero + drawer (no overlap, also after resizing to
+1920×1080 and back), Esc, pan + 7 rapid P toggles, R → exact start-frame hash (Chrome `c46fd1ca…`, WebKit
+`b307d155…`), P mid-reveal from 3D, slab fallback note in plan, 4K layout; no page/console errors, HTTP
+failures or external requests. Chrome 153 (Apple M4 Pro, 120 Hz): median 120 fps in every phase with 2,000
+events + terrain + bloom + panel, 0 frames > 20 ms. WebKit 26.5: median 58.8 fps (rAF capped at 60),
+0 frames > 33 ms. `make check`: seismic 465 passed / 2 skipped, API 26, web 492, tokens 12, copy clean.
+
+WEB-08 items found while testing (not WEB-07 scope): the VE badge's CornerNote sits in the canvas's
+bottom-left, under H4's mode pills (hidden today only because the mock's VE is 1); in 3D oblique the depth
+ruler title and unverified-well labels can overlap; the true-scale section shows a compact cluster when
+Tier C events scatter wide (a "fit structure" toggle would help, clearly labelled).
