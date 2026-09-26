@@ -43,7 +43,7 @@ from hq.associate.frame import (
 )
 from hq.associate.result import EVENT_DTYPES, PICK_DTYPES
 from hq.associate.run import run as stage_run
-from hq.associate.sweep import SweepScore, grid
+from hq.associate.sweep import SweepScore, grid, run_sweep, sweep_points
 from hq.associate.tables import (
     HEADER,
     PADDING,
@@ -765,43 +765,74 @@ def test_stage_writes_tables_record_and_counts_sweep(
     from hq.associate import core
 
     monkeypatch.setattr(core, "load_configured_model", lambda _cfg: HOMOGENEOUS)
-    sweep = {"enabled": True, "minStations": [4, 8], "nSPicks": [0, 2], "minPickProb": [0.3]}
-    seis = _cfg(world["cfg"], sweep=sweep)
+    sweep = {"enabled": True, "minStations": [4, 8], "nSPicks": [1, 2], "minPickProb": [0.3]}
+    seis = _cfg(world["cfg"], sweep=sweep)  # the configured point (0.3, nS 1) is a sweep point
     ctx = make_ctx(world["run"], seis)
     _write_inputs(ctx, world)
     ctx.path("sweep.parquet").write_bytes(b"stale")
+    runs: list[float] = []
+    real_run_pyocto = core.run_pyocto
+
+    def counting_run_pyocto(*args: Any, **kwargs: Any) -> Any:
+        runs.append(1.0)
+        return real_run_pyocto(*args, **kwargs)
+
+    monkeypatch.setattr("hq.associate.sweep.run_pyocto", counting_run_pyocto)
     stage_run(ctx)
     events = read_table(ctx.path("assoc_events.parquet"))
     picks = read_table(ctx.path("assoc_picks.parquet"))
     assert events.attrs["model"] == "AssocEvent" and len(events) == N_EVENTS
     assert list(picks.columns) == list(PICK_DTYPES) and not picks["pickId"].duplicated().any()
-    assert not ctx.path("sweep.parquet").exists()  # no evaluator: no SweepPoint rows, stale gone
+    assert not ctx.path("sweep.parquet").exists()  # the stale sweep of another association
     assert not list(ctx.run_dir.glob("*.part"))
+    assert len(runs) == 1  # the sweep reran PyOcto only for nS 2, not the configured point
     (rec,) = ctx.records
     assert rec["stage"] == "associate" and rec["counts"]["events"] == N_EVENTS
     assert rec["counts"]["sweepPoints"] == 4
     params = rec["params"]
     assert params["sweep"]["grid"] == grid(seis.associator)
-    assert next(p["candidates"] for p in params["sweep"]["points"]) >= N_EVENTS
-    assert "LOC-06" in params["sweep"]["note"] and not params["sweep"]["sweepTableWritten"]
+    assert [p["associated"] for p in params["sweep"]["points"]][1] == N_EVENTS  # (0.3, 1, 8)
+    assert "LOC-06" in params["sweep"]["note"]
     assert (ctx.cache_dir / params["tables"]["directory"]).is_dir()
     assert str(ctx.cache_dir) not in json.dumps(params)  # no machine-specific path in run.json
 
+    ctx.path("known").mkdir()
+    write_table(world["stations"], ctx.path("known/picks.parquet"), "Station")
+    with pytest.raises(ValueError, match="must hold 'Pick' rows"):
+        stage_run(make_ctx(world["run"], _cfg(seis, picksTable="known/picks.parquet")))
+
+
+@pytest.mark.smoke
+def test_sweep_scores_every_point_with_the_evaluator(
+    world: dict[str, Any], tmp_path: Path
+) -> None:
+    """LOC-06 calls run_sweep with an evaluator and writes sweep_points as sweep.parquet."""
+    sweep = {"enabled": True, "minStations": [4, 8], "nSPicks": [1], "minPickProb": [0.3, 0.5]}
+    acfg = _cfg(world["cfg"], sweep=sweep).associator
     calls: list[int] = []
 
     def evaluate(result: AssocResult) -> SweepScore:
         calls.append(len(result.events))
-        return SweepScore(recovered_public=len(result.events) // 2, tier_a=1)
+        return SweepScore(candidates=len(result.events) - 1,
+                          recovered_public=len(result.events) // 2, tier_a=1)
 
-    stage_run(ctx, evaluate=evaluate)
-    points = read_models(ctx.path("sweep.parquet"), SweepPoint)
+    with prepared(world["stations"], world["cfg"], world["run"], model=HOMOGENEOUS,
+                  cache_dir=world["cache"]) as setup:
+        rows = run_sweep(world["picks"], setup, acfg, evaluate)
+        unscored = run_sweep(world["picks"], setup, acfg)
+    points = sweep_points(rows)
     assert len(points) == 4 == len(calls)
-    for point, (prob, n_s, n_sta) in zip(
-        points, itertools.product([0.3], [0, 2], [4, 8]), strict=True
+    for point, row, (prob, n_s, n_sta) in zip(
+        points, rows, itertools.product([0.3, 0.5], [1], [4, 8]), strict=True
     ):
         assert point.params == {"minPickProb": prob, "nSPicks": n_s, "minStations": n_sta}
-        assert point.recoveredPublic == point.candidates // 2 and point.tierA == 1
-    assert points[0].candidates >= points[1].candidates  # minStations 4 keeps at least minStations 8
+        assert point.candidates == row.candidates - 1  # the evaluator's located count
+        assert point.recoveredPublic == row.candidates // 2 and point.tierA == 1
+    assert rows[0].candidates >= rows[1].candidates  # minStations 4 keeps at least minStations 8
+    write_models(points, tmp_path / "sweep.parquet", SweepPoint)  # docs/02 SweepPoint rows
+    assert read_models(tmp_path / "sweep.parquet", SweepPoint) == points
+    with pytest.raises(ValueError, match="no evaluator score"):
+        sweep_points(unscored)
 
 
 @pytest.mark.smoke
@@ -811,7 +842,7 @@ def test_stage_resolves_from_the_package_and_the_module() -> None:
 
     assert importlib.import_module("hq.associate").run is stage_run
     assert importlib.import_module("hq.associate.run").run is stage_run
-    assert list(inspect.signature(stage_run).parameters) == ["ctx", "evaluate"]
+    assert list(inspect.signature(stage_run).parameters) == ["ctx"]  # docs/02 §4, exactly
 
 
 # --- throughput (not smoke: about a minute) ------------------------------------------------------
