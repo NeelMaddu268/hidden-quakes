@@ -38,6 +38,9 @@ velocity:
   # - In basin columns, cells above ground hold Vp 0.73271 / Vs 0.40002 km/s (near the p. 3
   #   surface anchors, Vp 736 m/s and Vs30 400 m/s), not the 0.01 km/s p. 3 states. grid3d
   #   .airHandling says what the tables do with them.
+  # - A station in a column with no basin cells may sit outside the real 3D model even inside the
+  #   grid (LOC-01): use the 1D fallback there (grid3d.constantColumns), or confirm with the
+  #   authors.
   # - Vp and Vs are NaN in a strip at the west edge (E 315300-315400, N 4270750-4276200), all depths.
   model3d:
     submissionUrl: https://gdr.openei.org/submissions/1800
@@ -100,6 +103,15 @@ grid3d:
   # constant air value. Columns with one value at every elevation carry no ground surface in the
   # file and keep their values (their air already holds that velocity). asFile keeps every value.
   airHandling: topSurfaceVelocity
+  # Receivers in those one-value columns (velocity.model3d above: basement 5.8 / 3.392 km/s from
+  # the model's bottom to its top, no ground surface, no basin data; showcase: four Mineral
+  # Mountains outcrop stations and two on the valley floor west of the basin cut). fallback1d:
+  # no 3D table, their 1D tables instead (LOC-01's guidance; the record names them); asFile: a 3D
+  # table from those values. The lattice covers them either way, so switching this rebuilds
+  # nothing. LOC-07 review: without statics, asFile puts the matched events' depths kilometres
+  # above the catalog's and the outcrop stations' columns alone cause it (diagnostics.md and
+  # _runners/LOC-07_acceptance.out give the numbers).
+  constantColumns: fallback1d
   # Exact layered times of the receiver's own model column (50 m cells) within this radius (m):
   # the near-surface under the station, which the resampled cells can't hold, enters every
   # table through it. At least 4 cells (checked).

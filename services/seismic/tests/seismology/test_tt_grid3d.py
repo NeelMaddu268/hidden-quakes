@@ -20,6 +20,7 @@ from hq.locate.locator import GRID3D, Locator, LocatorSetup, build_locator, make
 from hq.locate.synthetic import run_synthetic
 from hq.locate.tt_grid import build_station_tables, layered_first_arrival
 from hq.locate.tt_grid3d import (
+    CONSTANT_COLUMN_REASON,
     Grid3dSpec,
     Model3dSource,
     Table3d,
@@ -27,7 +28,11 @@ from hq.locate.tt_grid3d import (
     air_mask,
     build_station_tables3d,
     column_model,
+    ground_elev_m,
     handle_air,
+    open_model3d,
+    resample,
+    station_columns,
 )
 from hq.locate.velocity import LayerModel
 
@@ -186,6 +191,28 @@ def test_grid3d_config_validation(loc02: Any) -> None:
     del bad["grid3d"]
     with pytest.raises(pydantic.ValidationError, match="grid3d"):
         SeismologyConfig.model_validate(bad)
+    assert cfg.grid3d.constantColumns == "fallback1d"
+    for spacing in (50.0, 250.0):  # the ticket's range is 100-200 m
+        with pytest.raises(pydantic.ValidationError, match="spacingM"):
+            Grid3dConfig.model_validate({**g3, "spacingM": spacing, "seedRadiusM": 4000.0})
+    with pytest.raises(pydantic.ValidationError, match="constantColumns"):
+        Grid3dConfig.model_validate({**g3, "constantColumns": "mask"})
+
+
+@pytest.mark.smoke
+def test_locate_without_cache_dir_finds_the_data_dir_for_grid3d(
+    seismology_config: SeismologyConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/02 locate() has no cache_dir: grid3d takes the data dir's cache (the 3D model lives
+    there), grid1d keeps its per-process temporary cache."""
+    from hq.locate import default_cache_dir
+
+    monkeypatch.setenv("HQ_DATA_DIR", str(tmp_path))
+    cfg1 = seismology_config
+    cfg3 = cfg1.model_copy(update={"locator": cfg1.locator.model_copy(update={"method": GRID3D})})
+    assert default_cache_dir(cfg3) == tmp_path.resolve() / "cache"
+    temp = default_cache_dir(cfg1)
+    assert temp != tmp_path.resolve() / "cache" and temp.name.startswith("hq-locate-ttgrids-")
 
 
 # --- non-smoke: solver accuracy, fallback, cache, locator and synthetic test ---------------------
@@ -193,7 +220,7 @@ def test_grid3d_config_validation(loc02: Any) -> None:
 
 def test_homogeneous_3d_model_matches_analytic(loc02: Any, tmp_path: Path) -> None:
     run = loc02.run_section()
-    cfg = grid3d_config(loc02)
+    cfg = grid3d_config(loc02, constantColumns="asFile")  # every column holds one value
     vp, vs = 4000.0, 2300.0
     source = toy_model(run, lambda e, n, z: np.full(e.shape, vp), lambda e, n, z: np.full(e.shape, vs))
     stations = few_stations(loc02, run, ("T.S01", "T.B02"))  # a surface and a borehole receiver
@@ -364,7 +391,8 @@ def test_toy_layer_model_is_the_column(loc02: Any) -> None:
 def test_stage_locate_with_grid3d_writes_the_1d_vs_3d_section(
     loc02: Any, make_ctx: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Stage locate on grid1d, then on grid3d in the same run dir: diagnostics.md compares them."""
+    """Stage locate with grid3d relocates the same association with grid1d in the same run and
+    diagnostics.md compares the two (no earlier 1D run in the run dir needed)."""
     import importlib
 
     from hq_contracts.io import read_table, write_table
@@ -412,24 +440,192 @@ def test_stage_locate_with_grid3d_writes_the_1d_vs_3d_section(
     write_table(typed_frame({c: [r[c] for r in links] for c in PICK_DTYPES}, PICK_DTYPES),
                 ctx.path("assoc_picks.parquet"), "AssocPick")
     stage = importlib.import_module("hq.locate.run").run
-    stage(ctx)
-    assert set(read_table(ctx.path("events_located.parquet"))["quality_method"]) == {"grid1d"}
     ctx3 = dataclasses.replace(ctx, config=dataclasses.replace(ctx.config, seismology=cfg3))
     stage(ctx3)
     ev = read_table(ctx.path("events_located.parquet"))
     assert set(ev["quality_method"]) == {GRID3D}
     report = ctx.path("diagnostics.md").read_text(encoding="utf-8")
     assert "## 1D vs 3D travel times (LOC-07)" in report
-    assert "Against the run dir's earlier grid1d locations of the same association (2 events" in report
+    assert ("Against grid1d locations of the same association, made in this stage run with the "
+            "same statics configuration (2 events") in report
     assert "method `grid3d`" in report and "3D minus 1D table time" in report
     assert "from the 3D tables themselves (grid3d)" in report  # row 2
+    assert "the locator's own 3D tables" in report  # the synthetic section's forward model
+    assert "Events above the 3D model's ground" in report
+    assert "nothing here asks for 3D grids" not in report
     velocity, params = ctx3.records[-2]["params"], ctx3.records[-1]["params"]
     assert velocity["method"] == GRID3D and velocity["fallback1d"]["stations"] == {}
     assert params["method"] == GRID3D and params["tables3d"]["stations3d"]
     assert params["synthetic"]["method"] == GRID3D
+    assert params["grid1dComparisonRuntimeS"] > 0
     # The picks are exact 3D times: grid3d puts the events back on the fine lattice.
     truth = {"a0": (500.0, -300.0, -2000.0), "a1": (-1200.0, 900.0, -3200.0)}
     flags = read_table(ctx.path("locate_flags.parquet"))
     for r in ev.merge(flags[["eventId", "assocId"]], left_on="id", right_on="eventId").itertuples():
         e, n, z = truth[r.assocId]
         assert abs(r.elevM - z) <= 25.0 and np.hypot(r.enu_e - e, r.enu_n - n) <= 25.0
+
+
+# --- the NetCDF path (a tiny file written in the test) ------------------------------------------
+
+NC_SPACING_M = 50.0  # the GDR 1800 file's node spacing
+NC_E0_M, NC_N0_M = -1030.0, -1020.0  # ENU of the first node: off the 100 m lattice, as for real
+NC_NODES = 41
+NC_ELEV = np.arange(-1000.0, 1000.0 + 1.0, NC_SPACING_M)
+NC_AIR = (0.73271, 0.40002)  # km/s, the file's above-ground value
+NC_BASIN_E_M = -200.0  # basin columns east of this ENU easting, one-value columns west of it
+NC_GROUND_M = 575.0  # basin columns: ground between the 550 m and 600 m nodes
+
+
+def _nc_values() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """(e, n, Vp, Vs): Vp/Vs in km/s, indexed (northing, easting, elevation)."""
+    e = NC_E0_M + NC_SPACING_M * np.arange(NC_NODES)
+    n = NC_N0_M + NC_SPACING_M * np.arange(NC_NODES)
+    _, ee, zz = np.meshgrid(n, e, NC_ELEV, indexing="ij")
+    basin = ee > NC_BASIN_E_M
+    vp = np.full(ee.shape, 5.8)
+    vs = np.full(ee.shape, 3.392)
+    sediment = basin & (zz >= 0.0) & (zz < NC_GROUND_M)
+    vp[sediment], vs[sediment] = 2.5, 1.2
+    air = basin & (zz > NC_GROUND_M)
+    vp[air], vs[air] = NC_AIR
+    vp[-1, -1, :] = vs[-1, -1, :] = np.nan  # one column without values (the file's NaN strip)
+    return e, n, vp, vs
+
+
+def _write_nc(path: Path, run: Any, *, dims_ok: bool = True) -> None:
+    import xarray as xr
+
+    x0, y0 = origin_utm(run.origin)
+    e, n, vp, vs = _nc_values()
+    order = ("elevation", "easting", "northing")  # not the (northing, easting, elevation) we use
+    data = {name: (order, np.transpose(v, (2, 1, 0))) for name, v in (("Vp", vp), ("Vs", vs))}
+    if not dims_ok:
+        data["Vs"] = (("elevation", "easting", "x"), np.transpose(vs, (2, 1, 0)))
+    xr.Dataset(data, coords={"elevation": NC_ELEV, "easting": e + x0, "northing": n + y0}
+               ).to_netcdf(path)
+
+
+def _nc_setup(loc02: Any, tmp_path: Path) -> tuple[Any, SeismologyConfig, Model3dSource, Any]:
+    run = loc02.run_section()
+    base = loc02.test_config()
+    path = tmp_path / "toy-model.nc"
+    _write_nc(path, run)
+    m3 = base.velocity.model3d.model_copy(update={
+        "cacheFile": path.name, "expectedBytes": path.stat().st_size, "units": "km/s",
+        "airVp": NC_AIR[0], "airVs": NC_AIR[1]})
+    return run, base, open_model3d(path, m3), m3
+
+
+def _nc_grid3d(constant_columns: str) -> Grid3dConfig:
+    return Grid3dConfig(spacingM=100.0, horizontalMarginM=0.0, topMarginM=100.0,
+                        bottomElevM=-900.0, airHandling="topSurfaceVelocity",
+                        constantColumns=constant_columns, seedRadiusM=400.0, fmmOrder=2)
+
+
+def _nc_stations() -> pd.DataFrame:
+    rows = [("N.BAS", 300.0, 0.0, 500.0),  # basin column, sensor below its ground
+            ("N.CON", -600.0, 100.0, 700.0),  # one-value column
+            ("N.NAN", NC_E0_M + 40 * NC_SPACING_M, NC_N0_M + 40 * NC_SPACING_M, 0.0),
+            ("N.EDGE", -1020.0, 0.0, 0.0),  # inside the model, west of the 100 m lattice's edge
+            ("N.OUT", 2000.0, 0.0, 0.0)]  # outside the model
+    return pd.DataFrame(rows, columns=["id", "enu_e", "enu_n", "sensorElevM"])
+
+
+def test_model_file_units_dims_and_columns(loc02: Any, tmp_path: Path) -> None:
+    run, _, source, m3 = _nc_setup(loc02, tmp_path)
+    _, _, vp_kms, vs_kms = _nc_values()
+    vp, vs = source.load()  # (northing, easting, elevation), m/s
+    np.testing.assert_array_equal(vp, vp_kms * 1000.0)
+    np.testing.assert_array_equal(vs, vs_kms * 1000.0)
+    col_vp, col_vs = source.column(3, 30)
+    np.testing.assert_array_equal(col_vs, vs[3, 30])
+    np.testing.assert_array_equal(col_vp, vp[3, 30])
+    many_vp, _ = source.columns([3, 7], [30, 2])
+    np.testing.assert_array_equal(many_vp, vp[[3, 7], [30, 2]])
+    assert source.units == "km/s" and source.air_m_per_s == pytest.approx(
+        (NC_AIR[0] * 1000.0, NC_AIR[1] * 1000.0))
+    np.testing.assert_allclose(ground_elev_m(vp[[3, 3], [30, 2]], source), [NC_GROUND_M, np.nan])
+    with pytest.raises(ValueError, match="partial download"):
+        open_model3d(Path(str(source.path)), m3.model_copy(update={"expectedBytes": 1}))
+    with pytest.raises(FileNotFoundError, match="missing"):
+        open_model3d(tmp_path / "absent.nc", m3)
+    bad = tmp_path / "bad-dims.nc"
+    _write_nc(bad, run, dims_ok=False)
+    with pytest.raises(ValueError, match="expected variable Vs"):
+        open_model3d(bad, m3.model_copy(update={"expectedBytes": bad.stat().st_size}))
+    kinds = station_columns(source, _nc_stations(), origin_utm(run.origin))
+    assert kinds["N.BAS"].kind == "basin" and kinds["N.BAS"].in_model
+    assert (kinds["N.BAS"].ground_low_elev_m, kinds["N.BAS"].ground_high_elev_m) == (550.0, 600.0)
+    assert kinds["N.CON"].kind == "constant" and kinds["N.CON"].in_model
+    assert not kinds["N.NAN"].in_model and "no (or partial) values" in str(kinds["N.NAN"].reason)
+    assert kinds["N.OUT"].reason == "outside the model's horizontal extent"
+
+
+def test_resampling_weights_model_cells_by_overlap_on_a_misaligned_lattice(
+    loc02: Any, tmp_path: Path
+) -> None:
+    run, _, source, _ = _nc_setup(loc02, tmp_path)
+    vp, _ = source.load()
+    grid = Grid3dSpec(spacing_m=100.0, e0_m=-900.0, n0_m=-900.0, z0_m=-900.0, n_e=17, n_n=17,
+                      n_z=17, origin_utm_e_m=origin_utm(run.origin)[0],
+                      origin_utm_n_m=origin_utm(run.origin)[1])
+    speed = resample(vp, source, grid)
+    e_cells = NC_E0_M + NC_SPACING_M * np.arange(NC_NODES)  # model node ENU
+    n_cells = NC_N0_M + NC_SPACING_M * np.arange(NC_NODES)
+
+    def overlap(x: float, cells: np.ndarray) -> np.ndarray:
+        return np.clip(np.minimum(x + 50.0, cells + 25.0) - np.maximum(x - 50.0, cells - 25.0), 0,
+                       None)
+
+    for k, j, i in ((13, 9, 7), (14, 3, 8), (9, 12, 9), (15, 5, 12)):  # across the basin edge
+        w = (overlap(grid.n_nodes()[j], n_cells)[:, None, None]
+             * overlap(grid.e_nodes()[i], e_cells)[None, :, None]
+             * overlap(grid.z_nodes()[k], NC_ELEV)[None, None, :])
+        finite = np.isfinite(vp)
+        expected = w[finite].sum() / (w[finite] / vp[finite]).sum()
+        assert speed[k, j, i] == pytest.approx(expected, rel=1e-12)
+
+
+def test_constant_columns_knob_and_model_edge_fallback(loc02: Any, tmp_path: Path) -> None:
+    import types
+
+    from hq.locate.statics import explain_terms, facts_grid3d
+
+    run, base, source, _ = _nc_setup(loc02, tmp_path)
+    stations = _nc_stations()
+    volume = VolumeBox(-500.0, 500.0, -500.0, 500.0, -800.0, 400.0)
+    kw = {"origin_utm": origin_utm(run.origin), "volume": volume, "cache_dir": tmp_path,
+          "vp_range_m_per_s": base.velocity.plausibleVpMPerS,
+          "vs_range_m_per_s": base.velocity.plausibleVsMPerS, "column_grid": base.grids}
+    fall = build_station_tables3d(stations, source, _nc_grid3d("fallback1d"), **kw)
+    as_file = build_station_tables3d(stations, source, _nc_grid3d("asFile"), **kw)
+    assert fall.grid == as_file.grid  # the knob never moves the lattice
+    assert fall.stations_3d == ("N.BAS",) and as_file.stations_3d == ("N.BAS", "N.CON")
+    assert fall.fallback["N.CON"] == CONSTANT_COLUMN_REASON
+    for t3 in (fall, as_file):
+        assert t3.fallback["N.EDGE"] == "outside the 3D lattice (model edge)"
+        assert set(t3.fallback) >= {"N.NAN", "N.OUT", "N.EDGE"}
+    assert (as_file.n_built, as_file.n_loaded) == (2, 2)  # N.BAS's tables came from the cache
+    np.testing.assert_array_equal(fall.table("N.BAS", "S").times_s,
+                                  as_file.table("N.BAS", "S").times_s)
+    assert fall.to_record()["constantColumns"] == "fallback1d"
+    # Static explanations against the 3D model use the station's own 3D column.
+    layer = loc02.toy_model(TOPS, VP, VS)
+    st = stations.iloc[:2].assign(sensorElevM=[500.0, 700.0])
+    facts = facts_grid3d(types.SimpleNamespace(tables3d=as_file,  # type: ignore[arg-type]
+                                               tables=types.SimpleNamespace(model=layer)), st)
+    assert facts["N.BAS"].vpvs == pytest.approx(2.5 / 1.2)
+    assert facts["N.CON"].vpvs == pytest.approx(5.8 / 3.392)
+    assert "between 550 and 600 m ASL" in facts["N.BAS"].elevation
+    assert "one velocity at every elevation" in facts["N.CON"].elevation
+    terms = pd.DataFrame([{"stationId": s, "phase": ph, "staticS": v, "rawS": v, "nEvents": 10,
+                           "madS": 0.01} for s, p, sv in (("N.BAS", 0.2, 0.6), ("N.CON", 0.0, 0.0))
+                          for ph, v in (("P", p), ("S", sv))])
+    ex = explain_terms(terms, st, layer, (0.0, 0.0), 0.15, 3, base.statics.explain, facts)
+    text = ex.set_index(["stationId", "phase"]).loc[("N.BAS", "S"), "explanation"]
+    assert "against the 3D model" in text and "Vp/Vs 2.08 at the sensor" in text
+    assert "extended upward" not in text
+    fb = facts_grid3d(types.SimpleNamespace(tables3d=fall,  # type: ignore[arg-type]
+                                            tables=types.SimpleNamespace(model=layer)), st)
+    assert fb["N.CON"].against.startswith("its 1D tables")

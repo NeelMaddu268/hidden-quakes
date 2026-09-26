@@ -126,18 +126,26 @@ class Grid3dConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Node spacing (m) of the resampled model and the tables, the same along e, n and elevM.
-    # Nodes sit at multiples of it in the run's ENU frame (e, n) and above bottomElevM.
-    spacingM: float = Field(gt=0)
+    # Nodes sit at multiples of it in the run's ENU frame (e, n) and above bottomElevM. LOC-07's
+    # range: 100-200 m.
+    spacingM: float = Field(ge=100.0, le=200.0)
     # Horizontal extent: the bounding box of the search volume and every receiver inside the 3D
-    # model, plus this margin (m) on each side, clipped to the model's own extent.
+    # model's extent, plus this margin (m) on each side, clipped to the model's own extent.
     horizontalMarginM: float = Field(ge=0)
     # Grid top: the highest in-model receiver or the search-volume top, whichever is higher, plus
     # this margin (m), snapped up onto the lattice and capped at the model's top.
     topMarginM: float = Field(ge=0)
-    bottomElevM: float  # grid bottom (m ASL); at or above the model's bottom node (checked on load)
+    # Grid bottom (m ASL): not above locator.volume.bottomElevM (checked on load) and not below
+    # the model's bottom node (checked when the lattice is built, hq.locate.tt_grid3d.make_grid3d).
+    bottomElevM: float
     # Cells above the ground in the model file (hq.locate.tt_grid3d, "Air"): topSurfaceVelocity
     # gives them the velocity of their column's topmost ground cell; asFile keeps the file values.
     airHandling: Literal["topSurfaceVelocity", "asFile"]
+    # A receiver whose model column holds one value at every elevation (no ground surface and no
+    # basin data in the file there: basement outcrop, or the valley floor west of the model's
+    # basin cut): fallback1d gives it no 3D table (it uses its 1D tables, named in the record);
+    # asFile builds its 3D table from those values.
+    constantColumns: Literal["fallback1d", "asFile"]
     # Near-receiver initialisation: nodes within this distance of the receiver get the exact
     # layered times of the receiver's own model column; the eikonal solve starts inside it.
     seedRadiusM: float = Field(gt=0)

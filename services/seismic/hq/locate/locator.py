@@ -93,7 +93,6 @@ log = logging.getLogger(__name__)
 
 GRID1D = "grid1d"  # LocationQuality.method values
 GRID3D = "grid3d"
-METHOD = GRID1D  # the 1D locator's method (kept for callers of the grid1d path)
 PICK_COLUMNS = ("id", "stationId", "phase", "t", "prob")
 STATION_COLUMNS = ("id", "enu_e", "enu_n", "enu_u", "sensorElevM")
 

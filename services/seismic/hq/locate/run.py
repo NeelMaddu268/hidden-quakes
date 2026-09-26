@@ -23,6 +23,11 @@ pass 1 and logs that the statics pass needs a match first. selfConsistent needs 
 After pass 2 the run dir's ``matches.parquet`` belongs to the pass-1 locations (logged): stage
 tier (``hq.tier.run.check_matches_current``) and a further locate refuse it until match reruns.
 
+With ``locator.method`` grid3d (LOC-07) the stage also locates the same association with grid1d,
+the same statics configuration and the same reference events (``grid1d_comparison``; about one
+more locate pass, nothing of it written) for diagnostics.md's 1D vs 3D section, so every grid3d
+run's report carries the 1D vs 3D depth-shift and residual comparison.
+
 ``ctx.record`` gets the counts, the runtime, the locator record (``ProcessingRun.locator``, with
 the stage's conventions under ``locate``, the synthetic test's params under ``synthetic`` and the
 diagnostics knobs) and the top-extended velocity model the tables were solved on
@@ -46,14 +51,19 @@ from hq_contracts.io import read_table, write_table
 
 from hq.locate import LocateDetails
 from hq.locate.diagnostics import (
+    Comparison1d,
     DiagnosticsInputs,
-    PreviousLocation,
     build_diagnostics,
     catalog_uncertainties,
 )
-from hq.locate.locator import LocatorSetup
+from hq.locate.locator import GRID1D, GRID3D, LocatorSetup
 from hq.locate.result import ARRIVALS_MODEL, EVENTS_MODEL, FLAGS_MODEL, STATICS_MODEL
-from hq.locate.statics import REFERENCE_EVENTS, locate_with_statics, reference_pairs
+from hq.locate.statics import (
+    REFERENCE_EVENTS,
+    StaticsOutcome,
+    locate_with_statics,
+    reference_pairs,
+)
 from hq.locate.synthetic import (
     SyntheticResult,
     measured_pick_stats,
@@ -89,8 +99,7 @@ PART_SUFFIX = ".part"
 # matches MATCH-02's, events_located and locate_flags this stage's own).
 INPUT_MODELS = {"picks": "Pick", "stations": "Station", "assoc_events": "AssocEvent",
                 "assoc_picks": "AssocPick", "catalog": "CatalogEvent", "matches": "Match",
-                "events_located": EVENTS_MODEL, "locate_flags": FLAGS_MODEL,
-                "arrivals": ARRIVALS_MODEL}
+                "events_located": EVENTS_MODEL, "locate_flags": FLAGS_MODEL}
 
 
 def _part(path: Path) -> Path:
@@ -202,14 +211,25 @@ def synthetic_test(
     return result
 
 
-def previous_location(ctx: "RunContext", events: pd.DataFrame | None) -> PreviousLocation | None:
-    """The run dir's events_located / locate_flags / arrivals from before this stage run (the
-    1D vs 3D section of diagnostics.md compares against them), or None when any is absent."""
-    paths = [ctx.path(n) for n in (FLAGS_TABLE, ARRIVALS_TABLE)]
-    if events is None or not all(p.is_file() for p in paths):
+def grid1d_comparison(
+    ctx: "RunContext", assoc: StoredAssociation, picks: pd.DataFrame, stations: pd.DataFrame,
+    reference: pd.DataFrame | None,
+) -> Comparison1d | None:
+    """grid3d only (else None): the same association located with grid1d and the same statics
+    configuration and reference events, for diagnostics.md's 1D vs 3D section. Nothing it
+    locates is written; it costs about one more locate pass."""
+    cfg = ctx.config.seismology
+    if cfg.locator.method != GRID3D:
         return None
-    return PreviousLocation(events=events, flags=_read(paths[0], "locate_flags"),
-                            arrivals=_read(paths[1], "arrivals"))
+    started = time.perf_counter()
+    cfg1 = cfg.model_copy(update={"locator": cfg.locator.model_copy(update={"method": GRID1D})})
+    outcome: StaticsOutcome = locate_with_statics(
+        assoc, picks, stations, cfg1, ctx.config.run, run_id=ctx.run_id, cache_dir=ctx.cache_dir,
+        reference=reference)
+    runtime = time.perf_counter() - started
+    log.info("locate: grid1d relocation of the same association for the 1D vs 3D comparison in "
+             "%.1f s", runtime)
+    return Comparison1d(details=outcome.details, statics=outcome.report, runtime_s=runtime)
 
 
 def run(ctx: "RunContext") -> None:
@@ -227,11 +247,11 @@ def run(ctx: "RunContext") -> None:
     reference = reference_input(ctx)
     previous = (_read(ctx.path(EVENTS_TABLE), "events_located")
                 if ctx.path(EVENTS_TABLE).is_file() else None)
-    earlier = previous_location(ctx, previous)
     outcome = locate_with_statics(assoc, picks, stations, cfg, run_cfg, run_id=ctx.run_id,
                                   cache_dir=ctx.cache_dir, reference=reference,
                                   previous_events=previous)
     details = outcome.details
+    grid1d = grid1d_comparison(ctx, assoc, picks, stations, reference)
     synthetic = synthetic_test(ctx, details, picks, stations)
     catalog_path = ctx.path(CATALOG_TABLE)
     quakeml_path = ctx.path(CATALOG_QUAKEML)
@@ -250,7 +270,7 @@ def run(ctx: "RunContext") -> None:
             known_ids=known_ids(ctx.path(KNOWN_WINDOWS)),
             synthetic=synthetic,
             statics=outcome.report,
-            previous=earlier,
+            grid1d=grid1d,
         )
     )
 
@@ -303,6 +323,7 @@ def run(ctx: "RunContext") -> None:
         "diagnostics": cfg.diagnostics.model_dump(mode="json"),
         "statics": {"config": cfg.statics.model_dump(mode="json"), **rep.to_record()},
         "locateRuntimeS": details.runtime_s,
+        "grid1dComparisonRuntimeS": None if grid1d is None else grid1d.runtime_s,
     }
     log.info("locate: wrote %s in %.1f s", ", ".join(p.name for p in targets), runtime_s)
     if reference is not None:
