@@ -65,10 +65,11 @@ from hq.config.signal import KnownEventsConfig, SignalConfig
 
 log = logging.getLogger(__name__)
 
-STAGE = "known_windows"  # key passed to ctx.record() and the key params nest under
-# Not a registered stage, so RunContext has no default field for it; its params go into
-# ProcessingRun.picker next to the other H1 stages (docs/requests/H4.md, REQ-H1-2).
-PARAMS_FIELD = "picker"
+STAGE = "known_windows"  # sub-step name; its record file is known/<STAGE>.record.json
+# The known-event sub-steps are not pipeline stages (H4's registry, hq.runs.STAGES, rejects
+# their names in RunContext.record), so each writes its runtime, counts and params to its
+# own record file next to its outputs, like H2's catalog.record.json.
+RECORD_SUFFIX = ".record.json"
 KNOWN_DIR = "known"
 WINDOWS_FILE = "windows.json"
 GAP_COLUMNS = ("stationId", "channel", "gapStart", "gapEnd")
@@ -150,7 +151,6 @@ class StageContext(Protocol):
         runtime_s: float,
         counts: dict[str, int],
         params: dict | None = None,
-        field: str | None = None,
     ) -> None: ...
 
 
@@ -935,14 +935,24 @@ def run_known_windows(
         len(written),
         runtime_s,
     )
-    ctx.record(
-        STAGE,
-        runtime_s=runtime_s,
-        counts=result.counts,
-        params={STAGE: cfg.model_dump(mode="json")},
-        field=PARAMS_FIELD,
+    record = write_step_record(
+        ctx.path(KNOWN_DIR), STAGE, runtime_s, result.counts, cfg.model_dump(mode="json")
     )
+    log.info("known windows: record written to %s", record)
     return result.doc
+
+
+def write_step_record(
+    out_dir: Path, step: str, runtime_s: float, counts: dict[str, int], params: dict | None
+) -> Path:
+    """Write ``<out_dir>/<step>.record.json`` (runtime, counts, params) atomically."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{step}{RECORD_SUFFIX}"
+    tmp = path.with_name(path.name + ".part")
+    payload = {"step": step, "runtimeS": runtime_s, "counts": counts, "params": params}
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
 
 
 # --- CLI --------------------------------------------------------------------------------------------
@@ -973,7 +983,6 @@ class _CliContext:
         runtime_s: float,
         counts: dict[str, int],
         params: dict | None = None,
-        field: str | None = None,
     ) -> None:
         log.info(
             "record %s (CLI, run.json not updated): runtime %.2f s, counts %s, params %s",

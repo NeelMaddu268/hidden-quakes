@@ -1147,11 +1147,13 @@ def build_inventory(
         if cov is None:
             used = cfg.availability.onMissing == "used"
             note = ""
-            if used and rd.status == "nodata":
-                # Unmeasured coverage is only a reason to keep a station if the service might
-                # still serve it; no data at any rate probe says it doesn't.
+            if used and rd.status == "nodata" and cfg.availability.onMissingNoProbeData == "unused":
+                # No availability measurement and nothing served at any rate probe: drop it, so
+                # the station doesn't enter geometry-dependent work (onMissingNoProbeData).
                 used = False
-                note = "; no data at any rate probe either, so usedInRun False"
+                note = (
+                    "; no data at any rate probe either, so usedInRun False (onMissingNoProbeData)"
+                )
             flags.append(
                 {
                     "station": c.id,
@@ -1248,7 +1250,8 @@ def build_inventory(
         raise InventoryError(
             f"none of the {len(rows)} selected stations has data in the window "
             f"({counts['withData']} measured with data, {counts['noAvailabilityMeasurement']} "
-            f"unmeasured, onMissing={cfg.availability.onMissing})"
+            f"unmeasured, onMissing={cfg.availability.onMissing}, "
+            f"onMissingNoProbeData={cfg.availability.onMissingNoProbeData})"
         )
     report = {
         "stage": STAGE,

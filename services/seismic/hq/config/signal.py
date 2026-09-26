@@ -122,6 +122,11 @@ class AvailabilityCheck(_Section):
     # some channels. "used": usedInRun stays true with coverage null, and SEIS-05's measured gaps
     # decide. "unused": the station leaves the run. "error": the stage stops.
     onMissing: Literal["error", "unused", "used"]
+    # Refines onMissing="used" for a station whose rate probes (stations.rateCheck) also got no
+    # data at any offset. "unused": it leaves the run, so it can't inflate geometry-dependent work
+    # such as H2's synthetic depth test. "used": SEIS-05's download decides. Use "used" for short
+    # windows (Live's last 2 h fits one probe, so one 5 s gap would decide).
+    onMissingNoProbeData: Literal["unused", "used"]
 
 
 class RateCheck(_Section):
