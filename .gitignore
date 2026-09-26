@@ -2,6 +2,8 @@
 data/showcase/
 data/cache/
 data/*/runs/
+# Live worker state, per-window configs and bundles (services/api)
+data/live/
 
 # Python
 .venv/
