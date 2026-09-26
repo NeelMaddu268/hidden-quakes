@@ -12,6 +12,12 @@ import {
   type EventUniforms,
 } from "./material";
 
+/**
+ * The default InstancedMesh raycast would test 1 km unit quads, not the billboards the shader draws.
+ * Picking is done in screen space instead (WEB-05), so the mesh opts out of raycasting.
+ */
+const NO_RAYCAST = () => undefined;
+
 export interface EventsLayerProps {
   instances: EventInstances;
   color: string;
@@ -19,7 +25,9 @@ export interface EventsLayerProps {
   size: number;
   /** Minimum on-screen radius, CSS pixels (scaled by DPR internally). */
   minPx: number;
-  /** Intensity multiplier (cores above 1.0 bloom). */
+  /** Maximum on-screen radius, CSS pixels (scaled by DPR internally). */
+  maxPx: number;
+  /** Core intensity (1 = token color; above 1 renders HDR cores for bloom). */
   glow?: number;
   /** Scene y of the site surface, for depth fog. */
   surfaceY?: number;
@@ -40,6 +48,7 @@ export function EventsLayer({
   color,
   size,
   minPx,
+  maxPx,
   glow = 1,
   surfaceY = 0,
   depthFog = 0,
@@ -50,9 +59,12 @@ export function EventsLayer({
   const mesh = useRef<InstancedMesh>(null);
   const material = useRef<ShaderMaterial>(null);
   const uniforms = useMemo(
-    () => createEventUniforms({ color, size, minPx, glow, depthFog, surfaceY }),
-    [color, size, minPx, glow, depthFog, surfaceY],
+    () => createEventUniforms({ color, size, minPx, maxPx, glow, depthFog, surfaceY }),
+    [color, size, minPx, maxPx, glow, depthFog, surfaceY],
   );
+  // three.js caches a material's uniforms object when it compiles the program, so new uniforms need a
+  // new material: key it on everything that rebuilds them.
+  const materialKey = `${color}|${size}|${minPx}|${maxPx}|${glow}|${depthFog}|${surfaceY}`;
 
   useLayoutEffect(() => {
     const m = mesh.current;
@@ -68,6 +80,7 @@ export function EventsLayer({
     const u = mat.uniforms as EventUniforms;
     u.uViewportHeight.value = state.size.height * state.viewport.dpr;
     u.uMinPx.value = minPx * state.viewport.dpr;
+    u.uMaxPx.value = maxPx * state.viewport.dpr;
     drive(u, delta);
   });
 
@@ -79,6 +92,7 @@ export function EventsLayer({
       args={[undefined, undefined, instances.count]}
       frustumCulled={false}
       renderOrder={renderOrder}
+      raycast={NO_RAYCAST}
     >
       <planeGeometry args={[1, 1]}>
         <instancedBufferAttribute attach="attributes-aTier" args={[instances.tiers, 1]} />
@@ -87,6 +101,7 @@ export function EventsLayer({
         <instancedBufferAttribute attach="attributes-aTime" args={[instances.times, 1]} />
       </planeGeometry>
       <shaderMaterial
+        key={materialKey}
         ref={material}
         uniforms={uniforms}
         vertexShader={EVENT_VERTEX_SHADER}
