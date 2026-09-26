@@ -5,8 +5,9 @@ Search volume (ENU metres around the run origin, elevM): ``e`` and ``n`` in
 (null: ``run.refSurfaceElevM``, the ground at the origin, because a 1D search has no DEM). Every
 grid is anchored at the volume's lower corner; the top is snapped down onto the fine lattice, so
 no hypocentre lies above the configured top. Where the ground in the volume lies below that top,
-hypocentres can still land above the local ground: this locator does not check them against a DEM
-(that check is LOC-04's and does not exist yet).
+hypocentres can still land above the local ground: this locator does not check them. ``locate``
+(LOC-04) flags them against the nearest used station's surfaceElevM (``locate_flags.parquet``,
+``aboveNearestStationSurface``); there is no DEM.
 
 Misfit at a node, over the picks in use:
     d_i = t_obs_i - T_i(node) - static_i
@@ -407,6 +408,23 @@ class Locator:
         override = self.cfg.profilePickSigmaS.get(self._profile[station_index])
         sig = override if override is not None else self.cfg.pickSigmaS
         return float(sig.P if phase == "P" else sig.S)
+
+    @property
+    def station_ids(self) -> list[str]:
+        """The stations in use, in the order they were given."""
+        return list(self._index)
+
+    def travel_times(self, e_m: float, n_m: float, elev_m: float) -> pd.DataFrame:
+        """Table travel times (s) from a hypocentre at (e, n, elevM) to every station, P and S.
+
+        Columns stationId, phase, travelTimeS; stations in ``station_ids`` order, P before S.
+        """
+        rows = []
+        for sid, i in self._index.items():
+            r = math.hypot(e_m - float(self._e[i]), n_m - float(self._n[i]))
+            for ph in PHASES:
+                rows.append((sid, ph, float(self.tables.table(sid, ph).lookup(r, elev_m))))
+        return pd.DataFrame(rows, columns=["stationId", "phase", "travelTimeS"])
 
     def pick_sigma(self, station_id: str, phase: Phase) -> float:
         """Pick sigma (s) the locator uses for ``station_id`` and ``phase``."""

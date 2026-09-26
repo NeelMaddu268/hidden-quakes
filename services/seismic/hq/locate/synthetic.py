@@ -7,11 +7,14 @@ times uniform in the run window. Every station gets a P pick; its S pick is kept
 (``tt_grid.layered_first_arrival``, an independent forward model, so table discretisation error
 is part of what the test measures) plus Gaussian noise with the standard deviation the locator
 uses for that station and phase (``Locator.pick_sigma``: ``pickSigmaS``, or the station's
-``profilePickSigmaS`` override). Every pick gets probability ``pickProb``. ``sKeepProb`` and
-``pickProb`` are placeholders until LOC-04 has the real nS and pick-probability distributions from
-association; with them the synthetic picks are optimistic for weak events, and the params say so.
-The same events are located twice, with and without noise (same S picks kept). One seeded
-generator draws everything in a fixed order, so identical config gives identical results.
+``profilePickSigmaS`` override). Every pick gets probability ``pickProb``. In seismology.yaml both
+may be null: stage ``locate`` then measures them from the run's located events
+(``measured_pick_stats``: median nS / nStations and median used-pick probability) and runs the
+test with those values (``with_pick_stats``); ``run_synthetic`` itself needs numbers. Every
+station still gets a P pick, so the synthetic picks stay optimistic for weak events, and the
+params say so. The same events are located twice, with and without noise (same S picks kept).
+One seeded generator draws everything in a fixed order, so identical config gives identical
+results.
 
 Errors against the truth: horizontal ``hypot(de, dn)``, vertical ``|dElevM|``, and depth bias
 ``elevM_true - elevM_located`` (positive = located too deep; docs/02 ``SyntheticTest`` carries no
@@ -40,6 +43,7 @@ import numpy as np
 import pandas as pd
 from hq_contracts.models import SyntheticTest
 
+from hq.config.seismology import SeismologyConfig
 from hq.locate.locator import EventLocation, Locator, LocatorSetup, build_locator, locate_many
 from hq.locate.tt_grid import PHASES, layered_first_arrival
 
@@ -47,6 +51,66 @@ log = logging.getLogger(__name__)
 
 DEPTH_BIAS_SIGN = "elevM_true - elevM_located; positive = located too deep"
 GEOMETRY_COLUMNS = ("id", "enu_e", "enu_n", "sensorElevM")
+
+
+def pick_probabilities(cfg: SeismologyConfig) -> tuple[float, float]:
+    """(sKeepProb, pickProb) from ``cfg.synthetic``; fails when either is still null."""
+    syn = cfg.synthetic
+    if syn.sKeepProb is None or syn.pickProb is None:
+        raise ValueError(
+            "synthetic.sKeepProb and synthetic.pickProb must be numbers here; null means stage "
+            "locate measures them from the run (measured_pick_stats, with_pick_stats)"
+        )
+    return float(syn.sKeepProb), float(syn.pickProb)
+
+
+def measured_pick_stats(events: pd.DataFrame, picks: pd.DataFrame) -> dict[str, Any]:
+    """The run's own S-pick fraction and used-pick probability, for the synthetic test.
+
+    ``events``: ``events_located`` rows (``quality_nS``, ``quality_nStations``, ``pickIds``);
+    ``picks``: the picks table they were located from (``id``, ``prob``). ``sKeepProb`` is the
+    median over events of nS / nStations (S picks per station with a used pick) and ``pickProb``
+    the median ``prob`` of the picks used in the final locations. Fails with no located event.
+    """
+    if events.empty:
+        raise ValueError(
+            "no located events to measure synthetic.sKeepProb / pickProb from; set numbers in "
+            "seismology.yaml (synthetic) to run the synthetic test on this run"
+        )
+    n_s = events["quality_nS"].to_numpy(dtype=np.float64)
+    n_st = events["quality_nStations"].to_numpy(dtype=np.float64)
+    used = [str(p) for ids in events["pickIds"] for p in ids]
+    prob = picks.assign(id=picks["id"].astype(str)).set_index("id")["prob"]
+    missing = sorted(set(used) - set(prob.index))
+    if missing:
+        raise ValueError(f"used pick ids missing from the picks table: {missing[:5]}")
+    probs = prob.loc[used].to_numpy(dtype=np.float64)
+    return {
+        "sKeepProb": float(np.median(n_s / n_st)),
+        "pickProb": float(np.median(probs)),
+        "from": "located events of this run: sKeepProb = median over events of nS / nStations, "
+        "pickProb = median prob of the picks used in the final locations",
+        "nEvents": len(events),
+        "nUsedPicks": len(used),
+        "medianNS": float(np.median(n_s)),
+        "medianNStations": float(np.median(n_st)),
+        "medianNPPerStation": float(
+            np.median(events["quality_nP"].to_numpy(dtype=np.float64) / n_st)
+        ),
+    }
+
+
+def with_pick_stats(cfg: SeismologyConfig, stats: dict[str, Any]) -> SeismologyConfig:
+    """``cfg`` with each null ``synthetic.sKeepProb`` / ``pickProb`` set from ``stats``."""
+    syn = cfg.synthetic
+    update = {
+        key: stats[key] for key in ("sKeepProb", "pickProb") if getattr(syn, key) is None
+    }
+    if not update:
+        return cfg
+    raw = cfg.model_dump(mode="json")
+    raw["synthetic"].update(update)
+    return SeismologyConfig.model_validate(raw)
 
 
 def geometry_record(stations: pd.DataFrame, label: str | None) -> dict[str, Any]:
@@ -109,8 +173,9 @@ def synthetic_picks(
     stations = setup.stations
     model = locator.tables.model
     ids = stations["id"].astype(str).tolist()
+    s_keep_prob, pick_prob = pick_probabilities(cfg)
     n_ev, n_st = len(truth), len(ids)
-    keep_s = rng.random((n_ev, n_st)) < cfg.synthetic.sKeepProb
+    keep_s = rng.random((n_ev, n_st)) < s_keep_prob
     noise = {
         ph: rng.normal(0.0, 1.0, (n_ev, n_st))
         * np.array([locator.pick_sigma(sid, ph) for sid in ids])[None, :]
@@ -142,7 +207,7 @@ def synthetic_picks(
                                                              strict=True)],
             "stationId": frame["stationId"],
             "phase": frame["phase"],
-            "prob": cfg.synthetic.pickProb,
+            "prob": pick_prob,
         }
         noisy.append(pd.DataFrame({**base, "t": frame["tNoisy"]}))
         clean.append(pd.DataFrame({**base, "t": frame["tExact"]}))
@@ -212,15 +277,21 @@ def _summary(df: pd.DataFrame, prefix: str) -> dict[str, float | int | None]:
 
 
 def run_synthetic(
-    setup: LocatorSetup, *, n_events: int | None = None, geometry_label: str | None = None
+    setup: LocatorSetup,
+    *,
+    n_events: int | None = None,
+    geometry_label: str | None = None,
+    pick_stats: dict[str, Any] | None = None,
 ) -> SyntheticResult:
     """Run the synthetic recovery test on ``setup``'s station geometry and configuration.
 
     ``geometry_label`` names where the station geometry came from (e.g. an H1 runId, or
-    "PROVISIONAL"); it goes into the params with the geometry itself.
+    "PROVISIONAL"); it goes into the params with the geometry itself. ``pick_stats`` (from
+    ``measured_pick_stats``) is recorded when the config's sKeepProb / pickProb came from it.
     """
     started = time.perf_counter()
     cfg = setup.config
+    s_keep_prob, pick_prob = pick_probabilities(cfg)
     count = cfg.synthetic.nEvents if n_events is None else int(n_events)
     if count < 1:
         raise ValueError("n_events must be >= 1")
@@ -251,9 +322,14 @@ def run_synthetic(
     runtime = time.perf_counter() - started
     params: dict[str, Any] = {
         "synthetic": cfg.synthetic.model_dump(mode="json"),
-        "placeholders": "sKeepProb and pickProb stand in for the real nS and pick-probability "
-        "distributions from association (LOC-04 swaps them in), and every station gets a P "
-        "pick, so these picks are optimistic for weak events",
+        "pickStats": {
+            "sKeepProb": s_keep_prob,
+            "pickProb": pick_prob,
+            "source": "measured from the run" if pick_stats is not None else "seismology.yaml",
+            "measured": pick_stats,
+            "caveat": "every station gets a P pick, so the synthetic picks are optimistic for "
+            "weak events",
+        },
         "forwardModel": "exact 1D layered first arrivals (tt_grid.layered_first_arrival) on the "
         "tables' top-extended velocity model, plus Gaussian noise at the locator's sigma per "
         "station and phase (pickSigmaS or the profilePickSigmaS override)",
