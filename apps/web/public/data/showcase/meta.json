@@ -4893,6 +4893,7 @@
         },
         "pHorizontalTolS": 0.3,
         "pickerGapEdgeS": 1.0,
+        "pickingRuntimeS": 142.02907339998637,
         "prefilter": {
           "borehole-A": {
             "corners": 4,
@@ -4921,15 +4922,17 @@
           "minOverlapS": 32.0,
           "overlapS": 60.0
         },
-        "prob": 1.0,
+        "prob": 0.72,
         "s": {
           "components": "NE",
           "ltaS": 4.0,
           "staS": 0.1,
           "warmupS": 12.0
         },
+        "scoringRuntimeS": null,
         "settleLtaMultiple": 10.0,
         "sweep": {
+          "maxPasses": 3,
           "offLevels": [
             1.0,
             1.5,
@@ -4953,9 +4956,11 @@
             10.0,
             12.0
           ],
-          "scoreWithH2": true
+          "scoreMode": "none",
+          "scoreWorkers": 3
         },
-        "sweepBestTierA": null
+        "sweepBestTierA": null,
+        "sweepScoring": null
       },
       "batchSize": 256,
       "candidateWeights": [
@@ -5154,7 +5159,7 @@
     "pickerWeights": "instance",
     "runtimeS": {
       "associate": 5.368319707999035,
-      "baseline": 175.08721880000667,
+      "baseline": 142.07975759997498,
       "catalog": 1.2712750999780837,
       "download": 13.199136499984888,
       "inventory": 63.38412979998975,
@@ -5164,7 +5169,8 @@
       "match": 0.07821320900256978,
       "pick": 129.54610979999416,
       "pick_known": 111.52180889999727,
-      "tier": 5121.028750042002
+      "tier": 5121.028750042002,
+      "validate": 2756.467269374989
     },
     "softwareVersions": {
       "numpy": "2.4.6",
