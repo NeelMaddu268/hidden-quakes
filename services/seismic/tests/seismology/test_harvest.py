@@ -1,14 +1,20 @@
 """LOC-10: pick harvest at predicted arrivals (hq.locate.harvest) and its config section.
 
-Offline. The smoke tests work on small tables built here.
+Offline. The smoke tests work on small tables built here; the others locate seven events on the
+LOC-02 test geometry whose picks carry planted station delays and whose S pick at one western
+station is left out of the association.
 """
 
+import dataclasses
+import importlib
+import json
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
+from hq_contracts.io import read_table
 
 from hq.config.seismology import PhaseSigma, SeismologyConfig
 from hq.locate.harvest import (
@@ -21,6 +27,7 @@ from hq.locate.harvest import (
     slot_table,
     untrusted_flags,
 )
+from hq.locate.statics import check_same_association
 
 # --- config (smoke) ----------------------------------------------------------------------------
 
@@ -230,3 +237,263 @@ def test_analytic_chance_counts_open_slots_of_trusted_events_only() -> None:
     free = _free(*[(f"f{k}", "A", "S", float(k), 0.9) for k in range(10)])
     # rate 10 picks / 100 s, one open trusted slot, window 2 x 0.15 s.
     assert analytic_chance(slots, free, WINDOW, 100.0) == pytest.approx(0.1 * 0.3)
+
+
+@pytest.mark.smoke
+def test_check_same_association_ignores_harvested_picks_but_not_a_regrouping() -> None:
+    pairs = pd.DataFrame({"catalogId": ["c1", "c2"], "assocId": ["x0", "x1"],
+                          "pickIds": [["p0", "p1", "h1"], ["p2", "h2"]]})  # h*: harvested
+    links = pd.DataFrame({"assocId": ["x0", "x0", "x1"], "pickId": ["p0", "p1", "p2"]})
+    check_same_association(pairs, links)
+    with pytest.raises(ValueError, match="another association"):
+        check_same_association(pairs, links.assign(assocId=["x0", "x1", "x1"]))  # p1 moved
+
+
+# --- locating the LOC-02 test geometry with withheld picks (not smoke) --------------------------
+
+SEED = 20260926
+NOISE = {"P": 0.004, "S": 0.008}
+# (e, n, elevM) of the reference events and one unmatched event (the last), as in test_statics.
+HYPOS = ((300.0, -200.0, -2000.0), (-400.0, 500.0, -2600.0), (100.0, 700.0, -1800.0),
+         (600.0, 300.0, -3000.0), (-200.0, -600.0, -2300.0), (0.0, 0.0, -2500.0),
+         (-700.0, 100.0, -2100.0))
+
+
+def _delay(e_m: float, phase: str) -> float:
+    """Planted station delay (s): west of the origin late, east early; S twice P."""
+    base = 0.12 if e_m < -1000.0 else -0.08 if e_m > 1000.0 else 0.0
+    return base * (2.0 if phase == "S" else 1.0)
+
+
+@pytest.fixture(scope="module")
+def hworld(loc02: Any) -> dict[str, Any]:
+    """Seven events on the LOC-02 geometry with planted station delays. Each event's S pick at
+    one western station (delay +0.24 s, far outside the window without statics) is left out of
+    the association but stays in the picks table; decoys: chance picks between events, a
+    P-labelled pick at a withheld S arrival and a sub-threshold pick next to another."""
+    from hq.locate.coords import from_enu
+    from hq.locate.locator import build_locator
+
+    run = loc02.run_section()
+    raw = loc02.test_config().model_dump(mode="json")
+    raw["diagnostics"]["datumCheck"]["elevM"] = [-2000.0]
+    raw["synthetic"] = {**raw["synthetic"], "nEvents": 2, "sKeepProb": 0.8, "pickProb": 0.8}
+    raw["statics"]["wellConstrained"]["minStations"] = 8
+    off = SeismologyConfig.model_validate(raw)
+    on = SeismologyConfig.model_validate(_with_harvest(raw, enabled=True))
+    locator = build_locator(loc02.setup(off, run))
+    rng = np.random.default_rng(SEED)
+    east = {sid: e for sid, e, _, _, _ in loc02.STATIONS}
+    west = sorted(sid for sid, e in east.items() if e < -1000.0)
+    frames, rows, links, withheld, decoys = [], [], [], [], []
+    for k, (e, n, z) in enumerate(HYPOS):
+        t0 = run.window_start_s + 600.0 * (k + 1)
+        p = loc02.exact_picks(locator, e, n, z, t0, prob=0.8)
+        p["t"] = (p["t"] + [_delay(east[s], ph) for s, ph in zip(p["stationId"], p["phase"],
+                                                                strict=True)]
+                  + rng.normal(0.0, 1.0, len(p)) * p["phase"].map(NOISE))
+        p["id"] = [f"phasenet:{s}:{ph}:{t:.3f}" for s, ph, t in
+                   zip(p["stationId"], p["phase"], p["t"], strict=True)]
+        keep = ~((p["stationId"] == west[k % len(west)]) & (p["phase"] == "S"))
+        withheld += p.loc[~keep, "id"].tolist()
+        aid = f"assoc-{k:06d}"
+        lat, lon, _ = from_enu(e, n, z - run.origin.elevM, run.origin)
+        rows.append({"assocId": aid, "t": t0, "latitude": float(lat), "longitude": float(lon),
+                     "elevM": z, "nPicks": int(keep.sum()),
+                     "nP": int((p.loc[keep, "phase"] == "P").sum()),
+                     "nS": int((p.loc[keep, "phase"] == "S").sum())})
+        links += [{"assocId": aid, "pickId": i} for i in p.loc[keep, "id"]]
+        frames.append(p)
+        s_true = p.loc[~keep].iloc[0]
+        extra = [(f"decoy:label:{k}", s_true["stationId"], "P", s_true["t"] + 0.01, 0.9)]
+        if k == 1:  # a pick below minProb 0.03 s from the true one: filtered, not a 2nd candidate
+            extra.append((f"decoy:weak:{k}", s_true["stationId"], "S", s_true["t"] + 0.03, 0.2))
+        extra += [(f"decoy:chance:{k}:{j}", sid, ph, t0 + float(rng.uniform(60.0, 500.0)), 0.9)
+                  for j, (sid, ph) in enumerate([(west[0], "S"), (west[1], "S"), ("T.S01", "P")])]
+        decoys += [d[0] for d in extra]
+        frames.append(pd.DataFrame(extra, columns=list(FREE_COLUMNS)))
+    picks = pd.concat(frames, ignore_index=True).assign(picker="phasenet:test", eventId=None)[
+        ["id", "stationId", "phase", "t", "prob", "picker", "eventId"]]
+    from hq.associate.result import EVENT_DTYPES, PICK_DTYPES, AssocResult, typed_frame
+
+    assoc = AssocResult(
+        typed_frame({c: [r[c] for r in rows] for c in EVENT_DTYPES}, EVENT_DTYPES),
+        typed_frame({c: [r[c] for r in links] for c in PICK_DTYPES}, PICK_DTYPES),
+    )
+    st = loc02.stations(run.origin.elevM)
+    lat, lon, _ = from_enu(st["enu_e"], st["enu_n"], st["enu_u"], run.origin)
+    st = st.assign(latitude=lat, longitude=lon, usedInRun=True)
+    planted = {(sid, ph): _delay(east[sid], ph) for sid in east for ph in ("P", "S")}
+    return {"run": run, "off": off, "on": on, "picks": picks, "assoc": assoc, "stations": st,
+            "planted": planted, "withheld": sorted(withheld), "decoys": decoys,
+            "cache": loc02.cache_dir, "rows": rows}
+
+
+def _call(w: dict[str, Any], cfg: SeismologyConfig, **kw: Any) -> Any:
+    from hq.locate import locate_detailed
+
+    return locate_detailed(w["assoc"], w["picks"], w["stations"], cfg, w["run"], run_id="t",
+                           cache_dir=w["cache"], **kw)
+
+
+@pytest.fixture(scope="module")
+def harvested(hworld: dict[str, Any]) -> Any:
+    return _call(hworld, hworld["on"], statics=hworld["planted"], harvest=True)
+
+
+def _harvested_ids(events: pd.DataFrame, assoc: Any) -> set[str]:
+    return {str(p) for ids in events["pickIds"] for p in ids} - set(
+        assoc.picks["pickId"].astype(str))
+
+
+def test_harvest_recovers_the_withheld_picks_with_statics(
+    hworld: dict[str, Any], harvested: Any
+) -> None:
+    rep = harvested.harvest
+    assert sorted(rep.added["pickId"]) == hworld["withheld"]  # every one, and nothing else
+    assert rep.added["usedInLocation"].all()
+    assert rep.added["offsetS"].abs().max() < 0.05
+    assert rep.counts["events"] == len(HYPOS) and len(rep.before) == len(HYPOS)
+    res = harvested.result
+    assert len(res.events) == len(HYPOS)
+    assert _harvested_ids(res.events, hworld["assoc"]) == set(hworld["withheld"])
+    arr = res.arrivals.set_index("pickId", drop=False)
+    assert arr.loc[hworld["withheld"], "usedInLocation"].all()
+    assert arr.loc[hworld["withheld"], "residualS"].abs().max() < 0.05
+    assert not set(hworld["decoys"]) & set(res.arrivals["pickId"].dropna())
+    c = harvested.counts
+    assert c["picksIn"] == len(hworld["assoc"].picks)  # the associated picks only
+    assert c["picksHarvested"] == len(hworld["withheld"]) == c["picksHarvestedUsed"]
+    assert c["picksUsed"] + c["picksDroppedAsOutliers"] == c["picksIn"] + c["picksHarvested"]
+    assert (res.events["quality_nS"] == 12).all()  # every S back
+    record = harvested.record["harvest"]
+    json.dumps(record)
+    assert {p["pickId"] for p in record["picks"]} == set(hworld["withheld"])
+    assert set(record["counts"]) >= {"picks", "ambiguousPicks", "skippedUntrustedSlots"}
+    assert record["chance"]["controlShiftsS"] == [-1.0, -0.6, 0.6, 1.0]
+    # Each event's pre-harvest location lacked the pick: one S fewer.
+    assert all(loc.n_s == 11 for loc in rep.before.values())
+
+
+def test_harvest_off_changes_nothing(hworld: dict[str, Any]) -> None:
+    kw = {"statics": hworld["planted"]}
+    flag_off = _call(hworld, hworld["off"], harvest=True, **kw)  # asked, but not enabled
+    not_asked = _call(hworld, hworld["on"], harvest=False, **kw)  # enabled, but not asked
+    assert flag_off.harvest is None and not_asked.harvest is None
+    for name in ("events", "arrivals", "statics"):
+        pd.testing.assert_frame_equal(getattr(flag_off.result, name),
+                                      getattr(not_asked.result, name))
+    pd.testing.assert_frame_equal(flag_off.flags, not_asked.flags)
+    assert flag_off.counts == not_asked.counts and "picksHarvested" not in flag_off.counts
+    # "tables" holds build/load counts and build time, which differ between calls anyway.
+    def same(rec: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in rec.items() if k != "tables"}
+
+    assert same(flag_off.record) == same(not_asked.record) and "harvest" not in flag_off.record
+    assert not _harvested_ids(flag_off.result.events, hworld["assoc"])
+
+
+def test_locate_api_harvests_only_with_a_statics_table(
+    hworld: dict[str, Any], harvested: Any
+) -> None:
+    from hq.locate import locate
+
+    table = pd.DataFrame([{"stationId": s, "phase": p, "staticS": v}
+                          for (s, p), v in hworld["planted"].items()])
+    args = (hworld["assoc"], hworld["picks"], hworld["stations"], hworld["on"], hworld["run"])
+    res = locate(*args, run_id="t", cache_dir=hworld["cache"], statics=table)
+    pd.testing.assert_frame_equal(res.events, harvested.result.events)
+    # referenceEvents without a match pass: pass 1, no statics, never a harvest.
+    plain = locate(*args, run_id="t", cache_dir=hworld["cache"])
+    assert not _harvested_ids(plain.events, hworld["assoc"])
+
+
+def test_self_consistent_harvests_on_the_last_iteration_only(
+    hworld: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hq.locate.harvest as harvest_mod
+    from hq.locate.statics import locate_with_statics
+
+    calls: list[int] = []
+    real = harvest_mod.harvest_and_relocate
+
+    def counting(*a: Any, **k: Any) -> Any:
+        calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(harvest_mod, "harvest_and_relocate", counting)
+    outs = {}
+    for label in ("off", "on"):
+        raw = hworld[label].model_dump(mode="json")
+        raw["statics"] = {**raw["statics"], "mode": "selfConsistent", "minEvents": 3,
+                          "iterations": 2}
+        cfg = SeismologyConfig.model_validate(raw)
+        outs[label] = locate_with_statics(hworld["assoc"], hworld["picks"], hworld["stations"],
+                                          cfg, hworld["run"], cache_dir=hworld["cache"])
+    assert len(calls) == 1  # the "on" run's last iteration
+    on, off = outs["on"], outs["off"]
+    pd.testing.assert_frame_equal(on.report.terms, off.report.terms)
+    pd.testing.assert_frame_equal(on.details.result.statics, off.details.result.statics)
+    assert on.details.harvest is not None and off.details.harvest is None
+
+
+def test_stage_pass_2_harvests_and_keeps_the_terms(
+    hworld: dict[str, Any], make_ctx: Any, tmp_path: Any
+) -> None:
+    import shutil
+
+    from hq_contracts.io import to_frame, write_table
+    from hq_contracts.models import CatalogEvent
+
+    from hq.locate.coords import from_enu
+    from hq.match import match
+
+    stage = importlib.import_module("hq.locate.run")
+    run = hworld["run"]
+    cat = []
+    for k, (e, n, z) in enumerate(HYPOS[:-1]):
+        lat, lon, _ = from_enu(e, n, z - run.origin.elevM, run.origin)
+        cat.append(CatalogEvent(
+            id=f"cat{k}", source="test", t=hworld["rows"][k]["t"], latitude=float(lat),
+            longitude=float(lon), depthKm=-z / 1000.0, depthDatum="test: km below sea level",
+            elevM=z, mag=1.0, magType="ml", enu={"e": e, "n": n, "u": z - run.origin.elevM}))
+    catalog = to_frame(cat, CatalogEvent)
+    off = dataclasses.replace(make_ctx(run, hworld["off"]), cache_dir=hworld["cache"])
+    write_table(hworld["picks"], off.path(hworld["off"].associator.picksTable), "Pick")
+    write_table(hworld["stations"], off.path("stations.parquet"), "Station")
+    write_table(hworld["assoc"].events, off.path("assoc_events.parquet"), "AssocEvent")
+    write_table(hworld["assoc"].picks, off.path("assoc_picks.parquet"), "AssocPick")
+    write_table(catalog, off.path("catalog.parquet"), "CatalogEvent")
+    stage.run(off)  # pass 1 (the same with harvest on: it never harvests)
+    first = read_table(off.path("events_located.parquet"))
+    write_table(match(first, catalog, hworld["off"]).matches, off.path("matches.parquet"),
+                "Match")
+    on_dir = tmp_path / "on"
+    shutil.copytree(off.run_dir, on_dir)
+    on = dataclasses.replace(off, run_dir=on_dir, records=[],
+                             config=dataclasses.replace(off.config, seismology=hworld["on"]))
+    stage.run(off)  # pass 2, harvest off
+    stage.run(on)  # pass 2, harvest on
+
+    def raw(ctx: Any, name: str) -> bytes:
+        return ctx.path(name).read_bytes()
+
+    assert raw(on, "statics.parquet") == raw(off, "statics.parquet")
+    assert raw(on, "synthetic.json") == raw(off, "synthetic.json")  # fixed sKeepProb/pickProb
+    ev_on, ev_off = (read_table(c.path("events_located.parquet")) for c in (on, off))
+    assert _harvested_ids(ev_on, hworld["assoc"]) == set(hworld["withheld"])
+    assert not _harvested_ids(ev_off, hworld["assoc"])
+    params_on, params_off = on.records[-1]["params"], off.records[-1]["params"]
+    assert "harvest" in params_on and "harvest" not in params_off
+    assert on.records[-1]["counts"]["picksHarvested"] == len(hworld["withheld"])
+    assert "picksHarvested" not in off.records[-1]["counts"]
+    ref = params_on["statics"]["reference"]
+    assert all("afterNoHarvestHM" in r for r in ref)
+    assert not any("afterNoHarvestHM" in r for r in params_off["statics"]["reference"])
+    assert set(params_on["statics"]["crossValidatedOffsets"]) == {
+        "before", "after", "afterNoHarvest", "inSample"}
+    # A pass 2 rerun on the harvested events_located (after match reruns) must not call the
+    # association stale: the harvested pick ids belong to no association event.
+    write_table(match(ev_on, catalog, hworld["on"]).matches, on.path("matches.parquet"), "Match")
+    stage.run(on)
+    pd.testing.assert_frame_equal(read_table(on.path("events_located.parquet")), ev_on)
