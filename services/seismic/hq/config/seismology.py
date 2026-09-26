@@ -111,11 +111,13 @@ class UnmatchedReasonsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     minStations: int = Field(ge=1)  # fewer stations than this with data/picks/association fails
+    minPickProb: float = Field(gt=0, le=1)  # picks below this count only for "below threshold"
     arrivalPadS: float = Field(ge=0)  # widens each side of every expected arrival window (s)
+    maxCandidateDtS: float = Field(gt=0)  # a located candidate's |dt| limit for "out of tolerance"
 
 
 class MatchingConfig(BaseModel):
-    """One-to-one matching of located events to the public catalog (stage ``match``, MATCH-02)."""
+    """One-to-one matching of located events to the public regional catalog (stage ``match``)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -124,13 +126,19 @@ class MatchingConfig(BaseModel):
     maxDtS: float = Field(gt=0)  # admissible only if |dt| <= maxDtS ...
     maxDistM: float = Field(gt=0)  # ... and epicentral distance <= maxDistM
     sensitivity: list[TolerancePair] = Field(min_length=1)  # each pair is limit and cost scale
+    enuConsistencyM: float = Field(gt=0)  # stored ENU vs ENU from lat/lon/elevation (stage check)
     reasons: UnmatchedReasonsConfig
 
     @model_validator(mode="after")
-    def _unique_pairs(self) -> "MatchingConfig":
+    def _pairs(self) -> "MatchingConfig":
         pairs = [(p.dtS, p.distM) for p in self.sensitivity]
         if len(set(pairs)) != len(pairs):
             raise ValueError(f"sensitivity pairs must be unique, got {pairs}")
+        if (self.maxDtS, self.maxDistM) not in pairs:
+            raise ValueError(
+                f"sensitivity pairs {pairs} must include the headline tolerance "
+                f"(maxDtS, maxDistM) = ({self.maxDtS}, {self.maxDistM})"
+            )
         return self
 
 

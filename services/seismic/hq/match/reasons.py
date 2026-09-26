@@ -1,4 +1,4 @@
-"""Why each unmatched public event is unmatched, from the evidence in the run dir (MATCH-02).
+"""Why each unmatched public regional catalog event is unmatched, from the run dir (MATCH-02).
 
 ``match()`` sees only the two tables, so it can say an event lost the one-to-one competition or
 had no admissible candidate. ``explain_unmatched`` refines the second along the pipeline, using
@@ -9,28 +9,40 @@ check that fails gives the reason:
 1. ``window``, ``bbox``: the public origin lies outside the run window or bbox.
 2. ``oneToOne`` (from ``match``): an admissible candidate exists but every one was assigned to
    another public event. The reason is kept as ``match`` wrote it.
-3. ``waveformData`` (stations, gaps): fewer than ``minStations`` used stations have waveform data
-   in the event's expected arrival windows; a station has none when every channel's gaps cover
-   both its P and its S window.
-4. ``picks`` (stations, picks): fewer than ``minStations`` used stations have a pick in the
-   expected windows (a P pick in the P window or an S pick in the S window).
-5. ``association`` (stations, picks, assoc_picks): fewer than ``minStations`` stations have an
-   associated pick among those.
-6. ``location`` (stations, picks, ``events_located.pickIds``): the located events that carry
-   in-window picks from at least ``minStations`` stations are this event's associated candidates.
-   If any exists, the reason is "located out of tolerance" with the nearest one (lowest cost);
-   if none does and check 5 ran, it is "associated, not located".
-7. Otherwise the ``match`` reason stays: "no candidate within ..." with the nearest located event.
+3. ``arrivalWindows`` (stations): fewer than ``minStations`` used stations have an expected
+   arrival window that overlaps the run window (an event near the end of the processed window).
+4. ``waveformData`` (stations, gaps): fewer than ``minStations`` used stations have waveform data
+   in their expected arrival windows. A station has none when, on every channel, the gaps cover
+   both its P and its S window (windows are clipped to the run window, the downloaded span).
+5. ``picks`` (stations, picks): fewer than ``minStations`` used stations have an in-window pick
+   at ``minPickProb`` or above. The reason is "picks below threshold" when counting every stored
+   pick would reach ``minStations``, and "too few picks" otherwise.
+6. ``association`` (stations, picks, assoc_picks): no single associated event (``assocId``)
+   holds in-window picks from ``minStations`` stations.
+7. ``location`` (stations, picks, ``events_located.pickIds``): the located events within
+   ``maxCandidateDtS`` of the public origin that carry in-window picks from ``minStations``
+   stations are this event's associated candidates. If any exists, the reason is "located out of
+   tolerance" with the nearest (lowest-cost) one; if none does and check 6 ran, it is
+   "associated, not located".
+8. Otherwise the ``match`` reason stays: "no candidate within ..." with the nearest located event.
+
+In-window picks
+    A station's in-window picks are its P picks inside its P window and its S picks inside its S
+    window. S counts as well as P because the associator counts stations with P or S picks, so
+    "too few picks" means too few for it. Contamination by neighbouring events stays small: a
+    pick of another event counts only with the same phase inside these 1D-model windows (a few
+    seconds wide), checks 6 and 7 need one associated or located event to hold the picks, and
+    check 7 an origin time within ``maxCandidateDtS``.
 
 Expected arrival windows
-    For a station at hypocentral distance ``R`` (ENU, sensor position to public hypocentre), the
-    P window is ``[t + R / vpMax - pad, t + R / vpMin + pad]`` and the S window the same with Vs,
-    where ``vMin``/``vMax`` are the slowest and fastest layer velocities of the configured 1D model
-    and ``pad`` is ``reasons.arrivalPadS``. In that model every first arrival lies inside the
-    unpadded bracket: no path is shorter than ``R`` or faster than ``vMax``, and the straight ray
-    is never slower than ``R / vMin`` (extending the top layer upward keeps its velocity). The pad
-    absorbs public origin-time and location error and pick error. Only stations with
-    ``usedInRun`` count.
+    For a station at hypocentral distance ``R`` (3D ENU, sensor to public hypocentre), the P window
+    is ``[t + R / vpMax - pad, t + T_P + pad]``: ``vpMax`` is the fastest P velocity of the
+    configured 1D model and ``T_P`` the P time along the straight ray through it (its top layer
+    extended upward). The S window is the same with S. In that model every first arrival lies in
+    the unpadded bracket: no path is shorter than ``R`` or faster than ``vMax``, and by Fermat's
+    principle the first arrival is never later than the straight ray. ``pad`` is ``arrivalPadS``
+    (public location and origin-time error, station delays, pick error). Windows are clipped to
+    the run window, and only stations with ``usedInRun`` count.
 """
 
 from dataclasses import dataclass, field
@@ -46,15 +58,19 @@ from hq.config.seismology import SeismologyConfig
 from hq.locate.velocity import LayerModel
 from hq.match import REASONS, MatchResult, Offsets, Tolerance, checked, pair_offsets
 
+FloatArray = NDArray[np.float64]
+
 # Evidence tables and the columns each check needs (docs/02 §2 names).
 STATION_COLUMNS = ("id", "enu_e", "enu_n", "enu_u", "channels", "usedInRun")
 GAP_COLUMNS = ("stationId", "channel", "gapStart", "gapEnd")
-PICK_COLUMNS = ("id", "stationId", "phase", "t")
+PICK_COLUMNS = ("id", "stationId", "phase", "t", "prob")
 ASSOC_PICK_COLUMNS = ("assocId", "pickId")
 PUBLIC_COLUMNS = ("id", "t", "latitude", "longitude", "enu_e", "enu_n", "enu_u")
+PHASES = ("P", "S")
 
 # Check name -> the evidence inputs it needs, in pipeline order.
 CHECK_INPUTS: dict[str, tuple[str, ...]] = {
+    "arrivalWindows": ("stations",),
     "waveformData": ("stations", "gaps"),
     "picks": ("stations", "picks"),
     "association": ("stations", "picks", "assoc_picks"),
@@ -73,34 +89,81 @@ class Evidence:
     assoc_picks: pd.DataFrame | None = None  # assoc_picks.parquet
 
 
-@dataclass(frozen=True)
-class SpeedBounds:
-    """Slowest and fastest P and S layer velocities of a 1D model (m/s)."""
+@dataclass(frozen=True, eq=False)
+class ArrivalModel:
+    """What the expected arrival windows take from the configured 1D model (m ASL, m/s)."""
 
     model_name: str
-    vp_min: float
-    vp_max: float
-    vs_min: float
-    vs_max: float
+    tops: FloatArray  # layer tops, top-down; the top layer extends upward, the last downward
+    vp: FloatArray
+    vs: FloatArray
 
     @classmethod
-    def from_model(cls, model: LayerModel) -> "SpeedBounds":
+    def from_model(cls, model: LayerModel) -> "ArrivalModel":
         return cls(
             model_name=model.name,
-            vp_min=float(np.min(model.vp_m_per_s)),
-            vp_max=float(np.max(model.vp_m_per_s)),
-            vs_min=float(np.min(model.vs_m_per_s)),
-            vs_max=float(np.max(model.vs_m_per_s)),
+            tops=np.asarray(model.top_elev_m, dtype=np.float64),
+            vp=np.asarray(model.vp_m_per_s, dtype=np.float64),
+            vs=np.asarray(model.vs_m_per_s, dtype=np.float64),
         )
 
-    def to_record(self) -> dict[str, Any]:
+    def speeds(self, phase: str) -> FloatArray:
+        return self.vp if phase == "P" else self.vs
+
+    def straight_ray_s(
+        self, phase: str, src_elev_m: float, rcv_elev_m: FloatArray, r_m: FloatArray
+    ) -> FloatArray:
+        """Travel time (s) along the straight ray of length ``r_m`` between the two elevations.
+
+        Slowness along a straight ray depends only on elevation, so the time is ``r_m`` times the
+        mean slowness over the ray's elevation span (the layer's slowness when it is horizontal).
+        """
+        v = self.speeds(phase)
+        upper = np.concatenate([[np.inf], self.tops[1:]])  # layer i spans (lower_i, upper_i]
+        lower = np.concatenate([self.tops[1:], [-np.inf]])
+        rcv = np.asarray(rcv_elev_m, dtype=np.float64)
+        z_lo = np.minimum(src_elev_m, rcv)[:, None]
+        z_hi = np.maximum(src_elev_m, rcv)[:, None]
+        overlap = np.clip(np.minimum(z_hi, upper) - np.maximum(z_lo, lower), 0.0, None)
+        span = (z_hi - z_lo)[:, 0]
+        layer_at = np.maximum((self.tops[None, :] >= z_lo).sum(axis=1) - 1, 0)
+        sloped = span > 0
+        mean_slowness = np.where(
+            sloped,
+            (overlap / v).sum(axis=1) / np.where(sloped, span, 1.0),
+            1.0 / v[layer_at],
+        )
+        return np.asarray(r_m, dtype=np.float64) * mean_slowness
+
+    def to_record(self, pad_s: float) -> dict[str, Any]:
         return {
             "velocityModel": self.model_name,
-            "vpMinMPerS": self.vp_min,
-            "vpMaxMPerS": self.vp_max,
-            "vsMinMPerS": self.vs_min,
-            "vsMaxMPerS": self.vs_max,
+            "vpMaxMPerS": float(self.vp.max()),
+            "vsMaxMPerS": float(self.vs.max()),
+            "padS": pad_s,
+            "rule": "[t + R / vMax - pad, t + straight-ray time + pad] per phase, clipped to the "
+            "run window",
         }
+
+
+def expected_windows(
+    t: float,
+    hypo_enu: FloatArray,
+    sensor_enu: FloatArray,
+    origin_elev_m: float,
+    arrivals: ArrivalModel,
+    pad_s: float,
+) -> dict[str, tuple[FloatArray, FloatArray]]:
+    """Unclipped ``{phase: (start, end)}`` epoch-s windows per sensor (module docstring)."""
+    r = np.sqrt(((sensor_enu - hypo_enu) ** 2).sum(axis=1))
+    src_elev = float(hypo_enu[2]) + origin_elev_m
+    rcv_elev = sensor_enu[:, 2] + origin_elev_m
+    out: dict[str, tuple[FloatArray, FloatArray]] = {}
+    for phase in PHASES:
+        fastest = float(arrivals.speeds(phase).max())
+        slowest_path = arrivals.straight_ray_s(phase, src_elev, rcv_elev, r)
+        out[phase] = (t + r / fastest - pad_s, t + slowest_path + pad_s)
+    return out
 
 
 @dataclass(frozen=True, eq=False)
@@ -135,14 +198,17 @@ def code_of(reason: str) -> str:
 @dataclass(frozen=True)
 class _Stations:
     ids: NDArray[Any]
-    enu: NDArray[np.float64]  # (n, 3)
+    enu: FloatArray  # (n, 3)
     channels: list[list[str]]
 
 
 def _used_stations(stations: pd.DataFrame) -> _Stations:
     _require(stations, STATION_COLUMNS, "stations")
-    if stations["usedInRun"].isna().any():
-        raise ValueError("stations: null usedInRun")
+    if stations["id"].isna().any() or stations["usedInRun"].isna().any():
+        raise ValueError("stations: null id or usedInRun")
+    dupes = sorted(stations.loc[stations["id"].duplicated(), "id"].astype(str))
+    if dupes:
+        raise ValueError(f"stations: duplicate ids {dupes}")
     used = stations[stations["usedInRun"].astype(bool)]
     enu = used[["enu_e", "enu_n", "enu_u"]].to_numpy(dtype=np.float64)
     if not np.isfinite(enu).all():
@@ -157,60 +223,90 @@ def _used_stations(stations: pd.DataFrame) -> _Stations:
 def _merged_gaps(gaps: pd.DataFrame) -> dict[tuple[str, str], list[tuple[float, float]]]:
     """Per (station, channel): gap intervals merged where they overlap or touch."""
     _require(gaps, GAP_COLUMNS, "gaps")
-    start, end = gaps["gapStart"].to_numpy(np.float64), gaps["gapEnd"].to_numpy(np.float64)
-    if not (np.isfinite(start).all() and np.isfinite(end).all() and (end >= start).all()):
+    starts, ends = gaps["gapStart"].to_numpy(np.float64), gaps["gapEnd"].to_numpy(np.float64)
+    if not (np.isfinite(starts).all() and np.isfinite(ends).all() and (ends >= starts).all()):
         raise ValueError("gaps: every gap needs finite gapStart <= gapEnd")
     merged: dict[tuple[str, str], list[tuple[float, float]]] = {}
     ordered = gaps.sort_values(["stationId", "channel", "gapStart"], kind="stable")
     for (sid, cha), group in ordered.groupby(["stationId", "channel"], sort=False):
         spans: list[tuple[float, float]] = []
-        for start, end in zip(group["gapStart"], group["gapEnd"], strict=True):
-            if spans and start <= spans[-1][1]:
-                spans[-1] = (spans[-1][0], max(spans[-1][1], float(end)))
+        for gap_start, gap_end in zip(group["gapStart"], group["gapEnd"], strict=True):
+            if spans and gap_start <= spans[-1][1]:
+                spans[-1] = (spans[-1][0], max(spans[-1][1], float(gap_end)))
             else:
-                spans.append((float(start), float(end)))
+                spans.append((float(gap_start), float(gap_end)))
         merged[(str(sid), str(cha))] = spans
     return merged
 
 
-def _covered(spans: list[tuple[float, float]], a: float, b: float) -> bool:
-    return any(start <= a and end >= b for start, end in spans)
+def _has_data(spans: list[tuple[float, float]], a: float, b: float) -> bool:
+    """Whether [a, b] (non-empty) holds time that no gap covers."""
+    return not any(start <= a and end >= b for start, end in spans)
 
 
 @dataclass(frozen=True)
 class _PickIndex:
-    """Per (station, phase): pick times (sorted) and ids."""
+    """Per (station, phase): pick times (sorted), ids and probabilities."""
 
-    t: dict[tuple[str, str], NDArray[np.float64]]
+    t: dict[tuple[str, str], FloatArray]
     ids: dict[tuple[str, str], NDArray[Any]]
+    prob: dict[tuple[str, str], FloatArray]
 
-    def within(self, sid: str, phase: str, a: float, b: float) -> NDArray[Any]:
+    def within(self, sid: str, phase: str, a: float, b: float) -> tuple[NDArray[Any], FloatArray]:
         key = (sid, phase)
-        if key not in self.t:
-            return np.zeros(0, dtype=object)
+        if key not in self.t or not a < b:
+            return np.zeros(0, dtype=object), np.zeros(0)
         times = self.t[key]
         lo = np.searchsorted(times, a, side="left")
         hi = np.searchsorted(times, b, side="right")
-        return self.ids[key][lo:hi]
+        return self.ids[key][lo:hi], self.prob[key][lo:hi]
 
 
 def _pick_index(picks: pd.DataFrame, station_ids: NDArray[Any]) -> _PickIndex:
     _require(picks, PICK_COLUMNS, "picks")
+    if picks[["id", "stationId", "phase"]].isna().any().any():
+        raise ValueError("picks: null id, stationId or phase")
     phases = set(picks["phase"].astype(str))
-    if not phases <= {"P", "S"}:
-        raise ValueError(f"picks: unknown phases {sorted(phases - {'P', 'S'})}")
+    if not phases <= set(PHASES):
+        raise ValueError(f"picks: unknown phases {sorted(phases - set(PHASES))}")
+    for col in ("t", "prob"):
+        values = picks[col].to_numpy(dtype=np.float64)
+        if not np.isfinite(values).all():
+            bad = sorted(picks.loc[~np.isfinite(values), "id"].astype(str))
+            raise ValueError(f"picks: non-finite {col} for {bad}")
     used = picks[picks["stationId"].astype(str).isin(set(station_ids))]
     ordered = used.sort_values(["stationId", "phase", "t", "id"], kind="stable")
-    t: dict[tuple[str, str], NDArray[np.float64]] = {}
+    t: dict[tuple[str, str], FloatArray] = {}
     ids: dict[tuple[str, str], NDArray[Any]] = {}
+    prob: dict[tuple[str, str], FloatArray] = {}
     for (sid, phase), group in ordered.groupby(["stationId", "phase"], sort=False):
-        t[(str(sid), str(phase))] = group["t"].to_numpy(dtype=np.float64)
-        ids[(str(sid), str(phase))] = group["id"].astype(str).to_numpy(dtype=object)
-    return _PickIndex(t=t, ids=ids)
+        key = (str(sid), str(phase))
+        t[key] = group["t"].to_numpy(dtype=np.float64)
+        ids[key] = group["id"].astype(str).to_numpy(dtype=object)
+        prob[key] = group["prob"].to_numpy(dtype=np.float64)
+    return _PickIndex(t=t, ids=ids, prob=prob)
+
+
+def _holders(assoc_picks: pd.DataFrame) -> dict[str, list[str]]:
+    """pick id -> the assocIds holding it."""
+    _require(assoc_picks, ASSOC_PICK_COLUMNS, "assoc_picks")
+    if assoc_picks[list(ASSOC_PICK_COLUMNS)].isna().any().any():
+        raise ValueError("assoc_picks: null assocId or pickId")
+    out: dict[str, list[str]] = {}
+    for assoc_id, pick_id in zip(assoc_picks["assocId"], assoc_picks["pickId"], strict=True):
+        out.setdefault(str(pick_id), []).append(str(assoc_id))
+    return out
 
 
 def _carriers(events_located: pd.DataFrame) -> dict[str, list[str]]:
     """pick id -> ids of the located events whose ``pickIds`` hold it."""
+    null = [
+        str(eid)
+        for eid, pick_ids in zip(events_located["id"], events_located["pickIds"], strict=True)
+        if not isinstance(pick_ids, list | tuple | np.ndarray)
+    ]
+    if null:
+        raise ValueError(f"events_located: null pickIds for {sorted(null)}")
     out: dict[str, list[str]] = {}
     for event_id, pick_ids in zip(events_located["id"], events_located["pickIds"], strict=True):
         for pick_id in pick_ids:
@@ -218,15 +314,23 @@ def _carriers(events_located: pd.DataFrame) -> dict[str, list[str]]:
     return out
 
 
-def _nearest(
-    candidates: list[str], j_of: dict[str, int], offsets: Offsets, i: int, tol: Tolerance
-) -> tuple[str, float, float]:
-    """The lowest-cost candidate for public row ``i``: (event id, dt, distance)."""
-    cols = np.array([j_of[c] for c in candidates], dtype=np.intp)
-    costs = tol.cost(offsets.dt[i, cols], offsets.dist[i, cols])
-    k = int(np.argmin(costs))
-    j = int(cols[k])
-    return candidates[k], float(offsets.dt[i, j]), float(offsets.dist[i, j])
+def _stations_per_group(
+    in_window: list[NDArray[Any]], owners: dict[str, list[str]]
+) -> dict[str, int]:
+    """Group id -> number of stations whose in-window picks it holds."""
+    counts: dict[str, int] = {}
+    for ids in in_window:
+        for group in {g for pid in ids for g in owners.get(str(pid), [])}:
+            counts[group] = counts.get(group, 0) + 1
+    return counts
+
+
+def _best(counts: dict[str, int]) -> tuple[str | None, int]:
+    """The group with the most stations (ties: smallest id), or (None, 0)."""
+    if not counts:
+        return None, 0
+    group, n = min(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return group, n
 
 
 @dataclass(frozen=True)
@@ -236,15 +340,18 @@ class _Context:
     stations: _Stations
     gaps: dict[tuple[str, str], list[tuple[float, float]]]
     picks: _PickIndex | None
-    associated: set[str]
+    holders: dict[str, list[str]]
     carriers: dict[str, list[str]]
     ran: frozenset[str]
     offsets: Offsets
     j_of: dict[str, int]
     tol: Tolerance
     k_min: int
+    min_prob: float
     pad: float
-    speeds: SpeedBounds
+    max_candidate_dt: float
+    arrivals: ArrivalModel
+    run: RunSection
 
 
 def explain_unmatched(
@@ -254,12 +361,20 @@ def explain_unmatched(
     evidence: Evidence,
     cfg: SeismologyConfig,
     run: RunSection,
-    speeds: SpeedBounds,
+    arrivals: ArrivalModel | None,
 ) -> Explained:
-    """Refine the reason of every unmatched public event in ``result.matches`` (module docstring)."""
+    """Refine the reason of every unmatched public event in ``result.matches`` (module docstring).
+
+    ``arrivals`` is needed only when ``evidence.stations`` is given (every window check needs it).
+    """
     _require(catalog, PUBLIC_COLUMNS, "catalog")
     public = checked(catalog, "catalog")
     located = checked(events_located, "events_located")
+    for col in ("latitude", "longitude", "enu_u"):
+        values = pd.to_numeric(catalog[col], errors="raise").to_numpy(dtype=np.float64)
+        if not np.isfinite(values).all():
+            bad = sorted(catalog.loc[~np.isfinite(values), "id"].astype(str))
+            raise ValueError(f"catalog: non-finite {col} for {bad}")
     matches = result.matches.copy()
     if len(matches) != len(public) or set(matches["catalogId"]) != set(public["id"]):
         raise ValueError("matches and catalog do not hold the same public events")
@@ -285,26 +400,26 @@ def explain_unmatched(
 
     ctx: _Context | None = None
     if evidence.stations is not None:
+        if arrivals is None:
+            raise ValueError("explain_unmatched: stations given without an arrival model")
         stations = _used_stations(evidence.stations)
-        associated: set[str] = set()
-        if evidence.assoc_picks is not None and "association" in ran:
-            _require(evidence.assoc_picks, ASSOC_PICK_COLUMNS, "assoc_picks")
-            associated = set(evidence.assoc_picks["pickId"].astype(str))
+        reasons_cfg = cfg.matching.reasons
         ctx = _Context(
             stations=stations,
-            gaps=_merged_gaps(evidence.gaps)
-            if evidence.gaps is not None and "waveformData" in ran
-            else {},
+            gaps=_merged_gaps(evidence.gaps) if evidence.gaps is not None else {},
             picks=_pick_index(evidence.picks, stations.ids) if evidence.picks is not None else None,
-            associated=associated,
+            holders=_holders(evidence.assoc_picks) if "association" in ran else {},
             carriers=_carriers(events_located) if "location" in ran else {},
             ran=ran,
             offsets=pair_offsets(located, public),
             j_of={eid: j for j, eid in enumerate(located["id"])},
             tol=Tolerance.from_config(cfg.matching),
-            k_min=cfg.matching.reasons.minStations,
-            pad=cfg.matching.reasons.arrivalPadS,
-            speeds=speeds,
+            k_min=reasons_cfg.minStations,
+            min_prob=reasons_cfg.minPickProb,
+            pad=reasons_cfg.arrivalPadS,
+            max_candidate_dt=reasons_cfg.maxCandidateDtS,
+            arrivals=arrivals,
+            run=run,
         )
     min_lon, min_lat, max_lon, max_lat = run.bbox
 
@@ -335,74 +450,92 @@ def explain_unmatched(
 
 
 def _evidence_reason(base: str, ev: pd.Series, i: int, ctx: _Context) -> str:
-    """Walk checks 3-6 for one public event (row ``i``) that had no admissible candidate."""
-    st, k_min, pad, speeds = ctx.stations, ctx.k_min, ctx.pad, ctx.speeds
+    """Walk checks 3-7 for one public event (row ``i``) that had no admissible candidate."""
+    st, k_min = ctx.stations, ctx.k_min
+    need = f"classifier minimum {k_min} stations"
+    n_used = len(st.ids)
     t = float(ev["t"])
     hypo = np.array([ev["enu_e"], ev["enu_n"], ev["enu_u"]], dtype=np.float64)
-    r = np.sqrt(((st.enu - hypo) ** 2).sum(axis=1))
-    p_lo, p_hi = t + r / speeds.vp_max - pad, t + r / speeds.vp_min + pad
-    s_lo, s_hi = t + r / speeds.vs_max - pad, t + r / speeds.vs_min + pad
-    n_used = len(st.ids)
+    ws, we = ctx.run.window_start_s, ctx.run.window_end_s
+    windows = {
+        phase: (np.maximum(lo, ws), np.minimum(hi, we))  # clipped; empty where start >= end
+        for phase, (lo, hi) in expected_windows(
+            t, hypo, st.enu, ctx.run.origin.elevM, ctx.arrivals, ctx.pad
+        ).items()
+    }
+    open_any = np.zeros(n_used, dtype=bool)
+    for lo, hi in windows.values():
+        open_any |= lo < hi
+
+    n_inside = int(open_any.sum())
+    if n_inside < k_min:
+        return (
+            f"{REASONS['arrivalsOutsideWindow']} (expected arrival windows of {n_inside} of "
+            f"{n_used} used stations overlap [{_iso(ws)}, {_iso(we)}); {need})"
+        )
 
     if "waveformData" in ctx.ran:
         with_data = 0
         for k, sid in enumerate(st.ids):
-            gapped = all(
-                _covered(ctx.gaps.get((sid, cha), []), p_lo[k], p_hi[k])
-                and _covered(ctx.gaps.get((sid, cha), []), s_lo[k], s_hi[k])
+            with_data += any(
+                lo[k] < hi[k] and _has_data(ctx.gaps.get((sid, cha), []), lo[k], hi[k])
                 for cha in st.channels[k]
+                for lo, hi in windows.values()
             )
-            with_data += not gapped
         if with_data < k_min:
             return (
                 f"{REASONS['noWaveformData']} (data on {with_data} of {n_used} used stations in "
-                f"the expected arrival windows; need {k_min})"
+                f"the expected arrival windows; {need})"
             )
 
-    if ctx.picks is None:  # checks 4-6 all need picks
+    if ctx.picks is None:  # checks 5-7 all need picks
         return base
-    in_window = [
-        np.concatenate(
-            [
-                ctx.picks.within(sid, "P", p_lo[k], p_hi[k]),
-                ctx.picks.within(sid, "S", s_lo[k], s_hi[k]),
-            ]
-        )
-        for k, sid in enumerate(st.ids)
-    ]
-    n_picked = sum(ids.size > 0 for ids in in_window)
-    if n_picked < k_min:
+    in_window: list[NDArray[Any]] = []
+    n_thr = 0
+    for k, sid in enumerate(st.ids):
+        found = [ctx.picks.within(sid, ph, lo[k], hi[k]) for ph, (lo, hi) in windows.items()]
+        in_window.append(np.concatenate([ids for ids, _ in found]))
+        n_thr += any((prob >= ctx.min_prob).any() for _, prob in found)
+    n_any = sum(ids.size > 0 for ids in in_window)
+    if n_thr < k_min:
+        code = "picksBelowThreshold" if n_any >= k_min else "tooFewPicks"
         return (
-            f"{REASONS['tooFewPicks']} (picks on {n_picked} of {n_used} used stations in the "
-            f"expected arrival windows; need {k_min})"
+            f"{REASONS[code]} (picks in the expected arrival windows on {n_any} of {n_used} used "
+            f"stations, {n_thr} of them at prob >= {ctx.min_prob:g}; {need})"
         )
 
-    n_assoc = 0
+    assoc_id, n_assoc = None, 0
     if "association" in ctx.ran:
-        n_assoc = sum(any(pid in ctx.associated for pid in ids) for ids in in_window)
+        assoc_id, n_assoc = _best(_stations_per_group(in_window, ctx.holders))
         if n_assoc < k_min:
             return (
-                f"{REASONS['picksNotAssociated']} (associated picks on {n_assoc} of the "
-                f"{n_picked} stations with picks in the expected arrival windows; need {k_min})"
+                f"{REASONS['picksNotAssociated']} (at most {n_assoc} of the {n_any} stations with "
+                f"picks in the expected arrival windows share one associated event; {need})"
             )
 
     if "location" not in ctx.ran:
         return base
-    stations_per_event: dict[str, int] = {}
-    for ids in in_window:
-        for eid in {e for pid in ids for e in ctx.carriers.get(str(pid), [])}:
-            stations_per_event[eid] = stations_per_event.get(eid, 0) + 1
-    candidates = sorted(e for e, n in stations_per_event.items() if n >= k_min)
+    per_event = _stations_per_group(in_window, ctx.carriers)
+    candidates = [
+        eid
+        for eid, n in sorted(per_event.items())
+        if n >= k_min and abs(ctx.offsets.dt[i, ctx.j_of[eid]]) <= ctx.max_candidate_dt
+    ]
     if candidates:
-        eid, dt, dist = _nearest(candidates, ctx.j_of, ctx.offsets, i, ctx.tol)
+        cols = np.array([ctx.j_of[e] for e in candidates], dtype=np.intp)
+        best = int(np.argmin(ctx.tol.cost(ctx.offsets.dt[i, cols], ctx.offsets.dist[i, cols])))
+        eid, j = candidates[best], int(cols[best])
         return (
             f"{REASONS['locatedOutOfTolerance']} {ctx.tol.label()} (nearest associated "
-            f"candidate {eid}: dt {dt:+.2f} s, {dist / 1000.0:.2f} km; picks from "
-            f"{stations_per_event[eid]} stations)"
+            f"candidate {eid}: dt {ctx.offsets.dt[i, j]:+.2f} s, "
+            f"{ctx.offsets.dist[i, j] / 1000.0:.2f} km; picks in the expected arrival windows "
+            f"from {per_event[eid]} stations)"
         )
     if "association" in ctx.ran:
         return (
-            f"{REASONS['associatedNotLocated']} (associated picks on {n_assoc} stations; no "
-            f"located event carries picks from {k_min} of them)"
+            f"{REASONS['associatedNotLocated']} (associated event {assoc_id} holds picks in the "
+            f"expected arrival windows from {n_assoc} stations; no located event within "
+            f"{ctx.max_candidate_dt:g} s of the public origin carries such picks from {k_min} "
+            "stations)"
         )
     return base

@@ -1,4 +1,5 @@
-"""Catalog matching (MATCH-02): one-to-one assignment of located events to the public catalog.
+"""Catalog matching (MATCH-02): one-to-one matching of located events to the public regional
+catalog.
 
 ``match(events_located, catalog, cfg) -> MatchResult`` is the docs/02 §5 API. It needs only the
 ``id``, ``t``, ``enu_e`` and ``enu_n`` columns of both tables, so it runs unchanged on events
@@ -80,8 +81,10 @@ REASONS: dict[str, str] = {
     "noCandidate": "no candidate within",
     "outsideWindow": "outside run window",
     "outsideBbox": "outside run bbox",
+    "arrivalsOutsideWindow": "arrivals outside run window",
     "noWaveformData": "no waveform data",
     "tooFewPicks": "too few picks",
+    "picksBelowThreshold": "picks below threshold",
     "picksNotAssociated": "picks not associated",
     "associatedNotLocated": "associated, not located",
     "locatedOutOfTolerance": "located out of tolerance",
@@ -195,7 +198,10 @@ def _dt_km(dt: float, dist: float) -> str:
 
 
 def no_candidate_reason(tol: Tolerance, nearest: tuple[float, float] | None) -> str:
-    """``no candidate within 2 s / 5 km (nearest: dt +3.40 s, 7.90 km)``."""
+    """``no candidate within 2 s / 5 km (nearest: dt +3.40 s, 7.90 km)``.
+
+    "nearest" is the located event with the lowest cost ``|dt| / dtScaleS + d / distScaleM``.
+    """
     detail = "no located events" if nearest is None else f"nearest: {_dt_km(*nearest)}"
     return f"{REASONS['noCandidate']} {tol.label()} ({detail})"
 
@@ -305,7 +311,8 @@ def match(
     sensitivity = sensitivity_frame(sens_rows)
 
     log.info(
-        "match: recovered %d / %d public events within %s from %d located events; "
+        "match: recovered %d / %d public regional catalog events within %s from %d located "
+        "candidate events; "
         "sensitivity %s; %.2f s",
         rows.size,
         len(public),
