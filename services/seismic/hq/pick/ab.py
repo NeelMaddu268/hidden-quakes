@@ -1179,9 +1179,21 @@ class StageContext(Protocol):
 
 
 def run(ctx: StageContext) -> None:
-    """Stage entry point (docs/02 -> Stage API): runs the A/B and records it in ``run.json``."""
+    """Entry point for the known-event A/B on a run.
+
+    It is a sub-step, not a pipeline stage (H4's registry rejects its name in ``ctx.record``), so
+    its runtime, counts and params go to ``known/pick_known.record.json``.
+    """
+    from hq.ingest.windows import KNOWN_DIR, write_step_record
+
     result = run_ab(ctx.run_dir, ctx.cache_dir, ctx.config.signal)
-    ctx.record(STAGE, runtime_s=result.runtimeS, counts=result.counts)
+    write_step_record(
+        ctx.path(KNOWN_DIR),
+        STAGE,
+        result.runtimeS,
+        result.counts,
+        ctx.config.signal.picker.model_dump(mode="json"),
+    )
 
 
 def load_signal_config(config_dir: Path) -> SignalConfig:
