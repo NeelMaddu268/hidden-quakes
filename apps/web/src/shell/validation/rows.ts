@@ -18,7 +18,7 @@ export type ValidationInput =
   | null
   | undefined;
 
-export type RowId = "recall" | "strict" | "stations" | "residual" | "depth" | "gain" | "chance";
+export type RowId = "recall" | "strict" | "stations" | "residual" | "depth" | "strictCompare" | "gain" | "chance";
 
 export interface ValidationRow {
   id: RowId;
@@ -31,6 +31,29 @@ const DECIMALS = { count: 0, stations: 1, residual: 3, depth: 0, gain: 2, chance
 
 /** Both association profiles of the contract (`BaselineRow.associationProfile`). */
 const ASSOCIATION_PROFILES = ["full", "p_only"] as const satisfies readonly BaselineRow["associationProfile"][];
+
+/** The profile the strict-events comparison is quoted on (the one `BaselineGain` is quoted on too). */
+const COMPARISON_PROFILE = "full" satisfies BaselineRow["associationProfile"];
+
+/**
+ * The strict (Tier A) counts of the `full` profile's PhaseNet and STA/LTA rows, when both rows
+ * exist with a finite count; the comparison is shown from the table itself, so it survives when
+ * no gain can be claimed (STA/LTA with no strict event at all, REQ-H1-5).
+ */
+export function strictComparison(
+  rows: readonly Nullable<BaselineRow>[] | null | undefined,
+): { phasenet: number; stalta: number } | null {
+  if (!rows) return null;
+  const strictOf = (method: BaselineRow["method"]): number | null => {
+    const row = rows.find((r) => r.method === method && r.associationProfile === COMPARISON_PROFILE);
+    const tierA = row?.tiers?.A;
+    return isFiniteNumber(tierA) ? tierA : null;
+  };
+  const phasenet = strictOf("phasenet");
+  const stalta = strictOf("stalta");
+  if (phasenet === null || stalta === null) return null;
+  return { phasenet, stalta };
+}
 
 /**
  * "The baseline ran": a presence check only. The table has a PhaseNet row and an STA/LTA row for
@@ -71,6 +94,16 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
   const medianVErrM = v.synthetic?.medianVErrM;
   if (isFiniteNumber(medianVErrM)) {
     out.push({ id: "depth", label: "Depth resolution", value: `±${formatNumber(medianVErrM, DECIMALS.depth)} m` });
+  }
+  // Lane doc: the strict counts side by side whenever the full profile has both rows; the table
+  // is the source, so the row also shows when STA/LTA's strict count is zero and no gain exists.
+  const comparison = strictComparison(v.baseline);
+  if (comparison) {
+    out.push({
+      id: "strictCompare",
+      label: "Strict events, PhaseNet vs STA/LTA",
+      value: `${formatNumber(comparison.phasenet, DECIMALS.count)} vs ${formatNumber(comparison.stalta, DECIMALS.count)}`,
+    });
   }
   // Lane doc: "Baseline ran and gain > 1 in both profiles". The value is summary.baseline.gain;
   // "ran" is the presence of the four baseline rows; "both profiles" is the exporter's guarantee.
