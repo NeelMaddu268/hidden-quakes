@@ -738,6 +738,21 @@ def test_reason_arrivals_outside_run_window(
     )
 
 
+def test_reason_too_few_used_stations(
+    seismology_config: SeismologyConfig, arrivals: ArrivalModel
+) -> None:
+    """Review reproduction: 3 used stations, all with data and picks, and an origin well inside
+    the window. The miss is the station count, not arrivals outside the run window."""
+    pub = public([("a", T0, 0, 0)])
+    sta = stations(n=3)
+    evidence = Evidence(
+        stations=sta, gaps=gaps_frame([]), picks=picks_frame(arrival_picks(sta, T0, HYPO, n=3))
+    )
+    reasons, explained = _explain(located([]), pub, seismology_config, arrivals, evidence)
+    assert reasons == {"a": f"too few used stations (3 used in the run; {NEED})"}
+    assert explained.codes == {"a": "tooFewUsedStations"}
+
+
 def test_reason_no_waveform_data_and_partial_gaps(
     seismology_config: SeismologyConfig, arrivals: ArrivalModel
 ) -> None:
