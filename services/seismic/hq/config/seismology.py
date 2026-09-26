@@ -174,8 +174,7 @@ class LocatorConfig(BaseModel):
     # hErrM is the semi-major axis at this level. docs/02 defines hErrM and vErrM as 68%, and vErrM
     # is the 1-sigma of the vertical marginal, so only 0.68 keeps the two consistent (checked).
     errConfidence: float
-    # depthOnEdge: more than this PDF mass on the fine grid's top or bottom face (or the MAP node on
-    # the search volume's top or bottom face; see hq.locate.uncertainty)
+    # depthOnEdge: more than this PDF mass on the fine grid's top or bottom face.
     depthOnEdgeMassFraction: float = Field(gt=0, lt=1)
     nWorkers: int = Field(ge=1)  # processes for locate_many; results do not depend on it
     evalChunkNodes: int = Field(ge=1)  # nodes per misfit block (memory only; results unchanged)

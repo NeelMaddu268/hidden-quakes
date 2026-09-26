@@ -113,8 +113,8 @@ locator:
   # hErrM = 68% semi-major axis of the horizontal marginal. docs/02 fixes 68% (vErrM is the vertical
   # 1-sigma), so any other value is rejected.
   errConfidence: 0.68
-  # depthOnEdge: > this PDF mass on the fine grid's top or bottom face, or the MAP node on the search
-  # volume's top or bottom face (hq.locate.uncertainty).
+  # depthOnEdge: > this PDF mass on the fine grid's top or bottom face. MAP boundary positions
+  # remain separate search diagnostics (hq.locate.uncertainty).
   depthOnEdgeMassFraction: 0.05
   nWorkers: 8 # processes for locate_many (spawned); results do not depend on it
   evalChunkNodes: 65536 # nodes per misfit block (memory only)

@@ -197,17 +197,17 @@ def test_face_masses_and_depth_on_edge() -> None:
     assert not _summary(misfit, e, n, z, top=True, bottom=True).depth_on_edge
 
 
-def test_depth_on_edge_map_rule_catches_a_broad_pdf_pinned_at_the_volume_top() -> None:
+def test_broad_pdf_map_boundary_is_separate_from_contracted_face_mass_flag() -> None:
     # Vertical sd 400 m peaked on the top row: the top row holds < 5% of the mass.
     misfit, e, n, z = _gaussian_box((80.0, 80.0, 400.0), (8, 8, 100))
     peak = 100  # z index of the minimum
     box = (misfit[: peak + 1], e, n, z[: peak + 1])
     pinned = _summary(*box, top=True)
-    assert pinned.top_face_mass < 0.05 and pinned.map_on_volume_top and pinned.depth_on_edge
+    assert pinned.top_face_mass < 0.05 and pinned.map_on_volume_top and not pinned.depth_on_edge
     interior = _summary(*box, top=False)  # the same face inside the volume: no z = 0 collapse
     assert not interior.map_on_volume_top and not interior.depth_on_edge
     upside_down = _summary(misfit[peak:], e, n, z[peak:], bottom=True)
-    assert upside_down.map_on_volume_bottom and upside_down.depth_on_edge
+    assert upside_down.map_on_volume_bottom and not upside_down.depth_on_edge
 
 
 # --- locator on the synthetic test geometry ---------------------------------------------------
@@ -293,7 +293,7 @@ def test_depth_on_edge_fires_at_the_volume_top(loc02: Any, locator: Locator, t0:
     assert deep.pdf.top_face_mass < 1e-4  # an interior face at the pdfCutoff contour
 
 
-def test_depth_on_edge_fires_for_a_broad_pdf_collapsed_to_the_volume_top(
+def test_broad_pdf_boundary_diagnostic_does_not_override_face_mass_flag(
     loc02: Any, locator: Locator, t0: float
 ) -> None:
     # Noisy, P-only, low-probability picks on 6 stations from a source 300 m above the volume top:
@@ -306,7 +306,7 @@ def test_depth_on_edge_fires_for_a_broad_pdf_collapsed_to_the_volume_top(
         loc = locator.locate(_noisy(picks, 300 + seed, 0.02, 0.04))
         assert loc.search["mapOnVolumeTop"] and loc.elev_m == top
         assert loc.search["faceMass"]["top"] < locator.cfg.depthOnEdgeMassFraction
-        assert loc.depth_on_edge
+        assert not loc.depth_on_edge
 
 
 def test_pdf_region_grows_past_the_first_fine_box_and_matches_brute_force(
