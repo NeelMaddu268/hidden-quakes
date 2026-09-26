@@ -93,8 +93,8 @@ locator:
   # (20 would need 6-9M).
   pdfCutoff: 12.0
   # PDF = exp(-pdfMisfitScale * misfit). 1.0 is the ticket's exp(-misfit): the Laplace likelihood
-  # with scale sigma / prob. With Gaussian pick noise it gives ~63% coverage for the "68%" errors;
-  # sqrt(2/pi) = 0.798 would calibrate that (lead decision). Formal errors only; never the MAP.
+  # with scale sigma / prob. The synthetic test measures how well the "68%" errors cover the true
+  # errors on the real geometry; change this only if that measurement says so. Formal errors only.
   pdfMisfitScale: 1.0
   # Most fine nodes one PDF may cover (misfit cost ~27 ns per node and pick). A PDF that needs more
   # is truncated: hErrM and vErrM become None and the search record says pdfTruncated.
