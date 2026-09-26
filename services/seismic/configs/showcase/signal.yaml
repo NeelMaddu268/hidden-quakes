@@ -152,9 +152,10 @@ preprocess:
     overlapS: 60.0           # real s read before and after every keep interval, then discarded
     minOverlapS: 30.0        # overlapS may not go below this. Edge effects inside the overlap are:
                              # taper (maxLengthS 1 s) + zero-phase filter settling (well under 1 s for
-                             # these filters) + half a PhaseNet window (3001 samples = 15 s of model time,
-                             # at most 15 s real) + the STA/LTA warm-up (the LTA window, a few s) = about
-                             # 22 s, rounded up to 30 s
+                             # these filters) + the longer of half a PhaseNet window (3001 samples = 15 s
+                             # of model time, at most 15 s real) and the STA/LTA warm-up (baseline
+                             # p/s.warmupS, 12 s) = about 17 s, rounded up to 30 s. The baseline also
+                             # checks overlapS >= max(s.warmupS, p.warmupS + maxSMinusPS) at run time
     edgeProbeS: 1.0          # every read reaches this much further, so data that continues past a chunk
                              # cut is told apart from a real data edge (gap, or data start/end). Must
                              # exceed one input sample interval (checked per trace) and stay below overlapS
@@ -163,4 +164,58 @@ preprocess:
 picker: {}
 
 # --- SEIS-07: STA/LTA baseline -----------------------------------------------------------------------
-baseline: {}
+# Classical picks (ObsPy recursive_sta_lta + trigger_onset) on exactly the chunks PhaseNet sees
+# (hq.preprocess.chunks). P from Z, S from the horizontals after a P. Windows are REAL seconds, so a
+# time-stretched borehole-B trace gets the same physical windows (factor x more model samples).
+baseline:
+  # STA/LTA has no calibrated confidence. Every trigger gets prob 1.0: how reliable the baseline is
+  # is controlled only by the trigger thresholds swept below, and prob 1.0 means no association
+  # probability threshold ever drops a baseline pick, so the baseline gets its best shot.
+  prob: 1.0
+  gapEdgeS: 1.0              # picks within 1 s of a raw data edge (gap, data start/end) are dropped and
+                             # counted, the same rule as PhaseNet (lane doc: gaps and noise)
+  minSegmentMarginS: 5.0     # a segment shorter than ltaS + 5 s is skipped and counted
+  maxWorkers: 4              # stations in parallel (threads: the C STA/LTA, filters and mseed reads
+                             # release the GIL); 1 runs inline
+  prefilter:                 # causal Butterworth bandpass before the STA/LTA (real Hz). Causal, so the
+    lowHz: 2.0               # onset is never pulled early by a zero-phase precursor. Removes microseism
+    highHz: 30.0             # and long-period drift that would otherwise dominate the LTA of raw counts;
+    corners: 4               # null runs the STA/LTA straight on the preprocessed traces
+  p:
+    components: Z
+    staS: 0.1                # lane doc range: STA 0.05-0.1 s, LTA 2-5 s at 100 Hz. On one live hour 0.1 s
+    ltaS: 2.0                # gave the same event onsets as 0.05 s with far fewer single-spike triggers
+    warmupS: 6.0             # 3 x ltaS: the recursive LTA starts from zero, so the ratio is inflated
+                             # after every segment start; no trigger may start inside this span
+  s:
+    components: NE           # borehole 1/2 arrive renamed to N/E by for_picking
+    staS: 0.1
+    ltaS: 4.0
+    warmupS: 12.0            # 3 x ltaS
+  # S = the earliest trigger on either horizontal in [tP + minSMinusPS, tP + maxSMinusPS] after a P
+  # of the same station (a P within gapEdgeS of a data edge does not count). The window spans hypo-
+  # central distances from a few hundred metres (borehole sensors above the seismicity) to the far
+  # side of the bbox. One S per P; two Ps choosing the same trigger give one S pick. Known limit of
+  # classical S picking: when P energy keeps a horizontal trigger on until the S arrives, that S has
+  # no onset of its own and is missed (docs/02 BaselineGain also scores a p_only association).
+  minSMinusPS: 0.15
+  maxSMinusPS: 5.0
+  # Thresholds of picks_stalta.parquet. Provisional: the lane doc asks for the sweep point with the
+  # most Tier A events, which needs H2's associate/locate/match/tier (not merged yet); until then
+  # baseline_sweep.parquet holds pick counts only.
+  chosen:
+    pOn: 5.0
+    pOff: 1.5
+    sOn: 5.0
+    sOff: 1.5
+  # Grid pOn x sOn x offLevels; each off level serves both phases at that point. The characteristic
+  # function is computed once per segment; every grid point only re-runs trigger_onset. Off is an
+  # absolute level, not a fraction of on: with a fixed off a higher on can only remove a trigger or
+  # move its onset later (each run of the CF above off holds at most one trigger), so the P count
+  # falls or stays as pOn rises, except where a later onset leaves a data-edge zone or crosses the
+  # run window start. An off tied to on could split one trigger into two. The S count is not
+  # strictly monotone either: a later S onset, or a later P, can move a trigger into an S window.
+  sweep:
+    pOn: [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
+    sOn: [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
+    offLevels: [1.0, 1.5, 2.0]
