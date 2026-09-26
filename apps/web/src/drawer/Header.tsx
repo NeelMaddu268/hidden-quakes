@@ -58,6 +58,11 @@ function EventSummary({ event, scene }: { event: SeismicEvent; scene: SceneMeta 
         <span className="hqd-tier" data-tier={event.tier}>
           Tier {event.tier}
         </span>
+        {match == null && (
+          <span className="hqd-notincat" data-testid="not-in-catalog">
+            Not in the public regional catalog
+          </span>
+        )}
         {event.tierReasons.length > 0 && <TierReasons key={event.id} reasons={event.tierReasons} />}
       </div>
       <div className="hqd-origin">

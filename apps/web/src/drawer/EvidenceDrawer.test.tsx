@@ -250,7 +250,7 @@ describe("opening (select / E → hero)", () => {
     render(<EvidenceDrawer />);
     select("hq-test-000002");
     expect(rows()).toHaveLength(4);
-    expect(screen.getByText(/traces/).textContent).toMatch(/4\s*traces from the closest stations, \d+ with a pick · 2–20 Hz bandpass/);
+    expect(document.querySelector(".hqd-caption")!.textContent).toMatch(/(^|\D)4 (of \d+ agreeing stations|stations) shown, closest first.* · 2–20 Hz bandpass · normalized per trace/);
     expect(document.querySelectorAll(".hqd-trace")).toHaveLength(4);
     select(HERO);
     expect(rows()).toHaveLength(16);
@@ -403,6 +403,18 @@ describe("figures", () => {
     select(HERO);
     expect(document.querySelector(".hqd-note")?.textContent).toMatch(/station list: ZZ\.GONE$/);
     expect(screen.getByRole("img", { name: /3 stations/ })).toBeTruthy();
+  });
+});
+
+describe("public-catalog status", () => {
+  it("marks an event with no public-catalog match, and only that", () => {
+    data.bundle = { ...readyBundle(), events: [event(HERO, { catalogMatch: null }), EVENTS[1]] } as BundleState;
+    render(<EvidenceDrawer />);
+    select(HERO);
+    expect(screen.getByTestId("not-in-catalog").textContent).toBe("Not in the public regional catalog");
+    select("hq-test-000002"); // matched to a public-catalog event
+    expect(screen.queryByTestId("not-in-catalog")).toBeNull();
+    expect(screen.getByText("uu60500001")).toBeTruthy();
   });
 });
 

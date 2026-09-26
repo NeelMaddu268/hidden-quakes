@@ -7,6 +7,7 @@ import {
   pickDelayMs,
   pickedTraceCount,
   prepareTraces,
+  recordCaption,
   recordDomain,
   timeTicks,
   tracePoints,
@@ -24,6 +25,8 @@ export interface RecordSectionProps {
   message?: string;
   /** Event origin time, epoch s: the axis is seconds after it. */
   originT: number;
+  /** How many stations agreed on the event (`quality.nStations`), for the caption. */
+  nStations?: number | null;
 }
 
 /** Tooltip for a mark: "P pick 1.23 s after origin · prob 0.87"; only finite numbers are printed. */
@@ -95,7 +98,7 @@ function Legend() {
  * row (CSS animation delays, so nothing re-renders while they play); the arrivals modeled from the
  * final location (`predP` / `predS`) are faint dashed lines. Missing picks or arrivals draw nothing.
  */
-export function RecordSection({ status, evidence, message, originT }: RecordSectionProps) {
+export function RecordSection({ status, evidence, message, originT, nStations }: RecordSectionProps) {
   const prepared = useMemo(() => (evidence ? prepareTraces(evidence.traces) : null), [evidence]);
   const domain = useMemo(
     () => (prepared && isNum(originT) ? recordDomain(prepared.traces, originT) : null),
@@ -132,9 +135,8 @@ export function RecordSection({ status, evidence, message, originT }: RecordSect
       <div className="hqd-caption">
         {status === "ready" && evidence ? (
           <>
-            <span className="hqd-num">{n}</span> {n === 1 ? "trace" : "traces"} from the closest stations,{" "}
-            <span className="hqd-num">{picked}</span> with a pick{band} · sorted by epicentral distance · normalized
-            per trace
+            {recordCaption(n, picked, nStations)}
+            {band} · normalized per trace
           </>
         ) : (
           "Waveforms from the stations closest to this event"
