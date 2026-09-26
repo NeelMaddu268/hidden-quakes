@@ -303,10 +303,12 @@ def self_consistent_terms(
 
 
 def _neighbour_median(
-    terms: pd.DataFrame, pos: pd.DataFrame, station: str, phase: str, k: int, min_events: int
+    terms: pd.DataFrame, pos: pd.DataFrame, station: str, phase: str, k: int, min_events: int,
+    max_dist_m: float,
 ) -> tuple[float, list[str]]:
-    """Median ``phase`` term of the ``k`` stations nearest ``station`` (epicentrally) that have
-    an estimated term (``nEvents >= min_events``), and their ids; NaN when none has one."""
+    """Median ``phase`` term of the ``k`` stations nearest ``station`` (epicentrally, within
+    ``max_dist_m``) that have an estimated term (``nEvents >= min_events``), and their ids; NaN
+    when none has one."""
     others = terms[(terms["phase"] == phase) & (terms["stationId"] != station)
                    & (terms["nEvents"] >= min_events)]
     if others.empty:
@@ -314,7 +316,9 @@ def _neighbour_median(
     here = pos.loc[station]
     p = pos.loc[others["stationId"]]
     d = np.hypot(p["enu_e"].to_numpy() - here["enu_e"], p["enu_n"].to_numpy() - here["enu_n"])
-    near = np.argsort(d, kind="stable")[:k]
+    near = [i for i in np.argsort(d, kind="stable") if d[i] <= max_dist_m][:k]
+    if not near:
+        return math.nan, []
     ids = others["stationId"].to_numpy()[near].tolist()
     return float(np.median(others["staticS"].to_numpy(dtype=np.float64)[near])), ids
 
@@ -330,39 +334,51 @@ def explain_terms(
 ) -> pd.DataFrame:
     """One row per static with ``|staticS| > flag_s``: its evidence and a written explanation.
 
-    Evidence, each computed from the terms, the station geometry and the model:
-    - neighbours: the median term of the ``neighbours`` nearest other stations with an
-      estimated term (``nEvents >= min_events``, same phase).
+    Evidence, each computed from the terms, the station geometry and the model. Each verdict
+    says what the term is consistent with; none proves a cause:
+    - neighbours: the median term of the ``neighbours`` nearest other stations within
+      ``neighbourMaxDistM`` with an estimated term (``nEvents >= min_events``, same phase).
       The same sign and at least ``lateralFraction`` of the term: nearby stations share the
-      delay, so it is lateral structure the 1D model can't hold (diagnostics row 7), not a
-      station fault.
+      delay, consistent with lateral structure the 1D model can't hold (diagnostics row 7)
+      rather than a station fault. The only verdict that draws on other stations' terms.
     - S/P: the station's S term over its P term (same sign, ``|P| >= minRatioTermS``) against
-      the model's Vp/Vs at the sensor. Within a factor ``ratioBand`` of it: P and S slowed in
-      proportion, a velocity anomaly along the path near the station. Above that: the anomaly is
-      mostly in S, so the local Vp/Vs differs from the model's (higher where late, as in
-      unconsolidated sediment; lower where early, as in crystalline rock under the model's
-      sediment-like top layers). Within a factor ``ratioBand`` of 1: equal delays, a station
-      timing offset or pick bias is possible.
+      the model's Vp/Vs at the sensor. Within a factor ``ratioBand`` of it: P and S changed in
+      proportion, consistent with a velocity anomaly near the station. Above that: S changed
+      proportionally more than P, consistent with near-station rock whose Vp/Vs differs from the
+      model's (slower and higher where late, as in unconsolidated sediment; faster and lower
+      where early, as in crystalline rock under the model's sediment-like top layers); such rock
+      moves both phases, so this covers the P term too. Within a factor ``ratioBand`` of 1:
+      equal delays, a station timing offset or pick bias is possible. These bands leave few
+      same-sign ratios without a label (only ratios below ``1 / ratioBand`` or between
+      ``ratioBand`` and ``Vp/Vs / ratioBand``), so they label consistency, not a tested cause.
     - distance: an early term at a station more than ``farStationM`` from ``centre`` (the
       events' median epicentre): most of its ray length lies in the model's half-space, where
       the sources sit and which the layer file marks as extrapolation, so a faster half-space
-      would make it early; a hypothesis the terms alone can't test.
+      would make distant stations early. Another station beyond ``farStationM`` whose same-phase
+      term is late by more than ``flag_s`` contradicts that, and then the verdict is not far.
     - elevation: the sensor against the source model's own top (above it the top layer is
       extended upward and stands in for whatever rock is there); context, not a verdict.
     ``verdict``: the first of lateral / path / vpvs / timing / far that holds, else unexplained.
     """
     columns = ["stationId", "phase", "staticS", "nEvents", "neighbourMedianS", "neighbours",
-               "spRatio", "modelVpVs", "distanceM", "sensorElevM", "aboveModelTopM", "verdict",
-               "explanation"]
+               "spRatio", "modelVpVs", "distanceM", "sensorElevM", "aboveModelTopM",
+               "farContradictedBy", "verdict", "explanation"]
     pos = stations.set_index(stations["id"].astype(str))
     source_top = (model.top_extension.from_elev_m if model.top_extension is not None
                   else model.top_of_model_elev_m)
     by_key = {(str(s), str(p)): float(v) for s, p, v in
               zip(terms["stationId"], terms["phase"], terms["staticS"], strict=True)}
+    sids = terms["stationId"].astype(str)
+    dist_of = pd.Series(np.hypot(pos.loc[sids, "enu_e"].to_numpy() - centre[0],
+                                 pos.loc[sids, "enu_n"].to_numpy() - centre[1]),
+                        index=terms.index)
+    far_late = terms[(dist_of > cfg.farStationM) & (terms["staticS"] > flag_s)
+                     & (terms["nEvents"] >= min_events)]
     rows = []
     for r in terms[terms["staticS"].abs() > flag_s].itertuples(index=False):
         sid, ph, term = str(r.stationId), str(r.phase), float(r.staticS)
-        near, near_ids = _neighbour_median(terms, pos, sid, ph, cfg.neighbours, min_events)
+        near, near_ids = _neighbour_median(terms, pos, sid, ph, cfg.neighbours, min_events,
+                                           cfg.neighbourMaxDistM)
         p_term, s_term = by_key.get((sid, "P"), 0.0), by_key.get((sid, "S"), 0.0)
         ratio = (s_term / p_term if abs(p_term) >= cfg.minRatioTermS and s_term * p_term > 0
                  else math.nan)
@@ -375,7 +391,9 @@ def explain_terms(
         path = has_ratio and vpvs / cfg.ratioBand <= ratio <= vpvs * cfg.ratioBand
         vpvs_differs = has_ratio and ratio > vpvs * cfg.ratioBand
         timing = has_ratio and 1.0 / cfg.ratioBand <= ratio <= cfg.ratioBand
-        far = term < 0 and dist > cfg.farStationM
+        far_hypothesis = term < 0 and dist > cfg.farStationM
+        counter = far_late[(far_late["phase"] == ph) & (far_late["stationId"] != sid)]
+        far = far_hypothesis and counter.empty
         verdict = next((name for name, hit in (("lateral", lateral), ("path", path),
                                                 ("vpvs", vpvs_differs), ("timing", timing),
                                                 ("far", far)) if hit), "unexplained")
@@ -384,33 +402,50 @@ def explain_terms(
         text = [f"{ph} arrives {abs(term):.3f} s {side} against the 1D model (n {int(r.nEvents)})."]
         if near_ids:
             text.append(
-                f"Its nearest stations with a {ph} term ({', '.join(near_ids)}) have a median "
+                f"Its nearest stations with a {ph} term within "
+                f"{cfg.neighbourMaxDistM / 1000:g} km ({', '.join(near_ids)}) have a median "
                 f"{near:+.3f} s: " + (
-                    "they share it, so it is lateral structure the 1D model can't hold (row 7), "
-                    "not a station fault." if lateral else "they don't share it.")
+                    "they share it, consistent with lateral structure the 1D model can't hold "
+                    "(row 7) rather than a station fault." if lateral else "they don't share it.")
             )
+        else:
+            text.append(f"No other station with a {ph} term lies within "
+                        f"{cfg.neighbourMaxDistM / 1000:g} km.")
         if has_ratio:
+            faster = "faster" if term < 0 else "slower"
             text.append(
                 f"S/P term ratio {ratio:.2f} against the model's Vp/Vs {vpvs:.2f} at the sensor: "
-                + (f"P and S {'slowed' if term > 0 else 'sped up'} in proportion, a velocity "
-                   "anomaly along the path near the station." if path else
-                   "the anomaly is mostly in S, so the local Vp/Vs "
-                   + ("is higher than the model's (as in unconsolidated sediment)." if term > 0
-                      else "is lower than the model's (as in crystalline rock under the model's "
-                      "sediment-like top layers).") if vpvs_differs else
+                + (f"P and S {'slowed' if term > 0 else 'sped up'} in proportion, consistent "
+                   "with a velocity anomaly near the station." if path else
+                   f"S changed proportionally more than P, consistent with {faster} "
+                   "near-station rock with a "
+                   + ("higher Vp/Vs than the model's (as in unconsolidated sediment), which "
+                      "delays P and delays S more." if term > 0
+                      else "lower Vp/Vs than the model's (as in crystalline rock under the "
+                      "model's sediment-like top layers), which advances P and advances S more.")
+                   if vpvs_differs else
                    "equal P and S delays: a station timing offset or pick bias is possible; "
                    "check the station's timing." if timing else
                    "neither proportional to the slownesses nor equal.")
             )
         elif p_term * s_term < 0 and abs(p_term) >= cfg.minRatioTermS:
             text.append("P and S terms have opposite signs.")
-        if far:
-            text.append(
-                f"The station lies {dist / 1000:.1f} km from the events' median epicentre (more "
-                f"than {cfg.farStationM / 1000:g} km), so most of its ray length lies in the "
-                "model's half-space, which the layer file marks as extrapolation; a faster "
-                "half-space would make it early (a hypothesis these terms can't test)."
-            )
+        if far_hypothesis:
+            head = (f"The station lies {dist / 1000:.1f} km from the events' median epicentre "
+                    f"(more than {cfg.farStationM / 1000:g} km), so most of its ray length lies "
+                    "in the model's half-space, which the layer file marks as extrapolation; a "
+                    "faster half-space would make distant stations early.")
+            if counter.empty:
+                text.append(head + f" No other station that far has a {ph} term later than "
+                            f"+{flag_s:g} s, so the table doesn't contradict that; nothing here "
+                            "tests it further.")
+            else:
+                cites = ", ".join(
+                    f"{c.stationId} at {dist_of[i] / 1000:.1f} km has a late {ph} term "
+                    f"{c.staticS:+.3f} s" for i, c in zip(counter.index,
+                                                          counter.itertuples(index=False),
+                                                          strict=True))
+                text.append(head + f" This table contradicts that: {cites}.")
         text.append(
             f"Sensor at {elev:.0f} m ASL, "
             + (f"{above:.0f} m above the velocity model's own top ({source_top:.0f} m ASL), where "
@@ -422,7 +457,10 @@ def explain_terms(
         rows.append({"stationId": sid, "phase": ph, "staticS": term, "nEvents": int(r.nEvents),
                      "neighbourMedianS": near, "neighbours": ",".join(near_ids),
                      "spRatio": ratio, "modelVpVs": vpvs, "distanceM": dist, "sensorElevM": elev,
-                     "aboveModelTopM": above, "verdict": verdict, "explanation": " ".join(text)})
+                     "aboveModelTopM": above,
+                     "farContradictedBy": (",".join(counter["stationId"].astype(str))
+                                           if far_hypothesis else ""),
+                     "verdict": verdict, "explanation": " ".join(text)})
     return pd.DataFrame(rows, columns=columns)
 
 
