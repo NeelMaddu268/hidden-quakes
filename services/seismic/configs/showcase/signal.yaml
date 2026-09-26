@@ -27,20 +27,23 @@ picker:
   pThreshold: 0.1                          # store everything >= 0.1; H2 filters later
   sThreshold: 0.1
   gapEdgeS: 1.0                            # real s; picks this close to a block edge are dropped
-  sampleRateHz: 100.0                      # for_picking output rate; asserted before the model
   batchSize: 256
   torchThreads: 4
   seed: 0
   seisbench:                               # passed verbatim to classify(); beats weight defaults
     overlap: 1500
     stacking: avg
-    blinding: [250, 250]
+    blinding: [250, 250]                   # samples with no output at each block edge; sum <= overlap
     strict: true
     flexibleHorizontalComponents: false    # for_picking already renamed 1/2 to N/E
   ab:
     profileVariants:
       borehole-A: [borehole-B]
     minStationsForRho: 3
+    arrivalWindow:                         # picks that may belong to the event, vs catalog origin
+      preOriginS: 2.0                      # allowance before the catalog origin time
+      minVelocityMps: 2000.0               # latest pick: origin + hypoDist / this + postMarginS
+      postMarginS: 5.0
     recordSection:
       bandHz: [2.0, 20.0]
       windowS: [-5.0, 30.0]

@@ -61,6 +61,13 @@ class SeisbenchArgs(_Section):
     def _check(self) -> "SeisbenchArgs":
         if min(self.blinding) < 0:
             raise ValueError(f"blinding must be non-negative, got {self.blinding}")
+        if self.overlap < sum(self.blinding):
+            # Blinded window edges would not be covered by the neighbouring window, leaving NaN
+            # holes inside a block that split triggers. overlap < the model window is checked
+            # against the loaded model (hq.pick.phasenet.check_model).
+            raise ValueError(
+                f"overlap {self.overlap} must be >= blinding[0] + blinding[1] = {sum(self.blinding)}"
+            )
         return self
 
 
@@ -86,6 +93,19 @@ class RecordSectionConfig(_Section):
         return self
 
 
+class ArrivalWindowConfig(_Section):
+    """Which picks may belong to a known event, relative to its public-catalog origin time.
+
+    Best P / best S, violations, rho and Check B only use picks with
+    ``origin - preOriginS <= t <= origin + hypocentralDist / minVelocityMps + postMarginS``.
+    Every pick is still written to ``known/picks.parquet``.
+    """
+
+    preOriginS: float = Field(ge=0.0)  # allowance for public-catalog origin-time error
+    minVelocityMps: float = Field(gt=0.0)  # slowest apparent velocity considered (bounds late S)
+    postMarginS: float = Field(ge=0.0)  # added to the slowest travel time
+
+
 class CheckBConfig(_Section):
     """Check B thresholds (docs/lanes/H1-signal.md, SEIS-04 acceptance)."""
 
@@ -97,10 +117,13 @@ class CheckBConfig(_Section):
 class PickerABConfig(_Section):
     """Weight A/B on the known-event windows (``hq.pick.ab``)."""
 
-    # Extra preprocessing profiles tried on the stations of a base profile; a variant is
-    # adopted only when it beats the base profile on the same A/B metric.
+    # Extra preprocessing profiles tried on the stations of a base profile. A station whose data
+    # the variant's preprocessing rejects (e.g. a rate outside its range) is logged, counted and
+    # left out of that variant. A variant is adopted only when it beats the base profile on the
+    # same A/B metric over the same station-windows; stations it rejected keep the base profile.
     profileVariants: dict[str, list[str]]
     minStationsForRho: int = Field(ge=2)  # fewer stations with a P pick -> rho is reported as NaN
+    arrivalWindow: ArrivalWindowConfig
     recordSection: RecordSectionConfig
     checkB: CheckBConfig
 
@@ -118,7 +141,6 @@ class PickerConfig(_Section):
     pThreshold: float = Field(gt=0.0, le=1.0)
     sThreshold: float = Field(gt=0.0, le=1.0)
     gapEdgeS: float = Field(ge=0.0)  # real s; picks this close to a block edge are dropped
-    sampleRateHz: float = Field(gt=0.0)  # rate for_picking must deliver; the model never resamples
     batchSize: int = Field(ge=1)
     torchThreads: int = Field(ge=1)
     seed: int

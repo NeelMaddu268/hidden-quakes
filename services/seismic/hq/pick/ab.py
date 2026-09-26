@@ -1,20 +1,31 @@
 """PhaseNet weight A/B on the known-event windows, plus the Check B evaluator (SEIS-04).
 
 Reads ``runs/<id>/known/windows.json`` (SEIS-02), ``runs/<id>/stations.parquet`` (SEIS-01) and
-waveforms via ``hq.ingest.cache.read_window`` (SEIS-05). For every event x weights x profile it
-picks every usable station, then per station keeps the best P (max probability) and the best S
-(max probability after that P). Metrics per (weights, profile): stations with P and S, Spearman
-rho between best-P time and epicentral distance, and P-before-S violations (a station whose
-max-probability S is not after its best P). Per profile the weights with the most P-and-S stations
-win, ties broken by the higher mean rho; a variant profile (``borehole-B``) is adopted only when
-it beats its base profile on the same metric.
+waveforms via ``hq.ingest.cache.read_window`` (SEIS-05), keeping only each station's
+``Station.channels``. For every event x weights x profile it picks every usable station.
 
-Writes to ``runs/<id>/known/``: ``ab.csv`` (one row per event x weights x profile + one summary row
-per weights x profile), ``ab.json`` (chosen weights, adopted profiles, Check B), ``picks.parquet``
-(every pick >= threshold from the chosen combination, ``Pick`` schema) and one
-``record_section_<eventId>.png`` per event.
+Per station and event only picks inside the event's arrival window count
+(``picker.ab.arrivalWindow``: from the catalog origin minus an allowance to the slowest travel
+time over the hypocentral distance plus a margin). Inside it the best P is the max-probability P
+and the best S the max-probability S after that P. A violation is a station whose max-probability
+S is not after its best P. Per event: stations with P and S, and Spearman rho between best-P time
+and epicentral distance over the stations with a best P (rhoPS over the P-and-S stations is
+reported alongside, not gated).
 
-CLI::
+A/B metric per (weights, profile), compared in this order: events consistent with Check B
+(no violation and rho >= checkB.minRho), total P-and-S stations, fewer violations, events with a
+defined rho, mean rho; a full tie goes to the earlier entry of ``candidateWeights``. A variant
+profile (``borehole-B``) is tried on its base profile's stations; stations whose data the
+variant's preprocessing rejects are counted and left out of it. The variant is adopted only when
+it strictly beats the base profile on the same station-windows; stations it rejected keep the
+base profile.
+
+Writes to ``runs/<id>/known/``: ``ab.csv`` (one row per event x weights x profile, one summary
+row per weights x profile, and the like-for-like variant comparison rows), ``ab.json`` (chosen
+weights, adopted profiles, Check B), ``picks.parquet`` (every pick >= threshold from the chosen
+combination, ``Pick`` schema) and one ``record_section_<eventId>.png`` per event.
+
+CLI (does not update ``run.json``; the stage entry point ``run(ctx)`` does)::
 
     uv run python -m hq.pick.ab --run-dir <dir> --config-dir configs/showcase --cache-dir <dir>
 """
@@ -29,10 +40,10 @@ import re
 import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 import obspy
@@ -40,7 +51,7 @@ import pandas as pd
 import yaml
 from scipy.stats import spearmanr
 
-from hq.config.signal import CheckBConfig, PickerConfig, SignalConfig
+from hq.config.signal import ArrivalWindowConfig, CheckBConfig, PickerConfig, SignalConfig
 from hq.pick.phasenet import (
     ForPicking,
     PickDiagnostics,
@@ -62,16 +73,44 @@ AB_JSON = "ab.json"
 PICKS_FILE = "picks.parquet"
 STAGE = "pick_known"
 
-# Record-section colours: categorical slots 1 and 2 of the dataviz reference palette; traces and
-# text stay in neutral ink so colour only carries the phase identity.
+# Record-section styling (presentation only, never a pipeline parameter). Colours: categorical
+# slots 1 and 2 of the dataviz reference palette; traces and text stay in neutral ink so colour
+# only carries the phase identity.
 _COLOR_P = "#2a78d6"
 _COLOR_S = "#eb6834"
 _INK = "#52514e"
 _INK_MUTED = "#8a8985"
 _SURFACE = "#fcfcfb"
+_TRACE_LINEWIDTH = 0.6
+_BEST_PICK_LINEWIDTH = 2.0
+_OTHER_PICK_LINEWIDTH = 0.8
+_OTHER_PICK_ALPHA = 0.35
+_GRID_LINEWIDTH = 0.5
+_GRID_ALPHA = 0.25
+_LABEL_FONTSIZE = 8
+_LEGEND_COLUMNS = 4
 
 
 # --- inputs -------------------------------------------------------------------------------------
+
+_DOC_KEYS = frozenset({"events", "params"})
+_EVENT_KEYS = frozenset(
+    {
+        "eventId",
+        "t",
+        "latitude",
+        "longitude",
+        "depthKm",
+        "mag",
+        "magType",
+        "windowStart",
+        "windowEnd",
+        "stations",
+    }
+)
+_STATION_KEYS = frozenset(
+    {"stationId", "components", "gapFraction", "epiDistM", "usable", "reason"}
+)
 
 
 @dataclass(frozen=True)
@@ -110,18 +149,27 @@ def _req(obj: Mapping[str, Any], key: str, where: str) -> Any:
     return obj[key]
 
 
+def _no_extra(obj: Mapping[str, Any], allowed: frozenset[str], where: str) -> None:
+    extra = sorted(set(obj) - allowed)
+    if extra:
+        raise ValueError(f"{where}: unknown keys {extra}")
+
+
 def _opt_float(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
 def parse_known_windows(doc: Mapping[str, Any]) -> KnownWindows:
-    """Parse the shared ``known/windows.json`` document (SEIS-02 writes it)."""
+    """Parse the shared ``known/windows.json`` document (SEIS-02 writes it; unknown keys fail)."""
+    _no_extra(doc, _DOC_KEYS, "windows.json")
     events: list[KnownEvent] = []
     for i, ev in enumerate(_req(doc, "events", "windows.json")):
         where = f"windows.json events[{i}]"
+        _no_extra(ev, _EVENT_KEYS, where)
         stations = []
         for j, st in enumerate(_req(ev, "stations", where)):
             swhere = f"{where}.stations[{j}]"
+            _no_extra(st, _STATION_KEYS, swhere)
             reason = _req(st, "reason", swhere)
             stations.append(
                 KnownStation(
@@ -168,6 +216,7 @@ class StationInfo:
     id: str
     preprocessProfile: str
     usedInRun: bool
+    channels: tuple[str, ...]
 
 
 def load_stations(path: Path) -> dict[str, StationInfo]:
@@ -177,20 +226,40 @@ def load_stations(path: Path) -> dict[str, StationInfo]:
 
     rows = from_frame(read_table(path), Station)
     return {
-        s.id: StationInfo(id=s.id, preprocessProfile=s.preprocessProfile, usedInRun=s.usedInRun)
+        s.id: StationInfo(
+            id=s.id,
+            preprocessProfile=s.preprocessProfile,
+            usedInRun=s.usedInRun,
+            channels=tuple(s.channels),
+        )
         for s in rows
     }
 
 
 def write_picks(picks: list[dict[str, Any]], path: Path) -> None:
-    """Write ``Pick`` rows through ``hq_contracts.io`` (validates every row against the model)."""
+    """Write ``Pick`` rows through ``hq_contracts.io`` (validates every row; empty is fine)."""
     from hq_contracts.io import to_frame, write_table
     from hq_contracts.models import Pick
 
-    write_table(to_frame([Pick(**p) for p in picks]), path, "Pick")
+    write_table(to_frame([Pick(**p) for p in picks], model=Pick), path, "Pick")
+
+
+def select_channels(raw: obspy.Stream, channels: Sequence[str]) -> tuple[obspy.Stream, int]:
+    """Keep only the station's selected channels (``read_window`` returns every cached one)."""
+    wanted = set(channels)
+    kept = obspy.Stream([tr for tr in raw if tr.stats.channel in wanted])
+    return kept, len(raw) - len(kept)
 
 
 # --- metrics ------------------------------------------------------------------------------------
+
+
+def arrival_window(
+    event: KnownEvent, epi_dist_m: float, cfg: ArrivalWindowConfig
+) -> tuple[float, float]:
+    """Times at which a pick may belong to ``event`` at a station ``epi_dist_m`` away."""
+    hypo_m = math.hypot(epi_dist_m, max(event.depthKm, 0.0) * 1000.0)
+    return event.t - cfg.preOriginS, event.t + hypo_m / cfg.minVelocityMps + cfg.postMarginS
 
 
 @dataclass(frozen=True)
@@ -201,6 +270,7 @@ class BestPS:
     bestS: dict[str, Any] | None  # max-probability S strictly after bestP
     bestSRaw: dict[str, Any] | None  # max-probability S, before the S-after-P filter
     violation: bool  # bestSRaw exists and is not after bestP
+    nOutsideWindow: int = 0  # picks at this station outside the event's arrival window
 
     @property
     def hasPS(self) -> bool:
@@ -215,15 +285,22 @@ def _argmax_pick(picks: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
     return best
 
 
-def best_phases(picks: Sequence[dict[str, Any]]) -> BestPS:
-    best_p = _argmax_pick(p for p in picks if p["phase"] == "P")
-    s_picks = [p for p in picks if p["phase"] == "S"]
+def best_phases(
+    picks: Sequence[dict[str, Any]], window: tuple[float, float] | None = None
+) -> BestPS:
+    """Best P, best S after it, and the S-before-P check, over the picks inside ``window``."""
+    inside = (
+        list(picks) if window is None else [p for p in picks if window[0] <= p["t"] <= window[1]]
+    )
+    n_out = len(picks) - len(inside)
+    best_p = _argmax_pick(p for p in inside if p["phase"] == "P")
+    s_picks = [p for p in inside if p["phase"] == "S"]
     best_s_raw = _argmax_pick(s_picks)
     if best_p is None:
-        return BestPS(bestP=None, bestS=None, bestSRaw=best_s_raw, violation=False)
+        return BestPS(None, None, best_s_raw, violation=False, nOutsideWindow=n_out)
     best_s = _argmax_pick(p for p in s_picks if p["t"] > best_p["t"])
     violation = best_s_raw is not None and best_s_raw["t"] <= best_p["t"]
-    return BestPS(bestP=best_p, bestS=best_s, bestSRaw=best_s_raw, violation=violation)
+    return BestPS(best_p, best_s, best_s_raw, violation=violation, nOutsideWindow=n_out)
 
 
 def spearman_rho(times: Sequence[float], dists: Sequence[float], min_n: int) -> float:
@@ -243,25 +320,35 @@ class EventMetrics:
     nS: int
     nPS: int
     violations: int
-    rho: float
+    rho: float  # over stations with a best P (gated by Check B)
     nRho: int
+    rhoPS: float  # over stations with a best P and a best S (reported only)
+    nRhoPS: int
+    nOutsideWindow: int  # picks outside the arrival window, all stations
 
 
 def event_metrics(
     best: Mapping[str, BestPS], dist_m: Mapping[str, float], min_n_rho: int
 ) -> EventMetrics:
     with_p = sorted(sid for sid, b in best.items() if b.bestP is not None)
-    times = [best[sid].bestP["t"] for sid in with_p]  # type: ignore[index]
-    dists = [dist_m[sid] for sid in with_p]
+    with_ps = [sid for sid in with_p if best[sid].hasPS]
+
+    def rho_over(sids: Sequence[str]) -> float:
+        times = [best[sid].bestP["t"] for sid in sids]  # type: ignore[index]
+        return spearman_rho(times, [dist_m[sid] for sid in sids], min_n_rho)
+
     return EventMetrics(
         nStations=len(best),
         nWithPicks=sum(1 for b in best.values() if b.bestP is not None or b.bestSRaw is not None),
         nP=len(with_p),
         nS=sum(1 for b in best.values() if b.bestSRaw is not None),
-        nPS=sum(1 for b in best.values() if b.hasPS),
+        nPS=len(with_ps),
         violations=sum(1 for b in best.values() if b.violation),
-        rho=spearman_rho(times, dists, min_n_rho),
+        rho=rho_over(with_p),
         nRho=len(with_p),
+        rhoPS=rho_over(with_ps),
+        nRhoPS=len(with_ps),
+        nOutsideWindow=sum(b.nOutsideWindow for b in best.values()),
     )
 
 
@@ -269,41 +356,58 @@ def _rho_key(rho: float) -> float:
     return -math.inf if math.isnan(rho) else rho
 
 
+def is_consistent(m: EventMetrics, min_rho: float) -> bool:
+    """The Check B criteria that apply to any station subset: no violation, rho >= minRho."""
+    return m.violations == 0 and not math.isnan(m.rho) and m.rho >= min_rho
+
+
 @dataclass(frozen=True)
 class ComboSummary:
     weights: str
     profile: str
     nEvents: int
+    nStationWindows: int
+    nEventsConsistent: int  # events with no violation and rho >= checkB.minRho
     totalPS: int
-    meanRho: float
-    minRho: float
-    nEventsWithRho: int
     violations: int
+    nEventsWithRho: int
+    meanRho: float  # over events with a defined rho
+    minRho: float
 
     @property
-    def key(self) -> tuple[int, float]:
-        """The A/B metric: P-and-S stations first, then mean rho (NaN ranks last)."""
-        return (self.totalPS, _rho_key(self.meanRho))
+    def key(self) -> tuple[int, int, int, int, float]:
+        """The A/B metric, larger is better (see the module docstring)."""
+        return (
+            self.nEventsConsistent,
+            self.totalPS,
+            -self.violations,
+            self.nEventsWithRho,
+            _rho_key(self.meanRho),
+        )
 
 
-def summarize(weights: str, profile: str, metrics: Sequence[EventMetrics]) -> ComboSummary:
+def summarize(
+    weights: str, profile: str, metrics: Sequence[EventMetrics], min_rho: float
+) -> ComboSummary:
     rhos = [m.rho for m in metrics if not math.isnan(m.rho)]
     return ComboSummary(
         weights=weights,
         profile=profile,
         nEvents=len(metrics),
+        nStationWindows=sum(m.nStations for m in metrics),
+        nEventsConsistent=sum(1 for m in metrics if is_consistent(m, min_rho)),
         totalPS=sum(m.nPS for m in metrics),
+        violations=sum(m.violations for m in metrics),
+        nEventsWithRho=len(rhos),
         meanRho=float(np.mean(rhos)) if rhos else math.nan,
         minRho=float(np.min(rhos)) if rhos else math.nan,
-        nEventsWithRho=len(rhos),
-        violations=sum(m.violations for m in metrics),
     )
 
 
 def choose_weights(
     summaries: Sequence[ComboSummary], candidate_order: Sequence[str]
 ) -> dict[str, str]:
-    """Per profile: most P-and-S stations, then higher mean rho, then candidate order."""
+    """Per profile: the weights with the largest ``ComboSummary.key``, then candidate order."""
     rank = {w: i for i, w in enumerate(candidate_order)}
     chosen: dict[str, ComboSummary] = {}
     for s in summaries:
@@ -313,24 +417,31 @@ def choose_weights(
     return {profile: s.weights for profile, s in chosen.items()}
 
 
+@dataclass(frozen=True)
+class VariantComparison:
+    """Base and variant profile, each with its chosen weights, on the same station-windows."""
+
+    base: str
+    variant: str
+    nStationWindows: int  # station-windows both profiles processed
+    baseSummary: ComboSummary
+    variantSummary: ComboSummary
+
+    @property
+    def variantWins(self) -> bool:
+        return self.nStationWindows > 0 and self.variantSummary.key > self.baseSummary.key
+
+
 def adopt_variants(
-    summaries: Sequence[ComboSummary],
-    chosen: Mapping[str, str],
-    profile_variants: Mapping[str, Sequence[str]],
+    bases: Iterable[str], comparisons: Sequence[VariantComparison]
 ) -> dict[str, str]:
-    """Per base profile, the profile to use: a variant only if it strictly beats the base."""
-    by_combo = {(s.profile, s.weights): s for s in summaries}
-    adopted: dict[str, str] = {}
-    for base in sorted({s.profile for s in summaries} - _all_variants(profile_variants)):
-        best_profile = base
-        best_key = by_combo[(base, chosen[base])].key
-        for variant in profile_variants.get(base, []):
-            if variant not in chosen:
-                continue
-            key = by_combo[(variant, chosen[variant])].key
-            if key > best_key:
-                best_profile, best_key = variant, key
-        adopted[base] = best_profile
+    """Per base profile: the first variant (config order) that strictly beats it, else the base."""
+    adopted = {base: base for base in bases}
+    for c in comparisons:
+        if c.base not in adopted:
+            raise ValueError(f"comparison for unknown base profile {c.base!r}")
+        if adopted[c.base] == c.base and c.variantWins:
+            adopted[c.base] = c.variant
     return adopted
 
 
@@ -349,6 +460,7 @@ class CheckBEvent:
     violations: int
     rho: float
     nRho: int
+    rhoPS: float
     passed: bool
     failures: tuple[str, ...]
 
@@ -381,6 +493,7 @@ def evaluate_check_b(metrics: Mapping[str, EventMetrics], cfg: CheckBConfig) -> 
                 violations=m.violations,
                 rho=m.rho,
                 nRho=m.nRho,
+                rhoPS=m.rhoPS,
                 passed=not failures,
                 failures=tuple(failures),
             )
@@ -389,22 +502,32 @@ def evaluate_check_b(metrics: Mapping[str, EventMetrics], cfg: CheckBConfig) -> 
     return CheckBResult(events=tuple(events), nPass=n_pass, passed=n_pass >= cfg.minEventsPass)
 
 
+def _fmt_rho(rho: float) -> str:
+    return "nan" if math.isnan(rho) else f"{rho:.3f}"
+
+
 def format_check_b(result: CheckBResult, cfg: CheckBConfig) -> str:
-    header = f"{'event':<24} {'stations':>8} {'P&S':>5} {'P>=S':>5} {'rho':>7} {'nRho':>5}  result"
+    header = (
+        f"{'event':<24} {'stations':>8} {'P&S':>5} {'S<=P':>5} {'rho':>7} {'nRho':>5} "
+        f"{'rhoPS':>7}  result"
+    )
     lines = [
         (
             f"Check B (P&S >= {cfg.minStationsPS}, no S-before-P, rho >= {cfg.minRho}, "
             f">= {cfg.minEventsPass} events)"
         ),
+        (
+            "rho: Spearman(best-P time, epicentral distance) over stations with a best P in the "
+            "arrival window; rhoPS: same over P&S stations (reported, not gated)"
+        ),
         header,
         "-" * len(header),
     ]
     for e in result.events:
-        rho = "nan" if math.isnan(e.rho) else f"{e.rho:.3f}"
         verdict = "PASS" if e.passed else "FAIL: " + "; ".join(e.failures)
         lines.append(
-            f"{e.eventId:<24} {e.nStations:>8} {e.nPS:>5} {e.violations:>5} {rho:>7} "
-            f"{e.nRho:>5}  {verdict}"
+            f"{e.eventId:<24} {e.nStations:>8} {e.nPS:>5} {e.violations:>5} "
+            f"{_fmt_rho(e.rho):>7} {e.nRho:>5} {_fmt_rho(e.rhoPS):>7}  {verdict}"
         )
     overall = "PASS" if result.passed else "FAIL"
     lines.append(f"overall: {overall} ({result.nPass}/{len(result.events)} events pass)")
@@ -445,20 +568,25 @@ def default_io() -> AbIO:
 class AbResult:
     eventRows: list[dict[str, Any]]
     summaryRows: list[dict[str, Any]]
+    comparisonRows: list[dict[str, Any]]
     chosenWeights: dict[str, str]
     adoptedProfiles: dict[str, str]
+    comparisons: list[VariantComparison]
     checkB: CheckBResult
     picks: list[dict[str, Any]]
     paths: dict[str, Path]
     counts: dict[str, int]
-    runtimeS: float
+    notApplicable: dict[tuple[str, str, str], str] = field(default_factory=dict)
+    runtimeS: float = 0.0
 
 
 Key = tuple[str, str, str, str]  # eventId, stationId, profile, weights
 _INT_COLUMNS = {
-    *(f for f in EventMetrics.__dataclass_fields__ if f != "rho"),
-    *("nNoData", "picksP", "picksS", "nBlocks", "nBlocksTooShort", "droppedNearEdge"),
-    *("nEvents", "totalPS", "nEventsWithRho", "violations"),
+    *(f for f in EventMetrics.__dataclass_fields__ if not f.startswith("rho")),
+    *("nNoData", "nNotApplicable", "picksP", "picksS", "nBlocks", "nBlocksTooShort"),
+    *("droppedNearEdge", "nOverlaps"),
+    *(f for f in ComboSummary.__dataclass_fields__ if f.startswith("n") or f == "totalPS"),
+    "violations",
 }
 
 
@@ -476,6 +604,7 @@ def run_ab(run_dir: Path, cache_dir: Path, cfg: SignalConfig, io: AbIO | None = 
     io = io if io is not None else default_io()
     picker = cfg.picker
     ab_cfg = picker.ab
+    min_rho = ab_cfg.checkB.minRho
     known_dir = run_dir / KNOWN_DIR
     windows = load_known_windows(known_dir / WINDOWS_FILE)
     stations = io.load_stations(run_dir / "stations.parquet")
@@ -510,39 +639,75 @@ def run_ab(run_dir: Path, cache_dir: Path, cfg: SignalConfig, io: AbIO | None = 
         log.warning(
             "%d usable station-windows have usedInRun=false; picked anyway", n_not_used_in_run
         )
+    win = {
+        event.eventId: {
+            ks.stationId: arrival_window(event, ks.epiDistM, ab_cfg.arrivalWindow)
+            for ks in usable[event.eventId]
+        }
+        for event in windows.events
+    }
+    dist = {
+        event.eventId: {ks.stationId: ks.epiDistM for ks in usable[event.eventId]}
+        for event in windows.events
+    }
 
     models = {w: io.load_model(w, picker) for w in weights_list}
 
     store: dict[Key, list[dict[str, Any]]] = {}
     diags: dict[Key, PickDiagnostics] = {}
     no_data: set[tuple[str, str]] = set()
+    not_applicable: dict[tuple[str, str, str], str] = {}  # (eventId, stationId, profile) -> why
+    n_channels_dropped = 0
     for event in windows.events:
         t_event = time.perf_counter()
         for ks in usable[event.eventId]:
-            raw = io.read_window(
-                ks.stationId, event.windowStart, event.windowEnd, cache_dir=cache_dir
+            sid = ks.stationId
+            base = base_of[sid]
+            raw, n_dropped = select_channels(
+                io.read_window(sid, event.windowStart, event.windowEnd, cache_dir=cache_dir),
+                stations[sid].channels,
             )
-            profiles = _profiles_for(base_of[ks.stationId], variants)
+            if n_dropped:
+                n_channels_dropped += n_dropped
+                log.info(
+                    "%s %s: dropped %d traces outside channels %s",
+                    event.eventId,
+                    sid,
+                    n_dropped,
+                    list(stations[sid].channels),
+                )
+            profiles = _profiles_for(base, variants)
             if len(raw) == 0:
-                no_data.add((event.eventId, ks.stationId))
-                log.warning("%s %s: read_window returned no data", event.eventId, ks.stationId)
+                no_data.add((event.eventId, sid))
+                log.warning("%s %s: no data on the station channels", event.eventId, sid)
                 for profile in profiles:
                     for w in weights_list:
-                        store[(event.eventId, ks.stationId, profile, w)] = []
+                        store[(event.eventId, sid, profile, w)] = []
                 continue
             for profile in profiles:
                 try:
-                    prepared = prepare_station(
-                        raw, ks.stationId, profile, cfg, for_picking=io.for_picking
+                    prepared = prepare_station(raw, sid, profile, cfg, for_picking=io.for_picking)
+                except ValueError as exc:
+                    if profile == base:
+                        raise RuntimeError(
+                            f"{event.eventId} {sid}: preprocessing with its own profile {base} "
+                            "failed"
+                        ) from exc
+                    # The variant's preprocessing rejects this station's data (e.g. a rate
+                    # outside the variant's range): not applicable here, counted and reported.
+                    not_applicable[(event.eventId, sid, profile)] = str(exc)
+                    log.warning(
+                        "%s %s: variant %s not applicable, compared without it: %s",
+                        event.eventId,
+                        sid,
+                        profile,
+                        exc,
                     )
-                except Exception as exc:
-                    raise RuntimeError(
-                        f"{event.eventId} {ks.stationId} {profile}: preprocessing failed"
-                    ) from exc
+                    continue
                 for w in weights_list:
                     picks, diag = pick_prepared(prepared, cfg, models[w], w)
-                    store[(event.eventId, ks.stationId, profile, w)] = picks
-                    diags[(event.eventId, ks.stationId, profile, w)] = diag
+                    store[(event.eventId, sid, profile, w)] = picks
+                    diags[(event.eventId, sid, profile, w)] = diag
         log.info(
             "%s: picked %d usable stations x %d weights in %.1f s",
             event.eventId,
@@ -551,48 +716,58 @@ def run_ab(run_dir: Path, cache_dir: Path, cfg: SignalConfig, io: AbIO | None = 
             time.perf_counter() - t_event,
         )
 
-    profile_order = []
-    for base in sorted(set(base_of.values())):
-        profile_order.extend(_profiles_for(base, variants))
+    bases = sorted(set(base_of.values()))
+    profile_order = [p for base in bases for p in _profiles_for(base, variants)]
 
-    def stations_on(event_id: str, profile: str) -> list[KnownStation]:
+    def stations_on(event_id: str, profile: str) -> list[str]:
+        """Usable stations of ``event_id`` that ``profile`` processed."""
         return [
-            ks
+            ks.stationId
             for ks in usable[event_id]
             if profile in _profiles_for(base_of[ks.stationId], variants)
+            and (event_id, ks.stationId, profile) not in not_applicable
         ]
+
+    def metrics_for(event_id: str, profile: str, w: str, sids: Sequence[str]) -> EventMetrics:
+        best = {
+            sid: best_phases(store[(event_id, sid, profile, w)], win[event_id][sid]) for sid in sids
+        }
+        return event_metrics(best, dist[event_id], ab_cfg.minStationsForRho)
 
     event_rows: list[dict[str, Any]] = []
     per_combo: dict[tuple[str, str], list[EventMetrics]] = {}
     for event in windows.events:
         for w in weights_list:
             for profile in profile_order:
-                sts = stations_on(event.eventId, profile)
-                if not sts:
+                sids = stations_on(event.eventId, profile)
+                n_na = sum(1 for k in not_applicable if k[0] == event.eventId and k[2] == profile)
+                if not sids and not n_na:
                     continue
-                keys = [(event.eventId, ks.stationId, profile, w) for ks in sts]
-                best = {k[1]: best_phases(store[k]) for k in keys}
-                dist = {ks.stationId: ks.epiDistM for ks in sts}
-                m = event_metrics(best, dist, ab_cfg.minStationsForRho)
+                m = metrics_for(event.eventId, profile, w, sids)
                 per_combo.setdefault((w, profile), []).append(m)
-                ds = [diags[k] for k in keys if k in diags]
-                row = {
-                    "rowType": "event",
-                    "eventId": event.eventId,
-                    "weights": w,
-                    "profile": profile,
-                    **asdict(m),
-                    "nNoData": sum(1 for ks in sts if (event.eventId, ks.stationId) in no_data),
-                    "picksP": sum(d.picksP for d in ds),
-                    "picksS": sum(d.picksS for d in ds),
-                    "nBlocks": sum(d.nBlocks for d in ds),
-                    "nBlocksTooShort": sum(d.nBlocksTooShort for d in ds),
-                    "droppedNearEdge": sum(d.droppedNearEdge for d in ds),
-                    "runtimeS": round(sum(d.runtimeS for d in ds), 3),
-                }
-                event_rows.append(row)
+                ds = [diags[k] for sid in sids if (k := (event.eventId, sid, profile, w)) in diags]
+                event_rows.append(
+                    {
+                        "rowType": "event",
+                        "eventId": event.eventId,
+                        "weights": w,
+                        "profile": profile,
+                        **asdict(m),
+                        "nNoData": sum(1 for sid in sids if (event.eventId, sid) in no_data),
+                        "nNotApplicable": n_na,
+                        "picksP": sum(d.picksP for d in ds),
+                        "picksS": sum(d.picksS for d in ds),
+                        "nBlocks": sum(d.nBlocks for d in ds),
+                        "nBlocksTooShort": sum(d.nBlocksTooShort for d in ds),
+                        "droppedNearEdge": sum(d.droppedNearEdge for d in ds),
+                        "secondsBlinded": round(sum(d.secondsBlinded for d in ds), 3),
+                        "nOverlaps": sum(d.nOverlaps for d in ds),
+                        "runtimeS": round(sum(d.runtimeS for d in ds), 3),
+                    }
+                )
                 log.info(
-                    "%s %s %s: stations %d, P %d, S %d, P&S %d, violations %d, rho %s",
+                    "%s %s %s: stations %d, P %d, S %d, P&S %d, violations %d, rho %s, "
+                    "outside arrival window %d",
                     event.eventId,
                     w,
                     profile,
@@ -601,17 +776,48 @@ def run_ab(run_dir: Path, cache_dir: Path, cfg: SignalConfig, io: AbIO | None = 
                     m.nS,
                     m.nPS,
                     m.violations,
-                    "nan" if math.isnan(m.rho) else f"{m.rho:.3f}",
+                    _fmt_rho(m.rho),
+                    m.nOutsideWindow,
                 )
 
     summaries = [
-        summarize(w, profile, per_combo[(w, profile)])
+        summarize(w, profile, per_combo[(w, profile)], min_rho)
         for w in weights_list
         for profile in profile_order
-        if (w, profile) in per_combo
+        if (w, profile) in per_combo and sum(m.nStations for m in per_combo[(w, profile)]) > 0
     ]
     chosen = choose_weights(summaries, weights_list)
-    adopted = adopt_variants(summaries, chosen, variants)
+
+    # Like-for-like: base and variant, each with its chosen weights, on the station-windows the
+    # variant could process.
+    comparisons: list[VariantComparison] = []
+    for base in bases:
+        for variant in variants.get(base, []):
+            if variant not in chosen:
+                log.warning("variant %s processed no %s station; not compared", variant, base)
+                continue
+            common = {e.eventId: stations_on(e.eventId, variant) for e in windows.events}
+            common = {ev: sids for ev, sids in common.items() if sids}
+            comparisons.append(
+                VariantComparison(
+                    base=base,
+                    variant=variant,
+                    nStationWindows=sum(len(s) for s in common.values()),
+                    baseSummary=summarize(
+                        chosen[base],
+                        base,
+                        [metrics_for(ev, base, chosen[base], s) for ev, s in common.items()],
+                        min_rho,
+                    ),
+                    variantSummary=summarize(
+                        chosen[variant],
+                        variant,
+                        [metrics_for(ev, variant, chosen[variant], s) for ev, s in common.items()],
+                        min_rho,
+                    ),
+                )
+            )
+    adopted = adopt_variants(bases, comparisons)
     adopted_set = set(adopted.values())
     summary_rows = [
         {
@@ -623,26 +829,65 @@ def run_ab(run_dir: Path, cache_dir: Path, cfg: SignalConfig, io: AbIO | None = 
         }
         for s in summaries
     ]
+    comparison_rows = [
+        {
+            "rowType": "variantCompare",
+            "eventId": "",
+            **asdict(summary),
+            "comparedWith": other,
+            "profileAdopted": adopted[c.base] == summary.profile,
+        }
+        for c in comparisons
+        for summary, other in ((c.baseSummary, c.variant), (c.variantSummary, c.base))
+    ]
+    for c in comparisons:
+        log.info(
+            "variant %s vs %s on %d station-windows: key %s vs %s -> %s",
+            c.variant,
+            c.base,
+            c.nStationWindows,
+            c.variantSummary.key,
+            c.baseSummary.key,
+            "adopted" if adopted[c.base] == c.variant else "not adopted",
+        )
     for base, profile in adopted.items():
         log.info(
             "A/B choice: stations on %s -> profile %s, weights %s", base, profile, chosen[profile]
         )
 
-    # Final picks: every usable station with its adopted profile and that profile's chosen weights.
+    # Final picks: every usable station with its adopted profile and that profile's chosen
+    # weights; a station the adopted variant could not process keeps its base profile.
+    n_variant_fallback = 0
+
     def final_key(event_id: str, station_id: str) -> Key:
-        profile = adopted[base_of[station_id]]
+        base = base_of[station_id]
+        profile = adopted[base]
+        if (event_id, station_id, profile) in not_applicable:
+            profile = base
         return (event_id, station_id, profile, chosen[profile])
 
     final_metrics: dict[str, EventMetrics] = {}
+    final_best: dict[str, dict[str, BestPS]] = {}
     final_picks: list[dict[str, Any]] = []
     for event in windows.events:
         best = {}
         for ks in usable[event.eventId]:
-            picks = store[final_key(event.eventId, ks.stationId)]
-            best[ks.stationId] = best_phases(picks)
+            key = final_key(event.eventId, ks.stationId)
+            if key[2] != adopted[base_of[ks.stationId]]:
+                n_variant_fallback += 1
+            picks = store[key]
+            best[ks.stationId] = best_phases(picks, win[event.eventId][ks.stationId])
             final_picks.extend(picks)
-        dist = {ks.stationId: ks.epiDistM for ks in usable[event.eventId]}
-        final_metrics[event.eventId] = event_metrics(best, dist, ab_cfg.minStationsForRho)
+        final_best[event.eventId] = best
+        final_metrics[event.eventId] = event_metrics(
+            best, dist[event.eventId], ab_cfg.minStationsForRho
+        )
+    if n_variant_fallback:
+        log.warning(
+            "%d station-windows kept their base profile because the adopted variant could not "
+            "process them",
+            n_variant_fallback,
+        )
     check_b = evaluate_check_b(final_metrics, ab_cfg.checkB)
 
     unique: dict[str, dict[str, Any]] = {}
@@ -653,50 +898,63 @@ def run_ab(run_dir: Path, cache_dir: Path, cfg: SignalConfig, io: AbIO | None = 
         log.warning("%d duplicate pick ids from overlapping event windows dropped", n_duplicates)
     picks_out = sorted(unique.values(), key=lambda p: (p["t"], p["stationId"], p["phase"]))
 
+    final_diags = [
+        diags[k]
+        for e in windows.events
+        for ks in usable[e.eventId]
+        if (k := final_key(e.eventId, ks.stationId)) in diags
+    ]
+    counts = {
+        "events": len(windows.events),
+        "stationWindows": sum(len(v) for v in usable.values()),
+        "stationWindowsNoData": len(no_data),
+        "tracesOutsideStationChannels": n_channels_dropped,
+        "variantNotApplicable": len(not_applicable),
+        "variantFallbackStationWindows": n_variant_fallback,
+        "picks": len(picks_out),
+        "picksP": sum(1 for p in picks_out if p["phase"] == "P"),
+        "picksS": sum(1 for p in picks_out if p["phase"] == "S"),
+        "picksOutsideArrivalWindow": sum(m.nOutsideWindow for m in final_metrics.values()),
+        "duplicatePicksDropped": n_duplicates,
+        "droppedNearEdge": sum(d.droppedNearEdge for d in final_diags),
+        "overlapsTreatedAsGaps": sum(d.nOverlaps for d in final_diags),
+        "checkBEventsPassed": check_b.nPass,
+    }
+
+    # Tables and the verdict first, so a plotting failure never hides them.
     known_dir.mkdir(parents=True, exist_ok=True)
     paths = {
         "abCsv": known_dir / AB_CSV,
         "abJson": known_dir / AB_JSON,
         "picks": known_dir / PICKS_FILE,
     }
-    table = pd.DataFrame(event_rows + summary_rows)
+    table = pd.DataFrame(event_rows + summary_rows + comparison_rows)
     for col in _INT_COLUMNS & set(table.columns):  # keep counts integer next to NaN cells
         table[col] = table[col].astype("Int64")
     table.to_csv(paths["abCsv"], index=False)
-    io.write_picks(picks_out, paths["picks"])
-
-    for event in windows.events:
-        png = known_dir / f"record_section_{_safe_name(event.eventId)}.png"
-        station_picks = {
-            ks.stationId: store[final_key(event.eventId, ks.stationId)]
-            for ks in usable[event.eventId]
-        }
-        plot_record_section(event, usable[event.eventId], station_picks, cfg, io, cache_dir, png)
-        paths[f"recordSection:{event.eventId}"] = png
-
-    counts = {
-        "events": len(windows.events),
-        "stationWindows": sum(len(v) for v in usable.values()),
-        "stationWindowsNoData": len(no_data),
-        "picks": len(picks_out),
-        "picksP": sum(1 for p in picks_out if p["phase"] == "P"),
-        "picksS": sum(1 for p in picks_out if p["phase"] == "S"),
-        "duplicatePicksDropped": n_duplicates,
-        "droppedNearEdge": sum(
-            diags[final_key(e.eventId, ks.stationId)].droppedNearEdge
-            for e in windows.events
-            for ks in usable[e.eventId]
-            if final_key(e.eventId, ks.stationId) in diags
-        ),
-        "checkBEventsPassed": check_b.nPass,
-    }
-    runtime_s = time.perf_counter() - t_start
     with paths["abJson"].open("w", encoding="utf-8") as fh:
         json.dump(
             {
-                "metric": "total P&S stations over the known events, tie -> higher mean rho",
+                "metric": (
+                    "per profile, larger is better in order: events with no S-before-P and "
+                    "rho >= checkB.minRho, total P&S stations, fewer violations, events with a "
+                    "defined rho, mean rho; tie -> candidateWeights order"
+                ),
+                "rhoStations": (
+                    "rho: stations with a best P inside the arrival window (gated); rhoPS: "
+                    "stations with P and S (reported only)"
+                ),
+                "variantRule": (
+                    "a variant is adopted only if it strictly beats its base profile on the same "
+                    "station-windows; stations it cannot process keep the base profile"
+                ),
                 "chosenWeightsByProfile": chosen,
                 "adoptedProfileByBase": adopted,
+                "variantComparisons": [_json_safe(asdict(c)) for c in comparisons],
+                "variantNotApplicable": [
+                    {"eventId": ev, "stationId": sid, "profile": prof, "reason": why}
+                    for (ev, sid, prof), why in sorted(not_applicable.items())
+                ],
                 "checkB": {
                     "params": ab_cfg.checkB.model_dump(mode="json"),
                     "passed": check_b.passed,
@@ -704,22 +962,46 @@ def run_ab(run_dir: Path, cache_dir: Path, cfg: SignalConfig, io: AbIO | None = 
                     "events": [_json_safe(asdict(e)) for e in check_b.events],
                 },
                 "counts": counts,
-                "runtimeS": round(runtime_s, 3),
+                "runtimeSBeforePlots": round(time.perf_counter() - t_start, 3),
                 "picker": picker.model_dump(mode="json"),
             },
             fh,
             indent=2,
         )
+    io.write_picks(picks_out, paths["picks"])
+
+    for event in windows.events:
+        png = known_dir / f"record_section_{_safe_name(event.eventId)}.png"
+        plot_record_section(
+            event,
+            usable[event.eventId],
+            {
+                ks.stationId: store[final_key(event.eventId, ks.stationId)]
+                for ks in usable[event.eventId]
+            },
+            final_best[event.eventId],
+            {sid: stations[sid].channels for sid in dist[event.eventId]},
+            cfg,
+            io,
+            cache_dir,
+            png,
+        )
+        paths[f"recordSection:{event.eventId}"] = png
+
+    runtime_s = time.perf_counter() - t_start
     log.info("A/B done in %.1f s: %s", runtime_s, counts)
     return AbResult(
         eventRows=event_rows,
         summaryRows=summary_rows,
+        comparisonRows=comparison_rows,
         chosenWeights=chosen,
         adoptedProfiles=adopted,
+        comparisons=comparisons,
         checkB=check_b,
         picks=picks_out,
         paths=paths,
         counts=counts,
+        notApplicable=not_applicable,
         runtimeS=runtime_s,
     )
 
@@ -741,12 +1023,18 @@ def plot_record_section(
     event: KnownEvent,
     stations: Sequence[KnownStation],
     picks_by_station: Mapping[str, Sequence[dict[str, Any]]],
+    best_by_station: Mapping[str, BestPS],
+    channels_by_station: Mapping[str, Sequence[str]],
     cfg: SignalConfig,
     io: AbIO,
     cache_dir: Path,
     path: Path,
-) -> None:
-    """Display copies sorted by epicentral distance, each normalized, with P and S picks marked."""
+) -> int:
+    """Display copies sorted by epicentral distance, each normalized, with P and S picks marked.
+
+    Best P / S (from the arrival window) are bold; every other pick is faint. Returns how many
+    best picks fall outside the plotted span (logged; widen ``recordSection.windowS`` to see them).
+    """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
@@ -761,10 +1049,14 @@ def plot_record_section(
     ax.set_facecolor(_SURFACE)
     labels = []
     n_skipped = 0
+    n_best_off_plot = 0
     for row, ks in enumerate(ordered):
         labels.append(f"{ks.stationId}  {ks.epiDistM / 1000:.1f} km")
-        raw = io.read_window(
-            ks.stationId, event.t + w0 - rs.padS, event.t + w1 + rs.padS, cache_dir=cache_dir
+        raw, _ = select_channels(
+            io.read_window(
+                ks.stationId, event.t + w0 - rs.padS, event.t + w1 + rs.padS, cache_dir=cache_dir
+            ),
+            channels_by_station[ks.stationId],
         )
         segments = []
         if len(raw):
@@ -779,40 +1071,50 @@ def plot_record_section(
             for tr in segments:
                 x = tr.times() + (tr.stats.starttime.timestamp - event.t)
                 y = row + rs.traceHalfHeight * np.asarray(tr.data, dtype=float) / peak
-                ax.plot(x, y, color=_INK, linewidth=0.6)
-        best = best_phases(list(picks_by_station.get(ks.stationId, [])))
+                ax.plot(x, y, color=_INK, linewidth=_TRACE_LINEWIDTH)
+        best = best_by_station.get(ks.stationId)
+        best_picks = [] if best is None else [best.bestP, best.bestS]
         for p in picks_by_station.get(ks.stationId, []):
-            if p is best.bestP or p is best.bestS:
+            if any(p is b for b in best_picks):
                 continue
-            color = _COLOR_P if p["phase"] == "P" else _COLOR_S
             ax.vlines(
                 p["t"] - event.t,
                 row - rs.traceHalfHeight / 2,
                 row + rs.traceHalfHeight / 2,
-                colors=color,
-                linewidth=0.8,
-                alpha=0.35,
+                colors=_COLOR_P if p["phase"] == "P" else _COLOR_S,
+                linewidth=_OTHER_PICK_LINEWIDTH,
+                alpha=_OTHER_PICK_ALPHA,
             )
-        for p, color in ((best.bestP, _COLOR_P), (best.bestS, _COLOR_S)):
-            if p is not None:
-                ax.vlines(
-                    p["t"] - event.t,
-                    row - rs.traceHalfHeight,
-                    row + rs.traceHalfHeight,
-                    colors=color,
-                    linewidth=2.0,
-                )
+        for best_pick, color in zip(best_picks, (_COLOR_P, _COLOR_S), strict=False):
+            if best_pick is None:
+                continue
+            if not w0 <= best_pick["t"] - event.t <= w1:
+                n_best_off_plot += 1
+            ax.vlines(
+                best_pick["t"] - event.t,
+                row - rs.traceHalfHeight,
+                row + rs.traceHalfHeight,
+                colors=color,
+                linewidth=_BEST_PICK_LINEWIDTH,
+            )
     if n_skipped:
         log.warning(
             "%s: %d stations without a plottable %s trace", event.eventId, n_skipped, rs.component
         )
+    if n_best_off_plot:
+        log.warning(
+            "%s: %d best picks outside the plotted span %s s",
+            event.eventId,
+            n_best_off_plot,
+            rs.windowS,
+        )
     ax.set_xlim(w0, w1)
     ax.set_ylim(len(ordered) - 0.5, -0.5)
     ax.set_yticks(range(len(ordered)))
-    ax.set_yticklabels(labels, fontsize=8, color=_INK)
+    ax.set_yticklabels(labels, fontsize=_LABEL_FONTSIZE, color=_INK)
     ax.tick_params(axis="x", colors=_INK)
     ax.set_xlabel("Seconds after public-catalog origin time", color=_INK)
-    ax.grid(axis="x", color=_INK_MUTED, alpha=0.25, linewidth=0.5)
+    ax.grid(axis="x", color=_INK_MUTED, alpha=_GRID_ALPHA, linewidth=_GRID_LINEWIDTH)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     origin = datetime.fromtimestamp(event.t, tz=UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -820,28 +1122,66 @@ def plot_record_section(
     ax.set_title(f"{event.eventId}  {origin} UTC  ({rs.component}, {band})", color=_INK)
     fig.legend(
         handles=[
-            Line2D([], [], color=_COLOR_P, linewidth=2.0, label="P (best)"),
-            Line2D([], [], color=_COLOR_S, linewidth=2.0, label="S (best, after P)"),
-            Line2D([], [], color=_COLOR_P, linewidth=0.8, alpha=0.35, label="other P picks"),
-            Line2D([], [], color=_COLOR_S, linewidth=0.8, alpha=0.35, label="other S picks"),
+            Line2D([], [], color=_COLOR_P, linewidth=_BEST_PICK_LINEWIDTH, label="P (best)"),
+            Line2D(
+                [], [], color=_COLOR_S, linewidth=_BEST_PICK_LINEWIDTH, label="S (best, after P)"
+            ),
+            Line2D(
+                [],
+                [],
+                color=_COLOR_P,
+                linewidth=_OTHER_PICK_LINEWIDTH,
+                alpha=_OTHER_PICK_ALPHA,
+                label="other P picks",
+            ),
+            Line2D(
+                [],
+                [],
+                color=_COLOR_S,
+                linewidth=_OTHER_PICK_LINEWIDTH,
+                alpha=_OTHER_PICK_ALPHA,
+                label="other S picks",
+            ),
         ],
         loc="outside lower center",
-        ncol=4,
-        fontsize=8,
+        ncol=_LEGEND_COLUMNS,
+        fontsize=_LABEL_FONTSIZE,
         frameon=False,
     )
     fig.savefig(path, dpi=rs.dpi, facecolor=_SURFACE)
     log.info("wrote %s (%d stations)", path, len(ordered))
+    return n_best_off_plot
 
 
 # --- stage + CLI --------------------------------------------------------------------------------
 
 
-def run(ctx: Any, io: AbIO | None = None) -> AbResult:
-    """Stage-style entry point: ``ctx`` is an ``hq.runs.RunContext`` (docs/02 -> Stage API)."""
-    result = run_ab(ctx.run_dir, ctx.cache_dir, ctx.config.signal, io)
+class StageContext(Protocol):
+    """The part of H4's ``hq.runs.RunContext`` this stage uses (docs/02 -> Stage API)."""
+
+    @property
+    def run_dir(self) -> Path: ...
+
+    @property
+    def cache_dir(self) -> Path: ...
+
+    @property
+    def config(self) -> Any: ...
+
+    def record(
+        self,
+        stage: str,
+        *,
+        runtime_s: float,
+        counts: dict[str, int],
+        params: dict[str, Any] | None = None,
+    ) -> None: ...
+
+
+def run(ctx: StageContext) -> None:
+    """Stage entry point (docs/02 -> Stage API): runs the A/B and records it in ``run.json``."""
+    result = run_ab(ctx.run_dir, ctx.cache_dir, ctx.config.signal)
     ctx.record(STAGE, runtime_s=result.runtimeS, counts=result.counts)
-    return result
 
 
 def load_signal_config(config_dir: Path) -> SignalConfig:
@@ -875,6 +1215,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print()
     for name, path in result.paths.items():
         print(f"{name}: {path}")
+    print("(CLI run: run.json is not updated; run the stage through hq to record it)")
     return 0
 
 
