@@ -1,9 +1,11 @@
 """Stage ``tier`` (LOC-06): located events + matches -> ``events.parquet``, ``event_picks.parquet``.
 
 Reads ``events_located.parquet``, ``matches.parquet``, ``arrivals.parquet``, ``stations.parquet``,
-the picks table the association read (``associator.picksTable``) and, when present, LOC-04's
-``locate_flags.parquet`` (without it the ``mapOnVolumeTop`` rule is not applied, logged and
-recorded). Checks every event's ``depthKm`` against ``(run.refSurfaceElevM - elevM) / 1000``
+the picks table the association read (``associator.picksTable``) and LOC-04's
+``locate_flags.parquet``. Stage locate writes the flags with every ``events_located.parquet``, so
+a run dir without them fails the stage: tiering without them would drop the ``mapOnVolumeTop``
+rule and change tiers (``assign_tiers`` keeps that fallback for the docs/02 three-argument call
+only). Checks every event's ``depthKm`` against ``(run.refSurfaceElevM - elevM) / 1000``
 within ``tiering.consistencyTolM``, runs ``hq.tier.assign_tiers`` (with arrivals and stations, so
 the nearest-station rule measures depth below the nearest used station's sensor) and
 ``hq.tier.picks.event_picks``, and writes ``events.parquet`` (final ``SeismicEvent`` rows) and
@@ -22,6 +24,12 @@ removes a ``sweep.parquet`` left by an earlier tier run, whose Tier A counts use
 and rules, so ``Validation.sweep`` stays empty until a tier run with the sweep enabled (logged and
 recorded). Every output is written under a ``.part`` name first and moved into place only after
 all of them were written.
+
+``events.parquet`` leaves this stage with every magnitude null; stage magnitude (MAG-01) fills
+them. So a ``magnitude.json`` from an earlier magnitude run is removed before the new
+``events.parquet`` moves into place (a crash between the two leaves no calibration next to
+events without magnitudes), and ``ProcessingRun.matching["magnitude"]`` is replaced by a status
+that says so, until stage magnitude writes its own record again (logged and recorded).
 
 ``ctx.record`` gets the counts (tiers for all, additional and matched events, event picks, sweep
 points) and ``ProcessingRun.tiering``: every bar with its source quantile and the size of the
@@ -63,6 +71,10 @@ CATALOG_TABLE = "catalog.parquet"
 EVENTS_TABLE = "events.parquet"
 EVENT_PICKS_TABLE = "event_picks.parquet"
 SWEEP_TABLE = "sweep.parquet"
+MAGNITUDE_JSON = "magnitude.json"  # stage magnitude's MagCalibration (MAG-01)
+# Stage magnitude records under ProcessingRun.matching["magnitude"] (FYI-H2-7).
+MAGNITUDE_FIELD = "matching"
+MAGNITUDE_KEY = "magnitude"
 PART_SUFFIX = ".part"
 # Model name each input's parquet metadata must carry (LOC-04's and MATCH-02's writers).
 INPUT_MODELS = {
@@ -246,10 +258,11 @@ def run(ctx: "RunContext") -> None:
     picks = _read(picks_path, "picks")
     stations = _read(ctx.path(STATIONS_TABLE), "stations")
     flags_path = ctx.path(FLAGS_TABLE)
-    flags = _read(flags_path, "flags") if flags_path.is_file() else None
-    if flags is None:
-        log.warning("tier: no %s in %s; Tier A does not apply the mapOnVolumeTop rule",
-                    FLAGS_TABLE, ctx.run_dir)
+    if not flags_path.is_file():
+        raise TierError(f"{flags_path} is absent: stage locate writes it with "
+                        f"{EVENTS_LOCATED_TABLE}, and without it Tier A would skip the "
+                        "mapOnVolumeTop rule; rerun stage locate, then match")
+    flags = _read(flags_path, "flags")
     log.info("tier: %d located candidate events, %d matches rows, %d arrivals, %d picks from %s",
              len(events_located), len(matches), len(arrivals), len(picks), picks_path)
     check_depth(events_located, ctx.config.run, cfg.tiering.consistencyTolM)
@@ -285,14 +298,22 @@ def run(ctx: "RunContext") -> None:
     }
     if sweep_points is not None:
         tables[sweep_path] = (to_frame(sweep_points, SweepPoint), SweepPoint.__name__)
+    magnitude_path = ctx.path(MAGNITUDE_JSON)
+    removed_magnitude = magnitude_path.exists()
     try:
         for path, (frame, model_name) in tables.items():
             write_table(frame, _part(path), model_name)
+        # The new events.parquet has no magnitudes: the old calibration goes first, so a crash
+        # between the two leaves no magnitude.json next to it, never the old one.
+        magnitude_path.unlink(missing_ok=True)
         for path in tables:
             os.replace(_part(path), path)
     finally:
         for path in tables:
             _part(path).unlink(missing_ok=True)
+    if removed_magnitude:
+        log.warning("tier: removed %s from an earlier magnitude run: %s now has every magnitude "
+                    "null; rerun stage magnitude", magnitude_path, EVENTS_TABLE)
     if sweep_points is None and sweep_path.exists():
         sweep_path.unlink()
         log.warning("tier: removed %s from an earlier tier run: tiering.sweep.enabled is false and "
@@ -319,7 +340,7 @@ def run(ctx: "RunContext") -> None:
             "arrivals": ARRIVALS_TABLE,
             "picks": cfg.associator.picksTable,
             "stations": STATIONS_TABLE,
-            "flags": FLAGS_TABLE if flags is not None else None,
+            "flags": FLAGS_TABLE,
             "catalog": CATALOG_TABLE,
         },
         "matchesChecked": "every matched row's dtS / distM equals what events_located and "
@@ -327,9 +348,16 @@ def run(ctx: "RunContext") -> None:
         "outputs": [p.name for p in tables],
         "eventPicks": "one Pick per id in each final event's pickIds (picks used in the final "
         "location); eventId set, residualS from arrivals.parquet",
-        "final": "SeismicEvent rows: located columns unchanged, tier, tierReasons, catalogMatch "
-        "from matches.parquet, magnitude null (MAG-01), revealOrder -1",
+        "final": "SeismicEvent rows as this stage writes them: located columns unchanged, tier, "
+        "tierReasons, catalogMatch from matches.parquet, magnitude null (stage magnitude, MAG-01, "
+        "fills it afterwards), revealOrder -1",
+        "removedMagnitudeJson": removed_magnitude,
         "sweep": sweep_record,
+    }
+    magnitude_status = {
+        "status": f"none: stage tier rewrote {EVENTS_TABLE} with every magnitude null; stage "
+        f"magnitude (MAG-01) fills them, writes {MAGNITUDE_JSON} and replaces this record",
+        "removedMagnitudeJson": removed_magnitude,
     }
     runtime_s = time.perf_counter() - started
     log.info(
@@ -338,4 +366,6 @@ def run(ctx: "RunContext") -> None:
         ", ".join(p.name for p in tables), *counts["all"].values(),
         *counts["additional"].values(), len(picks_out), stage_counts["sweepPoints"], runtime_s,
     )
+    ctx.record(STAGE, runtime_s=runtime_s, counts=stage_counts,
+               params={MAGNITUDE_KEY: magnitude_status}, field=MAGNITUDE_FIELD)
     ctx.record(STAGE, runtime_s=runtime_s, counts=stage_counts, params=params)
