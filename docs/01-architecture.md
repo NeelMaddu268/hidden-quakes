@@ -30,7 +30,7 @@ Every stage is a function `run(ctx: RunContext) -> None` that reads and writes f
 | match | H2 | `hq.match.run` | located events, catalog | `matches.parquet`, `match_sensitivity.parquet` |
 | tier | H2 | `hq.tier.run` | located events, matches | `events.parquet` (final `SeismicEvent` rows), `sweep.parquet` (association sweep rerun through locate, match and tier) |
 | magnitude | H2 | `hq.magnitude.run` | events, cache | updates `events.parquet`, `magnitude.json` |
-| validate | H4 | `hq.validate` | everything above | `validation.json` |
+| validate | H4 | `hq.validate` | everything above | `validation.json` (+ sidecars `null_test.json`, `baseline.json`, `gr.json`, `validation_notes.json`) |
 | export | H4 | `hq.export` | everything above + cache | `apps/web/public/data/<mode>/` |
 
 Two notes on the runner (`hq/runs.py`):
