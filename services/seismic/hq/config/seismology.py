@@ -464,6 +464,8 @@ class TieringConfig(BaseModel):
     # Tier A also needs a station with a used pick within this many focal depths (epicentral).
     strictNearestStationFactor: float = Field(gt=0)
     minMatched: int = Field(ge=1)  # fewer matched events than this: derivation fails loudly
+    # Stored vs recomputed depthKm and nearest used station distance must agree within this (m).
+    consistencyTolM: float = Field(gt=0)
     sweep: TierSweepConfig
 
 

@@ -38,18 +38,22 @@ log = logging.getLogger(__name__)
 
 STRICT = "A"
 
-# assoc -> (events_located, locate flags or None)
-LocateFn = Callable[["AssocResult"], tuple[pd.DataFrame, pd.DataFrame | None]]
+# assoc -> (events_located, locate flags or None, arrivals or None)
+LocateFn = Callable[
+    ["AssocResult"], tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame | None]
+]
 MatchFn = Callable[[pd.DataFrame], pd.DataFrame]  # events_located -> matches
 RunPoints = Callable[["Evaluate"], "list[SweepRow]"]  # evaluator -> one row per sweep point
 
 
 @dataclass(frozen=True)
 class SweepPipeline:
-    """The steps after association, bound to one run's inputs."""
+    """The steps after association, bound to one run's inputs. ``stations`` goes with the
+    arrivals ``locate`` returns to ``assign_tiers`` (both or neither)."""
 
     locate: LocateFn
     match: MatchFn
+    stations: pd.DataFrame | None
 
 
 def make_evaluator(
@@ -61,9 +65,10 @@ def make_evaluator(
     def evaluate(assoc: "AssocResult") -> "SweepScore":
         if len(assoc.events) == 0:
             return SweepScore(candidates=0, recovered_public=0, tier_a=0)
-        events, flags = pipeline.locate(assoc)
+        events, flags, arrivals = pipeline.locate(assoc)
         matches = pipeline.match(events)
-        tiered = assign_tiers(events, matches, cfg, flags=flags, thresholds=thresholds)
+        tiered = assign_tiers(events, matches, cfg, flags=flags, thresholds=thresholds,
+                              arrivals=arrivals, stations=pipeline.stations)
         recovered = int(matches["eventId"].notna().sum())
         tier_a = int((tiered.events["tier"].astype(str) == STRICT).sum())
         return SweepScore(candidates=len(tiered.events), recovered_public=recovered,
@@ -116,10 +121,12 @@ def real_pipeline(
     from hq.associate.sweep import run_sweep
     from hq.match import match
 
-    def locate(assoc: "AssocResult") -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    def locate(
+        assoc: "AssocResult",
+    ) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame | None]:
         details = locate_detailed(assoc, picks, stations, cfg, run, run_id=run_id,
                                   cache_dir=cache_dir)
-        return details.result.events, details.flags
+        return details.result.events, details.flags, details.result.arrivals
 
     def match_events(events: pd.DataFrame) -> pd.DataFrame:
         return match(events, catalog, cfg).matches
@@ -128,4 +135,4 @@ def real_pipeline(
         with prepared(stations, cfg, run, cache_dir=cache_dir) as setup:
             return run_sweep(picks, setup, cfg.associator, evaluate)
 
-    return run_points, SweepPipeline(locate=locate, match=match_events)
+    return run_points, SweepPipeline(locate=locate, match=match_events, stations=stations)

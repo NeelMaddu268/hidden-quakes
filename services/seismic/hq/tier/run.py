@@ -1,10 +1,12 @@
 """Stage ``tier`` (LOC-06): located events + matches -> ``events.parquet``, ``event_picks.parquet``.
 
-Reads ``events_located.parquet``, ``matches.parquet``, ``arrivals.parquet``, the picks table the
-association read (``associator.picksTable``) and, when present, LOC-04's ``locate_flags.parquet``
-(without it the ``mapOnVolumeTop`` rule is not applied, logged and recorded). Checks every
-event's ``depthKm`` against ``(run.refSurfaceElevM - elevM) / 1000``, runs ``hq.tier.assign_tiers``
-and ``hq.tier.picks.event_picks``, and writes ``events.parquet`` (final ``SeismicEvent`` rows) and
+Reads ``events_located.parquet``, ``matches.parquet``, ``arrivals.parquet``, ``stations.parquet``,
+the picks table the association read (``associator.picksTable``) and, when present, LOC-04's
+``locate_flags.parquet`` (without it the ``mapOnVolumeTop`` rule is not applied, logged and
+recorded). Checks every event's ``depthKm`` against ``(run.refSurfaceElevM - elevM) / 1000``
+within ``tiering.consistencyTolM``, runs ``hq.tier.assign_tiers`` (with arrivals and stations, so
+the nearest-station rule measures depth below the nearest used station's sensor) and
+``hq.tier.picks.event_picks``, and writes ``events.parquet`` (final ``SeismicEvent`` rows) and
 ``event_picks.parquet`` (docs/02 §2).
 
 With ``tiering.sweep.enabled`` it also runs the association sweep (``hq.tier.sweep``, with the
@@ -77,31 +79,35 @@ def _read(path: Path, what: str) -> pd.DataFrame:
     return frame
 
 
-def check_depth(events: pd.DataFrame, run: RunSection) -> None:
-    """``depthKm`` must equal ``(refSurfaceElevM - elevM) / 1000`` (docs/02) for this run."""
+def check_depth(events: pd.DataFrame, run: RunSection, tol_m: float) -> None:
+    """``depthKm`` must equal ``(refSurfaceElevM - elevM) / 1000`` (docs/02) for this run, within
+    ``tol_m`` metres (``tiering.consistencyTolM``)."""
     missing = [c for c in ("id", "elevM", "depthKm") if c not in events.columns]
     if missing:
         raise TierError(f"events_located lacks columns {missing}")
     elev = events["elevM"].to_numpy(dtype=np.float64)
     expected = (run.refSurfaceElevM - elev) / 1000.0
     stored = events["depthKm"].to_numpy(dtype=np.float64)
-    bad = np.flatnonzero(stored != expected)
+    bad = np.flatnonzero(~(np.abs(stored - expected) * 1000.0 <= tol_m))  # NaN fails too
     if bad.size:
         k = int(bad[0])
         raise TierError(
             f"{bad.size} located events have depthKm != (refSurfaceElevM {run.refSurfaceElevM} "
-            f"- elevM) / 1000, e.g. {events['id'].iloc[k]}: {stored[k]} vs {expected[k]}; "
-            "events_located.parquet was written with another run section"
+            f"- elevM) / 1000 within {tol_m} m, e.g. {events['id'].iloc[k]}: {stored[k]} vs "
+            f"{expected[k]}; events_located.parquet was written with another run section"
         )
 
 
 def _sweep(
-    ctx: "RunContext", picks: pd.DataFrame, thresholds: Thresholds, tier_a: int
+    ctx: "RunContext",
+    picks: pd.DataFrame,
+    stations: pd.DataFrame,
+    thresholds: Thresholds,
+    tier_a: int,
 ) -> tuple[list[SweepPoint], dict[str, Any]]:
     from hq.tier.sweep import real_pipeline, score_sweep
 
     cfg = ctx.config.seismology
-    stations = _read(ctx.path(STATIONS_TABLE), "stations")
     catalog = _read(ctx.path(CATALOG_TABLE), "catalog")
     run_points, pipeline = real_pipeline(
         picks, stations, catalog, cfg, ctx.config.run, run_id=ctx.run_id, cache_dir=ctx.cache_dir
@@ -142,6 +148,7 @@ def run(ctx: "RunContext") -> None:
     arrivals = _read(ctx.path(ARRIVALS_TABLE), "arrivals")
     picks_path = ctx.path(cfg.associator.picksTable)
     picks = _read(picks_path, "picks")
+    stations = _read(ctx.path(STATIONS_TABLE), "stations")
     flags_path = ctx.path(FLAGS_TABLE)
     flags = _read(flags_path, "flags") if flags_path.is_file() else None
     if flags is None:
@@ -149,9 +156,11 @@ def run(ctx: "RunContext") -> None:
                     FLAGS_TABLE, ctx.run_dir)
     log.info("tier: %d located candidate events, %d matches rows, %d arrivals, %d picks from %s",
              len(events_located), len(matches), len(arrivals), len(picks), picks_path)
-    check_depth(events_located, ctx.config.run)
+    check_depth(events_located, ctx.config.run, cfg.tiering.consistencyTolM)
 
-    result = assign_tiers(events_located, matches, cfg, flags=flags)
+    result = assign_tiers(
+        events_located, matches, cfg, flags=flags, arrivals=arrivals, stations=stations
+    )
     picks_out = event_picks(result.events, arrivals, picks)
     tiering = result.tiering
     n_a = int((result.events["tier"].astype(str) == "A").sum())
@@ -163,7 +172,7 @@ def run(ctx: "RunContext") -> None:
             raise TierError("the association sweep needs this run's bars, and it has no "
                             "located events to derive them from")
         sweep_points, sweep_record = _sweep(
-            ctx, picks, Thresholds.from_record(tiering["thresholds"]), n_a
+            ctx, picks, stations, Thresholds.from_record(tiering["thresholds"]), n_a
         )
     else:
         sweep_record = {"enabled": False}
@@ -206,6 +215,7 @@ def run(ctx: "RunContext") -> None:
             "matches": MATCHES_TABLE,
             "arrivals": ARRIVALS_TABLE,
             "picks": cfg.associator.picksTable,
+            "stations": STATIONS_TABLE,
             "flags": FLAGS_TABLE if flags is not None else None,
         },
         "outputs": [p.name for p in tables],

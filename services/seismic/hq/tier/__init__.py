@@ -20,11 +20,15 @@ Tiers come from the data, never from textbook values
     Boundary equality passes.
 
     A (Strict): every A bar, ``quality.depthOnEdge`` false, ``mapOnVolumeTop`` false when a
-    ``flags`` table (``locate_flags.parquet``) is given, and a station with a pick used in the
-    final location within ``strictNearestStationFactor`` focal depths, epicentral:
-    ``quality.minEpiDistM <= factor * depthKm * 1000``. Focal depth is ``depthKm * 1000 =
-    refSurfaceElevM - elevM``: the depth below the run's reference ground surface.
-    B (Good): every B bar. C (Candidate): associated and located, outside those ranges.
+    ``flags`` table (``locate_flags.parquet``) is given, and the nearest station with a pick used
+    in the final location within ``strictNearestStationFactor`` focal depths, epicentral:
+    ``quality.minEpiDistM <= factor * focal depth``. With ``arrivals`` and ``stations`` given
+    (stage ``tier`` and the sweep pass them), focal depth is the event's depth below that
+    station's sensor, ``sensorElevM - elevM`` (a borehole's depth included; an event at or above
+    the sensor fails the rule). Without them (the docs/02 3-argument call) it falls back to
+    ``depthKm * 1000 = refSurfaceElevM - elevM``, the depth below the run's reference surface.
+    ``tiering.rules`` records which. B (Good): every B bar. C (Candidate): associated and
+    located, outside those ranges.
 
     A null ``hErrM`` or ``vErrM`` (the contract allows it: a truncated PDF) fails A and B on that
     metric. The bars on those metrics are drawn from the matched events with a value (``nUsed``
@@ -76,6 +80,8 @@ LOCATED_COLUMNS: tuple[str, ...] = tuple(
 )
 MATCH_COLUMNS: tuple[str, ...] = ("catalogId", "eventId", "dtS", "distM")
 FLAG_COLUMNS: tuple[str, ...] = ("eventId", "mapOnVolumeTop")
+NEAREST_ARRIVAL_COLUMNS: tuple[str, ...] = ("eventId", "stationId", "usedInLocation")
+NEAREST_STATION_COLUMNS: tuple[str, ...] = ("id", "enu_e", "enu_n", "sensorElevM")
 REVEAL_ORDER_UNSET = -1  # docs/02: H2 writes -1, the exporter assigns the real order
 
 DEFINITION = (
@@ -91,9 +97,15 @@ CAVEAT = (
     "Public regional catalog events are the larger ones, so bars drawn from the recovered public "
     "events are conservative for small candidate events."
 )
-FOCAL_DEPTH = (
-    "depthKm * 1000 = refSurfaceElevM - elevM: the depth below the run's reference ground "
-    "surface (run.yaml refSurfaceElevM), the depth the scene shows"
+FOCAL_DEPTH_SENSOR = (
+    "sensorElevM - elevM of the epicentrally nearest station with a pick used in the final "
+    "location (arrivals.usedInLocation, stations.parquet): the event's depth below that station's "
+    "sensor, a borehole's depth included; an event at or above the sensor fails the rule"
+)
+FOCAL_DEPTH_REFERENCE = (
+    "depthKm * 1000 = refSurfaceElevM - elevM: the depth below the run's reference surface "
+    "(run.yaml refSurfaceElevM); the fallback when no arrivals and stations are given (the docs/02 "
+    "3-argument call)"
 )
 NULL_RULE = (
     "a null hErrM or vErrM fails A and B on that metric; bars on those metrics are drawn from the "
@@ -328,6 +340,69 @@ def _map_on_top(flags: pd.DataFrame | None, event_ids: pd.Series) -> np.ndarray 
     return by_id.reindex(event_ids.to_numpy()).to_numpy(dtype=bool)
 
 
+def nearest_used_station(
+    events: pd.DataFrame, arrivals: pd.DataFrame, stations: pd.DataFrame, tol_m: float
+) -> pd.DataFrame:
+    """Per event, in ``events`` order: its epicentrally nearest station with a pick used in the
+    final location (``stationId``, ``sensorElevM``, ``distM``). The distance must equal the
+    event's ``quality.minEpiDistM`` within ``tol_m``, or the tables come from different frames."""
+    _missing(arrivals, NEAREST_ARRIVAL_COLUMNS, "arrivals")
+    _missing(stations, NEAREST_STATION_COLUMNS, "stations")
+    station_ids = _ids(stations["id"], "stations")
+    sta = pd.DataFrame(
+        {
+            "stationId": station_ids.to_numpy(dtype=object),
+            "se": stations["enu_e"].to_numpy(dtype=np.float64),
+            "sn": stations["enu_n"].to_numpy(dtype=np.float64),
+            "sensorElevM": stations["sensorElevM"].to_numpy(dtype=np.float64),
+        }
+    )
+    event_ids = events["id"].astype(str)
+    ev = pd.DataFrame(
+        {
+            "eventId": event_ids.to_numpy(dtype=object),
+            "k": np.arange(len(events)),
+            "e": events["enu_e"].to_numpy(dtype=np.float64),
+            "n": events["enu_n"].to_numpy(dtype=np.float64),
+        }
+    )
+    used = arrivals[arrivals["usedInLocation"].astype(bool)]
+    links = pd.DataFrame(
+        {
+            "eventId": used["eventId"].astype(str).to_numpy(dtype=object),
+            "stationId": used["stationId"].astype(str).to_numpy(dtype=object),
+        }
+    ).drop_duplicates()
+    stray = sorted(set(links["eventId"]) - set(ev["eventId"]))
+    if stray:
+        raise TierError(f"arrivals name events missing from events_located: {stray[:5]}")
+    unknown = sorted(set(links["stationId"]) - set(sta["stationId"]))
+    if unknown:
+        raise TierError(f"used arrivals name stations missing from stations: {unknown[:5]}")
+    joined = links.merge(ev, on="eventId").merge(sta, on="stationId")
+    joined["distM"] = np.hypot(joined["se"] - joined["e"], joined["sn"] - joined["n"])
+    joined = joined.sort_values(["k", "distM", "stationId"], kind="stable")
+    nearest = joined.drop_duplicates("k").set_index("k").reindex(range(len(events)))
+    lacking = nearest["stationId"].isna().to_numpy()
+    if lacking.any():
+        raise TierError(
+            f"{int(lacking.sum())} located events have no used arrival, e.g. "
+            f"{event_ids.iloc[int(np.flatnonzero(lacking)[0])]}"
+        )
+    stored = events["quality_minEpiDistM"].to_numpy(dtype=np.float64)
+    off = np.abs(nearest["distM"].to_numpy(dtype=np.float64) - stored)
+    bad = np.flatnonzero(~(off <= tol_m))
+    if bad.size:
+        k = int(bad[0])
+        raise TierError(
+            f"{bad.size} located events have quality.minEpiDistM != the distance to their "
+            f"nearest used station in stations (tiering.consistencyTolM {tol_m} m), e.g. "
+            f"{event_ids.iloc[k]}: {stored[k]} vs {nearest['distM'].iloc[k]} m to "
+            f"{nearest['stationId'].iloc[k]}; arrivals or stations come from another run or frame"
+        )
+    return nearest[["stationId", "sensorElevM", "distM"]].reset_index(drop=True)
+
+
 def _metric_values(events: pd.DataFrame, metric: Metric) -> np.ndarray:
     """float64 values, NaN for null; a null in a required metric fails loudly."""
     values = pd.to_numeric(events[metric.column]).to_numpy(dtype=np.float64, na_value=np.nan)
@@ -461,6 +536,7 @@ def _metric_reason(metric: Metric, value: float | None, bars: dict[str, Bar]) ->
 class _Rules:
     factor: float
     map_on_top: np.ndarray | None
+    nearest: pd.DataFrame | None  # nearest_used_station rows, or None: reference-surface depth
 
 
 def _tier_event(
@@ -484,12 +560,16 @@ def _tier_event(
         failed_rules.append("depthOnEdge (PDF mass on the grid's top or bottom face): fails A")
     if rules.map_on_top is not None and rules.map_on_top[k]:
         failed_rules.append("MAP on the search-volume top: fails A")
-    depth_m = float(row["depthKm"]) * 1000.0
     nearest_m = float(row["quality_minEpiDistM"])
+    if rules.nearest is None:
+        depth_m, station, datum = float(row["depthKm"]) * 1000.0, "", "refSurfaceElevM"
+    else:
+        depth_m = float(rules.nearest["sensorElevM"].iloc[k]) - float(row["elevM"])
+        station, datum = f"{rules.nearest['stationId'].iloc[k]} ", "its sensor"
     if not nearest_m <= rules.factor * depth_m:
         failed_rules.append(
-            f"nearest station {nearest_m:.0f} m > {rules.factor:g} x focal depth {depth_m:.0f} m "
-            "(epicentral, depth below refSurfaceElevM): fails A"
+            f"nearest station {station}{nearest_m:.0f} m > {rules.factor:g} x focal depth "
+            f"{depth_m:.0f} m (epicentral, depth below {datum}): fails A"
         )
     if passes["A"] and not failed_rules:
         tier = "A"
@@ -537,18 +617,28 @@ def assign_tiers(
     *,
     flags: pd.DataFrame | None = None,
     thresholds: "Thresholds | Mapping[str, Any] | None" = None,
+    arrivals: pd.DataFrame | None = None,
+    stations: pd.DataFrame | None = None,
 ) -> TierResult:
     """Tier every located candidate event (docs/02 §5); see the module docstring.
 
-    ``flags`` (keyword only; the docs/02 call leaves it out): ``locate_flags.parquet`` rows, one
-    per event, to apply the ``mapOnVolumeTop`` rule. ``thresholds``: bars to apply instead of
+    Keyword only, all left out by the docs/02 call: ``flags``, ``locate_flags.parquet`` rows (one
+    per event) to apply the ``mapOnVolumeTop`` rule; ``thresholds``, bars to apply instead of
     deriving them from this call's matched set (a ``Thresholds`` or a ``ProcessingRun.tiering``
-    dict); their quantiles must equal ``cfg.tiering.quantiles``.
+    dict), whose quantiles must equal ``cfg.tiering.quantiles``; ``arrivals`` and ``stations``
+    together (``LocateResult.arrivals`` and the run's stations table), so the nearest-station
+    rule measures focal depth below the nearest used station's sensor.
     """
     tcfg = cfg.tiering
+    if (arrivals is None) != (stations is None):
+        raise TierError("pass arrivals= and stations= together (the nearest-station rule needs "
+                        "both), or neither")
     event_ids = _check_located(events_located)
     matched = matched_rows(matches, event_ids)
     map_on_top = _map_on_top(flags, event_ids)
+    nearest = None if arrivals is None or stations is None else nearest_used_station(
+        events_located, arrivals, stations, tcfg.consistencyTolM
+    )
     for metric in METRICS:  # every event, matched or not: nulls only where docs/02 allows them
         _metric_values(events_located, metric)
     is_matched = event_ids.isin(set(matched["eventId"])).to_numpy(dtype=bool)
@@ -567,7 +657,10 @@ def assign_tiers(
                 "factor": tcfg.strictNearestStationFactor,
                 "test": "quality.minEpiDistM <= factor * focal depth (epicentral distance to the "
                 "nearest station with a pick used in the final location)",
-                "focalDepth": FOCAL_DEPTH,
+                "focalDepthBelow": "nearestUsedSensor" if nearest is not None
+                else "refSurfaceElevM",
+                "focalDepth": FOCAL_DEPTH_SENSOR if nearest is not None
+                else FOCAL_DEPTH_REFERENCE,
             },
         },
         "nullErrors": NULL_RULE,
@@ -609,7 +702,9 @@ def assign_tiers(
         bars = supplied_thresholds(thresholds, tcfg)
     base["matchedSet"]["meetingEveryBar"] = meeting_every_bar(events_located[is_matched], bars)
 
-    rule_set = _Rules(factor=tcfg.strictNearestStationFactor, map_on_top=map_on_top)
+    rule_set = _Rules(
+        factor=tcfg.strictNearestStationFactor, map_on_top=map_on_top, nearest=nearest
+    )
     rows = events_located[list(LOCATED_COLUMNS)].to_dict("records")
     tiered = [_tier_event(row, k, bars, rule_set) for k, row in enumerate(rows)]
     tiers = [t for t, _ in tiered]
