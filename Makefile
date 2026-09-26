@@ -19,7 +19,7 @@ help:
 	@echo "make fetch-run RUN=<id>     download a teammate's run tables"
 	@echo "make runs                   list shared runs"
 
-check: check-py check-web
+check: check-py check-web check-copy
 
 check-py:
 	@cd services/seismic && uv run ruff check . ../../packages/contracts/python ../../scripts/mock-fixture.py && { uv run pytest -q -m smoke; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 5 ]; }
