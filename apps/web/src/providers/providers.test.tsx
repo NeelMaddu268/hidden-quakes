@@ -472,7 +472,7 @@ function FailoverView() {
   );
 }
 
-const SNAPSHOT_LABEL = "Snapshot · window · run snap";
+const SNAPSHOT_LABEL = "Today · window · run snap";
 
 /** A live worker whose health the test flips: `up` serves the window, `down` answers like a
  *  worker that was killed (refused), a 503 or a hang, per `failure`. */
@@ -736,7 +736,7 @@ describe("mode and labels", () => {
   it("builds labels only from bundle fields", () => {
     const m = meta();
     expect(modeLabel("showcase", m)).toBe(`Showcase · ${m.run.windowLabel} · run ${m.run.id}`);
-    expect(modeLabel("snapshot", m)).toBe(`Snapshot · ${m.run.windowLabel} · run ${m.run.id}`);
+    expect(modeLabel("snapshot", m)).toBe(`Today · ${m.run.windowLabel} · run ${m.run.id}`);
     expect(modeLabel("mock", m)).toContain(m.run.id);
     expect(
       liveLabel({ updatedAt: 1000, windowS: 7200, latencyS: 10, stationsOnline: 3 }, 1000 + 180),

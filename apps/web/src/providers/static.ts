@@ -39,7 +39,7 @@ export function modeLabel(mode: StaticMode, meta: BundleMeta): string {
     case "showcase":
       return `Showcase · ${meta.run.windowLabel} · run ${meta.run.id}`;
     case "snapshot":
-      return `Snapshot · ${meta.run.windowLabel} · run ${meta.run.id}`;
+      return `Today · ${meta.run.windowLabel} · run ${meta.run.id}`;
     case "mock":
       return `Synthetic · mock bundle · run ${meta.run.id}`;
   }
