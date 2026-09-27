@@ -102,3 +102,44 @@ describe("validation panel", () => {
     expect(value.style.fontVariantNumeric).toBe("tabular-nums");
   });
 });
+
+describe("validation panel: the ML-01 decoy-test row", () => {
+  async function mountWithConfidence(confidence: unknown) {
+    const files = { ...bundleFiles("mock-run", { validation, summary }), "confidence.json": confidence };
+    const provider = new StaticBundleProvider("mock", { fetchImpl: fakeFetch({ mock: files }) });
+    render(
+      <ProviderRoot mode="mock" provider={provider}>
+        <Shell />
+      </ProviderRoot>,
+    );
+    await screen.findByTestId("counter-public");
+    await act(async () => {});
+    act(() => useDemo.getState().reveal());
+  }
+
+  const file = (rocAuc: unknown) => ({
+    schema: "hq.confidence/1",
+    runId: "mock-run",
+    model: { heldOut: { rocAuc } },
+    label: "Decoy test",
+    description: "How much this event looks like real timing rather than a decoy",
+    events: {},
+  });
+
+  it("adds one last row from confidence.json: its label and the held-out AUC", async () => {
+    await mountWithConfidence(file(0.8125));
+    const labels = Array.from(screen.getByTestId("validation-panel").querySelectorAll("dt")).map((dt) => dt.textContent);
+    expect(labels.at(-1)).toBe("Decoy test (held-out ROC AUC)");
+    expect(rowText("confidence")).toBe((0.8125).toFixed(2));
+    expect(screen.getByTestId("validation-note-confidence").textContent).not.toMatch(/\d/);
+  });
+
+  it("shows no such row when the file is another run's or has no usable AUC", async () => {
+    await mountWithConfidence({ ...file(0.8125), runId: "other-run" });
+    expect(screen.getByTestId("validation-panel")).toBeTruthy();
+    expect(screen.queryByTestId("validation-row-confidence")).toBeNull();
+    cleanup();
+    await mountWithConfidence(file("high"));
+    expect(screen.queryByTestId("validation-row-confidence")).toBeNull();
+  });
+});

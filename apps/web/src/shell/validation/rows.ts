@@ -4,7 +4,7 @@
  * so a missing file, a null field or a hand-edited bundle hides the row instead of rendering
  * "NaN". Labels are words; every digit in a value comes from the data.
  */
-import type { AnalysisSummary, BaselineRow, Validation } from "@/providers";
+import type { AnalysisSummary, BaselineRow, Confidence, Validation } from "@/providers";
 import { formatNumber, isFiniteNumber } from "./format";
 
 type Nullable<T> = { [K in keyof T]?: T[K] | null };
@@ -18,7 +18,10 @@ export type ValidationInput =
   | null
   | undefined;
 
-export type RowId = "recall" | "strict" | "stations" | "residual" | "depth" | "stalta" | "gain" | "chance";
+/** The part of ML-01's `confidence.json` the card reads (`useConfidence`); null without the file. */
+export type ConfidenceInput = Pick<Confidence, "label" | "rocAuc"> | null | undefined;
+
+export type RowId = "recall" | "strict" | "stations" | "residual" | "depth" | "stalta" | "gain" | "chance" | "confidence";
 
 export interface ValidationRow {
   id: RowId;
@@ -29,7 +32,10 @@ export interface ValidationRow {
 }
 
 /** Display precision per row (decimals shown), not a data threshold. */
-const DECIMALS = { count: 0, stations: 1, residual: 3, depth: 0, gain: 2, chance: 1 } as const;
+const DECIMALS = { count: 0, stations: 1, residual: 3, depth: 0, gain: 2, chance: 1, auc: 2 } as const;
+
+/** The confidence row's label when `confidence.json` carries none of its own. */
+const CONFIDENCE_FALLBACK_LABEL = "Decoy test";
 
 /** Both association profiles of the contract (`BaselineRow.associationProfile`). */
 const ASSOCIATION_PROFILES = ["full", "p_only"] as const satisfies readonly BaselineRow["associationProfile"][];
@@ -85,7 +91,7 @@ export function chanceNote(nullTest: Nullable<NonNullable<Validation["nullTest"]
   return `${scrambles}; about ${formatNumber(strict, DECIMALS.chance)} per scramble reached the strict tier`;
 }
 
-export function rows(summary: SummaryInput, validation: ValidationInput): ValidationRow[] {
+export function rows(summary: SummaryInput, validation: ValidationInput, confidence?: ConfidenceInput): ValidationRow[] {
   const s = summary ?? {};
   const v = validation ?? {};
   const out: ValidationRow[] = [];
@@ -143,6 +149,17 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
       label: "Chance associations",
       value: formatNumber(meanChanceEvents, DECIMALS.chance),
       note: chanceNote(v.nullTest),
+    });
+  }
+  // ML-01: how well the decoy test tells real timing from scrambled-clock decoys on held-out
+  // events. Fixed decimals: an AUC reads as a score, never as a percentage or a probability.
+  const rocAuc = confidence?.rocAuc;
+  if (isFiniteNumber(rocAuc)) {
+    out.push({
+      id: "confidence",
+      label: `${confidence?.label ?? CONFIDENCE_FALLBACK_LABEL} (held-out ROC AUC)`,
+      value: rocAuc.toFixed(DECIMALS.auc),
+      note: "How well it separates real timing from scrambled-clock decoys",
     });
   }
   return out;

@@ -128,6 +128,13 @@ export class StaticBundleProvider implements SeismicDataProvider {
     return this.file<EventEvidence>(`evidence/${encodeURIComponent(id)}.json`);
   }
 
+  /** `confidence.json` (ML-01) is optional too; a missing file is `null`. `./confidence` parses it. */
+  getConfidence(): Promise<unknown> {
+    return this.memo("confidence", () =>
+      fetchJson<unknown>(this.fetchImpl, this.url("confidence.json"), { notFoundAsNull: true }),
+    );
+  }
+
   /** `validation.json` is optional in a bundle (P1); a missing file is `null`, not an error. */
   getValidation(): Promise<Validation | null> {
     return this.memo("validation", () =>
