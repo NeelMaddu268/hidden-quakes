@@ -168,9 +168,12 @@ describe("evidence notices", () => {
 });
 
 describe("recordCaption", () => {
-  it("says 'k of N agreeing stations shown' only when every shown trace has a pick", () => {
-    expect(recordCaption(16, 16, 23)).toBe("16 of 23 agreeing stations shown, closest first");
-    expect(recordCaption(16, 11, 23)).toBe("16 stations shown, closest first; 11 of the 23 that agreed are among them");
+  it("says 'k of N stations shown' counting only stations that agreed; nearby ones without a pick apart", () => {
+    expect(recordCaption(16, 16, 23)).toBe("16 of 23 stations shown, closest first");
+    expect(recordCaption(16, 15, 23)).toBe("15 of 23 stations shown, closest first, plus 1 without a pick");
+    expect(recordCaption(16, 11, 23)).toBe("11 of 23 stations shown, closest first, plus 5 without a pick");
+    expect(recordCaption(1, 1, 1)).toBe("1 of 1 station shown, closest first");
+    expect(recordCaption(4, 0, 6)).toBe("4 stations shown, closest first, none with a pick");
     expect(recordCaption(1, 0, null)).toBe("1 station shown, closest first, 0 with a pick");
     for (const c of [recordCaption(16, 16, NaN), recordCaption(4, 2, undefined)]) expect(c).not.toMatch(/NaN|undefined|null/);
   });

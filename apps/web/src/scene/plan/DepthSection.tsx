@@ -1,14 +1,14 @@
 "use client";
 
 import { colors, fonts, numeric } from "@hq/visualization";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { useDemo } from "../../state/demo";
 import { useBundle } from "../data";
 import { sceneFx } from "../fx";
 import { publicSwatch } from "../look";
 import { selectedInstanceIndex } from "../picking/selection";
 import type { BundleState } from "../types";
-import { sectionPanelRect } from "./layout";
+import { updatePlanDock, usePlanDock } from "./dock";
 import {
   buildSectionModel,
   drawSection,
@@ -26,7 +26,8 @@ type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 const HEADER_PX = 52;
 const FOOTER_PX = 36;
 /** How often the validation card's position is re-measured (ms). */
-const CARD_MEASURE_MS = 400;
+/** How often the shell's edges are re-measured for the dock (ms): they change with phase and panels. */
+const EDGE_MEASURE_MS = 400;
 /** Click radius in the section, CSS px (the 3D picker's default). */
 const HIT_PX = 10;
 
@@ -36,55 +37,42 @@ const HIT_PX = 10;
  * camera frames (Tier A and B) from the surface down (WEB-08); the header states how many events lie
  * outside that frame, so none are hidden without saying so. Mounted only in plan view. It
  * shares the scene's reveal clock, filter look and selection (clicks select through the store, so the
- * drawer opens exactly as from the map), and it never covers the shell or the evidence drawer.
+ * drawer opens exactly as from the map), and it never covers the shell or the evidence drawer: it docks
+ * left or right of the map by the shell's measured edges (layout.ts `sectionDock`, shared through
+ * dock.ts with the plan camera and the labels), and hides while the drawer covers a right dock.
  */
 export function DepthSection() {
   const bundle = useBundle();
   const view = useDemo((s) => s.view);
+  useShellEdges();
   if (bundle.status !== "ready" || view !== "plan") return null;
   return <SectionPanel bundle={bundle} />;
 }
 
-function useViewport(): { width: number; height: number } {
-  const [vp, setVp] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
-  useEffect(() => {
-    const on = () => setVp({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener("resize", on);
-    return () => window.removeEventListener("resize", on);
-  }, []);
-  return vp;
-}
-
 /**
- * The top edge (CSS px) of H4's validation card, measured read-only (shell `validation-panel` test id):
- * the card's height depends on its rows, so the panel stops above where the card actually is. Re-measured
- * on resize and a few times a second (the card appears after the reveal and its text can change).
+ * Keeps the shared dock current from page load on (not only in plan view), so the plan camera frames
+ * around the panel from its first frame: measured on mount, on resize and a few times a second (the
+ * validation card appears after the reveal; the header's rows can change).
  */
-function useValidationCardTop(): number | null {
-  const [top, setTop] = useState<number | null>(null);
+function useShellEdges(): void {
   useEffect(() => {
-    const measure = () => {
-      const el = document.querySelector('[data-testid="validation-panel"]');
-      const r = el?.getBoundingClientRect();
-      const next = r && r.height > 0 ? Math.floor(r.top) : null;
-      setTop((prev) => (prev === next ? prev : next));
-    };
+    const measure = () => updatePlanDock(document, window.innerWidth, window.innerHeight);
     measure();
-    const id = window.setInterval(measure, CARD_MEASURE_MS);
+    const id = window.setInterval(measure, EDGE_MEASURE_MS);
     window.addEventListener("resize", measure);
     return () => {
       window.clearInterval(id);
       window.removeEventListener("resize", measure);
     };
   }, []);
-  return top;
 }
 
 function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
   const { meta, events, catalog, stations } = bundle;
-  const vp = useViewport();
-  const cardTop = useValidationCardTop();
-  const rect = sectionPanelRect(vp.width, vp.height, cardTop);
+  const dock = usePlanDock((s) => s.dock);
+  // A right-docked panel sits where the drawer opens: it steps aside while the drawer is open.
+  const drawerOpen = useDemo((s) => s.selectedEventId !== null);
+  const rect = dock && !(dock.side === "right" && drawerOpen) ? dock : null;
   const canvas = useRef<HTMLCanvasElement>(null);
   const headerPx = HEADER_PX;
 

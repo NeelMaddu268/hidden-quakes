@@ -254,7 +254,7 @@ describe("opening (select / E → hero)", () => {
     render(<EvidenceDrawer />);
     select("hq-test-000002");
     expect(rows()).toHaveLength(4);
-    expect(document.querySelector(".hqd-caption")!.textContent).toMatch(/(^|\D)4 (of \d+ agreeing stations|stations) shown, closest first.* · 2–20 Hz bandpass · normalized per trace/);
+    expect(document.querySelector(".hqd-caption")!.textContent).toMatch(/((^|\D)\d of \d+ stations?|(^|\D)4 stations) shown, closest first.* · 2–20 Hz bandpass · normalized per trace/);
     expect(document.querySelectorAll(".hqd-trace")).toHaveLength(4);
     select(HERO);
     expect(rows()).toHaveLength(16);

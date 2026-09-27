@@ -5,7 +5,8 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { memo, useMemo, useRef } from "react";
 import { Vector3 } from "three";
 import type { SceneBounds } from "../camera/bounds";
-import { planReserveLeftPx } from "./layout";
+import { usePlanDock } from "./dock";
+import { planReservePx } from "./layout";
 import { planView } from "./view";
 
 /** How far the presenter can zoom out / in from the framed plan (multiples of the framed zoom). */
@@ -64,10 +65,12 @@ interface PlanCameraProps {
 export const PlanCamera = memo(function PlanCamera({ bounds, clipBounds }: PlanCameraProps) {
   const width = useThree((s) => s.size.width);
   const height = useThree((s) => s.size.height);
-  const v = useMemo(
-    () => planView(bounds, clipBounds, width, height, planReserveLeftPx(width, height)),
-    [bounds, clipBounds, width, height],
-  );
+  // Framed clear of the depth section wherever it docks (left or right; never re-framed for the drawer).
+  const dock = usePlanDock((s) => s.dock);
+  const v = useMemo(() => {
+    const reserve = planReservePx(dock, width);
+    return planView(bounds, clipBounds, width, height, reserve.left, reserve.right);
+  }, [bounds, clipBounds, width, height, dock]);
   const position = useMemo((): [number, number, number] => [v.x, v.y, v.z], [v]);
   const target = useMemo((): [number, number, number] => [v.x, v.targetY, v.z], [v]);
 
