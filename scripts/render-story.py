@@ -11,6 +11,8 @@ writes three files under ``--out`` (default ``data/story/``, gitignored):
     numbers.md          placeholder -> value -> source field, one row per placeholder
     pitch-filled.md     docs/demo/pitch-and-qa.md with the placeholders substituted
     devpost-filled.md   docs/demo/devpost.md with the placeholders substituted
+    video-shot-list-filled.md
+                        docs/demo/video-shot-list.md (the pitch's placeholders) substituted
 
 It never edits the docs in the repo. Substituted text is one of:
 
@@ -36,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -44,18 +47,25 @@ from typing import Any
 
 from hq_contracts import models as m
 
-from hq.export.files import EVIDENCE_DIR, META_JSON, VALIDATION_JSON
+from hq.export.files import EVENTS_JSON, EVIDENCE_DIR, META_JSON, VALIDATION_JSON
+
+# ML-01 (H2's PR agent/ML-01-ui): optional, next to validation.json in the bundle.
+CONFIDENCE_JSON = "confidence.json"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_DEMO = REPO_ROOT / "docs" / "demo"
 PITCH_DOC = DOCS_DEMO / "pitch-and-qa.md"
 DEVPOST_DOC = DOCS_DEMO / "devpost.md"
+SHOTS_DOC = DOCS_DEMO / "video-shot-list.md"  # the pitch's placeholders, spoken over the video
 DEFAULT_OUT = REPO_ROOT / "data" / "story"
+DEPLOY_DOC = REPO_ROOT / "docs" / "deploy.md"
+PUBLIC_LINK_RE = re.compile(r"\*\*Public link: <(https://[^>\s]+)>\*\*")
 
 NUMBERS_MD = "numbers.md"
 PITCH_FILLED_MD = "pitch-filled.md"
 DEVPOST_FILLED_MD = "devpost-filled.md"
-OUTPUT_FILES = (NUMBERS_MD, PITCH_FILLED_MD, DEVPOST_FILLED_MD)
+SHOTS_FILLED_MD = "video-shot-list-filled.md"
+OUTPUT_FILES = (NUMBERS_MD, PITCH_FILLED_MD, DEVPOST_FILLED_MD, SHOTS_FILLED_MD)
 
 SYNTHETIC_BANNER = (
     "# SYNTHETIC BUNDLE, NOT FOR SUBMISSION\n"
@@ -108,6 +118,7 @@ class Bundle:
     meta: dict[str, Any]
     validation: dict[str, Any] | None
     hero_evidence: dict[str, Any] | None
+    events: list[dict[str, Any]] | None = None  # events.json when present (hero stations, Q37)
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -153,8 +164,22 @@ def load_bundle(bundle_dir: Path) -> Bundle:
                 f"{EVIDENCE_DIR}/{hero_id}.json is missing: the hero station count renders as "
                 "not available"
             )
+    events: list[dict[str, Any]] | None = None
+    events_path = bundle_dir / EVENTS_JSON
+    if events_path.is_file():
+        events = [m.SeismicEvent.model_validate(e).model_dump() for e in _load_json(events_path)]
+    else:
+        notes.append(
+            f"{EVENTS_JSON} is missing: the hero station count falls back to the evidence "
+            "traces and the hidden-event pointer renders as not available"
+        )
     return Bundle(
-        path=bundle_dir, meta=meta, validation=validation, hero_evidence=hero, notes=notes
+        path=bundle_dir,
+        meta=meta,
+        validation=validation,
+        hero_evidence=hero,
+        events=events,
+        notes=notes,
     )
 
 
@@ -287,6 +312,48 @@ def gated(gate_file: str, gate_path: str, inner: Resolver, *, sentence: str) -> 
     return resolve
 
 
+def deployed_url() -> Resolver:
+    """The public link, read from ``docs/deploy.md`` ("Public link: <https://...>") so the
+    Devpost carries the one URL the deploy doc names and never a team-internal alias."""
+
+    def resolve(bundle: Bundle) -> Resolved:
+        source = "docs/deploy.md → Public link"
+        text = DEPLOY_DOC.read_text(encoding="utf-8") if DEPLOY_DOC.is_file() else ""
+        match = PUBLIC_LINK_RE.search(text)
+        if match is None:
+            return Resolved(
+                "[not available: docs/deploy.md names no public link]", source, STATUS_NOT_AVAILABLE
+            )
+        return Resolved(match.group(1), source, STATUS_VALUE)
+
+    return resolve
+
+
+def repo_url() -> Resolver:
+    """The GitHub repository URL from this checkout's ``origin`` remote (https form, no
+    ``.git``); read by hand when there is no remote."""
+
+    def resolve(bundle: Bundle) -> Resolved:
+        source = "git remote origin (https form)"
+        try:
+            raw = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "config", "--get", "remote.origin.url"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+        except OSError:
+            raw = ""
+        if not raw:
+            return Resolved("[manual: the GitHub repository URL]", source, STATUS_MANUAL)
+        url = re.sub(r"^git@github\.com:", "https://github.com/", raw)
+        url = re.sub(r"^ssh://git@github\.com/", "https://github.com/", url)
+        url = url.removesuffix(".git")
+        return Resolved(url, source, STATUS_VALUE)
+
+    return resolve
+
+
 def manual(where: str) -> Resolver:
     def resolve(bundle: Bundle) -> Resolved:
         return Resolved(f"[manual: {where}]", where, STATUS_MANUAL)
@@ -303,11 +370,11 @@ def literal(what: str) -> Resolver:
     return resolve
 
 
-def baseline_strict(method: str) -> Resolver:
+def baseline_field(method: str, path: str, *, decimals: int | None = None) -> Resolver:
     """``validation.baseline`` row with this method and ``associationProfile: "full"`` →
-    ``tiers.A``; only when both ``full`` rows exist (the Validation card's "Strict events,
-    PhaseNet vs STA/LTA" row)."""
-    source = f"{VALIDATION_JSON} → baseline[method={method}, associationProfile=full].tiers.A"
+    ``path``; only when both ``full`` rows exist (the Validation card's "Strict events,
+    PhaseNet vs STA/LTA" row), so the two methods are only ever quoted together."""
+    source = f"{VALIDATION_JSON} → baseline[method={method}, associationProfile=full].{path}"
     gate = f"{VALIDATION_JSON} → baseline[] full rows for both phasenet and stalta"
 
     def resolve(bundle: Bundle) -> Resolved:
@@ -320,24 +387,155 @@ def baseline_strict(method: str) -> Resolver:
         }
         if "phasenet" not in rows or "stalta" not in rows:
             return _condition_not_met(source, gate)
+        node: Any = rows[method]
+        for key in path.split("."):
+            node = node.get(key) if isinstance(node, dict) else None
+        if node is None:
+            return _not_available(bundle, VALIDATION_JSON, source)
+        return Resolved(fmt(node, decimals), f"{source} (only with {gate})", STATUS_VALUE)
+
+    return resolve
+
+
+def baseline_strict(method: str) -> Resolver:
+    """The strict (Tier A) count of that method's ``full`` baseline row."""
+    return baseline_field(method, "tiers.A")
+
+
+def matched_min_stations() -> Resolver:
+    """The fewest stations any recovered public event was located on: the Tier B
+    ``nStations`` bar, which is the worst matched event's value only while
+    ``tiering.thresholds.quantiles.B`` is 0 ("worst of matched"); any other quantile omits
+    the clause."""
+    source = f"{META_JSON} → run.tiering.thresholds.B.nStations.value"
+    gate = f"{META_JSON} → run.tiering.thresholds.quantiles.B == 0"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        value, _ = _lookup(bundle, META_JSON, "run.tiering.thresholds.B.nStations.value")
+        quantile, _ = _lookup(bundle, META_JSON, "run.tiering.thresholds.quantiles.B")
+        if value is None or quantile is None:
+            return _not_available(bundle, META_JSON, source)
+        if quantile != 0:
+            return Resolved(
+                f"[condition not met: {gate} is false; omit this clause]", source, STATUS_CONDITION
+            )
+        return Resolved(fmt(value, 0), f"{source} (only with {gate})", STATUS_VALUE)
+
+    return resolve
+
+
+def baseline_candidates(method: str) -> Resolver:
+    """``validation.baseline`` row with this method and ``associationProfile: "full"`` →
+    ``candidates`` (the card's "A of N candidates" denominator)."""
+    source = f"{VALIDATION_JSON} → baseline[method={method}, associationProfile=full].candidates"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        if bundle.validation is None:
+            return _not_available(bundle, VALIDATION_JSON, source)
+        for row in bundle.validation.get("baseline") or []:
+            if row.get("method") == method and row.get("associationProfile") == "full":
+                value = row.get("candidates")
+                if value is None:
+                    return _not_available(bundle, VALIDATION_JSON, source)
+                return Resolved(fmt(value), source, STATUS_VALUE)
+        return _not_available(bundle, VALIDATION_JSON, source)
+
+    return resolve
+
+
+def _confidence_file(bundle: Bundle) -> dict[str, Any] | None:
+    """``confidence.json`` (ML-01, ``hq.confidence/1``) as H2's PR #107 writes it, or None."""
+    path = bundle.path / CONFIDENCE_JSON
+    if not path.is_file():
+        return None
+    data = _load_json(path)
+    return data if isinstance(data, dict) else None
+
+
+def confidence_field(path: str, *, decimals: int | None = None) -> Resolver:
+    """``confidence.json`` (``hq.confidence/1``) → ``path`` ("model.heldOut.rocAuc",
+    "model.trainedOn.decoys", "label"); the scramble-test sentences are omitted when the file
+    is absent or the field is missing or not a number/string."""
+    source = f"{CONFIDENCE_JSON} → {path}"
+    gate = f"{CONFIDENCE_JSON} present with {path}"
+    note = f"{source} (only with {gate}: the scramble-test sentences)"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        node: Any = _confidence_file(bundle)
+        for key in path.split("."):
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, str) and node.strip():
+            return Resolved(node.strip(), note, STATUS_VALUE)
+        if isinstance(node, int | float) and not isinstance(node, bool):
+            return Resolved(
+                fmt(node if decimals is None else float(node), decimals), note, STATUS_VALUE
+            )
+        r = _condition_not_met(source, gate)
+        return Resolved(r.text, note, r.status)
+
+    return resolve
+
+
+def confidence_auc() -> Resolver:
+    """The Validation card's "<label> (held-out ROC AUC)" value, two decimals."""
+    return confidence_field("model.heldOut.rocAuc", decimals=2)
+
+
+def confidence_label() -> Resolver:
+    """What the drawer and the card call the score."""
+    return confidence_field("label")
+
+
+def hero_station_count() -> Resolver:
+    """ "{nStations} stations agreed": the hero's ``quality.nStations`` from ``events.json``,
+    which is what the drawer header prints. The evidence file's trace count is only a fallback
+    (the exporter caps traces per file, so it can read lower than the drawer)."""
+    source = f"{EVENTS_JSON} → hero's quality.nStations"
+    fallback = f"{EVIDENCE_DIR}/<scene.heroEventId>.json → traces.length"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        hero_id = bundle.meta["scene"]["heroEventId"]
+        if hero_id is not None and bundle.events is not None:
+            for event in bundle.events:
+                if event["id"] == hero_id:
+                    return Resolved(fmt(event["quality"]["nStations"]), source, STATUS_VALUE)
+        if bundle.hero_evidence is None:
+            return Resolved(
+                f"[not available: {source} (no hero in {EVENTS_JSON} and no hero evidence file)]",
+                source,
+                STATUS_NOT_AVAILABLE,
+            )
         return Resolved(
-            fmt(rows[method]["tiers"]["A"]), f"{source} (only with {gate})", STATUS_VALUE
+            fmt(len(bundle.hero_evidence["traces"])),
+            f"{fallback} (fallback: {EVENTS_JSON} absent)",
+            STATUS_VALUE,
         )
 
     return resolve
 
 
-def hero_station_count() -> Resolver:
-    source = f"{EVIDENCE_DIR}/<scene.heroEventId>.json → traces.length"
+def hidden_hero_id() -> Resolver:
+    """Q37's pointer: the strict event with no catalog match chosen by the hero's own rule
+    (most stations, then smallest timing misfit, then earliest, then id), from ``events.json``."""
+    source = (
+        f"{EVENTS_JSON} → Tier A, catalogMatch null, by the hero rule (most stations, least rmsS)"
+    )
 
     def resolve(bundle: Bundle) -> Resolved:
-        if bundle.hero_evidence is None:
+        if bundle.events is None:
+            return _not_available(bundle, META_JSON, source)
+        hidden = [e for e in bundle.events if e["tier"] == "A" and e["catalogMatch"] is None]
+        if not hidden:
             return Resolved(
-                f"[not available: {source} (no hero evidence file in the bundle)]",
+                "[condition not met: no strict event without a catalog match; omit this sentence]",
                 source,
-                STATUS_NOT_AVAILABLE,
+                STATUS_CONDITION,
             )
-        return Resolved(fmt(len(bundle.hero_evidence["traces"])), source, STATUS_VALUE)
+        best = min(
+            hidden,
+            key=lambda e: (-e["quality"]["nStations"], e["quality"]["rmsS"], e["t"], e["id"]),
+        )
+        return Resolved(str(best["id"]), source, STATUS_VALUE)
 
     return resolve
 
@@ -410,7 +608,9 @@ PITCH_SPECS: tuple[Spec, ...] = (
     Spec("{strictAdditionalCount}", meta_field("summary.strictAdditionalCount")),
     Spec("{N}", meta_field("summary.publicCatalogCount"), label="{N} (PUBLIC counter)"),
     Spec("{nStations}", hero_station_count()),
-    Spec("{medianVErrM}", validation_field("synthetic.medianVErrM")),
+    Spec("{hiddenHeroId}", hidden_hero_id()),
+    # Metres, whole: the Validation card rounds this row the same way (rows.ts DECIMALS.depth).
+    Spec("{medianVErrM}", validation_field("synthetic.medianVErrM", decimals=0)),
     Spec(
         "{gain}",
         gated(
@@ -422,6 +622,27 @@ PITCH_SPECS: tuple[Spec, ...] = (
     ),
     Spec("{strictPhasenet}", baseline_strict("phasenet")),
     Spec("{strictStalta}", baseline_strict("stalta")),
+    Spec("{staltaCandidates}", baseline_candidates("stalta")),
+    Spec("{heldOutRocAuc}", confidence_auc()),
+    Spec("{confidenceLabel}", confidence_label()),
+    Spec(
+        "{heldOutRocAucEqualStations}",
+        confidence_field("model.heldOut.rocAucEqualStationCount", decimals=2),
+    ),
+    Spec("{confidencePositives}", confidence_field("model.trainedOn.positives")),
+    Spec("{confidenceDecoys}", confidence_field("model.trainedOn.decoys")),
+    Spec("{staltaRecoveredPublic}", baseline_field("stalta", "recoveredPublic")),
+    Spec("{phasenetMedianRmsS}", baseline_field("phasenet", "medianRmsS", decimals=3)),
+    Spec("{staltaMedianRmsS}", baseline_field("stalta", "medianRmsS", decimals=3)),
+    Spec("{phasenetMedianStations}", baseline_field("phasenet", "medianStations")),
+    Spec("{staltaMedianStations}", baseline_field("stalta", "medianStations")),
+    Spec("{strictMatchedCount}", meta_field("run.tiering.counts.matched.A")),
+    Spec("{medianStations}", meta_field("summary.medianStations")),
+    Spec("{minMatchedStations}", matched_min_stations()),
+    Spec(
+        "{heldOutMedianAbsDzM}",
+        meta_field("run.locator.statics.crossValidatedOffsets.after.medianAbsDzM", decimals=0),
+    ),
     Spec(
         "{meanChanceEvents}",
         gated(
@@ -502,6 +723,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
         manual("/api/live/status → latencyS and /health → served.latencyS; only if measured"),
     ),
     Spec("{windowLabel}", meta_field("run.windowLabel")),
+    Spec("{runId}", meta_field("run.id")),
     Spec("{value}", literal("describes the placeholder form; not a placeholder")),
 )
 
@@ -542,7 +764,8 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
     Spec("<from meta.json: run.pickerWeights>", meta_field("run.pickerWeights")),
     Spec("<from meta.json: run.velocityModel.name>", velocity_model_name()),
     Spec(
-        "<from validation.json: synthetic.medianVErrM>", validation_field("synthetic.medianVErrM")
+        "<from validation.json: synthetic.medianVErrM>",
+        validation_field("synthetic.medianVErrM", decimals=0),
     ),
     Spec(
         "<from validation.json: nullTest.meanChanceEvents>",
@@ -554,6 +777,19 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
         ),
     ),
     Spec("<from validation.json: nullTest.nShuffles>", none_strict_scrambles()),
+    Spec("<from confidence.json: model.heldOut.rocAuc>", confidence_auc()),
+    Spec("<from confidence.json: label>", confidence_label()),
+    Spec(
+        "<from confidence.json: model.heldOut.rocAucEqualStationCount>",
+        confidence_field("model.heldOut.rocAucEqualStationCount", decimals=2),
+    ),
+    Spec(
+        "<from confidence.json: model.trainedOn.positives>",
+        confidence_field("model.trainedOn.positives"),
+    ),
+    Spec(
+        "<from confidence.json: model.trainedOn.decoys>", confidence_field("model.trainedOn.decoys")
+    ),
     Spec(
         "<from validation.json: magnitude.n>",
         gated(*MAG_GATE, validation_field("magnitude.n"), sentence=MAG_SENTENCE),
@@ -598,11 +834,11 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
             sentence=MAG_SENTENCE,
         ),
     ),
-    Spec("<from evidence/<heroEventId>.json: traces.length>", hero_station_count()),
+    Spec("<from events.json: hero quality.nStations>", hero_station_count()),
     Spec("<heroEventId>", meta_field("scene.heroEventId")),
     Spec("<scene.heroEventId>", meta_field("scene.heroEventId")),
-    Spec("<deployed URL>", manual("the production URL (docs/deploy.md)")),
-    Spec("<repo URL>", manual("the GitHub repository URL")),
+    Spec("<deployed URL>", deployed_url()),
+    Spec("<repo URL>", repo_url()),
     Spec("<video URL>", manual("the uploaded video URL")),
     Spec("<from FILE: field>", literal("describes the placeholder form; not a placeholder")),
 )
@@ -610,6 +846,7 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
 DOCS: tuple[tuple[str, Path, tuple[Spec, ...], str], ...] = (
     ("pitch", PITCH_DOC, PITCH_SPECS, PITCH_FILLED_MD),
     ("devpost", DEVPOST_DOC, DEVPOST_SPECS, DEVPOST_FILLED_MD),
+    ("pitch", SHOTS_DOC, PITCH_SPECS, SHOTS_FILLED_MD),
 )
 
 
@@ -778,12 +1015,14 @@ def render(
     *,
     pitch_doc: Path = PITCH_DOC,
     devpost_doc: Path = DEVPOST_DOC,
+    shots_doc: Path = SHOTS_DOC,
 ) -> tuple[list[Row], str]:
-    """Render the three output files; returns the rows and the stdout report."""
+    """Render the output files; returns the rows and the stdout report."""
     bundle = load_bundle(bundle_dir)
     docs = (
         ("pitch", pitch_doc, PITCH_SPECS, PITCH_FILLED_MD),
         ("devpost", devpost_doc, DEVPOST_SPECS, DEVPOST_FILLED_MD),
+        ("pitch", shots_doc, PITCH_SPECS, SHOTS_FILLED_MD),
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     rows: list[Row] = []

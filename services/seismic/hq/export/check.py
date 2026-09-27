@@ -11,7 +11,8 @@ across meta, events and summary; ``revealOrder`` is a permutation of ``0..n-1`` 
 the hero is a Tier A event with the most stations and has evidence; every evidence file is under
 the byte cap, names an event in ``events.json``, has at most 16 traces sorted by ``epiDistM``
 with samples in ``[-1, 1]``; the whole directory stays under the bundle budget; ``meta.mode``
-matches the directory name (or the mode passed in) and only a ``mock`` bundle is synthetic.
+matches the directory name (or the mode passed in) and only a ``mock`` bundle is synthetic; an
+optional ``confidence.json`` (ML-01) is under its cap and passes ``confidence_problems``.
 """
 
 import argparse
@@ -40,8 +41,10 @@ from pydantic import BaseModel, ValidationError
 from hq.config import load_config
 from hq.config.export import MAX_EVIDENCE_TRACES, EvidenceConfig, ExportConfig, RoundingConfig
 from hq.config.validate import BaselineConfig
+from hq.export.confidence import MAX_CONFIDENCE_BYTES, confidence_problems
 from hq.export.files import (
     CATALOG_JSON,
+    CONFIDENCE_JSON,
     EVENTS_JSON,
     EVIDENCE_DIR,
     FEATURES_JSON,
@@ -62,7 +65,7 @@ REQUIRED_FILES: tuple[str, ...] = (
     EVENTS_JSON,
     FEATURES_JSON,
 )
-OPTIONAL_FILES: tuple[str, ...] = (VALIDATION_JSON,)
+OPTIONAL_FILES: tuple[str, ...] = (VALIDATION_JSON, CONFIDENCE_JSON)
 DATA_MODES: tuple[str, ...] = get_args(DataMode.__value__)
 MAX_LISTED = 5
 SAMPLE_LIMIT = 1.0  # WaveformSnippet.samples are scaled to [-1, 1]
@@ -320,6 +323,25 @@ def _check_evidence(
     return seen
 
 
+def _check_confidence(
+    path: Path, events: dict[str, SeismicEvent], run_id: str, problems: list[str]
+) -> bool:
+    """The optional ``confidence.json``: under ``MAX_CONFIDENCE_BYTES`` and in format. Returns
+    whether the file is there."""
+    if not path.is_file():
+        return False
+    size = path.stat().st_size
+    if size > MAX_CONFIDENCE_BYTES:
+        problems.append(f"{path.name}: {size} bytes > {MAX_CONFIDENCE_BYTES}")
+    try:
+        raw = _read_json(path)
+    except (json.JSONDecodeError, OSError) as exc:
+        problems.append(f"{path.name}: unreadable: {exc}")
+        return True
+    problems.extend(confidence_problems(raw, events.keys(), run_id))
+    return True
+
+
 def check_bundle(
     bundle_dir: Path,
     *,
@@ -394,6 +416,9 @@ def check_bundle(
     _check_summary(meta, events, catalog, validation, rounding, problems)
     evidence_ids = _check_evidence(bundle_dir, events_by_id, stations, max_bytes, problems)
     _check_hero(meta, events_by_id, evidence_ids, problems)
+    has_confidence = _check_confidence(
+        bundle_dir / CONFIDENCE_JSON, events_by_id, meta.run.id, problems
+    )
     if problems:
         raise BundleCheckError(bundle_dir, problems)
     counts = {
@@ -403,6 +428,7 @@ def check_bundle(
         "features": len(features),
         "evidenceFiles": len(evidence_ids),
         "hasValidation": int(validation is not None),
+        "hasConfidence": int(has_confidence),
         "bytes": total_bytes,
     }
     log.info(

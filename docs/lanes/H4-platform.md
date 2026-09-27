@@ -160,13 +160,13 @@ This laptop runs the run of record. Around 10:30 PM, take H1's `data/cache/` fol
 | Row | Source field | Shown only if |
 | --- | --- | --- |
 | Catalog recall X / N | `summary.recoveredCatalogCount`, `publicCatalogCount` | Always |
-| Strict events | `summary.strictQualityCount` | Always |
+| Strict events "A (B not in public catalog)" | `summary.strictQualityCount`, `summary.strictAdditionalCount` (the parenthetical only when present) | Always |
 | Median stations | `summary.medianStations` | Always |
-| Median residual | `summary.medianRmsS` | Always |
-| Depth resolution ±m | `validation.synthetic.medianVErrM` | Always |
-| Strict events, PhaseNet vs STA/LTA ("A vs B") | `validation.baseline[]` rows with `associationProfile: "full"`: `tiers.A` of `method: "phasenet"` and of `method: "stalta"` | Both `full` rows exist with a finite count (also when STA/LTA's count is zero and no gain can be claimed, REQ-H1-5) |
+| Median timing misfit | `summary.medianRmsS` | Always |
+| Depth resolution (synthetic, all stations) ±m | `validation.synthetic.medianVErrM` | Always |
+| STA/LTA strict events ("A of N candidates") | `validation.baseline[]` row with `method: "stalta"`, `associationProfile: "full"`: `tiers.A` and `candidates` | That row exists with finite counts (also when STA/LTA's strict count is zero and no gain can be claimed, REQ-H1-5). The rerun's PhaseNet strict count is never shown: it is not the STRICT counter |
 | PhaseNet vs STA/LTA gain | `summary.baseline.gain` | Baseline ran and gain > 1 in both profiles |
-| Chance associations | `validation.nullTest.meanChanceEvents` | Null test ran |
+| Chance associations, with a note "Mean of N timing scrambles; none (or about M per scramble) reached the strict tier" | `validation.nullTest.meanChanceEvents`, `nShuffles`, `meanChanceStrict` | Null test ran |
 
 ### Validation reruns and `validation_notes.json`
 

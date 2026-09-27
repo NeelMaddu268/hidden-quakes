@@ -2,7 +2,9 @@
 
 *What the public can't see beneath Utah's geothermal frontier.* Built at HackGT 13.
 
-Public regional earthquake catalogs show only a sparse slice of the microseismicity around Utah's geothermal-development region near Milford. Operators and research teams run dense downhole and fiber arrays that see far more; the public gets the regional catalog. Hidden Quakes is an open, public-data-only seismic layer: it rebuilds a denser, quality-tiered, inspectable catalog of **candidate events** directly from raw public waveforms (neural phase picking, multi-station association, relocation, quality tiers, matching against the public regional catalog) and shows it underground, in 3D, as a reveal against the public view. It is for people without operator data: researchers, journalists, regulators, local communities and energy observers.
+**Live demo: <https://hidden-quakes.vercel.app>** (static export of `main`; `docs/deploy.md`).
+
+Public regional earthquake catalogs show only a sparse slice of the microseismicity around Utah's geothermal-development region near Milford. Operators and research teams run dense downhole and fiber arrays that see far more; the public gets the regional catalog. Hidden Quakes is an open, public-data-only seismic layer: it rebuilds a denser, quality-tiered, inspectable catalog of **candidate events** directly from raw public waveforms (neural phase picking, multi-station association, relocation, quality tiers, matching against the public regional catalog) and shows it underground, in 3D, as a reveal against the public view. It is for people without operator data who still have to answer for what happens underground: a county official, a reporter, a regulator without the operator's feed, a researcher without an array, a community nearby.
 
 Our contribution is product, pipeline, public access and visual explainability, not a new seismology algorithm. PhaseNet, PyOcto, QuakeFlow, GaMMA and published research catalogs for the region all exist, and we say so.
 

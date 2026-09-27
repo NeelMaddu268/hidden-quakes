@@ -1389,3 +1389,101 @@ def test_statics_table_fills_station_statics(
     write_table(pd.DataFrame({"stationId": ["XT.R01"]}), path, STATICS_MODEL)
     with pytest.raises(ExportError, match="lacks columns"):
         load_run_tables(ctx.run_dir)
+
+
+# --- confidence.json (ML-01): optional, checked, copied verbatim --------------------------------
+
+
+def confidence_doc(run: SyntheticRun, **over: object) -> dict[str, object]:
+    """A test-local ``hq.confidence/1`` document scoring every other event (rule 5)."""
+    doc: dict[str, object] = {
+        "schema": "hq.confidence/1",
+        "runId": run.events[0].runId,
+        "model": {"type": "test", "heldOut": {"rocAuc": 0.8125, "folds": 5}},
+        "label": "Decoy test",
+        "description": "How much this event looks like real timing rather than a decoy",
+        "events": {e.id: round(i / len(run.events), 3) for i, e in enumerate(run.events[::2])},
+    }
+    doc.update(over)
+    return doc
+
+
+def test_confidence_json_is_checked_and_copied_when_the_run_has_one(
+    ctx: runs.RunContext, synthetic_run: SyntheticRun, exported: Bundle, tmp_path: Path
+) -> None:
+    # Absent (the `exported` fixture): no file, no count, and check_bundle says so.
+    assert not (exported.dir / "confidence.json").exists()
+    assert check_bundle(exported.dir)["hasConfidence"] == 0
+    doc = confidence_doc(synthetic_run)
+    ctx.path("confidence.json").write_text(json.dumps(doc, indent=4))
+    first, result = do_export(ctx, tmp_path / "one" / "showcase", run=synthetic_run)
+    second, _ = do_export(ctx, tmp_path / "two" / "showcase", run=synthetic_run)
+    written = (first / "confidence.json").read_bytes()
+    assert written == (second / "confidence.json").read_bytes()  # byte-stable
+    assert json.loads(written) == doc  # every field kept, key-sorted and compact
+    assert written == (json.dumps(doc, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    assert result.counts["confidenceEvents"] == len(doc["events"])  # type: ignore[arg-type]
+    assert check_bundle(first)["hasConfidence"] == 1
+    # Every other bundle file is what the run gives without it.
+    for rel in sorted(p.relative_to(exported.dir) for p in exported.dir.rglob("*.json")):
+        assert (first / rel).read_bytes() == (exported.dir / rel).read_bytes(), rel
+
+
+@pytest.mark.parametrize(
+    ("change", "needle"),
+    [
+        ({"schema": "hq.confidence/2"}, "schema"),
+        ({"runId": "some-other-run"}, "runId"),
+        ({"events": {"hq-not-an-event": 0.5}}, "not in events.json: hq-not-an-event"),
+        ({"events": {}}, "non-empty"),
+        ({"label": "Predicted earthquake odds"}, "forbidden phrase"),
+        ({"description": 7}, "description is not a string"),
+        ({"model": {"heldOut": {"rocAuc": 1.5}}}, "rocAuc"),
+    ],
+)
+def test_bad_confidence_json_fails_loudly(
+    ctx: runs.RunContext, synthetic_run: SyntheticRun, change: dict[str, object], needle: str
+) -> None:
+    ctx.path("confidence.json").write_text(json.dumps(confidence_doc(synthetic_run, **change)))
+    with pytest.raises(ExportError, match="ML-01") as info:
+        load_run_tables(ctx.run_dir)
+    assert needle in str(info.value)
+
+
+def test_bad_confidence_scores_and_json_fail_loudly(
+    ctx: runs.RunContext, synthetic_run: SyntheticRun
+) -> None:
+    ids = [e.id for e in synthetic_run.events]
+    scores = {ids[0]: 1.5, ids[1]: -0.1, ids[2]: True, ids[3]: "0.5", ids[4]: 0.25}
+    path = ctx.path("confidence.json")
+    path.write_text(json.dumps(confidence_doc(synthetic_run, events=scores)))
+    with pytest.raises(ExportError, match=r"4 score\(s\) not a number in \[0, 1\]"):
+        load_run_tables(ctx.run_dir)
+    path.write_text(json.dumps(confidence_doc(synthetic_run)).replace("0.8125", "NaN"))
+    with pytest.raises(ExportError, match="rocAuc nan"):
+        load_run_tables(ctx.run_dir)
+    path.write_text("{not json")
+    with pytest.raises(ExportError, match="not valid JSON"):
+        load_run_tables(ctx.run_dir)
+
+
+def test_check_bundle_rechecks_confidence_json(
+    exported: Bundle, synthetic_run: SyntheticRun
+) -> None:
+    path = exported.dir / "confidence.json"
+    doc = confidence_doc(synthetic_run)
+    doc["events"] = {**doc["events"], "hq-stray": 0.5, synthetic_run.events[1].id: 2.0}  # type: ignore[dict-item]
+    doc["runId"] = "other"
+    path.write_text(json.dumps(doc))
+    with pytest.raises(BundleCheckError) as info:
+        check_bundle(exported.dir)
+    problems = "\n".join(info.value.problems)
+    for needle in ("runId 'other'", "not in events.json: hq-stray", "1 score(s)"):
+        assert needle in problems, needle
+    assert "unexpected entries" not in problems  # an optional file, not a stray one
+    path.write_text(json.dumps(confidence_doc(synthetic_run, pad="x" * 50_000)))
+    with pytest.raises(BundleCheckError, match="bytes >"):
+        check_bundle(exported.dir)
+    path.write_text("{")
+    with pytest.raises(BundleCheckError, match="confidence.json: unreadable"):
+        check_bundle(exported.dir)

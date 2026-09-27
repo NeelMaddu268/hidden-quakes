@@ -2,6 +2,7 @@
 
 import { motion } from "@hq/visualization";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useConfidence } from "../providers/confidence";
 import { useBundle, useEvidence } from "../scene/data";
 import type { SeismicEvent, Station } from "../scene/types";
 import { useDemo } from "../state/demo";
@@ -20,7 +21,8 @@ import { DRAWER_CSS } from "./styles";
  *
  * Data comes only from the scene's data hooks (`scene/data.ts`): the event record and stations from
  * the bundle, the traces from the event's evidence file. The header renders from the bundle at once;
- * the traces follow when the evidence is ready (immediately when it was preloaded).
+ * the traces follow when the evidence is ready (immediately when it was preloaded). The optional
+ * ML-01 decoy-test score comes from the provider's `useConfidence` (null when the bundle has none).
  */
 export function EvidenceDrawer() {
   const selectedId = useDemo((s) => s.selectedEventId);
@@ -50,6 +52,7 @@ export function EvidenceDrawer() {
 
   const bundle = useBundle();
   const evidence = useEvidence(shownId);
+  const confidence = useConfidence();
   const ready = bundle.status === "ready" ? bundle : null;
 
   const eventById = useMemo(() => (ready ? new Map(ready.events.map((e) => [e.id, e] as const)) : null), [ready]);
@@ -105,7 +108,7 @@ export function EvidenceDrawer() {
       <style>{DRAWER_CSS}</style>
       {shownId !== null && (
         <>
-          <Header eventId={shownId} event={event} meta={ready?.meta ?? null} onClose={close} />
+          <Header eventId={shownId} event={event} meta={ready?.meta ?? null} confidence={confidence} onClose={close} />
           {bundle.status === "loading" && <div className="hqd-section hqd-dim">Loading the data bundle…</div>}
           {bundle.status === "error" && (
             <div className="hqd-section hqd-error" role="status">
