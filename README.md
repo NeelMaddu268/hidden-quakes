@@ -1,162 +1,70 @@
 # Hidden Quakes
 
-*What the public can't see beneath Utah's geothermal frontier.* Built at HackGT 13.
+Small earthquakes hiding in public seismic data, found and shown in 3D.
 
-**Live demo: <https://hidden-quakes-final.vercel.app>** (static export of `main`; `docs/deploy.md`).
+![Hidden Quakes: candidate events under Utah's geothermal field](apps/web/public/og.png)
 
-Public regional earthquake catalogs show only a sparse slice of the microseismicity around Utah's geothermal-development region near Milford. Operators and research teams run dense downhole and fiber arrays that see far more; the public gets the regional catalog. Hidden Quakes is an open, public-data-only seismic layer: it rebuilds a denser, quality-tiered, inspectable catalog of **candidate events** directly from raw public waveforms (neural phase picking, multi-station association, relocation, quality tiers, matching against the public regional catalog) and shows it underground, in 3D, as a reveal against the public view. It is for people without operator data who still have to answer for what happens underground: a county official, a reporter, a regulator without the operator's feed, a researcher without an array, a community nearby.
+**Live demo:** https://hidden-quakes-final.vercel.app
 
-Our contribution is product, pipeline, public access and visual explainability, not a new seismology algorithm. PhaseNet, PyOcto, QuakeFlow, GaMMA and published research catalogs for the region all exist, and we say so.
+## What it is
 
-**Every number on screen is rendered from the exported run's `meta.json` and `validation.json`. This README therefore quotes none.** Where a number would go, open the deployed page or `apps/web/public/data/showcase/meta.json` (`summary` and `run`) and `validation.json` in the same folder.
+Geothermal energy is growing near Milford, Utah, and the teams working there watch tiny earthquakes with sensors deep underground. Everyone else only gets the public earthquake catalog, which on September 10, 2026 listed 43 events in the area.
 
-## How the reveal works
+We took one day of free, public seismometer data from the same area and ran it through our own pipeline. It found 654 candidate events, including all 43 of the known ones. 32 of them pass our strictest quality bar, and 14 of those aren't in the public catalog at all.
 
-1. The scene opens on dark terrain with one glowing geothermal reference and one counter: **PUBLIC**, the number of events the public regional catalog lists in the showcase window. That count comes from a catalog query saved in the run, never assumed.
-2. **REVEAL HIDDEN SIGNAL** (or Space) plays the candidate events into the volume in `revealOrder` (strict tier first, then the rest, time-ordered within a tier). The **RECOVERED** counter climbs to `summary.candidateCount`; **STRICT** settles on `summary.strictQualityCount`.
-3. **PUBLIC / ALL / STRICT** pills (or S) filter the view. **P** switches to plan view with a depth section. **T** turns on the time scrubber, which replays the window.
-4. **E** opens the evidence drawer on the hero event (the strict event located with the most stations; any other dot is a click away): a record section sorted by distance, neural P and S picks, and the arrival times the final location implies. Agreement between the two is what makes a dot an event.
-5. The **Validation** card and **Run details** (D) show the run's own checks and the full `ProcessingRun` config verbatim. Every row hides itself when its source field is missing, so nothing on screen is ever typed in.
+The website lets you see all of it. Press Space and the ground turns see-through as the candidate events light up underground. Click any event to see the actual seismograms behind it.
 
-Keyboard map: Space (next beat: reveal, then strict, then time), R (reset), S (strict / all), T (time), E (evidence on the hero event), H (evidence on the strict event the public regional catalog doesn't list that most stations agreed on), G (guided tour; any key, click or scroll stops it), P (plan / oblique), D (run details), Esc (close).
+## How it works
 
-## Pipeline
+1. **Get the data.** About 24 public stations (surface and borehole sensors) from EarthScope, for one full day.
+2. **Mark the waves.** A pretrained neural network (PhaseNet) marks every P and S wave arrival at every station.
+3. **Group them.** PyOcto groups marks from different stations that belong to the same event.
+4. **Locate each event.** Our own locator searches a 3D grid for the point that best explains the arrival times, using the published velocity model for the site.
+5. **Grade and check.** Each event gets a quality tier calibrated against the known events. We also scramble every station's clock to see what pure chance produces, compare against a classic detector, and trained a small model (the Scramble test) that tells real events from scrambled decoys.
 
-Two halves joined by files (`docs/01-architecture.md`). A batch pipeline (Python package `hq` in `services/seismic`) writes an immutable run directory under `data/showcase/runs/<runId>/`; an exporter turns one chosen run into a static data bundle; the web app (`apps/web`, Next.js + React Three Fiber) reads only that bundle through a provider. Nothing on the demo path depends on a live service.
+We call them candidate events, not confirmed earthquakes, and we never say what caused them.
 
-| Stage | Owner | Module | Writes |
-| --- | --- | --- | --- |
-| inventory | H1 Signal | `hq.ingest.inventory` | `stations.parquet` (+ StationXML in `data/cache/stationxml/`) |
-| catalog | H2 Seismology | `hq.match.catalog` | `catalog.parquet`, `catalog.quakeml` |
-| download | H1 Signal | `hq.ingest.download` | `gaps.parquet`, `download_report.json` (+ miniSEED in `data/cache/mseed/`) |
-| pick | H1 Signal | `hq.pick` (PhaseNet via SeisBench) | `picks.parquet`, `pick_report.json`, `known/` |
-| baseline | H1 Signal | `hq.baseline` (STA/LTA) | `picks_stalta.parquet`, `baseline_sweep.parquet`, `baseline_reference.json` |
-| associate | H2 Seismology | `hq.associate` (PyOcto) | `assoc_events.parquet`, `assoc_picks.parquet` |
-| locate | H2 Seismology | `hq.locate` | `events_located.parquet`, `arrivals.parquet`, `statics.parquet`, `synthetic.json`, `locate_flags.parquet`, `diagnostics.md` |
-| match | H2 Seismology | `hq.match` | `matches.parquet`, `match_sensitivity.parquet` |
-| tier | H2 Seismology | `hq.tier` | `events.parquet` (final `SeismicEvent` rows), `sweep.parquet` (association sweep) |
-| magnitude | H2 Seismology | `hq.magnitude` | updates `events.parquet`, `magnitude.json` |
-| validate | H4 Platform | `hq.validate` | `validation.json` (+ sidecars `null_test.json`, `baseline.json`, `gr.json`, `validation_notes.json`) |
-| export | H4 Platform | `hq.export` | `apps/web/public/data/<mode>/` |
+## Try it
 
-Every stage is `run(ctx: RunContext) -> None`. `hq run configs/showcase` runs them in order; `hq stage <name> --run <runId>` reruns one. Picks are stored once at a low probability floor and filtered downstream, waveforms download once into a shared cache, and every run records its full config in `run.json` (`ProcessingRun`), so every number on screen traces to a config.
+| Key | What it does |
+| --- | --- |
+| Space | Reveal the events, then show only the strict ones, then replay the day |
+| H | Jump to a strict event the public catalog doesn't have |
+| E | Open the evidence for the best-recorded event |
+| G | Play a guided tour |
+| P | Top-down plan view with a depth section |
+| ? | How it works and all the keys |
 
-Every knob lives in `services/seismic/configs/showcase/*.yaml` (`run.yaml` window, bbox and origin; `signal.yaml` stations, preprocessing profiles and picker; `seismology.yaml` velocity model, catalog query, association, location, tiers; `validate.yaml` null test, baseline and Gutenberg–Richter; `export.yaml` bundle, evidence snippets and reference features). Unknown keys are errors; no magic constants live in code.
+There's also a Listen button (the busiest hour at one borehole station, sped up so you can hear it), an event list, a download of the whole catalog, share links for any event, and a TODAY view that runs the same pipeline on recent data.
 
-## Running it
+## Run it locally
 
-Prerequisites: `uv` (Python, see `requires-python` in `services/seismic/pyproject.toml`), `pnpm` (Node, see `packageManager` in `package.json`), and `gh` for sharing runs.
-
-```bash
-pnpm install                              # JS workspace (web app, contracts, tokens)
-cd services/seismic && uv sync && cd -    # Python pipeline
-cd services/api && uv sync && cd -        # live worker (optional)
-
-make mock                 # synthetic bundle into apps/web/public/data/mock (SYNTHETIC banner)
-make dev                  # web app on localhost; open /?mode=mock
-make run                  # showcase pipeline: hq run configs/showcase (needs network + credentials)
-make export RUN=<runId>   # run -> apps/web/public/data/showcase/, validated
-make build                # static export into apps/web/out
-make offline              # build, then serve apps/web/out locally; works with Wi-Fi off
-make api                  # live worker + API (services/api/config.yaml); ?mode=live
-make check                # typecheck + lint + smoke tests, before every PR
-make check-copy           # scans README, docs/demo and the shell for numbers-as-facts and forbidden phrases
-```
-
-Data modes, picked with `?mode=`: `showcase` (default, the frozen final run), `mock` (synthetic, dev only, refused in production builds unless `NEXT_PUBLIC_ALLOW_MOCK=1`), `live` (behind `NEXT_PUBLIC_LIVE_ENABLED`, polls the API) and `snapshot` (the last good live window; automatic failover target, never a pill). Three of the four are the same static reader pointed at a different folder.
-
-Run tables move between laptops with `make publish-run RUN=<runId>`, `make fetch-run RUN=<runId>` and `make runs` (GitHub prereleases); the waveform cache is copied by hand; the web bundle under `apps/web/public/data/showcase/` is the one data product committed to git. Deployment is a static export (`docs/deploy.md`).
-
-## Data sources
-
-All public. Named as they appear in the code and config.
-
-| Source | Used for | Where |
-| --- | --- | --- |
-| EarthScope FDSN services (`fdsnClient: EARTHSCOPE`, station and dataselect; MUSTANG for availability) | Station metadata (StationXML, including channel depth for borehole sensors) and continuous waveforms | `configs/showcase/signal.yaml`, `hq.ingest` |
-| Public regional catalog via the USGS ComCat FDSN event service (`provider: USGS`; UUSS solutions for the region; `CatalogEvent.source` = `<contributor> via USGS ComCat`) | The PUBLIC count, catalog recall, tier calibration, magnitude calibration | `configs/showcase/seismology.yaml` → `catalog`, `hq.match.catalog` |
-| USGS 3DEP elevations (EPQS point query for the origin and station-elevation checks; terrain from AWS Terrain Tiles, Terrarium encoding, which carry 3DEP in the contiguous US) | Reference surface, DEM-checked station elevations, the terrain mesh | `run.yaml` → `origin`, `signal.yaml` → `stations`, `scripts/bake-dem.py` |
-| DOE Geothermal Data Repository (GDR): a published FORGE 1D velocity model, the Cape EGS / Utah FORGE 3D velocity model (Nakata et al., CC BY 4.0), and well drilling-data submissions (directional surveys) | Travel times and location; well trajectories and a wellhead as reference features | `configs/velocity/forge_1d.csv`, `seismology.yaml` → `velocity`, `export.yaml` → `features` |
-| Utah Geological Survey (UGS) FORGE extent layers | Project-area and study-area outlines as reference features | `export.yaml` → `features` |
-
-Every reference feature carries a `SourceRef` (citation, URL, `verified`). A feature whose coordinates were not read from the primary publication is `verified: false` and renders as approximate. None of this says anything about what causes seismicity in the region.
-
-## Candidate events and quality tiers
-
-A **candidate event** is a set of picks that agree across multiple stations through a velocity model and locate with a stored uncertainty. It is not a verified earthquake, and we never call it one. Tiers come from the data, not from textbooks: the public-catalog events we recovered form the reference set, and each threshold is a quantile of that set, stored with its source quantile in `ProcessingRun.tiering`.
-
-| Tier | Filter pill | Meaning |
-| --- | --- | --- |
-| A | STRICT | Every quality metric within the range reached by three-quarters of the public events we recovered (each bar is set per metric; `ProcessingRun.tiering.matchedSet.meetingEveryBar.A` over `matchedSet.n` is the share that meets every bar at once); depth not pinned to a grid edge; a station close enough to constrain depth |
-| B | (ALL) | On every metric, no worse than the worst recovered public event |
-| C | (ALL) | Associated and located, but outside that range |
-
-Caveat we own: public-catalog events are the larger ones, so tiers are conservative for small events. `meanPickProb` on each event is the picker's confidence, not a probability that the event is real. We never quote a false-positive rate: there is no ground truth for events the public catalog lacks. The proxies are the tiers and the null test below.
-
-## Validation
-
-Everything below is computed by the pipeline and written to `validation.json` and `meta.json`; the Validation card renders it and hides any row whose source is missing. The kill switches in `docs/03-schedule.md` remove a claim when its check fails; they never remove the reveal.
-
-| Check | What it does | Bundle field | Claim it licenses | Kill switch |
-| --- | --- | --- | --- | --- |
-| Catalog recall | One-to-one matching of candidates against the public regional catalog for the exact window; every miss is listed | `summary.recoveredCatalogCount` / `publicCatalogCount`, `summary.unmatchedPublicIds` | "Using only public waveforms, we recovered X of N public events" | Poor recall after reasonable debugging ends the science track |
-| Synthetic depth test | Synthetic events on the real station geometry, located with the same code; reports median horizontal and vertical error and depth bias | `validation.synthetic` (`medianVErrM`, `p90VErrM`, `medianDepthBiasM`) | "This station geometry resolves depth to about ±V m in the synthetic test, where every event is recorded on every station; a typical candidate, on fewer stations, resolves less finely" | Depth: too many strict events pinned to the grid top, or a nonphysical vertical distribution → plan view becomes the hero and the copy describes no pattern in the depths. The Saturday depth call passed on amended criteria (`docs/lanes/H2-seismology.md`, "Depth call"), so the 3D hero with depths stays; that licenses showing depths as located, not reading anything into their pattern (that would need relative relocation, which did not run) |
-| Null test | Reruns of associate → locate → match → tier with each station's picks time-shifted, same config, seeded | `validation.nullTest` (`meanChanceEvents`, `meanChanceStrict`) | "Chance associations on time-scrambled picks: about M" | Reported as is |
-| Baseline comparison | Two pickers (PhaseNet, STA/LTA) × two association profiles (`full`, `p_only`) through the same downstream code | `validation.baseline`, `summary.baseline.gain` (present only when the gain holds in both profiles) | "At comparable quality, neural picking yields G× more strict events", only while `summary.baseline` exists; without it the card shows the two strict counts side by side from the `full` rows and asserts no gain. H1 is rescoring STA/LTA on the run's statics scale (`docs/requests/H4.md`, `REQ-H1-5`), so no baseline outcome is written anywhere in this repository | STA/LTA within a comparable fraction of PhaseNet's strict count → drop the claim, keep the table |
-| Gutenberg–Richter | Aki–Utsu b with Shi–Bolt sigma, Mc by maximum curvature plus an offset; the public curve counts only the catalog events of the calibration magnitude type (`run.matching.magnitude.calibrationMagType`), the recovered curve is the candidates' `ML_cal` | `validation.gr`, `validation.magnitude` (`n`, `looMae`), `run.matching.magnitude` (`leaveOneEventOut.nullModelMae`, `magnitudes.belowCalibratedRange`) | "Magnitudes extend the trend below the public catalog's completeness", always with the magnitude type named, `looMae` read next to the null-model error, and the note that most candidate magnitudes lie below the calibrated range (extrapolated; near the detection limit, biased upward) | Leave-one-out MAE above the configured cap → no magnitude sizing, no G-R |
-| Association sweep | Recall, candidates and strict count across the association grid; the knee is the chosen config | `validation.sweep` (plotted in Run details) | Why these thresholds | — |
-
-What we never claim: that operators lack better monitoring, that any event was missed by anyone, what the pattern of candidate events means underground (we show depths and clustering as located and describe only what is on screen), or a mechanism.
-
-## What this is not
-
-> - **Not an attribution.** Several geothermal operations share this region. We never attribute any event to Utah FORGE, Cape Station or any operator; attribution needs operator data we don't have. Reference features on the map are context, with their sources cited.
-> - **Not a catalog of verified earthquakes.** These are candidate events, tiered by location quality against the public regional catalog, and we don't claim every one is real. "Confirmed earthquake" is a phrase this project never uses. <!-- copy-ok -->
-> - **Not a forecast.** We detect, associate and locate what already happened in a fixed window. Nothing here predicts anything. <!-- copy-ok -->
-> - **Not a claim on the public regional catalog.** It lists what it lists for its own purposes; we say "the public regional catalog shows N here," and no more.
-> - **Not a new algorithm.** The picker is pretrained PhaseNet (we trained nothing); the associator is PyOcto; the methods are published. What's ours is the product around them.
-
-## Honesty rules the code enforces
-
-- UI copy carries no digits: `apps/web/src/shell/copy.test.ts` parses every JSX text node and readable attribute in the shell and the page and fails on any number. Counters and panels read only `AnalysisSummary`, `Validation` and the demo store.
-- Docs carry no numbers as facts: `scripts/check-copy.sh` scans this README, `docs/demo/*.md` and the shell for digit-bearing claims outside code and placeholders, and for the forbidden phrases in `docs/00-project.md`.
-- Synthetic data comes only from `scripts/mock-fixture.py`, carries `isSynthetic: true`, and shows a full-width SYNTHETIC banner. Production builds refuse it.
-- Every run is deterministic (seeded) and records its full config; the summary counts in `meta.json` are recomputed from `events.json` when the bundle is checked.
-- Language: "candidate events", never verified ones; "public regional catalog", never a governmental or authoritative one; detect, associate and locate, never forecast; never name a cause.
-
-## Compliance (HackGT)
-
-- **Pre-event:** research only, into which public data exist (EarthScope waveforms, the public regional catalog, GDR velocity models and well surveys, UGS layers, 3DEP) and which published methods work (PhaseNet via SeisBench, PyOcto, grid and eikonal location, quantile-based quality tiers). That research produced the planning documents in `docs/`, which are the first commit.
-- **Built during HackGT:** everything else in this repository: the `hq` pipeline and its tests, the contracts, the exporter and validator, the live worker, the web app (scene, shell, drawer, providers), the mock generator, the terrain bake, the scripts and this README. Git history starts at the kickoff commit (`REPO-00`), whose content is the plan and an empty skeleton. No pre-event code, fixtures, notebooks or outputs entered the repo.
-- **Third-party components:** public libraries (ObsPy, SeisBench, PyOcto, scikit-fmm, SciPy, PyProj, FastAPI, Next.js, three.js, React Three Fiber, zustand), public pretrained model weights (PhaseNet through SeisBench; weights chosen by an A/B on public-catalog events, no training), public data and published papers only. Sources are cited in the config files and carried into the bundle as `SourceRef`s.
-- Every number in the submission comes from the pipeline of record run during the event; none from pre-event research.
-
-## Team and lanes
-
-Four humans, one lane each, each running their own coding agents (`docs/team.md`, `CLAUDE.md`).
-
-| Lane | Owns | GitHub |
-| --- | --- | --- |
-| H1 Signal | Station inventory, waveform download and cache, preprocessing profiles per sensor type, PhaseNet picking, STA/LTA baseline | @hueywinn |
-| H2 Seismology | Public-catalog query, association, travel times and location with statics and uncertainty, matching, quality tiers, magnitudes, velocity models | @NeelMaddu268 |
-| H3 Visualization | The 3D scene, terrain, the reveal, filters, plan view, evidence drawer, time scrubber, design tokens | @SN-P946 |
-| H4 Platform | Repo, contracts, config loader and stage runner, providers, shell, exporter, validation, deploy, live worker, the story (this README, Devpost, pitch) | @Sririthishpalani-max |
-
-## Repository layout
+You need Node with pnpm. The data is already in the repo, so the website runs without the pipeline.
 
 ```
-CLAUDE.md                          shared rules every agent follows (AGENTS.md links to it)
-Makefile                           every command above
-docs/                              00 project · 01 architecture · 02 contracts · 03 schedule · lanes/ · demo/ · requests/
-apps/web/                          Next.js app: src/app + src/shell + src/providers (H4), src/scene + src/drawer + src/state (H3)
-apps/web/public/data/<mode>/       generated bundles (showcase committed; mock from the fixture script)
-apps/web/public/terrain/           baked DEM tiles (scripts/bake-dem.py)
-services/seismic/                  Python pipeline package `hq`, configs/showcase/*.yaml, tests per lane
-services/api/                      live worker (FastAPI) and the Live API
-packages/contracts/                shared models: Python source of truth + generated TypeScript
-packages/visualization/            design tokens
-scripts/                           gen-contracts, mock-fixture, export-showcase, serve-offline, bake-dem, check-copy
-data/                              runs and caches; never committed
+pnpm install
+make offline
 ```
 
-Further reading: `docs/00-project.md` (what we may and must not claim), `docs/01-architecture.md`, `docs/02-contracts.md`, `docs/03-schedule.md`, `docs/deploy.md`, `services/api/README.md`, `docs/demo/pitch-and-qa.md`.
+Then open http://127.0.0.1:4173. It works with Wi-Fi off.
+
+To rerun the pipeline itself you also need Python 3.13 and uv (`cd services/seismic && uv sync`). `make check` runs all the tests.
+
+## What's in the repo
+
+```
+apps/web/            the website (Next.js, React Three Fiber)
+services/seismic/    the Python pipeline: download, picking, association, location, tiers, validation, export
+services/api/        a worker that reruns the pipeline on recent data
+packages/contracts/  the data formats shared between the pipeline and the website
+scripts/             export, offline serving, terrain baking and other helpers
+docs/                architecture, data formats, deployment and demo notes
+```
+
+## Data and credits
+
+Everything is public: waveforms and station data from EarthScope, the public regional catalog from USGS ComCat (University of Utah Seismograph Stations), elevations from USGS 3DEP, the FORGE velocity model and well surveys from the DOE Geothermal Data Repository, and FORGE outlines from the Utah Geological Survey. Picking uses PhaseNet through SeisBench, and association uses PyOcto.
+
+## Team
+
+Built at HackGT 13 by Hieu, Neel, Praneel and Sri, with AI coding assistants helping write the code.

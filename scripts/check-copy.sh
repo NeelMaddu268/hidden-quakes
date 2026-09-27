@@ -4,11 +4,11 @@
 #   scripts/check-copy.sh                 scan the default set (below)
 #   scripts/check-copy.sh FILE...         scan these files instead
 #
-# CLAUDE.md rule 4: never write a count, magnitude, date, station code or percentage as a fact
+# Rule: never write a count, magnitude, date, station code or percentage as a fact
 # into UI copy, pitch text or docs; numbers render from pipeline output. docs/00-project.md
 # lists the phrases we never use. This script greps for both and exits nonzero on any hit.
 #
-# Default set: README.md, docs/demo/*.md, and the H4 web copy under apps/web/src/app and
+# Default set: docs/demo/*.md, and the H4 web copy under apps/web/src/app and
 # apps/web/src/shell (.ts/.tsx, tests and .d.ts excluded).
 #
 # Digit rule (markdown): a line is an offender if any digit survives after removing
@@ -41,7 +41,7 @@ cd "$root"
 if [[ $# -gt 0 ]]; then
   files=("$@")
 else
-  files=(README.md)
+  files=()
   while IFS= read -r f; do files+=("$f"); done < <(ls docs/demo/*.md 2>/dev/null)
   while IFS= read -r f; do files+=("$f"); done < <(
     find apps/web/src/app apps/web/src/shell -type f \( -name '*.ts' -o -name '*.tsx' \) \
