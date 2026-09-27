@@ -588,6 +588,49 @@ def test_read_inventory_reads_station_xml(tmp_path: Path) -> None:
     assert got[0][0][0].depth == 150.0 and got[0][0].code == "A"
 
 
+def test_library_apis_match_docs02_signatures_exactly() -> None:
+    """Lane DoD: read_window, read_inventory, display_copy and for_picking match docs/02 section 5
+    (parameter names in order, kinds, no defaults, return annotations)."""
+    import inspect
+
+    from hq import preprocess
+    from hq.config.signal import SignalConfig
+    from hq.ingest import cache
+    from hq.preprocess import profiles
+
+    pos, kw = inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY
+    expected: dict[Callable[..., object], tuple[list[tuple[str, object, object]], object]] = {
+        cache.read_window: (
+            [("station_id", pos, str), ("t0", pos, float), ("t1", pos, float)]
+            + [("cache_dir", kw, Path)],
+            obspy.Stream,
+        ),
+        cache.read_inventory: (
+            [("station_id", pos, str), ("cache_dir", kw, Path)],
+            obspy.Inventory,
+        ),
+        preprocess.display_copy: (
+            [("st", pos, obspy.Stream), ("band_hz", pos, tuple[float, float])],
+            obspy.Stream,
+        ),
+        preprocess.for_picking: (
+            [("st", pos, obspy.Stream), ("profile", pos, str), ("cfg", pos, SignalConfig)],
+            tuple[obspy.Stream, preprocess.TimeMap],
+        ),
+    }
+    for fn, (params, returns) in expected.items():
+        sig = inspect.signature(fn, eval_str=True)
+        got = [(p.name, p.kind, p.annotation) for p in sig.parameters.values()]
+        assert got == params, fn.__name__
+        assert all(p.default is inspect.Parameter.empty for p in sig.parameters.values())
+        assert sig.return_annotation == returns, fn.__name__
+    # docs/02 places display_copy, for_picking and TimeMap in hq/preprocess/__init__.py
+    assert {"TimeMap", "display_copy", "for_picking"} <= set(preprocess.__all__)
+    assert preprocess.display_copy is profiles.display_copy
+    assert preprocess.for_picking is profiles.for_picking
+    assert preprocess.TimeMap is profiles.TimeMap and callable(preprocess.TimeMap.to_real)
+
+
 # --- gaps and Check A -------------------------------------------------------------------------
 
 
@@ -691,7 +734,8 @@ def _exercise_stage(io, fake_ctx, monkeypatch) -> None:
 
 
 def test_stage_run_writes_gaps_and_records(fake_ctx, monkeypatch) -> None:
-    io = pytest.importorskip("hq_contracts.io")  # CONTRACT-01 (H4) has not landed yet
+    from hq_contracts import io  # a hard dependency (pyproject.toml): a broken package fails
+
     _exercise_stage(io, fake_ctx, monkeypatch)
 
 
