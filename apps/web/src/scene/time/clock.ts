@@ -84,7 +84,9 @@ export const MAX_PLAYBACK_DELTA_S = 0.1;
  * What the time driver does this frame, written into `out` (the driver's preallocated step, so a playing
  * replay allocates nothing per frame); returns false for "nothing to do". Starts the replay when time mode
  * has just taken effect (playhead at windowStart, playing), otherwise advances a playing replay and stops
- * it at the window end. Pure, so the whole playback rule is tested without a canvas.
+ * it at the window end. While a Listen clip plays (`heardTNow`, WEB-10), a playing replay follows the
+ * audio instead of advancing on its own; the clip's end is handled by the player, not here. Pure, so
+ * the whole playback rule is tested without a canvas.
  */
 export function stepTime(
   s: TimeStateLike & { playing: boolean },
@@ -93,6 +95,7 @@ export function stepTime(
   windowEnd: number,
   rate: number,
   out: TimeStep,
+  heardTNow: number | null = null,
 ): boolean {
   if (shouldStartReplay(s)) {
     out.tNow = windowStart;
@@ -100,6 +103,11 @@ export function stepTime(
     return true;
   }
   if (!s.playing || !timeActive(s)) return false;
+  if (heardTNow !== null) {
+    out.tNow = heardTNow;
+    out.playing = true;
+    return true;
+  }
   const dt = deltaS > 0 ? Math.min(deltaS, MAX_PLAYBACK_DELTA_S) : 0;
   const next = (s.tNow as number) + dt * rate;
   out.tNow = next >= windowEnd ? windowEnd : next;

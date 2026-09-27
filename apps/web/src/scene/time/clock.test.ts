@@ -118,6 +118,19 @@ describe("stepTime (the TimeDriver's per-frame rule)", () => {
   it("does nothing with time mode off", () => {
     expect(step({ ...revealed, timeMode: false }, 0.1, START, END, RATE)).toBeNull();
   });
+
+  it("while a Listen clip plays, a playing replay follows the audio instead of advancing (WEB-10)", () => {
+    const run = (s: TimeStateLike & { playing: boolean }, heard: number | null) => {
+      const out: TimeStep = { tNow: NaN, playing: false };
+      return stepTime(s, 0.1, START, END, RATE, out, heard) ? { ...out } : null;
+    };
+    const playing = { ...revealed, tNow: START + 100, playing: true };
+    expect(run(playing, START + 5000)).toEqual({ tNow: START + 5000, playing: true });
+    expect(run(playing, START + 50)).toEqual({ tNow: START + 50, playing: true }); // even backwards
+    expect(run(playing, null)).toEqual({ tNow: START + 460, playing: true }); // no clip: the replay rule
+    expect(run({ ...playing, playing: false }, START + 5000)).toBeNull(); // paused: the audio has no say
+    expect(run({ ...playing, timeMode: false }, START + 5000)).toBeNull();
+  });
 });
 
 describe("histogram", () => {
