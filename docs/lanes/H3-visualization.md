@@ -610,3 +610,11 @@ recording the video. **G** starts it (H4's Tour button too, once mounted: REQ-H3
 - **State.** A separate `useTour` store (running, step, runs), so docs/02 §6's `DemoState` stays as frozen.
   `TourRun` is pure: the clock is passed in, and the overlay ticks it once per animation frame, so a hidden tab
   pauses the tour with the scene.
+
+### WEB-11 · H opens the hidden hero · 2026-09-26 9:45 PM EDT
+
+The live site had no key for the hidden hero (REQ-H3-12 was still open). H3 binds **H** in the scene itself
+(`scene/HiddenHeroKey.tsx`), the same way the tour binds G. It calls `selectHiddenHero(events)` once the reveal
+has begun, and does nothing on the public frame, where no candidate event is on screen to open. It follows the
+shell's key rules (`scene/keys.ts` `isPlainPress`: text fields, repeats and Cmd/Ctrl/Alt combos are left alone).
+While the tour plays, H stops the tour like any other key and opens nothing. H4 lists H in docs/02 §6 and the README.
