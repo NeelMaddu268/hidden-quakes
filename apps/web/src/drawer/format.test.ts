@@ -7,7 +7,6 @@ import {
   fmtMagnitude,
   fmtPlusMinusM,
   fmtSeconds,
-  fmtStationsAgreed,
   fmtUnit,
   fmtUtahLocal,
   fmtUtc,
@@ -28,7 +27,6 @@ describe("missing values never render as NaN or undefined", () => {
       expect(fmtKmFromM(v)).toBe(DASH);
       expect(fmtUtc(v)).toBe(DASH);
       expect(fmtUtahLocal(v)).toBe(DASH);
-      expect(fmtStationsAgreed(v)).not.toMatch(/NaN|undefined|Infinity/);
     }
   });
 });
@@ -44,10 +42,6 @@ describe("numbers", () => {
     expect(fmtPlusMinusM(369.3)).toBe("±369 m");
     expect(fmtKmFromM(3240)).toBe("3.2 km");
     expect(fmtKmFromM(3240, 2)).toBe("3.24 km");
-  });
-  it("stations agreed, singular and plural", () => {
-    expect(fmtStationsAgreed(11)).toBe("11 stations agreed");
-    expect(fmtStationsAgreed(1)).toBe("1 station agreed");
   });
   it("axis seconds follow the tick step", () => {
     expect(fmtSeconds(2, 1)).toBe("2");

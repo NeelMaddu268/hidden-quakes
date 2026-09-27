@@ -23,6 +23,41 @@ export function traceProblem(tr: WaveformSnippet): string | null {
   return null;
 }
 
+/**
+ * What the drawer says when an event's evidence can't be shown: never the raw provider message (a URL
+ * and status code). A 404 is expected (the exporter writes evidence for the first `maxEvents` events in
+ * reveal order only), so it reads as a neutral note; anything else is a real load failure.
+ */
+export function evidenceUnavailable(message: string | undefined): { text: string; expected: boolean } {
+  return /\bHTTP 404\b/.test(message ?? "")
+    ? { text: "No waveform evidence was exported for this event.", expected: true }
+    : { text: "Waveform evidence could not be loaded.", expected: false };
+}
+
+/**
+ * The record section's caption for `shown` traces (the closest stations), `picked` of them with a pick,
+ * and `agreed` stations that agreed on the event. A trace with a pick is one of the agreeing stations,
+ * so "k of N agreeing stations shown" is only said when every shown trace has one; otherwise the caption
+ * says how many of the shown stations agreed.
+ */
+export function recordCaption(shown: number, picked: number, agreed: number | null | undefined): string {
+  const stations = (k: number) => `${k} ${k === 1 ? "station" : "stations"}`;
+  if (!isFiniteCount(agreed)) return `${stations(shown)} shown, closest first, ${picked} with a pick`;
+  if (picked === shown) return `${shown} of ${agreed} agreeing stations shown, closest first`;
+  return `${stations(shown)} shown, closest first; ${picked} of the ${agreed} that agreed are among them`;
+}
+
+function isFiniteCount(v: number | null | undefined): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0;
+}
+
+/** How many traces carry a P or S pick (the rest are the closest stations' records without one). */
+export function pickedTraceCount(traces: readonly { pickP?: number | null; pickS?: number | null }[]): number {
+  let n = 0;
+  for (const t of traces) if (t.pickP != null || t.pickS != null) n++;
+  return n;
+}
+
 export interface PreparedTraces {
   /** Drawable traces, sorted by epicentral distance (stable), as the contract orders them. */
   traces: WaveformSnippet[];

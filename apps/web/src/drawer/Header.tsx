@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import type { BundleMeta, SceneMeta, SeismicEvent } from "../scene/types";
 import { depthKmOfElev } from "./geometry";
 import { DASH, fmtFixed, fmtMagnitude, fmtPlusMinusM, fmtUnit, fmtUtahLocal, fmtUtc, isNum } from "./format";
@@ -66,13 +67,12 @@ function EventSummary({ event, scene, confidence }: { event: SeismicEvent; scene
         <span className="hqd-tier" data-tier={event.tier}>
           Tier {event.tier}
         </span>
-        {event.tierReasons.length > 0 && (
-          <span className="hqd-reasons hqd-num">
-            {event.tierReasons.map((r, i) => (
-              <span key={i}>{r}</span>
-            ))}
+        {match == null && (
+          <span className="hqd-notincat" data-testid="not-in-catalog">
+            Not in the public regional catalog
           </span>
         )}
+        {event.tierReasons.length > 0 && <TierReasons key={event.id} reasons={event.tierReasons} />}
       </div>
       <div className="hqd-origin">
         <span className="hqd-label">Origin</span>
@@ -121,6 +121,35 @@ function EventSummary({ event, scene, confidence }: { event: SeismicEvent; scene
         </div>
       )}
       {q.depthOnEdge && <div className="hqd-note">Depth solution reaches the edge of the location grid.</div>}
+    </>
+  );
+}
+
+/**
+ * The pipeline's tier reasons, verbatim. Real reasons run to several hundred characters, which at 720p
+ * pushed the record section below the fold, so they're clamped to two lines with a toggle that appears
+ * only when the text actually overflows.
+ */
+function TierReasons({ reasons }: { reasons: readonly string[] }) {
+  const el = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const r = el.current;
+    if (r && !expanded) setOverflows(r.scrollHeight > r.clientHeight + 1);
+  }, [reasons, expanded]);
+  return (
+    <>
+      <span ref={el} className="hqd-reasons hqd-num" data-clamped={expanded ? "false" : "true"}>
+        {reasons.map((r, i) => (
+          <span key={i}>{r}</span>
+        ))}
+      </span>
+      {(overflows || expanded) && (
+        <button type="button" className="hqd-more" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "Show less" : "Show all reasons"}
+        </button>
+      )}
     </>
   );
 }

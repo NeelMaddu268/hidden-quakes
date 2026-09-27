@@ -2,14 +2,17 @@ import { useEffect, useMemo } from "react";
 import type { EventEvidence, WaveformSnippet } from "../scene/types";
 import { fmtFixed, fmtKmFromM, fmtSeconds, isNum } from "./format";
 import {
+  evidenceUnavailable,
   markPercent,
   pickDelayMs,
+  pickedTraceCount,
   prepareTraces,
+  recordCaption,
   recordDomain,
   timeTicks,
+  tracePoints,
   TRACK_H,
   TRACK_W,
-  tracePoints,
   type TimeDomain,
 } from "./record";
 
@@ -22,6 +25,8 @@ export interface RecordSectionProps {
   message?: string;
   /** Event origin time, epoch s: the axis is seconds after it. */
   originT: number;
+  /** How many stations agreed on the event (`quality.nStations`), for the caption. */
+  nStations?: number | null;
 }
 
 /** Tooltip for a mark: "P pick 1.23 s after origin · prob 0.87"; only finite numbers are printed. */
@@ -93,13 +98,22 @@ function Legend() {
  * row (CSS animation delays, so nothing re-renders while they play); the arrivals modeled from the
  * final location (`predP` / `predS`) are faint dashed lines. Missing picks or arrivals draw nothing.
  */
-export function RecordSection({ status, evidence, message, originT }: RecordSectionProps) {
+export function RecordSection({ status, evidence, message, originT, nStations }: RecordSectionProps) {
   const prepared = useMemo(() => (evidence ? prepareTraces(evidence.traces) : null), [evidence]);
   const domain = useMemo(
     () => (prepared && isNum(originT) ? recordDomain(prepared.traces, originT) : null),
     [prepared, originT],
   );
   const axis = useMemo(() => (domain ? timeTicks(domain) : null), [domain]);
+
+  // The drawer never shows the provider's raw message (a URL and status code); it goes to the console:
+  // a 404 is expected (evidence is capped at the exporter's maxEvents), anything else is a real failure.
+  const unavailable = status === "error" ? evidenceUnavailable(message) : null;
+  useEffect(() => {
+    if (status !== "error") return;
+    if (evidenceUnavailable(message).expected) console.info(`[drawer] no evidence file: ${message}`);
+    else console.error(`[drawer] evidence failed to load: ${message}`);
+  }, [status, message]);
 
   useEffect(() => {
     if (prepared?.skipped.length) {
@@ -108,6 +122,7 @@ export function RecordSection({ status, evidence, message, originT }: RecordSect
   }, [prepared, evidence]);
 
   const n = prepared?.traces.length ?? 0;
+  const picked = evidence ? pickedTraceCount(evidence.traces) : 0;
   const [lo, hi] = evidence?.filterHz ?? [NaN, NaN];
   const band = isNum(lo) && isNum(hi) ? ` · ${fmtFixed(lo, lo < 1 ? 1 : 0)}–${fmtFixed(hi, hi < 1 ? 1 : 0)} Hz bandpass` : "";
 
@@ -120,17 +135,17 @@ export function RecordSection({ status, evidence, message, originT }: RecordSect
       <div className="hqd-caption">
         {status === "ready" && evidence ? (
           <>
-            <span className="hqd-num">{n}</span> {n === 1 ? "trace" : "traces"}
-            {band} · sorted by epicentral distance · normalized per trace
+            {recordCaption(n, picked, nStations)}
+            {band} · normalized per trace
           </>
         ) : (
-          "Waveforms from the stations that picked this event"
+          "Waveforms from the stations closest to this event"
         )}
       </div>
 
-      {status === "error" ? (
-        <div className="hqd-error" role="status">
-          <b>Evidence unavailable.</b> {message}
+      {unavailable ? (
+        <div className={unavailable.expected ? "hqd-note" : "hqd-error"} role="status" data-testid="evidence-unavailable">
+          {unavailable.text}
         </div>
       ) : status !== "ready" || !prepared ? (
         <ol className="hqd-record" data-status="loading" aria-busy="true">

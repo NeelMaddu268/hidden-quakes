@@ -1,6 +1,6 @@
 "use client";
-// What the scene shows at the ground surface, decided in one place so the terrain layer and the depth
-// ruler's note ("Abstract surface …") can never disagree.
+// What the scene shows at the ground surface, decided in one place so the terrain layer and the corner
+// note ("Abstract surface …", references/CornerNote) can never disagree.
 
 import { useState } from "react";
 import type { SceneMeta } from "../types";
@@ -11,7 +11,7 @@ import { terrainMismatch } from "./meta";
 /** Flip to true to ship the abstract slab instead of the DEM (docs/03 kill switch "Terrain"). */
 export const FORCE_ABSTRACT_SLAB = false;
 
-/** Shown under the depth ruler's title whenever the abstract slab stands in for the terrain. */
+/** The corner note shown whenever the abstract slab stands in for the terrain (references/CornerNote). */
 export const ABSTRACT_SURFACE_LABEL = "Abstract surface (no terrain model)";
 
 export interface SurfaceState {

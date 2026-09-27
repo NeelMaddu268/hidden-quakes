@@ -39,11 +39,6 @@ export function fmtKmFromM(m: number | null | undefined, digits = 1): string {
   return isNum(m) ? `${fmtFixed(m / 1000, digits)} km` : DASH;
 }
 
-/** "11 stations agreed" / "1 station agreed" (docs/lanes/H3 → Drawer). */
-export function fmtStationsAgreed(n: number | null | undefined): string {
-  if (!isNum(n)) return `${DASH} stations agreed`;
-  return `${fmtFixed(n, 0)} ${n === 1 ? "station" : "stations"} agreed`;
-}
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 

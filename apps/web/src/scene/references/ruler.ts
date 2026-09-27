@@ -1,13 +1,13 @@
-// Depth ruler and depth slices: 0–6 km below the site surface with 1 km ticks. Tick heights come from
-// depthKmToSceneY (depth is measured from SceneMeta.refSurfaceElevM, docs/01), and the ruler's title is
-// SceneMeta.depthLabel verbatim, never a string of our own.
+// Depth ruler and depth slices: from the site surface down to the deepest displayed event (provider
+// data, rulerMaxDepthKm) with 1 km ticks. Tick heights come from depthKmToSceneY (depth is measured from
+// SceneMeta.refSurfaceElevM, docs/01), and the ruler's title is SceneMeta.depthLabel verbatim, never a
+// string of our own.
 
 import type { SceneBounds } from "../camera/bounds";
 import { depthKmToSceneY, METERS_PER_UNIT } from "../coords";
 import type { EnuBoundsM } from "../terrain/meta";
 import type { SceneMeta } from "../types";
 
-export const RULER_MAX_DEPTH_KM = 6;
 export const RULER_TICK_KM = 1;
 /** Tick length (km, scene units), drawn outward (west) from the spine. */
 export const RULER_TICK_LENGTH_KM = 0.35;
@@ -38,8 +38,27 @@ export interface RulerLayout {
   segments: Vec3[];
 }
 
+/**
+ * How deep the ruler and the depth slices reach: the deepest displayed event (candidates and the public
+ * regional catalog) in display depth, (refSurfaceElevM − elevM) / 1000, rounded up to a whole tick, and at
+ * least one tick. From provider data, never a fixed depth; non-finite elevations are ignored.
+ */
+export function rulerMaxDepthKm(
+  elevationsM: Iterable<number>,
+  scene: Pick<SceneMeta, "refSurfaceElevM">,
+  stepKm: number = RULER_TICK_KM,
+): number {
+  if (!(stepKm > 0)) throw new Error(`bad ruler step ${stepKm}`);
+  let deepest = 0;
+  for (const elevM of elevationsM) {
+    const d = (scene.refSurfaceElevM - elevM) / 1000;
+    if (Number.isFinite(d) && d > deepest) deepest = d;
+  }
+  return Math.max(stepKm, Math.ceil(deepest / stepKm - 1e-9) * stepKm);
+}
+
 /** Depths of the ticks, 0 … max inclusive. */
-export function rulerDepthsKm(maxDepthKm: number = RULER_MAX_DEPTH_KM, stepKm: number = RULER_TICK_KM): number[] {
+export function rulerDepthsKm(maxDepthKm: number, stepKm: number = RULER_TICK_KM): number[] {
   if (!(stepKm > 0) || !(maxDepthKm >= 0)) throw new Error(`bad ruler range 0..${maxDepthKm} step ${stepKm}`);
   const n = Math.round(maxDepthKm / stepKm);
   return Array.from({ length: n + 1 }, (_, i) => i * stepKm);
@@ -62,7 +81,7 @@ export function rulerAnchor(bounds: SceneBounds): { x: number; z: number } {
 export function rulerLayout(
   scene: Pick<SceneMeta, "depthLabel" | "originElevM" | "refSurfaceElevM" | "verticalExaggeration">,
   anchor: { x: number; z: number },
-  maxDepthKm: number = RULER_MAX_DEPTH_KM,
+  maxDepthKm: number,
   stepKm: number = RULER_TICK_KM,
 ): RulerLayout {
   const { x, z } = anchor;
@@ -132,7 +151,10 @@ export function stickyTitleT(y0: number, w0: number, y1: number, w1: number, ndc
   return t < 0 ? 0 : t > 1 ? 1 : t;
 }
 
-export const SLICE_DEPTHS_KM: readonly number[] = rulerDepthsKm().filter((d) => d > 0);
+/** Slice depths: every ruler tick below the surface. */
+export function sliceDepthsKm(maxDepthKm: number, stepKm: number = RULER_TICK_KM): number[] {
+  return rulerDepthsKm(maxDepthKm, stepKm).filter((d) => d > 0);
+}
 
 /**
  * Faint horizontal square outlines, one per slice depth, over the surface extent (ENU metres).
@@ -141,7 +163,7 @@ export const SLICE_DEPTHS_KM: readonly number[] = rulerDepthsKm().filter((d) => 
 export function sliceSegments(
   extent: EnuBoundsM,
   scene: Pick<SceneMeta, "originElevM" | "refSurfaceElevM" | "verticalExaggeration">,
-  depthsKm: readonly number[] = SLICE_DEPTHS_KM,
+  depthsKm: readonly number[],
 ): Vec3[] {
   const x0 = extent.eMin / METERS_PER_UNIT;
   const x1 = extent.eMax / METERS_PER_UNIT;

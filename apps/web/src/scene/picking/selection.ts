@@ -27,7 +27,8 @@ export function candidatePickable(
 }
 
 /**
- * For each public-catalog instance (catalog order), the candidate event that clicking it selects: its
+ * For each public-catalog instance (catalog order), the candidate event that clicking it selects after
+ * the reveal (before it, public points select nothing, so the drawer can't show a candidate early): its
  * `matchedEventId` when that event is in the bundle, else null. A null point has nothing to open, so it
  * is skipped by the pick and a click near it falls through to the nearest selectable glyph.
  */

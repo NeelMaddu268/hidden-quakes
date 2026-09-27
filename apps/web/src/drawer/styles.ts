@@ -58,8 +58,21 @@ export const DRAWER_CSS = `
   border: 1px solid ${colors.contour}; color: ${colors.text};
 }
 .hqd-tier[data-tier="A"] { border-color: ${colors.strictHalo}; color: ${colors.strictHalo}; }
+.hqd-notincat {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid ${colors.recovered}; color: ${colors.recovered};
+}
 .hqd-reasons { color: ${colors.textDim}; font-size: 11px; }
 .hqd-reasons span + span::before { content: " · "; }
+.hqd-reasons[data-clamped="true"] {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
+.hqd-more {
+  padding: 0; border: 0; background: none; color: ${colors.textDim}; font: inherit; font-size: 11px;
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.hqd-more:hover { color: ${colors.text}; }
+.hqd-more:focus-visible { outline: 1px solid ${colors.textDim}; outline-offset: 1px; }
 .hqd-origin { display: grid; grid-template-columns: 76px 1fr; gap: 1px 8px; margin-top: 10px; font-size: 12.5px; }
 .hqd-depth { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 10px; }
 .hqd-stats {
@@ -109,7 +122,6 @@ export const DRAWER_CSS = `
 .hqd-axis-track span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap; }
 .hqd-axis-title { text-align: right; color: ${colors.textDim}; font-size: 10.5px; margin-top: 1px; }
 .hqd-placeholder { grid-column: 1 / -1; border-top: 1px solid ${colors.contour}; opacity: 0.6; }
-.hqd-status { grid-column: 1 / -1; align-self: center; justify-self: center; color: ${colors.textDim}; font-size: 12px; }
 .hqd-error { color: ${colors.textDim}; font-size: 12px; margin-top: 10px; }
 .hqd-error b { color: ${colors.alert}; font-weight: 600; }
 
