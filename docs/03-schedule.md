@@ -17,7 +17,7 @@ We have ~36 hours and strong agents, so code volume isn't the constraint. Two th
 | **Depth call** | 10:00 AM Sat | Depth gate passes, or the plan-view hero becomes permanent | H2 |
 | **D · demo** | 2:00 PM Sat | Full 2-minute flow works; an outsider explains it in 20 seconds | Everyone |
 | **P · pipeline freeze** | Passed early, about 6:45 PM Sat (H2's call: run `20260926-0210-a04c611` is final and no v4 follows; the 9 PM slot from the 4:50 PM move is void) | Final showcase `runId` exported and deployed | H2 + H4 |
-| **F · feature freeze** | 3:00 AM Sun (moved from 12 AM at about 7 PM Sat: overnight features for the judging rubric; UI copy freeze 4:00 AM, code freeze 5:30 AM, submission by 7:00 AM) | Nothing new after this | H4 |
+| **F · feature freeze** | 12:30 AM Sun (H2's call at about 8:50 PM Sat, finishing early; UI copy freeze 1:30 AM, code freeze 2:30 AM, submission by about 3 AM) | Nothing new after this | H4 |
 
 ### Check A and Check B (10:00 PM)
 
@@ -53,14 +53,12 @@ We have ~36 hours and strong agents, so code volume isn't the constraint. Two th
 | 2–6 PM | 18–22 | Lane hardening pass | Final run, thresholds locked | Polish from outsider test | Pitch v1, API-05 |
 | **6 PM** | **22** | **Integration meeting 6** (Gate P moved to 9 PM) | | | |
 | **~6:45 PM** | **23** | **Gate P: data freeze, called early by H2** (run `20260926-0210-a04c611` final; no v4) | | | |
-| 6 PM–12 AM | 22–28 | Everyone: Devpost screenshots, video, Live if stable, language audit, second outsider test at 10 PM | | | |
-| **12 AM Sun** | **28** | **Integration meeting 7** (merge to `main`, Neel redeploys) | | | |
-| **3 AM Sun** | **31** | **Gate F: feature freeze** (moved from 12 AM); integration merge to `main`, Neel redeploys | | | |
-| **4 AM Sun** | **32** | UI copy and claims freeze | | | |
-| **5:30 AM Sun** | **33.5** | Code freeze | | | |
-| **7 AM Sun** | **35** | Submission done: Devpost first, then the Expo form (expo.hexlabs.org) | | | |
-| 12–3 AM | 28–31 | Overnight features for the judging rubric (comprehension, labels, who it is for, what the ML is); rehearsals and hostile Q&A drills in between | | | |
-| 3–7 AM | 31–35 | Devpost fill (`make story`), video, Expo form, README, multi-browser + Wi-Fi-off tests; emergency fixes only after 5:30 AM | | | |
+| 6 PM–12:30 AM | 22–28.5 | Everyone: features for the judging rubric (comprehension, labels, who it is for, what the ML is), Devpost screenshots, language audit; every push to `main` redeploys the site on Neel's side | | | |
+| **12:30 AM Sun** | **28.5** | **Gate F: feature freeze** (finishing early: H2's call at about 8:50 PM Sat) | | | |
+| **1:30 AM Sun** | **29.5** | UI copy and claims freeze | | | |
+| **2:30 AM Sun** | **30.5** | Code freeze; the repo goes public | | | |
+| **~3 AM Sun** | **31** | Submission done: Devpost first, then the Expo form (expo.hexlabs.org) | | | |
+| 12:30–3 AM | 28.5–31 | Devpost fill (`make story`), video, Expo form, README, multi-browser + Wi-Fi-off tests; emergency fixes only after 2:30 AM | | | |
 | 7–8 AM | 35–36 | Pitch practice; nothing else | | | |
 
 H2 and H3 are never asleep at the same time before the 10 AM depth call.
@@ -69,7 +67,7 @@ H2 and H3 are never asleep at the same time before the 10 AM depth call.
 
 ## Integration meetings
 
-15 minutes, at the team table: **10 PM Fri, 12 AM, 4 AM, 8 AM, 2 PM, 6 PM Sat, 12 AM and 3 AM Sun.** After each overnight merge H4 tells Neel, who redeploys `main` from his Vercel account (`docs/deploy.md`). Each lane answers three things: what's merged, what's blocked (with a `docs/requests/` link), and what lands before the next meeting. H4 merges `feat/*` into `main` right after each one, then everyone runs `git fetch && git merge origin/main`.
+15 minutes, at the team table: **10 PM Fri, 12 AM, 4 AM, 8 AM, 2 PM, 6 PM Sat.** From Saturday evening H4 merges to `main` as soon as a change is green, and every push to `main` redeploys the site on Neel's side (`docs/deploy.md`). Each lane answers three things: what's merged, what's blocked (with a `docs/requests/` link), and what lands before the next meeting. H4 merges `feat/*` into `main` right after each one, then everyone runs `git fetch && git merge origin/main`.
 
 Before the first meeting, foundations land on `main` directly so nobody waits: `run.yaml` (H2, 8:05 PM), contracts (H4, 8:25), config loader + stage runner and mock bundle (H4, 8:45), provider hooks (H4, 9:00).
 
@@ -80,10 +78,10 @@ Before the first meeting, foundations land on `main` directly so nobody waits: `
 | Contracts (`packages/contracts`, `docs/02`) | 8:30 PM Fri | PR + approval from affected lanes + version bump |
 | Tier definitions and match tolerances | 10:00 AM Sat | Only with a rerun under a new `runId` |
 | Showcase run | Frozen about 6:45 PM Sat (run `20260926-0210-a04c611`; H2 called no v4) | Nothing: the bundle on `main` is final |
-| Features | 3:00 AM Sun (moved from 12 AM) | Bugs, polish, docs |
-| UI copy and claims | 4:00 AM Sun (moved from 2 AM) | Typo fixes |
-| Code | 5:30 AM Sun (moved from 6 AM) | Emergency fixes only |
-| Submission | By 7:00 AM Sun: Devpost first, then the Expo form (expo.hexlabs.org) | — |
+| Features | 12:30 AM Sun (finishing early) | Bugs, polish, docs |
+| UI copy and claims | 1:30 AM Sun | Typo fixes |
+| Code | 2:30 AM Sun; the repo goes public | Emergency fixes only |
+| Submission | By about 3 AM Sun: Devpost first, then the Expo form (expo.hexlabs.org) | — |
 
 ## Kill switches
 
@@ -97,7 +95,7 @@ Only two switches end Hidden Quakes, and both fire before 4 AM. Everything else 
 | Baseline | STA/LTA within ~20% of PhaseNet's strict count at comparable rms | 2 PM Sat | Drop the neural-advantage claim; keep the table as context |
 | Magnitude | Leave-one-out MAE above ~0.4 | 2 PM Sat | Cut magnitude sizing and G-R |
 | Ridgecrest | Not started by the pipeline freeze | ~6:45 PM Sat (freeze called early) | Cut |
-| Live | Unstable, or latency over ~10 min | 10 PM Sat, or earlier on H2's word (7:20 PM Sat: H2 is making live windows borrow run `20260926-0210-a04c611`'s statics and tier bars, PR expected by ~9:30 PM; the live machine needs that run's tables at `<dataDir>/showcase/runs/<runId>` via `make fetch-run`) | Cut the LIVE pill (`NEXT_PUBLIC_LIVE_ENABLED` unset in the web build, `docs/deploy.md`) |
+| Live | Unstable, or latency over ~10 min | Decided by H2 at about 8:50 PM Sat: **cut** | The LIVE pill stays off (`NEXT_PUBLIC_LIVE_ENABLED` unset in the web build, `docs/deploy.md`); the pitch and shot list keep their "only if LIVE is up" lines, which now read as omitted |
 | Evidence drawer | Too slow or heavy | Any time | Drop to 8 traces per event |
 | Terrain | DEM work slows integration | 12 AM Sat | Clean abstract slab, labeled as such |
 | UI numbers | Any number not from provider data | Always | Bug; fix before the pipeline freeze |
