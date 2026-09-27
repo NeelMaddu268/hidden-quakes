@@ -78,6 +78,16 @@ describe("HeroListen", () => {
     expect(pause).toHaveBeenCalled();
   });
 
+  it("switching to another event mid-clip stops it, and the hero's button comes back ready to play", () => {
+    const { rerender } = render(<HeroListen eventId={HERO_ID} />);
+    fireEvent.click(screen.getByTestId("hero-listen-button"));
+    expect(screen.getByTestId("hero-listen-button").getAttribute("aria-pressed")).toBe("true");
+    rerender(<HeroListen eventId="hq-test-000043" />);
+    expect(pause).toHaveBeenCalled();
+    rerender(<HeroListen eventId={HERO_ID} />);
+    expect(screen.getByTestId("hero-listen-button").getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("a refused play() resets the button and explains on hover", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     play.mockImplementation(() => Promise.reject(Object.assign(new Error("blocked"), { name: "NotAllowedError" })));

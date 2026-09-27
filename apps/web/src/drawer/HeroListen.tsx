@@ -18,10 +18,14 @@ export function HeroListen({ eventId }: { eventId: string }) {
 
   const show = clip !== null && clip.heroEventId === eventId;
 
-  // Another event (or a closed drawer) never keeps the clip playing.
+  // Another event (or a closed drawer) never keeps the clip playing. The <audio> is gone by the time its
+  // pause event fires, so onPause never runs: reset the button here, or it comes back stuck on "stop".
   useEffect(() => {
     const el = audio.current;
-    return () => el?.pause();
+    return () => {
+      el?.pause();
+      setPlaying(false);
+    };
   }, [show]);
 
   if (!show) return null;
