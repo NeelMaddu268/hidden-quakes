@@ -75,6 +75,9 @@ log = logging.getLogger(__name__)
 
 SELF_CONSISTENT = "selfConsistent"
 REFERENCE_EVENTS = "referenceEvents"
+# Run mode live (hq.locate.calibration): another run's terms, applied as they are. A report mode,
+# not a statics.mode value.
+CALIBRATION_RUN = "calibrationRun"
 PIPELINE_ORDER = (
     "locate (pass 1, no statics) -> match -> locate (pass 2, reference terms from "
     "matches.parquet) -> match -> tier"
@@ -814,6 +817,50 @@ def locate_with_statics(
             a["p90HM"], i["p90HM"], b["medianAbsDzM"], a["medianAbsDzM"], i["medianAbsDzM"],
             int(np.count_nonzero(terms["staticS"])), time.perf_counter() - started,
         )
+    return StaticsOutcome(details, report)
+
+
+def locate_with_borrowed_statics(
+    assoc: "AssocResult",
+    picks: pd.DataFrame,
+    stations: pd.DataFrame,
+    cfg: SeismologyConfig,
+    run: RunSection,
+    borrowed: pd.DataFrame,
+    calibration_run: str,
+    *,
+    run_id: str | None = None,
+    cache_dir: Path | None = None,
+    previous_events: pd.DataFrame | None = None,
+) -> StaticsOutcome:
+    """Run mode live (``hq.locate.calibration``): every event located once, with another run's
+    station terms (``borrowed``: ``TERM_COLUMNS``), none fit here. A station-phase the
+    calibration run has no term for gets 0. Deterministic, so a repeated pass repeats it."""
+    started = time.perf_counter()
+    terms = borrowed[TERM_COLUMNS].reset_index(drop=True)
+    details = locate_detailed(assoc, picks, stations, cfg, run, run_id=run_id,
+                              cache_dir=cache_dir, statics=statics_map(terms),
+                              static_events=_counts(terms))
+    used = set(details.locator.station_ids)
+    have = set(statics_map(terms))
+    without = sorted(f"{s} {p}" for s in used for p in PHASES if (s, p) not in have)
+    previous = _previous_rms(previous_events)
+    report = _report(
+        cfg, details, terms[terms["stationId"].astype(str).isin(used)].reset_index(drop=True),
+        mode=CALIBRATION_RUN, pass_number=2,
+        note=f"terms borrowed from calibration run {calibration_run} (its statics.parquet), "
+        "applied to every event; none fit on this window",
+        cap_s=cfg.statics.referenceCapS, min_events=cfg.statics.minReferenceEvents,
+        sigma_ids=details.result.events["id"].astype(str).tolist(), sigma_events=ALL_EVENTS,
+        history=[_history_row(1, details, 0, terms)] if len(details.result.events) else [],
+        previous_median_rms_s=previous,
+        previous_median_rms_from=None if previous is None else PREVIOUS_FROM_TABLE,
+        extra={"calibrationRun": calibration_run, "stationPhasesWithoutTerm": without},
+    )
+    log.info("statics: %s: %d borrowed terms (%d non-zero) from %s; %d used station-phase(s) "
+             "without a term get 0; %.1f s", CALIBRATION_RUN, len(terms),
+             int(np.count_nonzero(terms["staticS"])), calibration_run, len(without),
+             time.perf_counter() - started)
     return StaticsOutcome(details, report)
 
 

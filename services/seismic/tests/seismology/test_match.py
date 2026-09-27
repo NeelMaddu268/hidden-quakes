@@ -1393,6 +1393,19 @@ def test_stage_zero_rows_keep_types(make_ctx: Any, run_section: RunSection) -> N
 
 
 @pytest.mark.smoke
+def test_stage_zero_public_events_with_located_events(
+    make_ctx: Any, run_section: RunSection
+) -> None:
+    """A live 2-hour window often has no public regional catalog event: match still writes."""
+    ctx = make_ctx(run_section)
+    _write_run(ctx, public([]), located([("x", T0, 0, 0), ("y", T0 + 60.0, 100, 0)]))
+    stage.run(ctx)
+    assert read_table(ctx.path("matches.parquet")).empty
+    assert ctx.records[-1]["counts"]["publicEvents"] == 0
+    assert ctx.records[-1]["counts"]["locatedEvents"] == 2
+
+
+@pytest.mark.smoke
 def test_stage_requires_its_inputs(make_ctx: Any, run_section: RunSection) -> None:
     ctx = make_ctx(run_section)
     catalog_stage.write_catalog(public([]), ctx.path("catalog.parquet"))
