@@ -1,0 +1,747 @@
+[
+  {
+    "channels": [
+      "GNZ",
+      "GN1",
+      "GN2"
+    ],
+    "enu": {
+      "e": -715.9296968735289,
+      "n": -2099.285276840441,
+      "u": -41.08232399999997
+    },
+    "id": "6K.CS01",
+    "kind": "borehole",
+    "latitude": 38.490958,
+    "location": "",
+    "longitude": -112.907708,
+    "network": "6K",
+    "preprocessProfile": "borehole-A",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 40.0,
+    "sensorElevM": 1586.617676,
+    "staticsS": {
+      "P": 0.06758177280426025,
+      "S": 0.24493098258972168
+    },
+    "station": "CS01",
+    "surfaceElevM": 1626.617676,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "GNZ",
+      "GN1",
+      "GN2"
+    ],
+    "enu": {
+      "e": -4334.091133419541,
+      "n": 2424.6918405769393,
+      "u": -155.35527300000012
+    },
+    "id": "6K.CS02",
+    "kind": "borehole",
+    "latitude": 38.531022,
+    "location": "",
+    "longitude": -112.950272,
+    "network": "6K",
+    "preprocessProfile": "borehole-A",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 40.0,
+    "sensorElevM": 1472.344727,
+    "staticsS": {
+      "P": 0.08865237236022949,
+      "S": 0.5882765054702759
+    },
+    "station": "CS02",
+    "surfaceElevM": 1512.344727,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "GNZ",
+      "GN1",
+      "GN2"
+    ],
+    "enu": {
+      "e": 5119.699147076928,
+      "n": 2794.603762664832,
+      "u": 202.69209
+    },
+    "id": "6K.CS03",
+    "kind": "strong_motion",
+    "latitude": 38.53611,
+    "location": "",
+    "longitude": -112.841951,
+    "network": "6K",
+    "preprocessProfile": "borehole-A",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 1.0,
+    "sensorElevM": 1830.39209,
+    "staticsS": {
+      "P": -0.2480480670928955,
+      "S": -0.4975447654724121
+    },
+    "station": "CS03",
+    "surfaceElevM": 1831.39209,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "GNZ",
+      "GN1",
+      "GN2"
+    ],
+    "enu": {
+      "e": 71.45423800346907,
+      "n": -5930.956431901082,
+      "u": 24.748974999999973
+    },
+    "id": "6K.CS04",
+    "kind": "borehole",
+    "latitude": 38.456592,
+    "location": "",
+    "longitude": -112.897779,
+    "network": "6K",
+    "preprocessProfile": "borehole-A",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 40.0,
+    "sensorElevM": 1652.448975,
+    "staticsS": {
+      "P": 0.035114169120788574,
+      "S": 0.036162495613098145
+    },
+    "station": "CS04",
+    "surfaceElevM": 1692.448975,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "GNZ",
+      "GN1",
+      "GN2"
+    ],
+    "enu": {
+      "e": 596.2547362751793,
+      "n": 4484.68954073824,
+      "u": -84.99479999999994
+    },
+    "id": "6K.CS05",
+    "kind": "borehole",
+    "latitude": 38.550505,
+    "location": "",
+    "longitude": -112.894224,
+    "network": "6K",
+    "preprocessProfile": "borehole-A",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 40.0,
+    "sensorElevM": 1542.7052,
+    "staticsS": {},
+    "station": "CS05",
+    "surfaceElevM": 1582.7052,
+    "usedInRun": false
+  },
+  {
+    "channels": [
+      "GNZ",
+      "GN1",
+      "GN2"
+    ],
+    "enu": {
+      "e": -3220.0667493927176,
+      "n": -5120.144364236854,
+      "u": -76.3070560000001
+    },
+    "id": "6K.CS06",
+    "kind": "borehole",
+    "latitude": 38.463278,
+    "location": "",
+    "longitude": -112.935678,
+    "network": "6K",
+    "preprocessProfile": "borehole-A",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 40.0,
+    "sensorElevM": 1551.392944,
+    "staticsS": {
+      "P": 0.23283958435058594,
+      "S": 0.6454241275787354
+    },
+    "station": "CS06",
+    "surfaceElevM": 1591.392944,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HNZ",
+      "HNN",
+      "HNE"
+    ],
+    "enu": {
+      "e": 22334.805291191267,
+      "n": -25577.35001133103,
+      "u": 180.29999999999995
+    },
+    "id": "NP.7225",
+    "kind": "strong_motion",
+    "latitude": 38.28346,
+    "location": "2C",
+    "longitude": -112.63873,
+    "network": "NP",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1808.0,
+    "staticsS": {},
+    "station": "7225",
+    "surfaceElevM": 1808.0,
+    "usedInRun": false
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": -17254.851974213787,
+      "n": -15292.037451975048,
+      "u": 14.299999999999955
+    },
+    "id": "UU.FOR1",
+    "kind": "surface",
+    "latitude": 38.3689,
+    "location": "01",
+    "longitude": -113.0938,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1642.0,
+    "staticsS": {
+      "P": -0.2647494077682495,
+      "S": -0.3531193733215332
+    },
+    "station": "FOR1",
+    "surfaceElevM": 1642.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 2381.467554473027,
+      "n": -1714.1522231055424,
+      "u": 132.29999999999995
+    },
+    "id": "UU.FOR2",
+    "kind": "surface",
+    "latitude": 38.495,
+    "location": "01",
+    "longitude": -112.8723,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1760.0,
+    "staticsS": {
+      "P": -0.06499886512756348,
+      "S": -0.23684239387512207
+    },
+    "station": "FOR2",
+    "surfaceElevM": 1760.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 4098.540250702179,
+      "n": 6547.315615576692,
+      "u": 111.39999999999986
+    },
+    "id": "UU.FOR5",
+    "kind": "surface",
+    "latitude": 38.569727,
+    "location": "01",
+    "longitude": -112.85453,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1739.1,
+    "staticsS": {
+      "P": -0.3244297504425049,
+      "S": -0.5809004306793213
+    },
+    "station": "FOR5",
+    "surfaceElevM": 1739.1,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 9767.267229392368,
+      "n": -2436.316266694106,
+      "u": 634.0329101559998
+    },
+    "id": "UU.FOR6",
+    "kind": "surface",
+    "latitude": 38.489818,
+    "location": "01",
+    "longitude": -112.787486,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 2261.732910156,
+    "staticsS": {
+      "P": -0.24701642990112305,
+      "S": -0.44694948196411133
+    },
+    "station": "FOR6",
+    "surfaceElevM": 2261.732910156,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 3934.1969522276777,
+      "n": -9992.30878741201,
+      "u": 336.29999999999995
+    },
+    "id": "UU.FOR7",
+    "kind": "surface",
+    "latitude": 38.420718,
+    "location": "01",
+    "longitude": -112.852595,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1964.0,
+    "staticsS": {
+      "P": -0.2470545768737793,
+      "S": -0.4529590606689453
+    },
+    "station": "FOR7",
+    "surfaceElevM": 1964.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": -15468.775909147225,
+      "n": 2396.9210917595774,
+      "u": 26.299999999999955
+    },
+    "id": "UU.FOR8",
+    "kind": "surface",
+    "latitude": 38.528575,
+    "location": "01",
+    "longitude": -113.077933,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1654.0,
+    "staticsS": {
+      "P": -0.21611499786376953,
+      "S": 0.0
+    },
+    "station": "FOR8",
+    "surfaceElevM": 1654.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "ENZ",
+      "ENN",
+      "ENE"
+    ],
+    "enu": {
+      "e": 3877.6265084560146,
+      "n": -2285.6769841955975,
+      "u": 211.39999999999986
+    },
+    "id": "UU.FORB",
+    "kind": "strong_motion",
+    "latitude": 38.490125,
+    "location": "01",
+    "longitude": -112.85502,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 1.0,
+    "sensorElevM": 1839.1,
+    "staticsS": {
+      "P": -0.2194993495941162,
+      "S": -0.420867919921875
+    },
+    "station": "FORB",
+    "surfaceElevM": 1840.1,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "GHZ",
+      "GH1",
+      "GH2"
+    ],
+    "enu": {
+      "e": 1158.1485823530238,
+      "n": -997.8344619777054,
+      "u": -219.70000000000005
+    },
+    "id": "UU.FORK",
+    "kind": "borehole",
+    "latitude": 38.501227,
+    "location": "01",
+    "longitude": -112.886489,
+    "network": "UU",
+    "preprocessProfile": "borehole-A",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 281.0,
+    "sensorElevM": 1408.0,
+    "staticsS": {
+      "P": 0.0,
+      "S": 0.0017402172088623047
+    },
+    "station": "FORK",
+    "surfaceElevM": 1689.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "GHZ",
+      "GH1",
+      "GH2"
+    ],
+    "enu": {
+      "e": 181.8270498503698,
+      "n": 18.45089060999453,
+      "u": -283.0
+    },
+    "id": "UU.FORK2",
+    "kind": "borehole",
+    "latitude": 38.5102,
+    "location": "01",
+    "longitude": -112.89792,
+    "network": "UU",
+    "preprocessProfile": "borehole-A",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 290.0,
+    "sensorElevM": 1344.7,
+    "staticsS": {
+      "P": -0.027727842330932617,
+      "S": 0.0065348148345947266
+    },
+    "station": "FORK2",
+    "surfaceElevM": 1634.7,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "GHZ",
+      "GH1",
+      "GH2"
+    ],
+    "enu": {
+      "e": 163.59002486884128,
+      "n": -1076.9670574273914,
+      "u": -272.20000000000005
+    },
+    "id": "UU.FORK3",
+    "kind": "borehole",
+    "latitude": 38.50033,
+    "location": "01",
+    "longitude": -112.89787,
+    "network": "UU",
+    "preprocessProfile": "borehole-A",
+    "sampleRateHz": 1000.0,
+    "sensorDepthM": 290.0,
+    "sensorElevM": 1355.5,
+    "staticsS": {
+      "P": 0.019685983657836914,
+      "S": 0.08938264846801758
+    },
+    "station": "FORK3",
+    "surfaceElevM": 1645.5,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HHN",
+      "HHE"
+    ],
+    "enu": {
+      "e": 3250.871909922571,
+      "n": -5750.714857703075,
+      "u": 212.29999999999995
+    },
+    "id": "UU.FORU",
+    "kind": "surface",
+    "latitude": 38.4588,
+    "location": "01",
+    "longitude": -112.8614,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1840.0,
+    "staticsS": {},
+    "station": "FORU",
+    "surfaceElevM": 1840.0,
+    "usedInRun": false
+  },
+  {
+    "channels": [
+      "ENZ",
+      "ENN",
+      "ENE"
+    ],
+    "enu": {
+      "e": -3089.2741617038264,
+      "n": 5903.80738378223,
+      "u": -111.70000000000005
+    },
+    "id": "UU.FORW",
+    "kind": "strong_motion",
+    "latitude": 38.562595,
+    "location": "01",
+    "longitude": -112.936839,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1516.0,
+    "staticsS": {
+      "P": 0.18034207820892334,
+      "S": 0.7853889465332031
+    },
+    "station": "FORW",
+    "surfaceElevM": 1516.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HH1",
+      "HH2"
+    ],
+    "enu": {
+      "e": 696.2168599872966,
+      "n": -2796.343946106732,
+      "u": 40.299999999999955
+    },
+    "id": "UU.FSB1",
+    "kind": "borehole",
+    "latitude": 38.484942,
+    "location": "01",
+    "longitude": -112.89136,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 29.0,
+    "sensorElevM": 1668.0,
+    "staticsS": {
+      "P": 0.018616080284118652,
+      "S": 0.04926729202270508
+    },
+    "station": "FSB1",
+    "surfaceElevM": 1697.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HH1",
+      "HH2"
+    ],
+    "enu": {
+      "e": 1692.7364227896323,
+      "n": 340.1347718136385,
+      "u": 44.299999999999955
+    },
+    "id": "UU.FSB3",
+    "kind": "borehole",
+    "latitude": 38.513377,
+    "location": "01",
+    "longitude": -112.880675,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 29.0,
+    "sensorElevM": 1672.0,
+    "staticsS": {
+      "P": -0.05585503578186035,
+      "S": -0.16083800792694092
+    },
+    "station": "FSB3",
+    "surfaceElevM": 1701.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HH1",
+      "HH2"
+    ],
+    "enu": {
+      "e": -3130.5075531741604,
+      "n": -9291.196676406078,
+      "u": -49.700000000000045
+    },
+    "id": "UU.FSB4",
+    "kind": "borehole",
+    "latitude": 38.425726,
+    "location": "01",
+    "longitude": -112.933649,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 41.0,
+    "sensorElevM": 1578.0,
+    "staticsS": {
+      "P": 0.09341704845428467,
+      "S": 0.39177799224853516
+    },
+    "station": "FSB4",
+    "surfaceElevM": 1619.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HH1",
+      "HH2"
+    ],
+    "enu": {
+      "e": -9938.257672070176,
+      "n": -546.8960710074753,
+      "u": -153.70000000000005
+    },
+    "id": "UU.FSB5",
+    "kind": "borehole",
+    "latitude": 38.50317,
+    "location": "01",
+    "longitude": -113.013784,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 41.0,
+    "sensorElevM": 1474.0,
+    "staticsS": {
+      "P": 0.3122735023498535,
+      "S": 0.8750543594360352
+    },
+    "station": "FSB5",
+    "surfaceElevM": 1515.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "HHZ",
+      "HH1",
+      "HH2"
+    ],
+    "enu": {
+      "e": -3372.6445076052332,
+      "n": 10285.025412823074,
+      "u": -165.70000000000005
+    },
+    "id": "UU.FSB6",
+    "kind": "borehole",
+    "latitude": 38.602002,
+    "location": "01",
+    "longitude": -112.941152,
+    "network": "UU",
+    "preprocessProfile": "surface-hi",
+    "sampleRateHz": 200.0,
+    "sensorDepthM": 41.0,
+    "sensorElevM": 1462.0,
+    "staticsS": {
+      "P": 0.16049599647521973,
+      "S": 0.7207107543945312
+    },
+    "station": "FSB6",
+    "surfaceElevM": 1503.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "ENZ",
+      "ENN",
+      "ENE"
+    ],
+    "enu": {
+      "e": -10123.953975789715,
+      "n": -12052.583264384419,
+      "u": -98.70000000000005
+    },
+    "id": "UU.MHS2",
+    "kind": "strong_motion",
+    "latitude": 38.399506,
+    "location": "01",
+    "longitude": -113.01303,
+    "network": "UU",
+    "preprocessProfile": "surface-100",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1529.0,
+    "staticsS": {
+      "P": 0.19274532794952393,
+      "S": 0.7512553930282593
+    },
+    "station": "MHS2",
+    "surfaceElevM": 1529.0,
+    "usedInRun": true
+  },
+  {
+    "channels": [
+      "EHZ",
+      "EHN",
+      "EHE"
+    ],
+    "enu": {
+      "e": 4374.328795633162,
+      "n": 632.4684274503961,
+      "u": 225.29999999999995
+    },
+    "id": "UU.NMU",
+    "kind": "surface",
+    "latitude": 38.5165,
+    "location": "01",
+    "longitude": -112.85,
+    "network": "UU",
+    "preprocessProfile": "surface-100",
+    "sampleRateHz": 100.0,
+    "sensorDepthM": 0.0,
+    "sensorElevM": 1853.0,
+    "staticsS": {
+      "P": -0.18869495391845703,
+      "S": -0.4720463752746582
+    },
+    "station": "NMU",
+    "surfaceElevM": 1853.0,
+    "usedInRun": true
+  }
+]
