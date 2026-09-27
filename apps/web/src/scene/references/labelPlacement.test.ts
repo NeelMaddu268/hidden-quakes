@@ -4,6 +4,7 @@ import {
   appendRects,
   cameraMoved,
   clearRects,
+  LABEL_CLEARANCE_PX,
   LABEL_GAP_PX,
   LABEL_LINE_GAP_PX,
   LABEL_SLOTS,
@@ -142,6 +143,25 @@ describe("placeLabels", () => {
     placeLabels(p, fixed, W, H);
     expect(p.slot[0]).toBeGreaterThan(0);
     expectClear(p, fixed);
+  });
+
+  it("keeps a clearance from fixed text, so neighbours never read as one run", () => {
+    const fixed = makeRectList(1);
+    // A tick label ending just before the default box would start (gap smaller than the clearance).
+    pushRect(fixed, 400 + LABEL_GAP_PX + 150 + LABEL_CLEARANCE_PX - 2, 293, 30, 14);
+    const p = setup([{ x: 400, y: 300 }]);
+    placeLabels(p, fixed, W, H);
+    expect(p.slot[0]).not.toBe(0);
+  });
+
+  it("drops a droppable (boundary) label with no free slot, but always places a well or facility", () => {
+    const fixed = makeRectList(1);
+    pushRect(fixed, 0, 0, W, H); // nowhere is free
+    const p = setup([{ x: 400, y: 300 }, { x: 600, y: 300 }]);
+    p.droppable[1] = 1;
+    placeLabels(p, fixed, W, H);
+    expect(p.slot[0]).toBeGreaterThanOrEqual(0); // the reference label stays (least overlap)
+    expect(p.slot[1]).toBe(-1); // the boundary label steps aside
   });
 
   it("flips to the left near the right edge instead of running off screen", () => {

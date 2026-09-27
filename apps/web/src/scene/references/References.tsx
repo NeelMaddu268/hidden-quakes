@@ -8,6 +8,7 @@ import { verticalBadgeText } from "./badge";
 import { makeRectList } from "./labelPlacement";
 import { rulerDepthsKm } from "./ruler";
 import { CornerNote } from "./CornerNote";
+import { LEGEND_SLOTS, SceneLegend } from "./SceneLegend";
 import type { GeoFeature, SceneMeta, Station } from "../types";
 import { DepthRuler } from "./DepthRuler";
 import { DepthSlices } from "./DepthSlices";
@@ -44,10 +45,11 @@ export function References({ bundle, bounds, rulerDepthKm, planView = false }: R
       {!planView && choice !== "none" && <DepthSlices scene={scene} extent={extent} maxDepthKm={rulerDepthKm} />}
       <StationsLayer stations={bundle.stations} scene={scene} />
       <FeaturesLayer features={bundle.features} scene={scene} obstacles={labelObstacles} planView={planView} />
+      <SceneLegend />
       <VerticalBadge scene={scene} />
       {choice === "slab" && (
         // Permanent while the slab stands in for the terrain: before the reveal, in every view, in plan.
-        <CornerNote slot={verticalBadgeText(scene) ? 1 : 0} testId="abstract-surface-note">
+        <CornerNote slot={LEGEND_SLOTS + (verticalBadgeText(scene) ? 1 : 0)} testId="abstract-surface-note">
           {ABSTRACT_SURFACE_LABEL}
         </CornerNote>
       )}

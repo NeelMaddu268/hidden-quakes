@@ -58,6 +58,10 @@ export const DRAWER_CSS = `
   border: 1px solid ${colors.contour}; color: ${colors.text};
 }
 .hqd-tier[data-tier="A"] { border-color: ${colors.strictHalo}; color: ${colors.strictHalo}; }
+.hqd-notincat {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid ${colors.recovered}; color: ${colors.recovered};
+}
 .hqd-reasons { color: ${colors.textDim}; font-size: 11px; }
 .hqd-reasons span + span::before { content: " · "; }
 .hqd-reasons[data-clamped="true"] {

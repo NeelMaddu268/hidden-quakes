@@ -168,6 +168,8 @@ interface LabelFrameState {
   writtenH: Float32Array;
   /** Sum of both LabelElements versions at the last write (a remount forces a rewrite). */
   version: number;
+  /** Whether each label is hidden because its anchor is off screen (written only on change). */
+  hidden: boolean[];
   /** Last frame's camera (world + projection matrices, viewport size), to tell a moving camera. */
   lastCamera: Float64Array;
 }
@@ -182,12 +184,13 @@ function makeLabelFrameState(n: number, obstacleCapacity: number): LabelFrameSta
     writtenW: new Float32Array(n),
     writtenH: new Float32Array(n),
     version: -1,
+    hidden: new Array<boolean>(n).fill(false),
     lastCamera: makeCameraTrack(),
   };
 }
 
 interface FeatureLabelsProps {
-  labels: { id: string; text: string; anchor: [number, number, number] }[];
+  labels: { id: string; text: string; anchor: [number, number, number]; droppable: boolean }[];
   /** Screen boxes (CSS px) the labels keep clear of: the depth ruler's labels, written earlier each frame. */
   obstacles?: RectList;
   /** Plan view: the labels also keep clear of the depth-section panel. */
@@ -240,9 +243,12 @@ function FeatureLabels({ labels, obstacles, planView }: FeatureLabelsProps) {
       v.set(a[0], a[1], a[2]).project(camera);
       p.ax[i] = (v.x * 0.5 + 0.5) * size.width;
       p.ay[i] = (-v.y * 0.5 + 0.5) * size.height;
-      p.active[i] = v.z < 1 && Number.isFinite(v.x) && Number.isFinite(v.y) ? 1 : 0;
+      // A label whose anchor is off screen (e.g. a large boundary's highest vertex) is hidden, not
+      // pushed to the viewport edge.
+      p.active[i] = v.z < 1 && v.x >= -1 && v.x <= 1 && v.y >= -1 && v.y <= 1 ? 1 : 0;
       p.w[i] = els.width(i);
       p.h[i] = els.height(i);
+      p.droppable[i] = labels[i].droppable ? 1 : 0;
     }
     // Hold slots only mid-move (no hopping); a still camera gets the canonical layout.
     const moving = cameraMoved(st.lastCamera, camera.matrixWorld.elements, camera.projectionMatrix.elements, size.width, size.height);
@@ -252,6 +258,15 @@ function FeatureLabels({ labels, obstacles, planView }: FeatureLabelsProps) {
     const remount = version !== st.version;
     st.version = version;
     for (let i = 0; i < n; i++) {
+      const hide = p.active[i] === 0 || (p.slot[i] < 0 && p.w[i] > 0);
+      if (hide !== st.hidden[i] || remount) {
+        st.hidden[i] = hide;
+        const vis = hide ? "hidden" : "visible";
+        const el = els.el(i);
+        if (el) el.style.visibility = vis;
+        const leader = leaders.el(i);
+        if (leader) leader.style.visibility = vis;
+      }
       const s = p.slot[i];
       if (s < 0) continue;
       if (!remount && s === st.written[i] && p.w[i] === st.writtenW[i] && p.h[i] === st.writtenH[i]) continue;
@@ -343,7 +358,8 @@ export function FeaturesLayer({
       drawables
         .map((d, i) => ({ i, id: d.feature.id, text: d.style.label, anchor: d.anchor, rank: labelPriority(d.feature.kind) }))
         .sort((a, b) => a.rank - b.rank || a.i - b.i)
-        .map(({ id, text, anchor }) => ({ id, text, anchor })),
+        // Boundary labels may step aside when crowded; wells and facilities (the reference) never do.
+        .map(({ id, text, anchor, rank }) => ({ id, text, anchor, droppable: rank >= labelPriority("boundary") })),
     [drawables],
   );
 

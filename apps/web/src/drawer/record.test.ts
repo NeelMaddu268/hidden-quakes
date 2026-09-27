@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WaveformSnippet } from "../scene/types";
 import {
+  recordCaption,
   evidenceUnavailable,
   pickedTraceCount,
   markPercent,
@@ -163,5 +164,14 @@ describe("evidence notices", () => {
   it("counts traces with a P or S pick", () => {
     expect(pickedTraceCount([{ pickP: 1 }, { pickS: 2 }, { pickP: null, pickS: null }, {}])).toBe(2);
     expect(pickedTraceCount([])).toBe(0);
+  });
+});
+
+describe("recordCaption", () => {
+  it("says 'k of N agreeing stations shown' only when every shown trace has a pick", () => {
+    expect(recordCaption(16, 16, 23)).toBe("16 of 23 agreeing stations shown, closest first");
+    expect(recordCaption(16, 11, 23)).toBe("16 stations shown, closest first; 11 of the 23 that agreed are among them");
+    expect(recordCaption(1, 0, null)).toBe("1 station shown, closest first, 0 with a pick");
+    for (const c of [recordCaption(16, 16, NaN), recordCaption(4, 2, undefined)]) expect(c).not.toMatch(/NaN|undefined|null/);
   });
 });

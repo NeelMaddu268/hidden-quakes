@@ -12,6 +12,11 @@ export const LABEL_GAP_PX = 10;
 export const LABEL_LINE_GAP_PX = 3;
 /** Half-size of the square kept clear around every other feature's anchor (its marker or wellhead). */
 export const ANCHOR_CLEAR_PX = 6;
+/**
+ * Clear space kept between a label and any other label or fixed box (CSS px), so neighbouring texts
+ * never butt into one run (e.g. "… · approximate" against the ruler's "0 km").
+ */
+export const LABEL_CLEARANCE_PX = 6;
 
 export interface LabelSlot {
   /** 1 = right of the anchor, −1 = left. */
@@ -20,9 +25,9 @@ export interface LabelSlot {
   lines: number;
 }
 
-/** Tried in this order: same line (right, then left), then one, two and three lines away. */
+/** Tried in this order: same line (right, then left), then one to five lines away. */
 export const LABEL_SLOTS: readonly LabelSlot[] = Object.freeze(
-  [0, -1, 1, -2, 2, -3, 3].flatMap((lines) => [
+  [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5].flatMap((lines) => [
     { side: 1 as const, lines },
     { side: -1 as const, lines },
   ]),
@@ -89,9 +94,14 @@ export interface LabelPlacement {
   h: Float32Array;
   /** 1 = the anchor is in front of the camera (drei hides the label otherwise). */
   active: Uint8Array;
-  /** Slot index into LABEL_SLOTS chosen last frame and this frame; −1 = none. */
+  /** Slot index into LABEL_SLOTS chosen last frame and this frame; −1 = none (inactive, or dropped). */
   prev: Int8Array;
   slot: Int8Array;
+  /**
+   * 1 = the label may be dropped when no slot is free (boundary labels: their anchor is an arbitrary
+   * vertex); 0 = always placed, least-overlap if need be (wells and facilities: the geothermal reference).
+   */
+  droppable: Uint8Array;
   /** Scratch: the labels placed so far this frame. */
   placed: RectList;
 }
@@ -106,6 +116,7 @@ export function makeLabelPlacement(n: number): LabelPlacement {
     active: new Uint8Array(n),
     prev: new Int8Array(n).fill(-1),
     slot: new Int8Array(n).fill(-1),
+    droppable: new Uint8Array(n),
     placed: makeRectList(n),
   };
 }
@@ -125,13 +136,15 @@ function slotCost(
   const t = p.ay[i] + slotOffsetY(slot, h);
   // Area outside the viewport counts like an overlap.
   let cost = w * h - overlapArea(l, t, w, h, 0, 0, viewportW, viewportH);
+  // Against other texts, the label's box grows by the clearance on every side.
+  const m = LABEL_CLEARANCE_PX;
   const fr = fixed.rects;
   for (let k = 0; k < fixed.count; k++) {
-    cost += overlapArea(l, t, w, h, fr[k * 4], fr[k * 4 + 1], fr[k * 4 + 2], fr[k * 4 + 3]);
+    cost += overlapArea(l - m, t - m, w + 2 * m, h + 2 * m, fr[k * 4], fr[k * 4 + 1], fr[k * 4 + 2], fr[k * 4 + 3]);
   }
   const pr = p.placed.rects;
   for (let k = 0; k < p.placed.count; k++) {
-    cost += overlapArea(l, t, w, h, pr[k * 4], pr[k * 4 + 1], pr[k * 4 + 2], pr[k * 4 + 3]);
+    cost += overlapArea(l - m, t - m, w + 2 * m, h + 2 * m, pr[k * 4], pr[k * 4 + 1], pr[k * 4 + 2], pr[k * 4 + 3]);
   }
   const c = ANCHOR_CLEAR_PX;
   for (let j = 0; j < p.n; j++) {
@@ -143,7 +156,7 @@ function slotCost(
 
 /**
  * Chooses a slot for every active, measured label, in order (earlier labels have priority), writing
- * `p.slot` and then copying it to `p.prev`. Per label: the default slot when it's free; otherwise, with
+ * `p.slot` (−1 for a droppable label with no free slot) and then copying it to `p.prev`. Per label: the default slot when it's free; otherwise, with
  * `holdPrevious` (the camera is moving), last frame's slot when that's still free, so labels don't hop
  * between slots mid-move; otherwise the first free slot; otherwise the least-overlapping one (earliest
  * on ties). Without `holdPrevious` the result depends only on this frame, so a still camera always
@@ -174,6 +187,10 @@ export function placeLabels(
           chosen = s;
           if (cost === 0) break;
         }
+      }
+      if (best > 0 && p.droppable[i]) {
+        p.slot[i] = -1; // no clean spot: a low-priority label steps aside rather than collide
+        continue;
       }
     }
     p.slot[i] = chosen;
