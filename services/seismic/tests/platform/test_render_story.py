@@ -24,6 +24,7 @@ SHOWCASE_BUNDLE = REPO_ROOT / "apps" / "web" / "public" / "data" / "showcase"
 PITCH_DOC = REPO_ROOT / "docs" / "demo" / "pitch-and-qa.md"
 DEVPOST_DOC = REPO_ROOT / "docs" / "demo" / "devpost.md"
 SHOTS_DOC = REPO_ROOT / "docs" / "demo" / "video-shot-list.md"
+EXPO_DOC = REPO_ROOT / "docs" / "demo" / "expo-card.md"
 BANNER = "SYNTHETIC BUNDLE, NOT FOR SUBMISSION"
 
 
@@ -76,6 +77,7 @@ def test_every_placeholder_is_substituted_or_manual(
         "pitch": (PITCH_DOC, story.PITCH_FILLED_MD),
         "devpost": (DEVPOST_DOC, story.DEVPOST_FILLED_MD),
         "pitch (shot list)": (SHOTS_DOC, story.SHOTS_FILLED_MD),
+        "pitch (expo card)": (EXPO_DOC, story.EXPO_FILLED_MD),
     }
     reported = {(r.doc, r.name) for r in rows}
     assert all(r.status in story.STATUSES for r in rows)
