@@ -310,51 +310,43 @@ def test_docs_in_the_repo_are_untouched(rendered: tuple[Path, list, str]) -> Non
     assert "<from meta.json: summary.publicCatalogCount>" in DEVPOST_DOC.read_text(encoding="utf-8")
 
 
-def test_classifier_sentence_needs_confidence_json(story: ModuleType, tmp_path: Path) -> None:
-    """ML-01: the held-out AUC renders at two decimals from confidence.json; without the file,
-    or with a null AUC, the classifier sentence is marked for omission."""
+def test_decoy_test_sentence_needs_confidence_json(story: ModuleType, tmp_path: Path) -> None:
+    """ML-01 (H2's PR #107 format): the label and the held-out AUC render from
+    ``confidence.json`` (``model.heldOut.rocAuc``, two decimals); without the file, or without
+    the AUC, the decoy-test sentences are marked for omission."""
     bundle = tmp_path / "bundle"
     shutil.copytree(MOCK_BUNDLE, bundle)
     rows, _ = story.render(bundle, tmp_path / "absent")
     by_name = {(r.doc, r.name): r for r in rows}
     pitch = by_name[("pitch-and-qa.md", "{heldOutRocAuc}")]
-    devpost = by_name[("devpost.md", "<from confidence.json: heldOutRocAuc>")]
+    devpost = by_name[("devpost.md", "<from confidence.json: model.heldOut.rocAuc>")]
     assert pitch.status == story.STATUS_CONDITION and "omit this sentence" in pitch.text
     assert devpost.status == story.STATUS_CONDITION
+    assert by_name[("pitch-and-qa.md", "{confidenceLabel}")].status == story.STATUS_CONDITION
 
     meta = json.loads((bundle / "meta.json").read_text(encoding="utf-8"))
-    (bundle / "confidence.json").write_text(
-        json.dumps(
-            {
-                "schema": "hq.confidence/1",
-                "runId": meta["run"]["id"],
-                "model": {"name": "gbm"},
-                "heldOutRocAuc": 0.9137,
-                "scores": {},
-            }
-        ),
-        encoding="utf-8",
-    )
+    hero = meta["scene"]["heroEventId"]
+    file = {
+        "schema": "hq.confidence/1",
+        "runId": meta["run"]["id"],
+        "model": {"name": "gbm", "heldOut": {"rocAuc": 0.8737, "folds": 5}},
+        "label": "AI decoy test",
+        "description": "How much the timing looks like a real association, not a decoy",
+        "events": {hero: 0.61},
+    }
+    (bundle / "confidence.json").write_text(json.dumps(file), encoding="utf-8")
     rows, _ = story.render(bundle, tmp_path / "present")
     value = {(r.doc, r.name): r.text for r in rows}
-    assert value[("pitch-and-qa.md", "{heldOutRocAuc}")] == "0.91"
-    assert value[("devpost.md", "<from confidence.json: heldOutRocAuc>")] == "0.91"
+    assert value[("pitch-and-qa.md", "{heldOutRocAuc}")] == "0.87"
+    assert value[("pitch-and-qa.md", "{confidenceLabel}")] == "AI decoy test"
+    assert value[("devpost.md", "<from confidence.json: model.heldOut.rocAuc>")] == "0.87"
+    assert value[("devpost.md", "<from confidence.json: label>")] == "AI decoy test"
     filled = (tmp_path / "present" / "pitch-filled.md").read_text(encoding="utf-8")
-    assert "held-out ROC AUC of 0.91" in filled
+    assert "the AI decoy test, trained on decoy events" in filled
+    assert "ROC AUC is 0.87" in filled
 
-    (bundle / "confidence.json").write_text(
-        json.dumps(
-            {
-                "schema": "hq.confidence/1",
-                "runId": meta["run"]["id"],
-                "model": {},
-                "heldOutRocAuc": None,
-                "scores": {},
-            }
-        ),
-        encoding="utf-8",
-    )
-    rows, _ = story.render(bundle, tmp_path / "null")
-    assert {(r.doc, r.name): r for r in rows}[
-        ("pitch-and-qa.md", "{heldOutRocAuc}")
-    ].status == story.STATUS_CONDITION
+    file["model"] = {"name": "gbm"}
+    (bundle / "confidence.json").write_text(json.dumps(file), encoding="utf-8")
+    rows, _ = story.render(bundle, tmp_path / "no-auc")
+    row = {(r.doc, r.name): r for r in rows}[("pitch-and-qa.md", "{heldOutRocAuc}")]
+    assert row.status == story.STATUS_CONDITION

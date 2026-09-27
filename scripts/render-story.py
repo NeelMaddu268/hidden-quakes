@@ -443,27 +443,48 @@ def baseline_candidates(method: str) -> Resolver:
     return resolve
 
 
+def _confidence_file(bundle: Bundle) -> dict[str, Any] | None:
+    """``confidence.json`` (ML-01, ``hq.confidence/1``) as H2's PR #107 writes it, or None."""
+    path = bundle.path / CONFIDENCE_JSON
+    if not path.is_file():
+        return None
+    data = _load_json(path)
+    return data if isinstance(data, dict) else None
+
+
 def confidence_auc() -> Resolver:
-    """``confidence.json`` (ML-01) → ``heldOutRocAuc`` at two decimals; the sentence is omitted
-    when the file is absent or the AUC is null."""
-    source = f"{CONFIDENCE_JSON} → heldOutRocAuc"
-    gate = f"{CONFIDENCE_JSON} present with a held-out AUC"
+    """``confidence.json`` → ``model.heldOut.rocAuc`` at two decimals (the Validation card's
+    "<label> (held-out ROC AUC)" row); the sentence is omitted when the file is absent or the
+    AUC is missing."""
+    source = f"{CONFIDENCE_JSON} → model.heldOut.rocAuc"
+    gate = f"{CONFIDENCE_JSON} present with model.heldOut.rocAuc"
+    note = f"{source} (only with {gate}: the decoy-test sentence)"
 
     def resolve(bundle: Bundle) -> Resolved:
-        path = bundle.path / CONFIDENCE_JSON
-        if not path.is_file():
+        data = _confidence_file(bundle)
+        model = data.get("model") if data is not None else None
+        held_out = model.get("heldOut") if isinstance(model, dict) else None
+        auc = held_out.get("rocAuc") if isinstance(held_out, dict) else None
+        if not isinstance(auc, int | float) or isinstance(auc, bool):
             r = _condition_not_met(source, gate)
-            return Resolved(
-                r.text, f"{source} (only with {gate}: the classifier sentence)", r.status
-            )
-        data = _load_json(path)
-        auc = data.get("heldOutRocAuc") if isinstance(data, dict) else None
-        if auc is None:
+            return Resolved(r.text, note, r.status)
+        return Resolved(fmt(float(auc), 2), note, STATUS_VALUE)
+
+    return resolve
+
+
+def confidence_label() -> Resolver:
+    """``confidence.json`` → ``label``: what the drawer and the card call the score."""
+    source = f"{CONFIDENCE_JSON} → label"
+    gate = f"{CONFIDENCE_JSON} present with a label"
+
+    def resolve(bundle: Bundle) -> Resolved:
+        data = _confidence_file(bundle)
+        label = data.get("label") if data is not None else None
+        if not isinstance(label, str) or not label.strip():
             r = _condition_not_met(source, gate)
-            return Resolved(
-                r.text, f"{source} (only with {gate}: the classifier sentence)", r.status
-            )
-        return Resolved(fmt(float(auc), 2), source, STATUS_VALUE)
+            return Resolved(r.text, f"{source} (only with {gate})", r.status)
+        return Resolved(label.strip(), source, STATUS_VALUE)
 
     return resolve
 
@@ -606,6 +627,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
     Spec("{strictStalta}", baseline_strict("stalta")),
     Spec("{staltaCandidates}", baseline_candidates("stalta")),
     Spec("{heldOutRocAuc}", confidence_auc()),
+    Spec("{confidenceLabel}", confidence_label()),
     Spec("{staltaRecoveredPublic}", baseline_field("stalta", "recoveredPublic")),
     Spec("{phasenetMedianRmsS}", baseline_field("phasenet", "medianRmsS", decimals=3)),
     Spec("{staltaMedianRmsS}", baseline_field("stalta", "medianRmsS", decimals=3)),
@@ -752,7 +774,8 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
         ),
     ),
     Spec("<from validation.json: nullTest.nShuffles>", none_strict_scrambles()),
-    Spec("<from confidence.json: heldOutRocAuc>", confidence_auc()),
+    Spec("<from confidence.json: model.heldOut.rocAuc>", confidence_auc()),
+    Spec("<from confidence.json: label>", confidence_label()),
     Spec(
         "<from validation.json: magnitude.n>",
         gated(*MAG_GATE, validation_field("magnitude.n"), sentence=MAG_SENTENCE),
