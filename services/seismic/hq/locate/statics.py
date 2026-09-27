@@ -835,9 +835,16 @@ def locate_with_borrowed_statics(
 ) -> StaticsOutcome:
     """Run mode live (``hq.locate.calibration``): every event located once, with another run's
     station terms (``borrowed``: ``TERM_COLUMNS``), none fit here. A station-phase the
-    calibration run has no term for gets 0. Deterministic, so a repeated pass repeats it."""
+    calibration run has no term for gets 0; a term for a station not in use in this window
+    (``usedInRun`` false: no data served tonight) is dropped. Deterministic, so a repeated pass
+    repeats it."""
     started = time.perf_counter()
-    terms = borrowed[TERM_COLUMNS].reset_index(drop=True)
+    in_use = set(stations.loc[stations["usedInRun"].astype(bool), "id"].astype(str))
+    keep = borrowed["stationId"].astype(str).isin(in_use)
+    not_in_use = sorted(f"{s} {p}" for s, p in zip(
+        borrowed.loc[~keep, "stationId"].astype(str), borrowed.loc[~keep, "phase"].astype(str),
+        strict=True))
+    terms = borrowed.loc[keep, TERM_COLUMNS].reset_index(drop=True)
     details = locate_detailed(assoc, picks, stations, cfg, run, run_id=run_id,
                               cache_dir=cache_dir, statics=statics_map(terms),
                               static_events=_counts(terms))
@@ -855,12 +862,13 @@ def locate_with_borrowed_statics(
         history=[_history_row(1, details, 0, terms)] if len(details.result.events) else [],
         previous_median_rms_s=previous,
         previous_median_rms_from=None if previous is None else PREVIOUS_FROM_TABLE,
-        extra={"calibrationRun": calibration_run, "stationPhasesWithoutTerm": without},
+        extra={"calibrationRun": calibration_run, "stationPhasesWithoutTerm": without,
+               "stationPhasesNotInUse": not_in_use},
     )
     log.info("statics: %s: %d borrowed terms (%d non-zero) from %s; %d used station-phase(s) "
-             "without a term get 0; %.1f s", CALIBRATION_RUN, len(terms),
-             int(np.count_nonzero(terms["staticS"])), calibration_run, len(without),
-             time.perf_counter() - started)
+             "without a term get 0; %d term(s) of stations not in use dropped; %.1f s",
+             CALIBRATION_RUN, len(terms), int(np.count_nonzero(terms["staticS"])),
+             calibration_run, len(without), len(not_in_use), time.perf_counter() - started)
     return StaticsOutcome(details, report)
 
 
