@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useBundle, useMode } from "@/providers";
+import { TourButton } from "@/scene";
 import { useDemo } from "@/state/demo";
 import { Counters } from "./Counters";
 import { DownloadButton } from "./download/DownloadButton";
@@ -41,12 +42,18 @@ export function Shell() {
 
       <header className={styles.header}>
         <h1 className={styles.title}>Hidden Quakes</h1>
+        {/* REQ-H3-13: what the first frame shows, in one plain line (H2's wording). */}
+        <p className={styles.subtitle}>Seismic events beneath Utah&apos;s geothermal field near Milford, from public data only</p>
         <p className={styles.modeLabel} data-testid="mode-label">
           {bundle.status === "ready" && bundle.info.label}
           {bundle.status === "loading" && (mode ? `Loading ${mode}…` : "Loading…")}
           {bundle.status === "error" && mode}
         </p>
-        {ready && <RunDetailsButton open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)} />}
+        <div className={styles.headerButtons}>
+          {ready && <RunDetailsButton open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)} />}
+          {/* REQ-H3-15: the guided tour (G); hides itself while the tour plays. */}
+          {ready && <TourButton className={`${styles.pill} ${styles.modePill}`} />}
+        </div>
         <DownloadButton />
       </header>
 

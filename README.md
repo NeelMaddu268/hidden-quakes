@@ -18,7 +18,7 @@ Our contribution is product, pipeline, public access and visual explainability, 
 4. **E** opens the evidence drawer on the hero event (the strict event located with the most stations; any other dot is a click away): a record section sorted by distance, neural P and S picks, and the arrival times the final location implies. Agreement between the two is what makes a dot an event.
 5. The **Validation** card and **Run details** (D) show the run's own checks and the full `ProcessingRun` config verbatim. Every row hides itself when its source field is missing, so nothing on screen is ever typed in.
 
-Keyboard map: Space (next beat: reveal, then strict, then time), R (reset), S (strict / all), T (time), E (evidence on the hero event), P (plan / oblique), D (run details), Esc (close).
+Keyboard map: Space (next beat: reveal, then strict, then time), R (reset), S (strict / all), T (time), E (evidence on the hero event), H (evidence on the strict event the public regional catalog doesn't list that most stations agreed on), G (guided tour; any key, click or scroll stops it), P (plan / oblique), D (run details), Esc (close).
 
 ## Pipeline
 

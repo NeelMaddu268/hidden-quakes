@@ -47,6 +47,8 @@ else
     find apps/web/src/app apps/web/src/shell -type f \( -name '*.ts' -o -name '*.tsx' \) \
       ! -name '*.test.ts' ! -name '*.test.tsx' ! -name '*.d.ts' 2>/dev/null | sort
   )
+  # REQ-H3-15 (c): the guided tour's captions, whose one copy file H3 handed to H4.
+  [[ -f apps/web/src/scene/tour/copy.ts ]] && files+=(apps/web/src/scene/tour/copy.ts)
 fi
 
 # One ERE for every forbidden phrase; matched case-insensitively against each scanned line.
