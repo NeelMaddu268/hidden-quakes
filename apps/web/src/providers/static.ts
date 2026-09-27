@@ -39,16 +39,10 @@ export function modeLabel(mode: StaticMode, meta: BundleMeta): string {
     case "showcase":
       return `Showcase · ${meta.run.windowLabel} · run ${meta.run.id}`;
     case "snapshot":
-      return `Snapshot · generated ${formatUtc(meta.run.createdAt)} by our pipeline · run ${meta.run.id}`;
+      return `Snapshot · ${meta.run.windowLabel} · run ${meta.run.id}`;
     case "mock":
       return `Synthetic · mock bundle · run ${meta.run.id}`;
   }
-}
-
-function formatUtc(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toISOString().replace("T", " ").slice(0, 16) + " UTC";
 }
 
 export class StaticBundleProvider implements SeismicDataProvider {

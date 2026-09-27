@@ -60,6 +60,7 @@ class StubRunContext:
     cache_dir: Path
     config: StubConfig
     records: list[dict[str, Any]] = field(default_factory=list)
+    mode: str = "showcase"  # ProcessingRun.mode (hq.locate.calibration reads it)
 
     def path(self, name: str) -> Path:
         return self.run_dir / name
@@ -74,7 +75,7 @@ class StubRunContext:
             target = rec["field"] or STAGE_PARAM_FIELDS.get(rec["stage"])
             if rec["params"] is not None and target is not None:
                 fields[target] = {**fields[target], **rec["params"]}
-        return SimpleNamespace(**fields)
+        return SimpleNamespace(mode=self.mode, **fields)
 
     def record(
         self,

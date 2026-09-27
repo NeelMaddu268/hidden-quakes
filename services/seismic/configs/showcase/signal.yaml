@@ -472,3 +472,66 @@ sonify:
       oggQuality: 0.6
       mp3BitrateKbps: 192
       maxBytes: 2000000
+
+# SEIS-10: "A day at one station", a helicorder (drum plot) of one borehole station's vertical
+# channel over the run's UTC day, written as a PNG and a JSON manifest for the web app and the
+# gallery (hq.preprocess.helicorder). Not a pipeline stage: it changes no station, pick or bundle file.
+helicorder:
+  fileStem: station-day        # station-day.png + station-day.json
+  title: A day at one station
+  component: Z                 # vertical channel (stations.parquet channels ending in this letter)
+  stationKind: borehole
+  usedInRunOnly: true
+  pickPhases: [P, S]           # the station with the most picks.parquet picks of these phases wins
+  runnersUp: 2                 # (ties: station id order); the manifest lists this many runners-up
+  rowMinutes: 30               # 48 rows of 30 min: the classic drum layout, about 1 s per pixel
+  padS: 10.0                   # s read beyond each row end: taper and filter edges fall outside
+  detrend: linear
+  taper:                       # per gap-separated segment, before the bandpass
+    type: hann
+    maxPercentage: 0.05
+    maxLengthS: 1.0
+  bandHz: [5.0, 40.0]          # Measured on the frozen run at the chosen station: the 1 s peak within
+                               # 4 s of each candidate origin over the median 1 s peak, in the busiest
+                               # hour and a quieter one, was higher with 5-40 Hz than with the evidence
+                               # drawer's 2-20 Hz (strong low-frequency noise) and no worse than 10-80 Hz
+  bandpassCorners: 4           # zero-phase (sosfiltfilt)
+  joinMisalignmentSamples: 0.01   # pieces of one channel that abut within this fraction of a sample join
+  scale:                       # one scale for the whole day
+    refPercentile: 50.0        # median per-pixel peak |x| over pixels with data: the day's noise level
+    refHeightRows: 0.07        # ... drawn this many row spacings tall, so the noise is a thin band
+    clipRows: 1.2              # traces never swing more than this many row spacings (contract: <= 1.5)
+  layout:
+    widthPx: 1920              # the contract: exactly 1920 px wide
+    heightPx: 1280             # 3:2 for the gallery
+    dpi: 100
+    leftPx: 104                # UTC row labels
+    rightPx: 40
+    topPx: 196                 # title, subtitle, legend, minute axis
+    bottomPx: 64               # footer (source, scale, run)
+    headroomRows: 0.9
+    footroomRows: 0.9
+    minTraceHeightPx: 1.0      # a quiet pixel column still draws one pixel
+    maxBytes: 1500000
+  markers:                     # row spacings above the row's trace centre (rows run downwards)
+    tickFromRows: 0.24
+    tickToRows: 0.78
+    tickWidthPx: 2.0
+    haloPx: 1.5                # a background-coloured outline so markers read over a busy trace
+    diamondRows: 0.51          # the diamond sits on the tick, so a matched pair reads as one mark
+    diamondSizePx: 10.0
+    diamondEdgePx: 1.2
+  style:                       # packages/visualization/tokens.ts
+    background: "#07090C"      # bg
+    text: "#E6E9ED"            # text
+    textDim: "#8A94A0"         # textDim
+    grid: "#2A333D"            # contour
+    traceTones: ["#5E8DB8", "#8DB0CC"]   # two cool tones, alternating row by row
+    candidate: "#FFB547"       # recovered: candidate events
+    public: "#DCE6F2"          # public: public-catalog events
+    tierOpacity: {A: 1.0, B: 0.6, C: 0.3}   # tierStyle
+    fontFamily: DejaVu Sans    # ships with Matplotlib, so every machine renders the same glyphs
+    titlePt: 30.0
+    subtitlePt: 14.0
+    labelPt: 10.5
+    footerPt: 11.0

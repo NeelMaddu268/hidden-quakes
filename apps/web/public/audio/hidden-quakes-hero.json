@@ -1,0 +1,98 @@
+{
+  "stationId": "UU.FORK2",
+  "channel": "GHZ",
+  "startUtc": "2026-09-10T11:27:00.182Z",
+  "endUtc": "2026-09-10T11:28:00.182Z",
+  "speed": 100,
+  "sampleRateHz": 48000,
+  "filterHz": [
+    10.0,
+    160.0
+  ],
+  "source": "EarthScope public waveforms",
+  "filterDomain": "real ground-motion Hz, before the speed-up; audioBandHz is where it plays",
+  "audioBandHz": [
+    1000.0,
+    16000.0
+  ],
+  "note": "A sped-up audio rendering of public seismic waveform data from one sensor's vertical channel. Gaps in the recording play as silence.",
+  "clip": "hero",
+  "runId": "20260926-0210-a04c611",
+  "seedId": "UU.FORK2.01.GHZ",
+  "heroEventId": "hq-20260926-0210-a04c611-000301",
+  "durationS": 0.6,
+  "windowS": 60.0,
+  "realRateHz": 480.0,
+  "sourceSampleRateHz": 1000.0,
+  "gapsAsSilence": true,
+  "silentSeconds": 0.0,
+  "segments": {
+    "read": 1,
+    "placed": 1,
+    "droppedTooShort": 0
+  },
+  "selection": {
+    "rule": "The bundle's hero event (meta.json scene.heroEventId); the nearest station of stationKind used in the run by epicentral distance (ties: station id order) whose source Nyquist is above the clip's band and whose vertical channel covers at least minCoverageFraction of the window; preS before and postS after the origin.",
+    "heroEventId": "hq-20260926-0210-a04c611-000301",
+    "eventOriginUtc": "2026-09-10T11:27:30.182Z",
+    "preS": 30.0,
+    "postS": 30.0,
+    "stationKind": "borehole",
+    "usedInRunOnly": true,
+    "epiDistM": 156.96373593468218,
+    "coverageFraction": 1.0,
+    "minCoverageFraction": 0.5
+  },
+  "processing": {
+    "detrend": "linear",
+    "taper": {
+      "type": "hann",
+      "maxPercentage": 0.05,
+      "maxLengthS": 1.0
+    },
+    "bandpass": {
+      "corners": 4,
+      "zeroPhase": true
+    },
+    "resample": {
+      "method": "scipy.signal.resample_poly",
+      "kaiserBeta": 5.0,
+      "maxFactor": 1000,
+      "rateRelTol": 1e-09
+    },
+    "levelPercentile": 50.0,
+    "compression": {
+      "description": "Soft-knee downward compressor on a peak envelope: the peak of |x| over the next lookaheadMs, released exponentially (falls by 1/e per releaseMs), then averaged over the past lookaheadMs (audio ms). The envelope never falls below |x|, and the gain can start to fall at most lookaheadMs before the sample that drives it. Levels in dB relative to the levelPercentile of |x| over samples with data. Gain is (1/ratio - 1) x (level - thresholdDb) above the knee, quadratic inside it.",
+      "thresholdDb": 18.0,
+      "ratio": 3.0,
+      "kneeDb": 12.0,
+      "lookaheadMs": 0.5,
+      "releaseMs": 10.0
+    },
+    "edgeFadeMs": 5.0,
+    "peakDbfs": -1.0,
+    "maxTruePeakDbtp": -0.5,
+    "truePeakOversample": 4
+  },
+  "files": {
+    "ogg": {
+      "name": "hidden-quakes-hero.ogg",
+      "bytes": 11976,
+      "sha256": "96c41593fbf729af86362ab078b0650490315b80e6727243c158c4af923f9c13",
+      "nominalBitrateBps": 110000,
+      "vorbisQuality": 0.6
+    },
+    "mp3": {
+      "name": "hidden-quakes-hero.mp3",
+      "bytes": 15552,
+      "sha256": "26968ca220190b84cc38f35204742589d9b1bf3dd9e0d879cc51ca86c8e85b59",
+      "bitrateKbps": 192
+    }
+  },
+  "encoder": {
+    "library": "python-soundfile",
+    "soundfile": "0.14.0",
+    "libsndfile": "1.2.2"
+  },
+  "generator": "hq.preprocess.sonify"
+}

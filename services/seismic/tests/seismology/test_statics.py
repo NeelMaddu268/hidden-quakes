@@ -474,6 +474,65 @@ def test_stage_runs_pass_1_then_pass_2_after_a_match(
     assert "carried from run.json" in ctx.path("diagnostics.md").read_text()
 
 
+def test_live_stage_borrows_the_calibration_terms(
+    world: dict[str, Any], make_ctx: Any, tmp_path: Any
+) -> None:
+    """Run mode live: every event located with the calibration run's statics.parquet (here the
+    planted delays), no terms fit on the window; the runner's second pass (matches.parquet now
+    present) repeats the first exactly."""
+    from hq.match import match
+
+    stage = importlib.import_module("hq.locate.run")
+    cfg = world["cfg"]
+    east = dict(zip(world["stations"]["id"], world["stations"]["enu_e"], strict=True))
+    planted = pd.DataFrame([{"stationId": s, "phase": p, "staticS": _delay(e, p), "nEvents": 40}
+                            for s, e in east.items() for p in ("P", "S")])
+    # A calibration station that served no data tonight (not in this window's stations): dropped.
+    gone = pd.DataFrame([{"stationId": "XX.GONE", "phase": p, "staticS": 0.05, "nEvents": 40}
+                         for p in ("P", "S")])
+    cal_dir = tmp_path / "data" / "showcase" / "runs" / cfg.live.calibrationRun
+    cal_dir.mkdir(parents=True)
+    write_table(pd.concat([planted, gone], ignore_index=True), cal_dir / "statics.parquet",
+                "StationStatic")
+    (cal_dir / "run.json").write_text(json.dumps({
+        "id": cfg.live.calibrationRun, "mode": "showcase",
+        "locator": {"method": cfg.locator.method},
+        "tiering": {"thresholds": {"quantiles": {"A": 0.25, "B": 0.0}}}}), encoding="utf-8")
+    window = tmp_path / "data" / "live" / "runs" / "window"
+    window.mkdir(parents=True)
+    ctx = dataclasses.replace(make_ctx(world["run"], cfg), run_dir=window, mode="live",
+                              cache_dir=world["cache"])
+    write_table(world["picks"], ctx.path(cfg.associator.picksTable), "Pick")
+    write_table(world["stations"], ctx.path("stations.parquet"), "Station")
+    write_table(world["assoc"].events, ctx.path("assoc_events.parquet"), "AssocEvent")
+    write_table(world["assoc"].picks, ctx.path("assoc_picks.parquet"), "AssocPick")
+    write_table(world["catalog"].iloc[:1], ctx.path("catalog.parquet"), "CatalogEvent")
+
+    stage.run(ctx)  # pass 1 of the runner's plan: already the borrowed terms
+    first = read_table(ctx.path("events_located.parquet"))
+    assert first["quality_statics"].all()
+    statics = read_table(ctx.path("statics.parquet")).set_index(["stationId", "phase"])
+    for (sid, ph), v in statics["staticS"].items():
+        assert v == pytest.approx(_delay(east[sid], ph))
+    plain = locate(world["assoc"], world["picks"], world["stations"], cfg, world["run"],
+                   cache_dir=world["cache"])
+    assert first["quality_rmsS"].median() < plain.events["quality_rmsS"].median()
+    counts = ctx.records[-1]["counts"]
+    assert counts["staticsPass"] == 2 and counts["staticsReferenceEvents"] == 0
+    params = ctx.records[-1]["params"]
+    assert params["calibration"]["runId"] == cfg.live.calibrationRun
+    assert params["statics"]["mode"] == "calibrationRun"
+    assert params["statics"]["calibrationRun"] == cfg.live.calibrationRun
+    assert params["statics"]["stationPhasesNotInUse"] == ["XX.GONE P", "XX.GONE S"]
+    assert "calibration run `" in ctx.path("diagnostics.md").read_text()
+
+    # Pass 2: one public event matched (too few for referenceEvents terms): ignored, same output.
+    write_table(match(first, world["catalog"].iloc[:1], cfg).matches,
+                ctx.path("matches.parquet"), "Match")
+    stage.run(ctx)
+    pd.testing.assert_frame_equal(read_table(ctx.path("events_located.parquet")), first)
+
+
 def test_catalog_hypocentres_off_the_grid_are_left_out(world: dict[str, Any]) -> None:
     pairs = world["pairs"].copy()
     pairs.loc[0, "catalogElevM"] = -50000.0  # below the travel-time grid
