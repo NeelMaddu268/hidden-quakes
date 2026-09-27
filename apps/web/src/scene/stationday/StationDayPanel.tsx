@@ -3,9 +3,10 @@
 import { colors, fonts, motion } from "@hq/visualization";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { FetchLike } from "../../providers/fetch";
+import { useBundle } from "../data";
 import { STATION_DAY_DIALOG_ID } from "./StationDayButton";
 import { loadStationDayManifest, stationDayImageUrl, type StationDayLegendEntry, type StationDayManifest } from "./manifest";
-import { closeStationDay, setStationDayManifest, useStationDay } from "./store";
+import { closeStationDay, fittingManifest, setStationDayManifest, setStationDayRun, useStationDay } from "./store";
 
 const TITLE_ID = "station-day-title";
 const CAPTION_ID = "station-day-caption";
@@ -21,7 +22,7 @@ const COUNT = new Intl.NumberFormat("en-US");
  * inside, and the presenter keys (Space, E, S, T, G, H, ...) do not act on the scene behind it.
  */
 export function StationDayPanel({ fetchImpl }: { fetchImpl?: FetchLike }) {
-  const manifest = useStationDay((s) => s.manifest);
+  const manifest = useStationDay(fittingManifest);
   const open = useStationDay((s) => s.open);
 
   useEffect(() => {
@@ -41,6 +42,19 @@ export function StationDayPanel({ fetchImpl }: { fetchImpl?: FetchLike }) {
 }
 
 /**
+ * Tells the station-day store which run the scene has loaded, so the button and panel appear only for the
+ * picture's own run (not in Today, whose run the picture doesn't show). Mounted next to the panel.
+ */
+export function StationDayRunSync() {
+  const bundle = useBundle();
+  const runId = bundle.status === "ready" ? (bundle.meta.scene.runId ?? null) : null;
+  useEffect(() => {
+    setStationDayRun(runId);
+  }, [runId]);
+  return null;
+}
+
+/**
  * Registered on mount, on window in the capture phase: mounted before the tour's listener (Canvas.tsx),
  * it runs first, and while the panel is open it stops every key from reaching the scene and the shell.
  * Default actions still happen (Enter or Space on a focused button, arrow-key scrolling of the image).
@@ -48,7 +62,8 @@ export function StationDayPanel({ fetchImpl }: { fetchImpl?: FetchLike }) {
 function useModalKeys(): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!useStationDay.getState().open) return;
+      const state = useStationDay.getState();
+      if (!state.open || fittingManifest(state) === null) return;
       const dialog = document.getElementById(STATION_DAY_DIALOG_ID);
       if (event.key === "Escape") {
         event.preventDefault();
