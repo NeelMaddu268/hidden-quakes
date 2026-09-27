@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { useDemo } from "../../state/demo";
 import { useBundle } from "../data";
 import { hiddenHeroEventId, selectHiddenHero } from "../hiddenHero";
+import { isPlainPress } from "../keys";
 import { LOOK, publicSwatch } from "../look";
 import { drawerWidthPx } from "../plan/layout";
 import { H3_OVERLAY_SELECTORS, shellRoot } from "../references/overlayObstacles";
@@ -31,12 +32,6 @@ const MEASURE_MS = 250;
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn", "FnLock", "Hyper", "Super"]);
 
 type ReadyBundle = Extract<BundleState, { status: "ready" }>;
-
-function isTextInput(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
-}
 
 /**
  * The guided tour (WEB-09): G (or H4's Tour button) plays the judge sequence with a caption per step;
@@ -113,8 +108,7 @@ function useTourInput(): void {
         stopTour();
         return;
       }
-      if (event.repeat || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (isTextInput(event.target)) return;
+      if (!isPlainPress(event)) return;
       if (event.key.toLowerCase() === TOUR_KEY) {
         event.preventDefault();
         startTour();
