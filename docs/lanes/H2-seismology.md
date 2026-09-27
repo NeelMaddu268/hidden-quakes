@@ -169,6 +169,42 @@
   Associated FOR1 S picks already sit late in the harvest-on run (median residual +0.071 s over 291 picks), and its 176 harvested picks sit at +0.087 s after the relocation; the held-out depth offsets move deeper for 14 events and shallower for 3. The evaluator (`ab-report.md`) recommended not adopting it for a v4 for these reasons.
 - **Before revisiting (from the evaluation and the three review lenses):** refit or gate the weak terms first (harvest only at station-phases whose term has enough events and whose harvested-offset median is near 0; FOR1 S's 5-event term is the clear case), pin the synthetic pick stats to the pre-harvest values, compute the pick sigma from associated picks only, have H4's validation notes state that the reruns harvest, and judge on held-out depth and horizontal offsets rather than counts, tiers or the hero. Not measured for this record: the validation null test and baseline with harvest on (on this branch the reruns call `locate(statics=...)`, so they would harvest).
 
+### ML-01 · P1 · Saturday evening — Chance-association classifier (issue #100)
+
+- **What it is:** a logistic regression trained this weekend on this run's own pipeline output. Positives: the 654 candidate events the pipeline built from the real picks. Negatives: 1880 decoy events the same pipeline built after shifting each station's picks by one uniform ±30 s draw (the null test's 20 published shuffles, `hq.validate.null_test`). It scores each candidate for how much its **station count, arrival-time fit (rms) and mean pick probability** look like an association on real pick timing rather than a scrambled-clock decoy. It is not a probability that an event is an earthquake.
+- **Files:** `hq/tier/confidence_data.py` (training data: real rerun + decoys through one `rerun_pipeline` path, same statics and tier bars), `hq/tier/confidence.py` (models, folds, metrics, `confidence.json`), `tests/seismology/test_confidence_data.py`, `tests/seismology/test_confidence.py`.
+- **Model choice:** three candidates, simplest first: logistic regression on 3 features (`quality_nStations`, `quality_rmsS`, `meanPickProb`), logistic regression on 34 features (37 minus 3 exact duplicates), and a 16-unit torch MLP on the 34. A larger one replaces the simpler only if it beats it by more than 0.01 on both the fold-mean ROC AUC and the equal-station-count AUC; neither did, so the 3-feature model ships. The 3-feature set was found by the independent review on these same folds, so it is not a pre-registered choice. Weights per standard deviation (full-data fit): station count +2.70, rms −1.18, mean pick probability −1.14.
+- **Held-out numbers (run `20260926-0210-a04c611`):** 5 folds, seed 0; decoys split by whole shuffle (4 per fold), real events at random; every event is scored by the fold model that never saw it, and the imputer/standardizer are fitted on training rows only. Fold mean (min–max); "equal station count" is ROC AUC over real/decoy pairs with the same number of stations (63,339 pairs), where station count alone scores exactly 0.5.
+
+  | Scorer | ROC AUC | Equal station count |
+  |---|---|---|
+  | **3-feature logistic (shipped)** | **0.990 (0.986–0.994)** | **0.956 (0.932–0.980)** |
+  | 34-feature logistic | 0.992 (0.986–0.997) | 0.949 (0.901–0.981) |
+  | 34-feature MLP | 0.992 (0.987–0.997) | 0.948 (0.907–0.977) |
+  | 3-feature without pick probability (station count + rms) | 0.977 | 0.932 |
+  | Station count alone (no training) | 0.948 | 0.5 |
+  | Arrival-time rms alone (no training) | 0.843 | 0.932 |
+
+  Shipped model, pooled out of fold: ROC AUC 0.990, AP 0.975, equal station count 0.961, equal used-pick count 0.949. By station count (pooled): 3 stations 0.89 (3 real), 4: 0.92 (8 real), 5: 0.96, 6: 0.98, 7: 0.98, 8: 1.00 (25 real vs 8 decoys). No decoy reached Tier B.
+- **Caveats (say them with the numbers):**
+  - Size carries most of the headline: station count alone reaches 0.948. The equal-station-count AUC is the number that shows learning beyond size, and most of it is timing coherence (rms alone 0.932), which is exactly what the scramble destroys.
+  - Mean pick probability gets a **negative** weight because decoys are re-assembled strong picks from real events (the review found that scrambling only the picks left over after the real events gave no decoys in 5 shuffles). That is an artifact of how decoys are made, not physics; without it the model is station count + rms (0.977 / 0.932).
+  - **Decoy support ends at 8 stations** (the largest station count with at least 5 decoys; 1871 of 1880 decoys have 7 or fewer, one has 10). 457 of the 654 candidates have 9 or more stations; their scores near 1 extrapolate the station-count weight and are not a comparison with decoys. The 197 candidates within support are all Tier C.
+  - Single small-event scores are model-dependent: within the support, the 3-feature and 34-feature scores rank-correlate at only 0.55 although both models have similar AUCs. Do not quote counts of candidates below a decoy threshold as a finding.
+  - Label 1 means "associated on real pick timing", not "real": the real set holds some chance associations itself (the null test's mean per shuffle is probably an upper bound, since decoys form mainly from recycled real-event picks).
+  - The 43 public-catalog-matched events all have 15 or more stations, above the decoy support, so their scores near 1 are trivially met and are not evidence for the model.
+- **UI:** label "Scramble test"; show the score only for events with at most `model.decoySupport.maxStations` stations, and "larger than any decoy" otherwise; tooltip is the file's `description`. Validation card: held-out ROC AUC quoted next to the station-count baseline.
+- **Run:** from `services/seismic`, two steps. Step 1 rebuilds the training data (about 46 min with 6 workers; `--max-extra 0` keeps exactly the 20 published shuffles); step 2 trains, evaluates and writes the file (about 2 s, deterministic: two reruns give byte-identical `scores.parquet`).
+
+  ```
+  nice -n 5 uv run python -m hq.tier.confidence_data --run-dir <runs>/20260926-0210-a04c611 \
+      --config-dir configs/showcase --out-dir <scratch>/data --workers 6 --max-extra 0
+  uv run python -m hq.tier.confidence --run 20260926-0210-a04c611 \
+      --data-dir <scratch>/data --out <scratch>/confidence.json
+  ```
+
+  Step 2 writes `confidence.json` (`hq.confidence/1`: `model` with the held-out numbers, baselines and decoy support; `label`; `description`; `events` = eventId → score, 3 decimals, all 654 canonical ids) and, beside it, `scores.parquet` (out-of-fold scores of real and decoy events for every candidate model) and `report.json` (every metric, per-fold summaries, thresholds, weights, permutation importance). It is copied into `runs/<runId>/confidence.json` only after the exporter change (branch `agent/ML-01-ui`) is merged; that is the lead's call.
+
 ## Domain notes (give these to your agent)
 
 ### Velocity models
