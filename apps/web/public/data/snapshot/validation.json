@@ -1,0 +1,18 @@
+{
+  "baseline": [],
+  "gr": null,
+  "magnitude": null,
+  "nullTest": null,
+  "sweep": [],
+  "synthetic": {
+    "medianDepthBiasM": -2.7183043324914706,
+    "medianHErrM": 60.453903468795396,
+    "medianVErrM": 68.29078839069302,
+    "nEvents": 200,
+    "p90VErrM": 163.8713744668612,
+    "pickSigmaS": {
+      "P": 0.02,
+      "S": 0.04
+    }
+  }
+}

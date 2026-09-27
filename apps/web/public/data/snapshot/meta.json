@@ -1,0 +1,3145 @@
+{
+  "mode": "snapshot",
+  "run": {
+    "associator": {
+      "config": {
+        "associationCutoffDistanceKm": null,
+        "edtPickStdS": 1.0,
+        "enuConsistencyTolM": 0.01,
+        "exponentialEdt": false,
+        "locationSplitDepth": 6,
+        "locationSplitReturn": 4,
+        "maxPickOverlap": 4,
+        "mergeMinSharedFraction": 0.5,
+        "mergeWithinS": 0.5,
+        "minIntereventTimeS": 0.0,
+        "minNodeSizeKm": 4.0,
+        "minNodeSizeLocationKm": 0.25,
+        "minPickFraction": 0.25,
+        "minPickProb": 0.3,
+        "minStations": 5,
+        "nPAndSPicks": 0,
+        "nPPicks": 2,
+        "nPicks": 4,
+        "nSPicks": 1,
+        "nThreads": 8,
+        "nodeLogInterval": 0,
+        "pickMatchToleranceS": 0.5,
+        "picksFromUnusedStations": "drop",
+        "picksTable": "picks.parquet",
+        "queueMemoryProtectionDfsSize": 500000,
+        "refinementIterations": 3,
+        "sweep": {
+          "enabled": false,
+          "minPickProb": [
+            0.1,
+            0.2,
+            0.3
+          ],
+          "minStations": [
+            4,
+            5,
+            6,
+            8
+          ],
+          "nSPicks": [
+            0,
+            1,
+            2
+          ]
+        },
+        "tables": {
+          "fmmOrder": 2,
+          "maxSeedErrorS": 0.05,
+          "seedRadiusM": 100.0,
+          "spacingM": 50.0
+        },
+        "timeBeforeS": 30.0,
+        "timeSlicingS": 1200.0,
+        "toleranceS": 0.3,
+        "volume": {
+          "bottomElevM": -10000.0,
+          "horizontalMarginM": 1000.0,
+          "topElevM": null
+        }
+      },
+      "frame": {
+        "elevM": "-z * 1000 (m ASL)",
+        "origin": {
+          "elevM": 1627.7,
+          "lat": 38.51,
+          "lon": -112.9
+        },
+        "x": "ENU e / 1000 (km; UTM 12N EPSG:32612 minus the run origin)",
+        "y": "ENU n / 1000 (km)",
+        "z": "-elevM / 1000 (km below sea level, down positive); stations at sensorElevM"
+      },
+      "input": {
+        "picksTable": "picks.parquet",
+        "stationsTable": "stations.parquet"
+      },
+      "picks": {
+        "fromUnusedStations": "drop: picks from stations with usedInRun false (counts.picksFromUnusedStationsDropped)",
+        "minPickProb": 0.3,
+        "nIn": 112,
+        "probMinIn": 0.10002601891756058,
+        "tMaxS": 1790472567.23,
+        "tMinS": 1790465453.52,
+        "weights": "none: PyOcto 0.2.0 has no per-pick weight; prob is only the threshold"
+      },
+      "postprocess": {
+        "mergeMinSharedFraction": 0.5,
+        "mergeRule": "pairwise against a primary taken in rank order (most picks, earlier, lower index): origin times within mergeWithinS and shared picks >= fraction of the smaller event's picks; not transitive; absorbed picks keep the absorbed event's PyOcto residual",
+        "mergeWithinS": 0.5,
+        "minStations": 5,
+        "minimumsReapplied": "nPicks, nPPicks, nSPicks, nPAndSPicks and minStations before and after the shared-pick rule; an event dropped there returns its picks to the other events holding them and the rule reruns until no event is dropped",
+        "pyoctoDeduplication": "PyOcto deletes the smaller of two events sharing more than max_pick_overlap picks before this merge (no time condition, not counted here)",
+        "sharedPickRule": "a pick in two events stays with the smaller |PyOcto residual| (ties: more picks, earlier, lower index)"
+      },
+      "provenance": {
+        "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+        "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
+        "softwareVersions": {
+          "numpy": "2.5.3",
+          "obspy": "1.5.1",
+          "pandas": "3.0.6",
+          "pyarrow": "25.0.1",
+          "pydantic": "2.13.5",
+          "pyocto": "0.2.0",
+          "pyproj": "3.8.0",
+          "python": "3.13.12",
+          "scikit-fmm": "2025.6.23",
+          "scipy": "1.18.1",
+          "seisbench": "0.12.6",
+          "torch": "2.14.0"
+        },
+        "uncommittedChanges": false
+      },
+      "pyocto": {
+        "OctoAssociator": {
+          "crs": null,
+          "edt_pick_std": 1.0,
+          "exponential_edt": false,
+          "location_split_depth": 6,
+          "location_split_return": 4,
+          "max_pick_overlap": 4,
+          "min_interevent_time": 0.0,
+          "min_node_size": 4.0,
+          "min_node_size_location": 0.25,
+          "min_pick_fraction": 0.25,
+          "n_p_and_s_picks": 0,
+          "n_p_picks": 2,
+          "n_picks": 4,
+          "n_s_picks": 1,
+          "n_threads": 8,
+          "node_log_interval": 0,
+          "pick_match_tolerance": 0.5,
+          "queue_memory_protection_dfs_size": 500000,
+          "refinement_iterations": 3,
+          "second_pass_overwrites": null,
+          "time_before": 30.0,
+          "time_slicing": 1200.0,
+          "velocity_model": {
+            "association_cutoff_distance": null,
+            "class": "StationSpecificVelocityModel1D",
+            "path": "ttgrids/pyocto/71fbe75a1967562c",
+            "tolerance": 0.3
+          },
+          "velocity_model_location": null,
+          "xlim": [
+            -27.768565766678716,
+            27.60355769196374
+          ],
+          "ylim": [
+            -27.02063213813398,
+            27.10893330007419
+          ],
+          "zlim": [
+            -1.6277000000000001,
+            10.0
+          ]
+        }
+      },
+      "pyoctoVersion": "0.2.0",
+      "removedStale": [],
+      "stations": {
+        "aboveModelSourceTopM": {
+          "6K.CS03": 30.392090000000053,
+          "UU.FOR6": 461.7329101559999,
+          "UU.FOR7": 164.0,
+          "UU.FORB": 39.09999999999991,
+          "UU.NMU": 53.0
+        },
+        "aboveModelSourceTopNote": "sensor elevation minus the velocity model's own top, for sensors above it: their tables run through the top layer extended upward over this thickness, so their predicted times are late where the ground there is faster; PyOcto station terms are 0 (statics come after location, LOC-05)",
+        "elevationField": "sensorElevM",
+        "nNotUsedInRun": 3,
+        "nStations": 23,
+        "stationTermsS": "none: PyOcto adds 0 s for every station (statics come after location)"
+      },
+      "sweep": {
+        "enabled": false,
+        "grid": [],
+        "note": "associated = events after this stage's post-processing at that point, before location; sweep.parquet (SweepPoint with located candidates, recoveredPublic and tierA) is written by LOC-06",
+        "points": []
+      },
+      "tables": {
+        "builderVersion": 1,
+        "deltaKm": 0.05,
+        "directory": "ttgrids/pyocto/71fbe75a1967562c",
+        "directoryRelativeTo": "cache_dir (data/cache), or a temporary directory when associate() runs without cache_dir",
+        "format": "pyocto-0.2.0-station-specific-1d",
+        "key": "71fbe75a1967562c485c9c3bfcd3c34abc55bcb66cbeaafebb3fd8760b9cb26b",
+        "maxSTimeInVolumeS": 19.70029981260462,
+        "modelTopElevM": 2261.732910156,
+        "nPadding": 6,
+        "nx": 1237,
+        "nz": 254,
+        "rMaxM": 61800.0,
+        "rowsAboveModelTop": "repeat the top layer's velocities (PyOcto's n_padding is shared by all stations); no queried travel time passes through them",
+        "seedErrorBoundS": {
+          "6K.CS01": 0.00466560129723935,
+          "6K.CS02": 0.0,
+          "6K.CS03": 0.0,
+          "6K.CS04": 0.0021668975475743757,
+          "6K.CS06": 0.0028717929134280326,
+          "UU.FOR1": 0.0026990083087644065,
+          "UU.FOR2": 0.0,
+          "UU.FOR5": 0.0,
+          "UU.FOR6": 0.0,
+          "UU.FOR7": 0.0,
+          "UU.FOR8": 0.002087912087912088,
+          "UU.FORB": 0.0,
+          "UU.FORK": 0.0,
+          "UU.FORK2": 0.0,
+          "UU.FORK3": 0.0,
+          "UU.FORW": 0.0010694183864915572,
+          "UU.FSB1": 0.0013749664969177164,
+          "UU.FSB3": 0.0011712677566336103,
+          "UU.FSB4": 0.004226748860895202,
+          "UU.FSB5": 0.0,
+          "UU.FSB6": 0.0,
+          "UU.MHS2": 0.0017314392924149022,
+          "UU.NMU": 0.0
+        },
+        "skfmmVersion": "2025.06.23",
+        "spacingM": 50.0
+      },
+      "velocityModel": {
+        "boundaryConvention": "layer i spans topElevM[i+1] < elevM <= topElevM[i]: a point exactly on a boundary takes the layer below; the deepest layer is a half-space; above the top of the model is an error",
+        "conversion": "topElevM = -TVDSS, in m above mean sea level with up positive. vpMPerS and vsMPerS are the source vp and vs unchanged (the source is already in m/s, so no unit conversion was needed). No value was edited, smoothed or resampled.",
+        "datum": "topElevM is the top of each layer in metres above mean sea level (up positive), converted as elevM = -TVDSS, with mean sea level taken as NAVD88 orthometric height (the vertical of USGS 3DEP and run.yaml); the TVDSS datum (mean sea level, positive down) is established by the GDR 1613 methods report (p. 4 text ties the TVDSS column to mean sea level; p. 5 Fig. 3a shows it positive down with these layer tops), not by the velocity CSV, which only labels the column; the deepest layer is a half-space.",
+        "layerConvention": "each source row is the top of one layer carrying that layer's constant Vp and Vs; the deepest row is the top of a half-space. The CSV does not state this; Fig. 3a of the same submission (methods report p. 5) shows it: its interfaces (green lines, digitized at TVDSS about -1598, -1230, -1030, -447, -316, 215 and 610 m) match rows 2-8, and the step velocities above the first interface (Vp about 2280 m/s, Vs about 1160 m/s) and below the last (Vp about 5520 m/s, Vs about 3330 m/s) match rows 1 (Vp 2296, Vs 1163 m/s) and 8 (Vp 5521, Vs 3334 m/s), which reading the rows as layer bottoms would contradict. The report (p. 4, Results) also describes eight layers about 130-580 m thick with Vp/Vs ratios of about 1.63-2.2. Row 1 (TVDSS -1800 m) is the model's formal top, not a resolved interface: Fig. 3a starts at about 1700 m ASL, near the local ground (1692.7 m ASL over the event-cloud centroid, USGS 3DEP 1 m via EPQS).",
+        "layers": [
+          {
+            "topElevM": 2261.732910156,
+            "vpMPerS": 2296.0,
+            "vsMPerS": 1163.0
+          },
+          {
+            "topElevM": 1595.0,
+            "vpMPerS": 2600.0,
+            "vsMPerS": 1203.0
+          },
+          {
+            "topElevM": 1227.0,
+            "vpMPerS": 3097.0,
+            "vsMPerS": 1808.0
+          },
+          {
+            "topElevM": 1027.0,
+            "vpMPerS": 4319.0,
+            "vsMPerS": 2339.0
+          },
+          {
+            "topElevM": 445.0,
+            "vpMPerS": 5272.0,
+            "vsMPerS": 2444.0
+          },
+          {
+            "topElevM": 315.0,
+            "vpMPerS": 5113.0,
+            "vsMPerS": 3138.0
+          },
+          {
+            "topElevM": -217.0,
+            "vpMPerS": 5615.0,
+            "vsMPerS": 3374.0
+          },
+          {
+            "topElevM": -610.0,
+            "vpMPerS": 5521.0,
+            "vsMPerS": 3334.0
+          }
+        ],
+        "license": "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), as stated on the GDR 1613 submission page",
+        "name": "forge_1d_gdr1613_ver1",
+        "notes": "Inverted jointly with the locations of 5 events (methods report p. 2, \"Joint event location and velocity model inversion\"; also Vera Rodriguez et al., SGW 2025, section 2.2, in GDR 1739) from DAS picks in wells 16B(78)-32 and 78B-32; the 257 events in the GDR 1613 DAS catalog lie at TVDSS 576-871 m (elevM -576 to -871). Rays therefore sample only the paths between that event cloud and those two wells, from the local ground (about 1693 m ASL there, so the first layer is sampled over only about 100 m) down to about -870 m ASL. Elsewhere, and deeper, the layer values and the half-space are extrapolation. Two velocity inversions are as published: layer 5 (Vp 5272) over layer 6 (Vp 5113), and layer 7 (Vp 5615, Vs 3374) over the half-space (Vp 5521, Vs 3334); the half-space Vp is about 5% below the 5.8 km/s basement of the GDR 1800 3D model. The same team later relocated these events with a dipping-layer 3D model from 2024 data, after the 1D locations disagreed with surface-network locations (Vera Rodriguez et al., SGW 2025, in GDR 1739); that 3D model is not published as a file. The GDR 1613 README calls the submission a preliminary data archive and its curator note anticipates updated VerX velocity-model files; none was published as of retrieval (2026-09-25: the submission lists only Inverted_1D_VelocityModel.csv, and GDR 1739 adds no velocity file).",
+        "source": {
+          "citation": "Vera Rodriguez, I., Wolpert, J., Podrasky, D., Coleman, T., Maldaner, C., Ma, Y., Chamarczuk, M., Becker, M., & Ajo-Franklin, J. (2024). Utah FORGE 3-2417: DAS Microseismic Event Catalog from the 16A/16B Circulation Test, 2023 [Data set]. Geothermal Data Repository, Rice University. https://doi.org/10.15121/2376139",
+          "url": "https://gdr.openei.org/submissions/1613",
+          "verified": true
+        },
+        "sourceDatum": "TVDSS is true vertical depth below mean sea level, positive down, so negative values lie above sea level. The velocity CSV only labels the column \"TVDSS (m)\"; the methods report of the same submission (FOGMORE_MEQ_Circulation2023.pdf) establishes the datum. Evidence: (1) p. 5, Fig. 3a plots this model's P and S step velocities and layer interfaces on an axis labelled only \"TVDSS (km)\" that runs from about -1.70 km at the top to about +0.90 km at the bottom, which shows the sign (positive down) but does not name the datum; (2) p. 4 (Results) gives the located microseismicity a \"depth range of 570 m to 750 m from mean sea level\", which matches the \"TVDSS (m)\" column of the same submission's event catalog (FORGE_DAS_event_catalogue_circulation.csv, 5th-95th percentile 584-746 m, n = 257) and so ties that column to mean sea level; (3) the same team's final relocated catalog (GDR 1739, Header_Description.txt) defines its depth column as hypocentral depth from mean sea level.",
+        "sourceFile": "https://gdr.openei.org/files/1613/Inverted_1D_VelocityModel.csv",
+        "sourceSha256": "806cfad01f65cf9f2dac3376a1bdc458f3bedaf65e359c3e2815e28d249dd994",
+        "topExtension": {
+          "fromElevM": 1800.0,
+          "note": "Vp and Vs above fromElevM are the source's top layer extended upward; the source has no values there",
+          "toElevM": 2261.732910156
+        },
+        "verifiedBasis": "verified: true means the values, the TVDSS datum and the layer-top reading all come from the GDR 1613 submission itself (the velocity CSV, and the methods report's p. 4 text and p. 5 Fig. 3a). The NAVD88 reading of mean sea level and any top-layer extension are ours; they are stated in datum and topExtension."
+      },
+      "volume": {
+        "bottomElevM": -10000.0,
+        "eMaxM": 27603.55769196374,
+        "eMinM": -27768.565766678716,
+        "nMaxM": 27108.93330007419,
+        "nMinM": -27020.63213813398,
+        "note": "bbox projected to ENU plus volume.horizontalMarginM, from topElevM (null: run.refSurfaceElevM, not the local ground) down to bottomElevM; it is not the locator's volume. Association elevM is preliminary: it may lie above the local ground and must not be shown without relocation",
+        "topElevM": 1627.7
+      },
+      "window": {
+        "endS": 1790472600.0,
+        "rule": "events with origin time outside [startS, endS) are dropped after the duplicate merge (counts.droppedOutsideWindow); the bbox is not applied here",
+        "startS": 1790465400.0
+      }
+    },
+    "bbox": [
+      -113.2,
+      38.28,
+      -112.6,
+      38.74
+    ],
+    "createdAt": "2026-09-27T02:21:31Z",
+    "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+    "id": "20260927-0221-615e997",
+    "isSynthetic": false,
+    "locator": {
+      "calibration": {
+        "locatorMethod": "grid1d",
+        "nonZero": 46,
+        "runDir": "showcase/runs/20260926-0210-a04c611",
+        "runId": "20260926-0210-a04c611",
+        "staticsSha256": "fd15b2e7bb4f77e920cccb74fda6e772704c702f34a7442fde52ac97a29e17a6",
+        "staticsTable": "statics.parquet",
+        "stationPhases": 50,
+        "thresholdsNMatched": 43
+      },
+      "config": {
+        "coarseSpacingM": 200.0,
+        "depthOnEdgeMassFraction": 0.05,
+        "enuConsistencyTolM": 0.01,
+        "errConfidence": 0.68,
+        "evalChunkNodes": 65536,
+        "fineHalfWidthM": 1000.0,
+        "fineSpacingM": 25.0,
+        "fineStageSpacingM": 100.0,
+        "mapOnVolumeFaceBandM": 100.0,
+        "maxPdfNodes": 3000000,
+        "method": "grid1d",
+        "minPicks": 4,
+        "nWorkers": 8,
+        "outlier": {
+          "floorS": 0.15,
+          "madK": 3.0
+        },
+        "pdfCutoff": 12.0,
+        "pdfMisfitScale": 1.0,
+        "pickSigmaS": {
+          "P": 0.02,
+          "S": 0.04
+        },
+        "profilePickSigmaS": {},
+        "volume": {
+          "bottomElevM": -7000.0,
+          "halfWidthM": 10000.0,
+          "topElevM": null
+        }
+      },
+      "diagnostics": {
+        "boreholeProfilePrefix": "borehole",
+        "datumCheck": {
+          "eM": 0.0,
+          "elevM": [
+            -3500.0,
+            -1500.0,
+            500.0
+          ],
+          "nM": 0.0,
+          "passTolM": 50.0
+        },
+        "degradationRatio": 1.5,
+        "minGroupSize": 5,
+        "minSForDepth": 3,
+        "stationResidualFlagS": 0.15,
+        "tableErrorFlagS": 0.005,
+        "trendFlagS": 0.05,
+        "trendSPRatioExcess": 1.3
+      },
+      "grid1dComparisonRuntimeS": null,
+      "input": {
+        "assocTables": [
+          "assoc_events.parquet",
+          "assoc_picks.parquet"
+        ],
+        "picksTable": "picks.parquet",
+        "referenceMatches": null,
+        "stationsTable": "stations.parquet"
+      },
+      "locate": {
+        "arrivals": "one row per event x used station x phase; tPred = origin time + table travel time + static; tObs/residualS/pickId null without a pick; usedInLocation false for outlier-dropped picks and rows without a pick",
+        "depthKm": "(run.refSurfaceElevM - elevM) / 1000",
+        "eventId": "hq-<runId>-<6 digits>, numbered from 0 in origin-time order (ties: assocId)",
+        "flagsTable": "locate_flags.parquet (H2-internal): eventId, assocId, mapOnVolumeTop, mapOnVolumeBottom, depthOnEdgeTop, depthOnEdgeBottom, topFaceMass, bottomFaceMass, pdfTruncated, nodeBudgetHit, hErrGridLimited, vErrGridLimited, nDroppedPicks, outlierPassSkipped, nearestStationSurfaceElevM, aboveNearestStationSurface",
+        "latLon": "hq.locate.coords.from_enu (EPSG:32612 minus the run origin)",
+        "meanPickProb": "mean prob of the picks in pickIds (picker confidence)",
+        "method": "grid1d",
+        "pickIds": "picks used in the final location (outlier-dropped picks left out)",
+        "pickers": [
+          "phasenet:instance"
+        ],
+        "refSurfaceElevM": 1627.7,
+        "runId": "20260927-0221-615e997",
+        "source": "hq-pipeline",
+        "statics": {
+          "applied": true,
+          "eventsWithOwnStatics": 0,
+          "nonZero": 44,
+          "note": "additive per (stationId, phase); the statics table holds the map every event without its own used (hq.locate.statics)"
+        },
+        "stations": {
+          "ids": [
+            "6K.CS01",
+            "6K.CS02",
+            "6K.CS03",
+            "6K.CS04",
+            "6K.CS06",
+            "UU.FOR1",
+            "UU.FOR2",
+            "UU.FOR5",
+            "UU.FOR6",
+            "UU.FOR7",
+            "UU.FOR8",
+            "UU.FORB",
+            "UU.FORK",
+            "UU.FORK2",
+            "UU.FORK3",
+            "UU.FORW",
+            "UU.FSB1",
+            "UU.FSB3",
+            "UU.FSB4",
+            "UU.FSB5",
+            "UU.FSB6",
+            "UU.MHS2",
+            "UU.NMU"
+          ],
+          "nUsed": 23
+        }
+      },
+      "locateRuntimeS": 0.965789040987147,
+      "method": "grid1d",
+      "misfit": "sum_i w_i |t_obs_i - T_i - static_i - t0|, w_i = prob_i / sigma_i; t0 = lower weighted median of (t_obs_i - T_i - static_i) (eliminated analytically)",
+      "outliers": "drop |residual| > max(madK * MAD, floorS), MAD unscaled over both phases; relocate once",
+      "outputs": [
+        "events_located.parquet",
+        "arrivals.parquet",
+        "statics.parquet",
+        "locate_flags.parquet",
+        "synthetic.json",
+        "diagnostics.md"
+      ],
+      "provenance": {
+        "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+        "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
+        "softwareVersions": {
+          "numpy": "2.5.3",
+          "obspy": "1.5.1",
+          "pandas": "3.0.6",
+          "pyarrow": "25.0.1",
+          "pydantic": "2.13.5",
+          "pyocto": "0.2.0",
+          "pyproj": "3.8.0",
+          "python": "3.13.12",
+          "scikit-fmm": "2025.6.23",
+          "scipy": "1.18.1",
+          "seisbench": "0.12.6",
+          "torch": "2.14.0"
+        },
+        "uncommittedChanges": false
+      },
+      "search": "coarse grid over the volume; a fineStageSpacingM pass from the first fine box (fineHalfWidthM around the best coarse node) grown until the region within pdfCutoff clears every non-volume face; fine nodes over that region, grown the same way; both stop at maxPdfNodes (then hErrM/vErrM are None, pdfTruncated); hypocentre = fine MAP node",
+      "statics": {
+        "calibrationRun": "20260926-0210-a04c611",
+        "capS": 1.0,
+        "config": {
+          "capS": 0.3,
+          "explain": {
+            "farStationM": 15000.0,
+            "lateralFraction": 0.5,
+            "minRatioTermS": 0.05,
+            "neighbourMaxDistM": 8000.0,
+            "neighbours": 3,
+            "ratioBand": 1.3
+          },
+          "folds": null,
+          "iterations": 3,
+          "minEvents": 5,
+          "minReferenceEvents": 3,
+          "mode": "referenceEvents",
+          "polishIterations": 3,
+          "referenceCapS": 1.0,
+          "sigmaFlagRatio": 1.5,
+          "wellConstrained": {
+            "maxGapDeg": 180.0,
+            "minS": 3,
+            "minStations": 8
+          }
+        },
+        "crossValidatedOffsets": null,
+        "explanations": [
+          {
+            "aboveModelTopM": -213.38232399999993,
+            "distanceM": 1005.0263436793075,
+            "explanation": "S arrives 0.245 s late against the 1D model (n 43). Its nearest stations with a S term within 8 km (UU.FORK3, UU.FSB1, UU.FORK) have a median +0.049 s: they don't share it. S/P term ratio 3.62 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1587 m ASL, 213 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 43,
+            "neighbourMedianS": 0.04926729202270508,
+            "neighbours": "UU.FORK3,UU.FSB1,UU.FORK",
+            "phase": "S",
+            "sensorElevM": 1586.617676,
+            "spRatio": 3.624216596080202,
+            "staticS": 0.24493098258972168,
+            "stationId": "6K.CS01",
+            "verdict": "vpvs"
+          },
+          {
+            "aboveModelTopM": -327.6552730000001,
+            "distanceM": 6782.159737949364,
+            "explanation": "S arrives 0.588 s late against the 1D model (n 42). Its nearest stations with a S term within 8 km (UU.FORW, UU.FORK2, UU.FORK3) have a median +0.089 s: they don't share it. S/P term ratio 6.64 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1472 m ASL, 328 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 42,
+            "neighbourMedianS": 0.08938264846801758,
+            "neighbours": "UU.FORW,UU.FORK2,UU.FORK3",
+            "phase": "S",
+            "sensorElevM": 1472.344727,
+            "spRatio": 6.635767208573696,
+            "staticS": 0.5882765054702759,
+            "stationId": "6K.CS02",
+            "verdict": "vpvs"
+          },
+          {
+            "aboveModelTopM": 30.392090000000053,
+            "distanceM": 7512.954167757816,
+            "explanation": "P arrives 0.248 s early against the 1D model (n 43). Its nearest stations with a P term within 8 km (UU.NMU, UU.FOR5, UU.FSB3) have a median -0.189 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.01 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1830 m ASL, 30 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 43,
+            "neighbourMedianS": -0.18869495391845703,
+            "neighbours": "UU.NMU,UU.FOR5,UU.FSB3",
+            "phase": "P",
+            "sensorElevM": 1830.39209,
+            "spRatio": 2.0058401232615877,
+            "staticS": -0.2480480670928955,
+            "stationId": "6K.CS03",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": 30.392090000000053,
+            "distanceM": 7512.954167757816,
+            "explanation": "S arrives 0.498 s early against the 1D model (n 43). Its nearest stations with a S term within 8 km (UU.NMU, UU.FOR5, UU.FSB3) have a median -0.472 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.01 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1830 m ASL, 30 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 43,
+            "neighbourMedianS": -0.4720463752746582,
+            "neighbours": "UU.NMU,UU.FOR5,UU.FSB3",
+            "phase": "S",
+            "sensorElevM": 1830.39209,
+            "spRatio": 2.0058401232615877,
+            "staticS": -0.4975447654724121,
+            "stationId": "6K.CS03",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": -248.60705600000006,
+            "distanceM": 4038.678107104796,
+            "explanation": "P arrives 0.233 s late against the 1D model (n 41). Its nearest stations with a P term within 8 km (6K.CS04, 6K.CS01, UU.FSB4) have a median +0.068 s: they don't share it. S/P term ratio 2.77 against the model's Vp/Vs 2.16 at the sensor: P and S slowed in proportion, consistent with a velocity anomaly near the station. Sensor at 1551 m ASL, 249 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 41,
+            "neighbourMedianS": 0.06758177280426025,
+            "neighbours": "6K.CS04,6K.CS01,UU.FSB4",
+            "phase": "P",
+            "sensorElevM": 1551.392944,
+            "spRatio": 2.771969076387467,
+            "staticS": 0.23283958435058594,
+            "stationId": "6K.CS06",
+            "verdict": "path"
+          },
+          {
+            "aboveModelTopM": -248.60705600000006,
+            "distanceM": 4038.678107104796,
+            "explanation": "S arrives 0.645 s late against the 1D model (n 39). Its nearest stations with a S term within 8 km (6K.CS04, 6K.CS01, UU.FSB4) have a median +0.245 s: they don't share it. S/P term ratio 2.77 against the model's Vp/Vs 2.16 at the sensor: P and S slowed in proportion, consistent with a velocity anomaly near the station. Sensor at 1551 m ASL, 249 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 39,
+            "neighbourMedianS": 0.24493098258972168,
+            "neighbours": "6K.CS04,6K.CS01,UU.FSB4",
+            "phase": "S",
+            "sensorElevM": 1551.392944,
+            "spRatio": 2.771969076387467,
+            "staticS": 0.6454241275787354,
+            "stationId": "6K.CS06",
+            "verdict": "path"
+          },
+          {
+            "aboveModelTopM": -158.0,
+            "distanceM": 21371.95838701254,
+            "explanation": "P arrives 0.265 s early against the 1D model (n 16). Its nearest stations with a P term within 8 km (UU.MHS2) have a median +0.193 s: they don't share it. S/P term ratio 1.33 against the model's Vp/Vs 1.97 at the sensor: neither proportional to the slownesses nor equal. The station lies 21.4 km from the events' median epicentre (more than 15 km), so most of its ray length lies in the model's half-space, which the layer file marks as extrapolation; faster rock there would make distant stations early. No other station that far has a P term later than +0.15 s, so the table doesn't contradict that; nothing here tests it further. Sensor at 1642 m ASL, 158 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 16,
+            "neighbourMedianS": 0.19274532794952393,
+            "neighbours": "UU.MHS2",
+            "phase": "P",
+            "sensorElevM": 1642.0,
+            "spRatio": 1.3337872076776807,
+            "staticS": -0.2647494077682495,
+            "stationId": "UU.FOR1",
+            "verdict": "far"
+          },
+          {
+            "aboveModelTopM": -158.0,
+            "distanceM": 21371.95838701254,
+            "explanation": "S arrives 0.353 s early against the 1D model (n 5). Its nearest stations with a S term within 8 km (UU.MHS2) have a median +0.751 s: they don't share it. S/P term ratio 1.33 against the model's Vp/Vs 1.97 at the sensor: neither proportional to the slownesses nor equal. The station lies 21.4 km from the events' median epicentre (more than 15 km), so most of its ray length lies in the model's half-space, which the layer file marks as extrapolation; faster rock there would make distant stations early. No other station that far has a S term later than +0.15 s, so the table doesn't contradict that; nothing here tests it further. Sensor at 1642 m ASL, 158 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 5,
+            "neighbourMedianS": 0.7512553930282593,
+            "neighbours": "UU.MHS2",
+            "phase": "S",
+            "sensorElevM": 1642.0,
+            "spRatio": 1.3337872076776807,
+            "staticS": -0.3531193733215332,
+            "stationId": "UU.FOR1",
+            "verdict": "far"
+          },
+          {
+            "aboveModelTopM": -40.0,
+            "distanceM": 2551.2196248966156,
+            "explanation": "S arrives 0.237 s early against the 1D model (n 41). Its nearest stations with a S term within 8 km (UU.FORK, UU.FORB, UU.FSB1) have a median +0.002 s: they don't share it. S/P term ratio 3.64 against the model's Vp/Vs 1.97 at the sensor: S changed proportionally more than P, consistent with faster near-station rock with a lower Vp/Vs than the model's (as in crystalline rock under the model's sediment-like top layers), which advances P and advances S more. Sensor at 1760 m ASL, 40 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 41,
+            "neighbourMedianS": 0.0017402172088623047,
+            "neighbours": "UU.FORK,UU.FORB,UU.FSB1",
+            "phase": "S",
+            "sensorElevM": 1760.0,
+            "spRatio": 3.6437927556166896,
+            "staticS": -0.23684239387512207,
+            "stationId": "UU.FOR2",
+            "verdict": "vpvs"
+          },
+          {
+            "aboveModelTopM": -60.90000000000009,
+            "distanceM": 10140.55007468539,
+            "explanation": "P arrives 0.324 s early against the 1D model (n 43). Its nearest stations with a P term within 8 km (6K.CS03, UU.NMU, UU.FSB3) have a median -0.189 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.79 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1739 m ASL, 61 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 43,
+            "neighbourMedianS": -0.18869495391845703,
+            "neighbours": "6K.CS03,UU.NMU,UU.FSB3",
+            "phase": "P",
+            "sensorElevM": 1739.1,
+            "spRatio": 1.7905276254320206,
+            "staticS": -0.3244297504425049,
+            "stationId": "UU.FOR5",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": -60.90000000000009,
+            "distanceM": 10140.55007468539,
+            "explanation": "S arrives 0.581 s early against the 1D model (n 43). Its nearest stations with a S term within 8 km (6K.CS03, UU.NMU, UU.FSB3) have a median -0.472 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.79 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1739 m ASL, 61 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 43,
+            "neighbourMedianS": -0.4720463752746582,
+            "neighbours": "6K.CS03,UU.NMU,UU.FSB3",
+            "phase": "S",
+            "sensorElevM": 1739.1,
+            "spRatio": 1.7905276254320206,
+            "staticS": -0.5809004306793213,
+            "stationId": "UU.FOR5",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": 461.7329101559999,
+            "distanceM": 9722.328933540746,
+            "explanation": "P arrives 0.247 s early against the 1D model (n 43). Its nearest stations with a P term within 8 km (UU.FORB, UU.NMU, 6K.CS03) have a median -0.219 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.81 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 2262 m ASL, 462 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 43,
+            "neighbourMedianS": -0.2194993495941162,
+            "neighbours": "UU.FORB,UU.NMU,6K.CS03",
+            "phase": "P",
+            "sensorElevM": 2261.732910156,
+            "spRatio": 1.8093917159397797,
+            "staticS": -0.24701642990112305,
+            "stationId": "UU.FOR6",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": 461.7329101559999,
+            "distanceM": 9722.328933540746,
+            "explanation": "S arrives 0.447 s early against the 1D model (n 43). Its nearest stations with a S term within 8 km (UU.FORB, UU.NMU, 6K.CS03) have a median -0.472 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.81 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 2262 m ASL, 462 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 43,
+            "neighbourMedianS": -0.4720463752746582,
+            "neighbours": "UU.FORB,UU.NMU,6K.CS03",
+            "phase": "S",
+            "sensorElevM": 2261.732910156,
+            "spRatio": 1.8093917159397797,
+            "staticS": -0.44694948196411133,
+            "stationId": "UU.FOR6",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": 164.0,
+            "distanceM": 8218.152014651469,
+            "explanation": "P arrives 0.247 s early against the 1D model (n 43). Its nearest stations with a P term within 8 km (6K.CS04, UU.FSB4, UU.FORB) have a median +0.035 s: they don't share it. S/P term ratio 1.83 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1964 m ASL, 164 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 43,
+            "neighbourMedianS": 0.035114169120788574,
+            "neighbours": "6K.CS04,UU.FSB4,UU.FORB",
+            "phase": "P",
+            "sensorElevM": 1964.0,
+            "spRatio": 1.833437236422311,
+            "staticS": -0.2470545768737793,
+            "stationId": "UU.FOR7",
+            "verdict": "path"
+          },
+          {
+            "aboveModelTopM": 164.0,
+            "distanceM": 8218.152014651469,
+            "explanation": "S arrives 0.453 s early against the 1D model (n 43). Its nearest stations with a S term within 8 km (6K.CS04, UU.FSB4, UU.FORB) have a median +0.036 s: they don't share it. S/P term ratio 1.83 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1964 m ASL, 164 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 43,
+            "neighbourMedianS": 0.036162495613098145,
+            "neighbours": "6K.CS04,UU.FSB4,UU.FORB",
+            "phase": "S",
+            "sensorElevM": 1964.0,
+            "spRatio": 1.833437236422311,
+            "staticS": -0.4529590606689453,
+            "stationId": "UU.FOR7",
+            "verdict": "path"
+          },
+          {
+            "aboveModelTopM": -146.0,
+            "distanceM": 16350.02148142711,
+            "explanation": "P arrives 0.216 s early against the 1D model (n 12). Its nearest stations with a P term within 8 km (UU.FSB5) have a median +0.312 s: they don't share it. The station lies 16.4 km from the events' median epicentre (more than 15 km), so most of its ray length lies in the model's half-space, which the layer file marks as extrapolation; faster rock there would make distant stations early. No other station that far has a P term later than +0.15 s, so the table doesn't contradict that; nothing here tests it further. Sensor at 1654 m ASL, 146 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 12,
+            "neighbourMedianS": 0.3122735023498535,
+            "neighbours": "UU.FSB5",
+            "phase": "P",
+            "sensorElevM": 1654.0,
+            "spRatio": null,
+            "staticS": -0.21611499786376953,
+            "stationId": "UU.FOR8",
+            "verdict": "far"
+          },
+          {
+            "aboveModelTopM": 39.09999999999991,
+            "distanceM": 3855.6867807487783,
+            "explanation": "P arrives 0.219 s early against the 1D model (n 7). Its nearest stations with a P term within 8 km (UU.FOR2, UU.NMU, UU.FORK) have a median -0.065 s: they don't share it. S/P term ratio 1.92 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1839 m ASL, 39 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 7,
+            "neighbourMedianS": -0.06499886512756348,
+            "neighbours": "UU.FOR2,UU.NMU,UU.FORK",
+            "phase": "P",
+            "sensorElevM": 1839.1,
+            "spRatio": 1.9173993941217427,
+            "staticS": -0.2194993495941162,
+            "stationId": "UU.FORB",
+            "verdict": "path"
+          },
+          {
+            "aboveModelTopM": 39.09999999999991,
+            "distanceM": 3855.6867807487783,
+            "explanation": "S arrives 0.421 s early against the 1D model (n 21). Its nearest stations with a S term within 8 km (UU.FOR2, UU.NMU, UU.FORK) have a median -0.237 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.92 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1839 m ASL, 39 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 21,
+            "neighbourMedianS": -0.23684239387512207,
+            "neighbours": "UU.FOR2,UU.NMU,UU.FORK",
+            "phase": "S",
+            "sensorElevM": 1839.1,
+            "spRatio": 1.9173993941217427,
+            "staticS": -0.420867919921875,
+            "stationId": "UU.FORB",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": -284.0,
+            "distanceM": 9205.619180584494,
+            "explanation": "P arrives 0.180 s late against the 1D model (n 42). Its nearest stations with a P term within 8 km (6K.CS02, UU.FSB6, UU.FORK2) have a median +0.089 s: they don't share it. S/P term ratio 4.35 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1516 m ASL, 284 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 42,
+            "neighbourMedianS": 0.08865237236022949,
+            "neighbours": "6K.CS02,UU.FSB6,UU.FORK2",
+            "phase": "P",
+            "sensorElevM": 1516.0,
+            "spRatio": 4.354995541436219,
+            "staticS": 0.18034207820892334,
+            "stationId": "UU.FORW",
+            "verdict": "vpvs"
+          },
+          {
+            "aboveModelTopM": -284.0,
+            "distanceM": 9205.619180584494,
+            "explanation": "S arrives 0.785 s late against the 1D model (n 31). Its nearest stations with a S term within 8 km (6K.CS02, UU.FSB6, UU.FORK2) have a median +0.588 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 4.35 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1516 m ASL, 284 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 31,
+            "neighbourMedianS": 0.5882765054702759,
+            "neighbours": "6K.CS02,UU.FSB6,UU.FORK2",
+            "phase": "S",
+            "sensorElevM": 1516.0,
+            "spRatio": 4.354995541436219,
+            "staticS": 0.7853889465332031,
+            "stationId": "UU.FORW",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": -128.0,
+            "distanceM": 3499.6451052544467,
+            "explanation": "S arrives 0.161 s early against the 1D model (n 22). Its nearest stations with a S term within 8 km (UU.FORK, UU.FORK2, UU.FORK3) have a median +0.007 s: they don't share it. S/P term ratio 2.88 against the model's Vp/Vs 1.97 at the sensor: S changed proportionally more than P, consistent with faster near-station rock with a lower Vp/Vs than the model's (as in crystalline rock under the model's sediment-like top layers), which advances P and advances S more. Sensor at 1672 m ASL, 128 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 22,
+            "neighbourMedianS": 0.0065348148345947266,
+            "neighbours": "UU.FORK,UU.FORK2,UU.FORK3",
+            "phase": "S",
+            "sensorElevM": 1672.0,
+            "spRatio": 2.8795614518104946,
+            "staticS": -0.16083800792694092,
+            "stationId": "UU.FSB3",
+            "verdict": "vpvs"
+          },
+          {
+            "aboveModelTopM": -222.0,
+            "distanceM": 7273.436756803747,
+            "explanation": "S arrives 0.392 s late against the 1D model (n 37). Its nearest stations with a S term within 8 km (6K.CS06, 6K.CS04, UU.FOR7) have a median +0.036 s: they don't share it. S/P term ratio 4.19 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1578 m ASL, 222 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 37,
+            "neighbourMedianS": 0.036162495613098145,
+            "neighbours": "6K.CS06,6K.CS04,UU.FOR7",
+            "phase": "S",
+            "sensorElevM": 1578.0,
+            "spRatio": 4.193859672629872,
+            "staticS": 0.39177799224853516,
+            "stationId": "UU.FSB4",
+            "verdict": "vpvs"
+          },
+          {
+            "aboveModelTopM": -326.0,
+            "distanceM": 10228.340933192001,
+            "explanation": "P arrives 0.312 s late against the 1D model (n 39). Its nearest stations with a P term within 8 km (UU.FOR8, 6K.CS02) have a median -0.064 s: they don't share it. S/P term ratio 2.80 against the model's Vp/Vs 2.16 at the sensor: P and S slowed in proportion, consistent with a velocity anomaly near the station. Sensor at 1474 m ASL, 326 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 39,
+            "neighbourMedianS": -0.06373131275177002,
+            "neighbours": "UU.FOR8,6K.CS02",
+            "phase": "P",
+            "sensorElevM": 1474.0,
+            "spRatio": 2.8022049672843323,
+            "staticS": 0.3122735023498535,
+            "stationId": "UU.FSB5",
+            "verdict": "path"
+          },
+          {
+            "aboveModelTopM": -326.0,
+            "distanceM": 10228.340933192001,
+            "explanation": "S arrives 0.875 s late against the 1D model (n 38). Its nearest stations with a S term within 8 km (6K.CS02) have a median +0.588 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.80 against the model's Vp/Vs 2.16 at the sensor: P and S slowed in proportion, consistent with a velocity anomaly near the station. Sensor at 1474 m ASL, 326 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 38,
+            "neighbourMedianS": 0.5882765054702759,
+            "neighbours": "6K.CS02",
+            "phase": "S",
+            "sensorElevM": 1474.0,
+            "spRatio": 2.8022049672843323,
+            "staticS": 0.8750543594360352,
+            "stationId": "UU.FSB5",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": -338.0,
+            "distanceM": 13476.883279838243,
+            "explanation": "P arrives 0.160 s late against the 1D model (n 40). Its nearest stations with a P term within 8 km (UU.FORW, 6K.CS02) have a median +0.134 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 4.49 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1462 m ASL, 338 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 40,
+            "neighbourMedianS": 0.13449722528457642,
+            "neighbours": "UU.FORW,6K.CS02",
+            "phase": "P",
+            "sensorElevM": 1462.0,
+            "spRatio": 4.490521696631901,
+            "staticS": 0.16049599647521973,
+            "stationId": "UU.FSB6",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": -338.0,
+            "distanceM": 13476.883279838243,
+            "explanation": "S arrives 0.721 s late against the 1D model (n 21). Its nearest stations with a S term within 8 km (UU.FORW, 6K.CS02) have a median +0.687 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 4.49 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1462 m ASL, 338 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 21,
+            "neighbourMedianS": 0.6868327260017395,
+            "neighbours": "UU.FORW,6K.CS02",
+            "phase": "S",
+            "sensorElevM": 1462.0,
+            "spRatio": 4.490521696631901,
+            "staticS": 0.7207107543945312,
+            "stationId": "UU.FSB6",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": -271.0,
+            "distanceM": 13785.767838328498,
+            "explanation": "P arrives 0.193 s late against the 1D model (n 16). Its nearest stations with a P term within 8 km (UU.FSB4, UU.FOR1) have a median -0.086 s: they don't share it. S/P term ratio 3.90 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1529 m ASL, 271 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 16,
+            "neighbourMedianS": -0.08566617965698242,
+            "neighbours": "UU.FSB4,UU.FOR1",
+            "phase": "P",
+            "sensorElevM": 1529.0,
+            "spRatio": 3.897658122354062,
+            "staticS": 0.19274532794952393,
+            "stationId": "UU.MHS2",
+            "verdict": "vpvs"
+          },
+          {
+            "aboveModelTopM": -271.0,
+            "distanceM": 13785.767838328498,
+            "explanation": "S arrives 0.751 s late against the 1D model (n 14). Its nearest stations with a S term within 8 km (UU.FSB4, UU.FOR1) have a median +0.019 s: they don't share it. S/P term ratio 3.90 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1529 m ASL, 271 m below the velocity model's own top.",
+            "farContradictedBy": "",
+            "modelVpVs": 2.1612635078969245,
+            "nEvents": 14,
+            "neighbourMedianS": 0.019329309463500977,
+            "neighbours": "UU.FSB4,UU.FOR1",
+            "phase": "S",
+            "sensorElevM": 1529.0,
+            "spRatio": 3.897658122354062,
+            "staticS": 0.7512553930282593,
+            "stationId": "UU.MHS2",
+            "verdict": "vpvs"
+          },
+          {
+            "aboveModelTopM": 53.0,
+            "distanceM": 5490.073969942565,
+            "explanation": "P arrives 0.189 s early against the 1D model (n 37). Its nearest stations with a P term within 8 km (6K.CS03, UU.FSB3, UU.FORB) have a median -0.219 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.50 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1853 m ASL, 53 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 37,
+            "neighbourMedianS": -0.2194993495941162,
+            "neighbours": "6K.CS03,UU.FSB3,UU.FORB",
+            "phase": "P",
+            "sensorElevM": 1853.0,
+            "spRatio": 2.501637513203714,
+            "staticS": -0.18869495391845703,
+            "stationId": "UU.NMU",
+            "verdict": "lateral"
+          },
+          {
+            "aboveModelTopM": 53.0,
+            "distanceM": 5490.073969942565,
+            "explanation": "S arrives 0.472 s early against the 1D model (n 38). Its nearest stations with a S term within 8 km (6K.CS03, UU.FSB3, UU.FORB) have a median -0.421 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.50 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1853 m ASL, 53 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
+            "farContradictedBy": "",
+            "modelVpVs": 1.9742046431642304,
+            "nEvents": 38,
+            "neighbourMedianS": -0.420867919921875,
+            "neighbours": "6K.CS03,UU.FSB3,UU.FORB",
+            "phase": "S",
+            "sensorElevM": 1853.0,
+            "spRatio": 2.501637513203714,
+            "staticS": -0.4720463752746582,
+            "stationId": "UU.NMU",
+            "verdict": "lateral"
+          }
+        ],
+        "history": [
+          {
+            "iteration": 1,
+            "maxAbsS": 0.8750543594360352,
+            "medianRmsS": 0.04432027667012297,
+            "nCalibration": 0,
+            "nNonZero": 44
+          }
+        ],
+        "minEvents": 3,
+        "mode": "calibrationRun",
+        "note": "terms borrowed from calibration run 20260926-0210-a04c611 (its statics.parquet), applied to every event; none fit on this window",
+        "pass": 2,
+        "pipelineOrder": null,
+        "previousMedianRmsS": null,
+        "previousMedianRmsSFrom": null,
+        "reference": null,
+        "sigma": [
+          {
+            "configuredS": 0.02,
+            "events": "all located events",
+            "nPicks": 4,
+            "phase": "P",
+            "ratio": 0.015650299787521364,
+            "robustSigmaRoundedS": 0.0,
+            "robustSigmaS": 0.00031300599575042725,
+            "wellAbove": false
+          },
+          {
+            "configuredS": 0.04,
+            "events": "all located events",
+            "nPicks": 5,
+            "phase": "S",
+            "ratio": 0.809971500635147,
+            "robustSigmaRoundedS": 0.032,
+            "robustSigmaS": 0.03239886002540588,
+            "wellAbove": false
+          }
+        ],
+        "sigmaEvents": "all located events",
+        "skippedOutsideGrid": [],
+        "stationPhasesNotInUse": [
+          "6K.CS05 P",
+          "6K.CS05 S",
+          "UU.FORU P",
+          "UU.FORU S"
+        ],
+        "stationPhasesWithoutTerm": [],
+        "terms": [
+          {
+            "madS": 0.011647343635559082,
+            "nEvents": 42,
+            "phase": "P",
+            "rawS": 0.06758177280426025,
+            "staticS": 0.06758177280426025,
+            "stationId": "6K.CS01"
+          },
+          {
+            "madS": 0.03418231010437012,
+            "nEvents": 43,
+            "phase": "S",
+            "rawS": 0.24493098258972168,
+            "staticS": 0.24493098258972168,
+            "stationId": "6K.CS01"
+          },
+          {
+            "madS": 0.045806884765625,
+            "nEvents": 43,
+            "phase": "P",
+            "rawS": 0.08865237236022949,
+            "staticS": 0.08865237236022949,
+            "stationId": "6K.CS02"
+          },
+          {
+            "madS": 0.03994607925415039,
+            "nEvents": 42,
+            "phase": "S",
+            "rawS": 0.5882765054702759,
+            "staticS": 0.5882765054702759,
+            "stationId": "6K.CS02"
+          },
+          {
+            "madS": 0.029158592224121094,
+            "nEvents": 43,
+            "phase": "P",
+            "rawS": -0.2480480670928955,
+            "staticS": -0.2480480670928955,
+            "stationId": "6K.CS03"
+          },
+          {
+            "madS": 0.0536956787109375,
+            "nEvents": 43,
+            "phase": "S",
+            "rawS": -0.4975447654724121,
+            "staticS": -0.4975447654724121,
+            "stationId": "6K.CS03"
+          },
+          {
+            "madS": 0.034188270568847656,
+            "nEvents": 42,
+            "phase": "P",
+            "rawS": 0.035114169120788574,
+            "staticS": 0.035114169120788574,
+            "stationId": "6K.CS04"
+          },
+          {
+            "madS": 0.05690932273864746,
+            "nEvents": 42,
+            "phase": "S",
+            "rawS": 0.036162495613098145,
+            "staticS": 0.036162495613098145,
+            "stationId": "6K.CS04"
+          },
+          {
+            "madS": 0.024255990982055664,
+            "nEvents": 41,
+            "phase": "P",
+            "rawS": 0.23283958435058594,
+            "staticS": 0.23283958435058594,
+            "stationId": "6K.CS06"
+          },
+          {
+            "madS": 0.053182125091552734,
+            "nEvents": 39,
+            "phase": "S",
+            "rawS": 0.6454241275787354,
+            "staticS": 0.6454241275787354,
+            "stationId": "6K.CS06"
+          },
+          {
+            "madS": 0.017138957977294922,
+            "nEvents": 16,
+            "phase": "P",
+            "rawS": -0.2647494077682495,
+            "staticS": -0.2647494077682495,
+            "stationId": "UU.FOR1"
+          },
+          {
+            "madS": 0.037354469299316406,
+            "nEvents": 5,
+            "phase": "S",
+            "rawS": -0.3531193733215332,
+            "staticS": -0.3531193733215332,
+            "stationId": "UU.FOR1"
+          },
+          {
+            "madS": 0.007178306579589844,
+            "nEvents": 41,
+            "phase": "P",
+            "rawS": -0.06499886512756348,
+            "staticS": -0.06499886512756348,
+            "stationId": "UU.FOR2"
+          },
+          {
+            "madS": 0.024605274200439453,
+            "nEvents": 41,
+            "phase": "S",
+            "rawS": -0.23684239387512207,
+            "staticS": -0.23684239387512207,
+            "stationId": "UU.FOR2"
+          },
+          {
+            "madS": 0.05066180229187012,
+            "nEvents": 43,
+            "phase": "P",
+            "rawS": -0.3244297504425049,
+            "staticS": -0.3244297504425049,
+            "stationId": "UU.FOR5"
+          },
+          {
+            "madS": 0.08349871635437012,
+            "nEvents": 43,
+            "phase": "S",
+            "rawS": -0.5809004306793213,
+            "staticS": -0.5809004306793213,
+            "stationId": "UU.FOR5"
+          },
+          {
+            "madS": 0.018512248992919922,
+            "nEvents": 43,
+            "phase": "P",
+            "rawS": -0.24701642990112305,
+            "staticS": -0.24701642990112305,
+            "stationId": "UU.FOR6"
+          },
+          {
+            "madS": 0.027792692184448242,
+            "nEvents": 43,
+            "phase": "S",
+            "rawS": -0.44694948196411133,
+            "staticS": -0.44694948196411133,
+            "stationId": "UU.FOR6"
+          },
+          {
+            "madS": 0.026073217391967773,
+            "nEvents": 43,
+            "phase": "P",
+            "rawS": -0.2470545768737793,
+            "staticS": -0.2470545768737793,
+            "stationId": "UU.FOR7"
+          },
+          {
+            "madS": 0.048719167709350586,
+            "nEvents": 43,
+            "phase": "S",
+            "rawS": -0.4529590606689453,
+            "staticS": -0.4529590606689453,
+            "stationId": "UU.FOR7"
+          },
+          {
+            "madS": 0.025228023529052734,
+            "nEvents": 12,
+            "phase": "P",
+            "rawS": -0.21611499786376953,
+            "staticS": -0.21611499786376953,
+            "stationId": "UU.FOR8"
+          },
+          {
+            "madS": 0.0,
+            "nEvents": 1,
+            "phase": "S",
+            "rawS": -0.30547523498535156,
+            "staticS": 0.0,
+            "stationId": "UU.FOR8"
+          },
+          {
+            "madS": 0.03640890121459961,
+            "nEvents": 7,
+            "phase": "P",
+            "rawS": -0.2194993495941162,
+            "staticS": -0.2194993495941162,
+            "stationId": "UU.FORB"
+          },
+          {
+            "madS": 0.03713631629943848,
+            "nEvents": 21,
+            "phase": "S",
+            "rawS": -0.420867919921875,
+            "staticS": -0.420867919921875,
+            "stationId": "UU.FORB"
+          },
+          {
+            "madS": 0.0077190399169921875,
+            "nEvents": 43,
+            "phase": "P",
+            "rawS": 0.0,
+            "staticS": 0.0,
+            "stationId": "UU.FORK"
+          },
+          {
+            "madS": 0.030492067337036133,
+            "nEvents": 42,
+            "phase": "S",
+            "rawS": 0.0017402172088623047,
+            "staticS": 0.0017402172088623047,
+            "stationId": "UU.FORK"
+          },
+          {
+            "madS": 0.015221118927001953,
+            "nEvents": 43,
+            "phase": "P",
+            "rawS": -0.027727842330932617,
+            "staticS": -0.027727842330932617,
+            "stationId": "UU.FORK2"
+          },
+          {
+            "madS": 0.03406691551208496,
+            "nEvents": 33,
+            "phase": "S",
+            "rawS": 0.0065348148345947266,
+            "staticS": 0.0065348148345947266,
+            "stationId": "UU.FORK2"
+          },
+          {
+            "madS": 0.008463859558105469,
+            "nEvents": 42,
+            "phase": "P",
+            "rawS": 0.019685983657836914,
+            "staticS": 0.019685983657836914,
+            "stationId": "UU.FORK3"
+          },
+          {
+            "madS": 0.029903650283813477,
+            "nEvents": 42,
+            "phase": "S",
+            "rawS": 0.08938264846801758,
+            "staticS": 0.08938264846801758,
+            "stationId": "UU.FORK3"
+          },
+          {
+            "madS": 0.04952359199523926,
+            "nEvents": 42,
+            "phase": "P",
+            "rawS": 0.18034207820892334,
+            "staticS": 0.18034207820892334,
+            "stationId": "UU.FORW"
+          },
+          {
+            "madS": 0.06992769241333008,
+            "nEvents": 31,
+            "phase": "S",
+            "rawS": 0.7853889465332031,
+            "staticS": 0.7853889465332031,
+            "stationId": "UU.FORW"
+          },
+          {
+            "madS": 0.020571112632751465,
+            "nEvents": 36,
+            "phase": "P",
+            "rawS": 0.018616080284118652,
+            "staticS": 0.018616080284118652,
+            "stationId": "UU.FSB1"
+          },
+          {
+            "madS": 0.037999629974365234,
+            "nEvents": 38,
+            "phase": "S",
+            "rawS": 0.04926729202270508,
+            "staticS": 0.04926729202270508,
+            "stationId": "UU.FSB1"
+          },
+          {
+            "madS": 0.023492932319641113,
+            "nEvents": 34,
+            "phase": "P",
+            "rawS": -0.05585503578186035,
+            "staticS": -0.05585503578186035,
+            "stationId": "UU.FSB3"
+          },
+          {
+            "madS": 0.06275367736816406,
+            "nEvents": 22,
+            "phase": "S",
+            "rawS": -0.16083800792694092,
+            "staticS": -0.16083800792694092,
+            "stationId": "UU.FSB3"
+          },
+          {
+            "madS": 0.03539931774139404,
+            "nEvents": 38,
+            "phase": "P",
+            "rawS": 0.09341704845428467,
+            "staticS": 0.09341704845428467,
+            "stationId": "UU.FSB4"
+          },
+          {
+            "madS": 0.0583953857421875,
+            "nEvents": 37,
+            "phase": "S",
+            "rawS": 0.39177799224853516,
+            "staticS": 0.39177799224853516,
+            "stationId": "UU.FSB4"
+          },
+          {
+            "madS": 0.018352746963500977,
+            "nEvents": 39,
+            "phase": "P",
+            "rawS": 0.3122735023498535,
+            "staticS": 0.3122735023498535,
+            "stationId": "UU.FSB5"
+          },
+          {
+            "madS": 0.05784022808074951,
+            "nEvents": 38,
+            "phase": "S",
+            "rawS": 0.8750543594360352,
+            "staticS": 0.8750543594360352,
+            "stationId": "UU.FSB5"
+          },
+          {
+            "madS": 0.0532609224319458,
+            "nEvents": 40,
+            "phase": "P",
+            "rawS": 0.16049599647521973,
+            "staticS": 0.16049599647521973,
+            "stationId": "UU.FSB6"
+          },
+          {
+            "madS": 0.07529759407043457,
+            "nEvents": 21,
+            "phase": "S",
+            "rawS": 0.7207107543945312,
+            "staticS": 0.7207107543945312,
+            "stationId": "UU.FSB6"
+          },
+          {
+            "madS": 0.023829936981201172,
+            "nEvents": 16,
+            "phase": "P",
+            "rawS": 0.19274532794952393,
+            "staticS": 0.19274532794952393,
+            "stationId": "UU.MHS2"
+          },
+          {
+            "madS": 0.0373682975769043,
+            "nEvents": 14,
+            "phase": "S",
+            "rawS": 0.7512553930282593,
+            "staticS": 0.7512553930282593,
+            "stationId": "UU.MHS2"
+          },
+          {
+            "madS": 0.02118659019470215,
+            "nEvents": 37,
+            "phase": "P",
+            "rawS": -0.18869495391845703,
+            "staticS": -0.18869495391845703,
+            "stationId": "UU.NMU"
+          },
+          {
+            "madS": 0.030769705772399902,
+            "nEvents": 38,
+            "phase": "S",
+            "rawS": -0.4720463752746582,
+            "staticS": -0.4720463752746582,
+            "stationId": "UU.NMU"
+          }
+        ]
+      },
+      "stationIds": [
+        "6K.CS01",
+        "6K.CS02",
+        "6K.CS03",
+        "6K.CS04",
+        "6K.CS06",
+        "UU.FOR1",
+        "UU.FOR2",
+        "UU.FOR5",
+        "UU.FOR6",
+        "UU.FOR7",
+        "UU.FOR8",
+        "UU.FORB",
+        "UU.FORK",
+        "UU.FORK2",
+        "UU.FORK3",
+        "UU.FORW",
+        "UU.FSB1",
+        "UU.FSB3",
+        "UU.FSB4",
+        "UU.FSB5",
+        "UU.FSB6",
+        "UU.MHS2",
+        "UU.NMU"
+      ],
+      "synthetic": {
+        "depthBiasSign": "elevM_true - elevM_located; positive = located too deep",
+        "forwardModel": "exact 1D layered first arrivals (tt_grid.layered_first_arrival) on the tables' top-extended velocity model, plus Gaussian noise at the locator's sigma per station and phase (pickSigmaS or the profilePickSigmaS override)",
+        "method": "grid1d",
+        "nPicksMean": 34.945,
+        "nSMean": 15.945,
+        "nStations": 19,
+        "nWorkers": 8,
+        "noiseFree": {
+          "fracHWithinHErrM": 1.0,
+          "fracVWithinVErrM": 1.0,
+          "meanDepthBiasM": 4.1598369285608285,
+          "medianDepthBiasM": 4.839762885952496,
+          "medianFormalHErrM": 47.89529034942622,
+          "medianFormalVErrM": 52.467066622436036,
+          "medianHErrM": 9.92173102673619,
+          "medianVErrM": 6.959737529829454,
+          "nDepthOnEdge": 0,
+          "nEventsWithDroppedPicks": 0,
+          "nMapOnVolumeBottom": 0,
+          "nMapOnVolumeTop": 0,
+          "nPdfTruncated": 0,
+          "p90HErrM": 14.588280459294165,
+          "p90VErrM": 14.628246190470007
+        },
+        "noisy": {
+          "fracHWithinHErrM": 0.88,
+          "fracVWithinVErrM": 0.785,
+          "meanDepthBiasM": -2.965163071439172,
+          "medianDepthBiasM": -2.7183043324914706,
+          "medianFormalHErrM": 100.45053785886029,
+          "medianFormalVErrM": 114.1882436917426,
+          "medianHErrM": 60.453903468795396,
+          "medianVErrM": 68.29078839069302,
+          "nDepthOnEdge": 0,
+          "nEventsWithDroppedPicks": 2,
+          "nMapOnVolumeBottom": 0,
+          "nMapOnVolumeTop": 0,
+          "nPdfTruncated": 0,
+          "p90HErrM": 102.89088994205248,
+          "p90VErrM": 163.8713744668612
+        },
+        "pickSigmaSByStation": {
+          "6K.CS01": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "6K.CS03": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "6K.CS04": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "6K.CS06": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FOR1": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FOR2": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FOR5": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FOR6": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FOR7": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FOR8": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FORB": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FORK": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FORK2": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FORK3": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FORW": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FSB1": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FSB4": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.MHS2": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.NMU": {
+            "P": 0.02,
+            "S": 0.04
+          }
+        },
+        "pickStats": {
+          "caveat": "every station gets a P pick, so the synthetic picks are optimistic for weak events",
+          "measured": {
+            "from": "located events of this run: sKeepProb = median over events of nS / nStations, pickProb = median prob of the picks used in the final locations",
+            "medianNPPerStation": 0.6666666666666666,
+            "medianNS": 5.0,
+            "medianNStations": 6.0,
+            "nEvents": 1,
+            "nUsedPicks": 9,
+            "pickProb": 0.6141995191574097,
+            "sKeepProb": 0.8333333333333334
+          },
+          "pickProb": 0.6141995191574097,
+          "sKeepProb": 0.8333333333333334,
+          "source": "measured from the run"
+        },
+        "report": {
+          "medianDepthBiasM": -2.7183043324914706,
+          "medianHErrM": 60.453903468795396,
+          "medianVErrM": 68.29078839069302,
+          "nEvents": 200,
+          "p90VErrM": 163.8713744668612,
+          "pickSigmaS": {
+            "P": 0.02,
+            "S": 0.04
+          }
+        },
+        "reportFields": "synthetic.json medianHErrM/medianVErrM/p90VErrM are TRUE errors of the noisy run; compare Tier A formal vErrM with noisy.medianFormalVErrM",
+        "runtimeS": 72.50336833299662,
+        "stationGeometry": {
+          "enuEM": [
+            -715.9296968735289,
+            5119.699147076928,
+            71.45423800346907,
+            -3220.0667493927176,
+            -17254.851974213787,
+            2381.467554473027,
+            4098.540250702179,
+            9767.267229392368,
+            3934.1969522276777,
+            -15468.775909147225,
+            3877.6265084560146,
+            1158.1485823530238,
+            181.8270498503698,
+            163.59002486884128,
+            -3089.2741617038264,
+            696.2168599872966,
+            -3130.5075531741604,
+            -10123.953975789715,
+            4374.328795633162
+          ],
+          "enuNM": [
+            -2099.285276840441,
+            2794.603762664832,
+            -5930.956431901082,
+            -5120.144364236854,
+            -15292.037451975048,
+            -1714.1522231055424,
+            6547.315615576692,
+            -2436.316266694106,
+            -9992.30878741201,
+            2396.9210917595774,
+            -2285.6769841955975,
+            -997.8344619777054,
+            18.45089060999453,
+            -1076.9670574273914,
+            5903.80738378223,
+            -2796.343946106732,
+            -9291.196676406078,
+            -12052.583264384419,
+            632.4684274503961
+          ],
+          "hashOf": "JSON list of [id, enu_e, enu_n, sensorElevM] per station, in frame order",
+          "label": "20260927-0221-615e997",
+          "nBorehole": 8,
+          "sensorElevM": [
+            1586.617676,
+            1830.39209,
+            1652.448975,
+            1551.392944,
+            1642.0,
+            1760.0,
+            1739.1,
+            2261.732910156,
+            1964.0,
+            1654.0,
+            1839.1,
+            1408.0,
+            1344.7,
+            1355.5,
+            1516.0,
+            1668.0,
+            1578.0,
+            1529.0,
+            1853.0
+          ],
+          "sha256": "91e4f08893a52f81849370e063c24585451c14746dc02d4c9ed45d0c78b8337b",
+          "stationIds": [
+            "6K.CS01",
+            "6K.CS03",
+            "6K.CS04",
+            "6K.CS06",
+            "UU.FOR1",
+            "UU.FOR2",
+            "UU.FOR5",
+            "UU.FOR6",
+            "UU.FOR7",
+            "UU.FOR8",
+            "UU.FORB",
+            "UU.FORK",
+            "UU.FORK2",
+            "UU.FORK3",
+            "UU.FORW",
+            "UU.FSB1",
+            "UU.FSB4",
+            "UU.MHS2",
+            "UU.NMU"
+          ]
+        },
+        "stationsWithoutPicks": [
+          "6K.CS02",
+          "UU.FSB3",
+          "UU.FSB5",
+          "UU.FSB6"
+        ],
+        "synthetic": {
+          "nEvents": 200,
+          "pickProb": 0.6141995191574097,
+          "sKeepProb": 0.8333333333333334,
+          "seed": 20260925,
+          "zone": {
+            "bottomElevM": -4500.0,
+            "centerEM": 0.0,
+            "centerNM": 0.0,
+            "radiusM": 2000.0,
+            "topElevM": -1000.0
+          }
+        }
+      },
+      "tableConfig": {
+        "grid3d": {
+          "airHandling": "topSurfaceVelocity",
+          "bottomElevM": -7000.0,
+          "constantColumns": "fallback1d",
+          "fmmOrder": 2,
+          "horizontalMarginM": 1000.0,
+          "seedRadiusM": 1000.0,
+          "spacingM": 200.0,
+          "topMarginM": 100.0
+        },
+        "grids": {
+          "accuracyCheckStrideR": 4,
+          "bottomElevM": -8000.0,
+          "drM": 25.0,
+          "dzM": 25.0,
+          "fmmOrder": 2,
+          "rMaxM": 52000.0,
+          "seedRadiusM": 500.0,
+          "topMarginM": 100.0
+        },
+        "velocity": {
+          "layerFile": "configs/velocity/forge_1d.csv",
+          "maxTopExtensionM": 1000.0,
+          "minLayerThicknessM": 10.0,
+          "model3d": {
+            "airVp": 0.73271,
+            "airVs": 0.40002,
+            "cacheFile": "Cape-model_50m_grid_sonic-logs-only_stretched_3-1-24.nc",
+            "citation": "Nakata, N., Hopp, C., Wu, S., Robertson, M., & Dadi, S. (2025). Cape EGS and Utah FORGE: Empirical 3D Seismic Velocity Model [Data set]. Geothermal Data Repository, Lawrence Berkeley National Laboratory. https://gdr.openei.org/submissions/1800",
+            "crs": "EPSG:32612",
+            "expectedBytes": 1161642687,
+            "license": "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)",
+            "submissionUrl": "https://gdr.openei.org/submissions/1800",
+            "units": "km/s",
+            "url": "https://gdr.openei.org/files/1800/Cape-model_50m_grid_sonic-logs-only_stretched_3-1-24.nc"
+          },
+          "plausibleVpMPerS": [
+            300.0,
+            9000.0
+          ],
+          "plausibleVsMPerS": [
+            100.0,
+            5000.0
+          ],
+          "profilePlotBottomElevM": -2000.0
+        }
+      },
+      "tables": {
+        "accuracyVsExactByLayer": {
+          "P": [
+            {
+              "maxErrS": 0.006334676647528292,
+              "topElevM": 2375.0
+            },
+            {
+              "maxErrS": 0.0060091725849928945,
+              "topElevM": 1595.0
+            },
+            {
+              "maxErrS": 0.006404767373265785,
+              "topElevM": 1227.0
+            },
+            {
+              "maxErrS": 0.0063123231059845075,
+              "topElevM": 1027.0
+            },
+            {
+              "maxErrS": 0.002432662307473965,
+              "topElevM": 445.0
+            },
+            {
+              "maxErrS": 0.0026268313515487307,
+              "topElevM": 315.0
+            },
+            {
+              "maxErrS": 0.0023734111273849834,
+              "topElevM": -217.0
+            },
+            {
+              "maxErrS": 0.001778489807728434,
+              "topElevM": -610.0
+            }
+          ],
+          "S": [
+            {
+              "maxErrS": 0.014083516633809467,
+              "topElevM": 2375.0
+            },
+            {
+              "maxErrS": 0.01446909558216003,
+              "topElevM": 1595.0
+            },
+            {
+              "maxErrS": 0.015244843472404679,
+              "topElevM": 1227.0
+            },
+            {
+              "maxErrS": 0.00961945597930014,
+              "topElevM": 1027.0
+            },
+            {
+              "maxErrS": 0.004292791116025985,
+              "topElevM": 445.0
+            },
+            {
+              "maxErrS": 0.003672263131804243,
+              "topElevM": 315.0
+            },
+            {
+              "maxErrS": 0.003303326980308441,
+              "topElevM": -217.0
+            },
+            {
+              "maxErrS": 0.0024127300455667466,
+              "topElevM": -610.0
+            }
+          ]
+        },
+        "algorithm": "tt_grid/2: skfmm, cell-mean slowness, exact 1D layered seed",
+        "buildS": 0.17189516698999796,
+        "fmmOrder": 2,
+        "grid": {
+          "bottomElevM": -8000.0,
+          "drM": 25.0,
+          "dzM": 25.0,
+          "nR": 2081,
+          "nZ": 416,
+          "rMaxM": 52000.0,
+          "topElevM": 2375.0
+        },
+        "nBuilt": 0,
+        "nLoaded": 46,
+        "scikitFmm": "2025.06.23",
+        "seedRadiusM": 500.0,
+        "solverSourceSha256": "9e0505d0206c07fb99e8fac39aacb7d7b9cad034bfcbf89f044e5a901a610c7f",
+        "tables": [
+          {
+            "key": "45f18b3a40e72c34481b52629ddd2ed3565a81b62cdd469359899ef42c2ffd58",
+            "maxErrVsExactS": 0.005674431354930676,
+            "phase": "P",
+            "receiverElevM": 1344.7,
+            "stationIds": [
+              "UU.FORK2"
+            ]
+          },
+          {
+            "key": "51bb0165b1b3a87a88acbc0a674893e84184b0eae00db57af70fcd4c09f9b3d8",
+            "maxErrVsExactS": 0.00580765481522616,
+            "phase": "P",
+            "receiverElevM": 1355.5,
+            "stationIds": [
+              "UU.FORK3"
+            ]
+          },
+          {
+            "key": "afa61fb786bad780b5caf54ff08913ce0006f709780229eafa52445da717d3c1",
+            "maxErrVsExactS": 0.005304197097645347,
+            "phase": "P",
+            "receiverElevM": 1408.0,
+            "stationIds": [
+              "UU.FORK"
+            ]
+          },
+          {
+            "key": "376929a384a219d181bf9aa707d8a4205ca75feb5af4b58a3acf938c51fbb167",
+            "maxErrVsExactS": 0.005380588108792328,
+            "phase": "P",
+            "receiverElevM": 1462.0,
+            "stationIds": [
+              "UU.FSB6"
+            ]
+          },
+          {
+            "key": "58ccfbfb6befa938852000376a8fca7403330b9f0b5c3def74853fafbe4ffc1d",
+            "maxErrVsExactS": 0.005036669371630109,
+            "phase": "P",
+            "receiverElevM": 1472.344727,
+            "stationIds": [
+              "6K.CS02"
+            ]
+          },
+          {
+            "key": "3ba4e74a5c4d97b857cd7031e1e188b343e2fdcd91d91870d88aa73d49baf177",
+            "maxErrVsExactS": 0.005098963625331909,
+            "phase": "P",
+            "receiverElevM": 1474.0,
+            "stationIds": [
+              "UU.FSB5"
+            ]
+          },
+          {
+            "key": "f76f628dc8474b7d73499de618bc46f7f2a2e5821443842b019609bd16be0a7f",
+            "maxErrVsExactS": 0.0056524348605372365,
+            "phase": "P",
+            "receiverElevM": 1516.0,
+            "stationIds": [
+              "UU.FORW"
+            ]
+          },
+          {
+            "key": "3141f703a671f47182095122a8ef8d39f6013ac4ac5d12e643df40bfe13706e6",
+            "maxErrVsExactS": 0.005077069177896187,
+            "phase": "P",
+            "receiverElevM": 1529.0,
+            "stationIds": [
+              "UU.MHS2"
+            ]
+          },
+          {
+            "key": "915595484f1253c421373f4aa789a5f52bc3e2252d342344179989ffbe31f3c6",
+            "maxErrVsExactS": 0.0049935350603690365,
+            "phase": "P",
+            "receiverElevM": 1551.392944,
+            "stationIds": [
+              "6K.CS06"
+            ]
+          },
+          {
+            "key": "61b8f39a58c318e32a3419fee06d02264542a66a10cc2cc99d2690b15cc998fd",
+            "maxErrVsExactS": 0.005010493693082041,
+            "phase": "P",
+            "receiverElevM": 1578.0,
+            "stationIds": [
+              "UU.FSB4"
+            ]
+          },
+          {
+            "key": "37c1fe12762cffcfd407f2b8dd1bfec846467621d86cba7bb4587c443937f3b0",
+            "maxErrVsExactS": 0.005257710742766264,
+            "phase": "P",
+            "receiverElevM": 1586.617676,
+            "stationIds": [
+              "6K.CS01"
+            ]
+          },
+          {
+            "key": "a8c8818c9c9bda43f763cb222366cdd78ba679c74159c3c2a24486d6758f17ef",
+            "maxErrVsExactS": 0.004994506368498575,
+            "phase": "P",
+            "receiverElevM": 1642.0,
+            "stationIds": [
+              "UU.FOR1"
+            ]
+          },
+          {
+            "key": "483ec0dda3a98d4f82cc6c6bd33387f1515be96e7601949eca70b3aa10aca1d7",
+            "maxErrVsExactS": 0.0055728609407612595,
+            "phase": "P",
+            "receiverElevM": 1652.448975,
+            "stationIds": [
+              "6K.CS04"
+            ]
+          },
+          {
+            "key": "2d36148d5185639cd7d2d39563549054469e5aaf7a540aa56b1e3289b1f3b7b0",
+            "maxErrVsExactS": 0.006363039539764248,
+            "phase": "P",
+            "receiverElevM": 1654.0,
+            "stationIds": [
+              "UU.FOR8"
+            ]
+          },
+          {
+            "key": "cefd7b428885b8146a67912cebd6ad48aa93f82c6babf9928f78b6e041a0267b",
+            "maxErrVsExactS": 0.004906938382421067,
+            "phase": "P",
+            "receiverElevM": 1668.0,
+            "stationIds": [
+              "UU.FSB1"
+            ]
+          },
+          {
+            "key": "aca515b074d985c1baed234ed94e62686675f17743e741802f8f4355fd520b96",
+            "maxErrVsExactS": 0.0058214222480004185,
+            "phase": "P",
+            "receiverElevM": 1672.0,
+            "stationIds": [
+              "UU.FSB3"
+            ]
+          },
+          {
+            "key": "ed6f24141b154d2d10579340c840690f568261c619d4e49a65d459e5aa244e33",
+            "maxErrVsExactS": 0.004741998563669969,
+            "phase": "P",
+            "receiverElevM": 1739.1,
+            "stationIds": [
+              "UU.FOR5"
+            ]
+          },
+          {
+            "key": "9f673c65a950e3d3d3492eace48ee5ac2a7cb96051ba1268449628d7861ccdb2",
+            "maxErrVsExactS": 0.006404767373265785,
+            "phase": "P",
+            "receiverElevM": 1760.0,
+            "stationIds": [
+              "UU.FOR2"
+            ]
+          },
+          {
+            "key": "957c05aff859f8a81aa2d12edd40fc924d4bf55a3c4bd4b77c3226be8f62e5ea",
+            "maxErrVsExactS": 0.005399289939167162,
+            "phase": "P",
+            "receiverElevM": 1830.39209,
+            "stationIds": [
+              "6K.CS03"
+            ]
+          },
+          {
+            "key": "e3e1acf80e8f37c72b87fd6a54efc78870e2a251793df164791108b87851db51",
+            "maxErrVsExactS": 0.004543987090899204,
+            "phase": "P",
+            "receiverElevM": 1839.1,
+            "stationIds": [
+              "UU.FORB"
+            ]
+          },
+          {
+            "key": "87c68b72f2d53761dd68b85fabb19a3d3c19e77041fbd47f88605f68d389d128",
+            "maxErrVsExactS": 0.005362214122157649,
+            "phase": "P",
+            "receiverElevM": 1853.0,
+            "stationIds": [
+              "UU.NMU"
+            ]
+          },
+          {
+            "key": "f399b1371650bdb42386403c04d2e3157255926fb17aff8feba1642e92be0729",
+            "maxErrVsExactS": 0.004628576346719981,
+            "phase": "P",
+            "receiverElevM": 1964.0,
+            "stationIds": [
+              "UU.FOR7"
+            ]
+          },
+          {
+            "key": "ed7117d29f5f8720f1cbf1550acf6f2b4cd0cdb365a4496398cfba52d3808641",
+            "maxErrVsExactS": 0.004553508114584437,
+            "phase": "P",
+            "receiverElevM": 2261.732910156,
+            "stationIds": [
+              "UU.FOR6"
+            ]
+          },
+          {
+            "key": "19a15e5d053214ca134a2ee5d06f0ceedfa62f11eb84c68017854514412f48c1",
+            "maxErrVsExactS": 0.015244843472404679,
+            "phase": "S",
+            "receiverElevM": 1344.7,
+            "stationIds": [
+              "UU.FORK2"
+            ]
+          },
+          {
+            "key": "8fcf6f75bb4c79a38af22051bae8ca8a218b4e71b795bb4b06c52c2183592485",
+            "maxErrVsExactS": 0.013999438960694,
+            "phase": "S",
+            "receiverElevM": 1355.5,
+            "stationIds": [
+              "UU.FORK3"
+            ]
+          },
+          {
+            "key": "a5e4fa433b9f60fdf8d07e1d13dfa2bb570964f7ba0d148fc871ebf9c37287dd",
+            "maxErrVsExactS": 0.013732961562768597,
+            "phase": "S",
+            "receiverElevM": 1408.0,
+            "stationIds": [
+              "UU.FORK"
+            ]
+          },
+          {
+            "key": "7e8abebce0e2e12de7df4ab172ff65c8c414dbc2dcc7c4196ecae60a925f1526",
+            "maxErrVsExactS": 0.012845673368717225,
+            "phase": "S",
+            "receiverElevM": 1462.0,
+            "stationIds": [
+              "UU.FSB6"
+            ]
+          },
+          {
+            "key": "90d3e5425a3c01b81e212405e369221e5750683543167addbcdd8aa768add2ad",
+            "maxErrVsExactS": 0.01454582245335112,
+            "phase": "S",
+            "receiverElevM": 1472.344727,
+            "stationIds": [
+              "6K.CS02"
+            ]
+          },
+          {
+            "key": "720bc6925c88a23f89e747e95757576cca11c4229f7e014645f53214ce1efc99",
+            "maxErrVsExactS": 0.014721397514594337,
+            "phase": "S",
+            "receiverElevM": 1474.0,
+            "stationIds": [
+              "UU.FSB5"
+            ]
+          },
+          {
+            "key": "3d3cb068ad352e16d3cb70031517c6a6cc596084a56d4a9123fd8af7ca313dd2",
+            "maxErrVsExactS": 0.012552717532665958,
+            "phase": "S",
+            "receiverElevM": 1516.0,
+            "stationIds": [
+              "UU.FORW"
+            ]
+          },
+          {
+            "key": "7750bd676e1300553fb98e460cc32e01e77ffcbb56e889ae7054bf6fc565ba8f",
+            "maxErrVsExactS": 0.012842555322117977,
+            "phase": "S",
+            "receiverElevM": 1529.0,
+            "stationIds": [
+              "UU.MHS2"
+            ]
+          },
+          {
+            "key": "41eec2eb39e0006c00fdddec7bd81d71d11d2bfcb5ff5f222cf25e00387dabe2",
+            "maxErrVsExactS": 0.012367791178355847,
+            "phase": "S",
+            "receiverElevM": 1551.392944,
+            "stationIds": [
+              "6K.CS06"
+            ]
+          },
+          {
+            "key": "bfdecb69406ef43b26ce9b9a6c8f51717f6263fa9a38657cf4f23e0a26b4f77d",
+            "maxErrVsExactS": 0.01263859971371617,
+            "phase": "S",
+            "receiverElevM": 1578.0,
+            "stationIds": [
+              "UU.FSB4"
+            ]
+          },
+          {
+            "key": "b9f5560b65c708e82793238fc272dabe83c07c82b6d561a15af5208f1dab53ea",
+            "maxErrVsExactS": 0.012661134184760003,
+            "phase": "S",
+            "receiverElevM": 1586.617676,
+            "stationIds": [
+              "6K.CS01"
+            ]
+          },
+          {
+            "key": "6a2ca914c168089e68e709f19972ab82d367246b301cebea2ee129ea5d7a6b5f",
+            "maxErrVsExactS": 0.013725656753871052,
+            "phase": "S",
+            "receiverElevM": 1642.0,
+            "stationIds": [
+              "UU.FOR1"
+            ]
+          },
+          {
+            "key": "98efa5c3f5364748d5be58ba2eab39252ca8ddf2691f4957cd2db8e61e38670d",
+            "maxErrVsExactS": 0.012575549937572261,
+            "phase": "S",
+            "receiverElevM": 1652.448975,
+            "stationIds": [
+              "6K.CS04"
+            ]
+          },
+          {
+            "key": "c2ea3f22c2dcb8604b11cbc4454f490907707b081648abb119a5bf2988a1eb8f",
+            "maxErrVsExactS": 0.01267548405334007,
+            "phase": "S",
+            "receiverElevM": 1654.0,
+            "stationIds": [
+              "UU.FOR8"
+            ]
+          },
+          {
+            "key": "2f37a30aff4b6452587c0bd5ac5d9c0f9d312f8d99ae5cfa00e1356c70c8a9ef",
+            "maxErrVsExactS": 0.013992682465932771,
+            "phase": "S",
+            "receiverElevM": 1668.0,
+            "stationIds": [
+              "UU.FSB1"
+            ]
+          },
+          {
+            "key": "f21f15d1b46e2e242a11c0f38a64f244279ffe6b34d20cb7b88f19afa518a264",
+            "maxErrVsExactS": 0.011596509069376815,
+            "phase": "S",
+            "receiverElevM": 1672.0,
+            "stationIds": [
+              "UU.FSB3"
+            ]
+          },
+          {
+            "key": "7f7ea43ba1d5aa98fbfe6272865bb7d1c84b4709d5b0e1ea74420138787b519e",
+            "maxErrVsExactS": 0.01351494325339675,
+            "phase": "S",
+            "receiverElevM": 1739.1,
+            "stationIds": [
+              "UU.FOR5"
+            ]
+          },
+          {
+            "key": "5bbfebaed4dbceae634b9ca963f070679254e9f65b52273522f8e65c1dcb52af",
+            "maxErrVsExactS": 0.011788064153875233,
+            "phase": "S",
+            "receiverElevM": 1760.0,
+            "stationIds": [
+              "UU.FOR2"
+            ]
+          },
+          {
+            "key": "25143981ac5aa22a4158880e52faf230e163a6b96af4bb666d25ed6f9856f2f9",
+            "maxErrVsExactS": 0.011154772890424991,
+            "phase": "S",
+            "receiverElevM": 1830.39209,
+            "stationIds": [
+              "6K.CS03"
+            ]
+          },
+          {
+            "key": "f9edfd296309a9ce961f1d8236290ac0e1949ee021314e4e1d2c1a0a1d5c6989",
+            "maxErrVsExactS": 0.01396253480780063,
+            "phase": "S",
+            "receiverElevM": 1839.1,
+            "stationIds": [
+              "UU.FORB"
+            ]
+          },
+          {
+            "key": "bf7844c08d3f1c8cee3209eab268c9d569ad57495cbc88f73fa194d884ea497a",
+            "maxErrVsExactS": 0.011598523457330145,
+            "phase": "S",
+            "receiverElevM": 1853.0,
+            "stationIds": [
+              "UU.NMU"
+            ]
+          },
+          {
+            "key": "6ce91f7b8a5b0bcfec7227298b97830efbfd73106a2bea8317942ed044fad34e",
+            "maxErrVsExactS": 0.013523082065142411,
+            "phase": "S",
+            "receiverElevM": 1964.0,
+            "stationIds": [
+              "UU.FOR7"
+            ]
+          },
+          {
+            "key": "f504e7c127187c6ac6c15f5cbd4367c2c99caafb4694cc91409bfc92328b251c",
+            "maxErrVsExactS": 0.012679377860577157,
+            "phase": "S",
+            "receiverElevM": 2261.732910156,
+            "stationIds": [
+              "UU.FOR6"
+            ]
+          }
+        ],
+        "velocityModel": {
+          "boundaryConvention": "layer i spans topElevM[i+1] < elevM <= topElevM[i]: a point exactly on a boundary takes the layer below; the deepest layer is a half-space; above the top of the model is an error",
+          "conversion": "topElevM = -TVDSS, in m above mean sea level with up positive. vpMPerS and vsMPerS are the source vp and vs unchanged (the source is already in m/s, so no unit conversion was needed). No value was edited, smoothed or resampled.",
+          "datum": "topElevM is the top of each layer in metres above mean sea level (up positive), converted as elevM = -TVDSS, with mean sea level taken as NAVD88 orthometric height (the vertical of USGS 3DEP and run.yaml); the TVDSS datum (mean sea level, positive down) is established by the GDR 1613 methods report (p. 4 text ties the TVDSS column to mean sea level; p. 5 Fig. 3a shows it positive down with these layer tops), not by the velocity CSV, which only labels the column; the deepest layer is a half-space.",
+          "layerConvention": "each source row is the top of one layer carrying that layer's constant Vp and Vs; the deepest row is the top of a half-space. The CSV does not state this; Fig. 3a of the same submission (methods report p. 5) shows it: its interfaces (green lines, digitized at TVDSS about -1598, -1230, -1030, -447, -316, 215 and 610 m) match rows 2-8, and the step velocities above the first interface (Vp about 2280 m/s, Vs about 1160 m/s) and below the last (Vp about 5520 m/s, Vs about 3330 m/s) match rows 1 (Vp 2296, Vs 1163 m/s) and 8 (Vp 5521, Vs 3334 m/s), which reading the rows as layer bottoms would contradict. The report (p. 4, Results) also describes eight layers about 130-580 m thick with Vp/Vs ratios of about 1.63-2.2. Row 1 (TVDSS -1800 m) is the model's formal top, not a resolved interface: Fig. 3a starts at about 1700 m ASL, near the local ground (1692.7 m ASL over the event-cloud centroid, USGS 3DEP 1 m via EPQS).",
+          "layers": [
+            {
+              "topElevM": 2375.0,
+              "vpMPerS": 2296.0,
+              "vsMPerS": 1163.0
+            },
+            {
+              "topElevM": 1595.0,
+              "vpMPerS": 2600.0,
+              "vsMPerS": 1203.0
+            },
+            {
+              "topElevM": 1227.0,
+              "vpMPerS": 3097.0,
+              "vsMPerS": 1808.0
+            },
+            {
+              "topElevM": 1027.0,
+              "vpMPerS": 4319.0,
+              "vsMPerS": 2339.0
+            },
+            {
+              "topElevM": 445.0,
+              "vpMPerS": 5272.0,
+              "vsMPerS": 2444.0
+            },
+            {
+              "topElevM": 315.0,
+              "vpMPerS": 5113.0,
+              "vsMPerS": 3138.0
+            },
+            {
+              "topElevM": -217.0,
+              "vpMPerS": 5615.0,
+              "vsMPerS": 3374.0
+            },
+            {
+              "topElevM": -610.0,
+              "vpMPerS": 5521.0,
+              "vsMPerS": 3334.0
+            }
+          ],
+          "license": "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), as stated on the GDR 1613 submission page",
+          "name": "forge_1d_gdr1613_ver1",
+          "notes": "Inverted jointly with the locations of 5 events (methods report p. 2, \"Joint event location and velocity model inversion\"; also Vera Rodriguez et al., SGW 2025, section 2.2, in GDR 1739) from DAS picks in wells 16B(78)-32 and 78B-32; the 257 events in the GDR 1613 DAS catalog lie at TVDSS 576-871 m (elevM -576 to -871). Rays therefore sample only the paths between that event cloud and those two wells, from the local ground (about 1693 m ASL there, so the first layer is sampled over only about 100 m) down to about -870 m ASL. Elsewhere, and deeper, the layer values and the half-space are extrapolation. Two velocity inversions are as published: layer 5 (Vp 5272) over layer 6 (Vp 5113), and layer 7 (Vp 5615, Vs 3374) over the half-space (Vp 5521, Vs 3334); the half-space Vp is about 5% below the 5.8 km/s basement of the GDR 1800 3D model. The same team later relocated these events with a dipping-layer 3D model from 2024 data, after the 1D locations disagreed with surface-network locations (Vera Rodriguez et al., SGW 2025, in GDR 1739); that 3D model is not published as a file. The GDR 1613 README calls the submission a preliminary data archive and its curator note anticipates updated VerX velocity-model files; none was published as of retrieval (2026-09-25: the submission lists only Inverted_1D_VelocityModel.csv, and GDR 1739 adds no velocity file).",
+          "source": {
+            "citation": "Vera Rodriguez, I., Wolpert, J., Podrasky, D., Coleman, T., Maldaner, C., Ma, Y., Chamarczuk, M., Becker, M., & Ajo-Franklin, J. (2024). Utah FORGE 3-2417: DAS Microseismic Event Catalog from the 16A/16B Circulation Test, 2023 [Data set]. Geothermal Data Repository, Rice University. https://doi.org/10.15121/2376139",
+            "url": "https://gdr.openei.org/submissions/1613",
+            "verified": true
+          },
+          "sourceDatum": "TVDSS is true vertical depth below mean sea level, positive down, so negative values lie above sea level. The velocity CSV only labels the column \"TVDSS (m)\"; the methods report of the same submission (FOGMORE_MEQ_Circulation2023.pdf) establishes the datum. Evidence: (1) p. 5, Fig. 3a plots this model's P and S step velocities and layer interfaces on an axis labelled only \"TVDSS (km)\" that runs from about -1.70 km at the top to about +0.90 km at the bottom, which shows the sign (positive down) but does not name the datum; (2) p. 4 (Results) gives the located microseismicity a \"depth range of 570 m to 750 m from mean sea level\", which matches the \"TVDSS (m)\" column of the same submission's event catalog (FORGE_DAS_event_catalogue_circulation.csv, 5th-95th percentile 584-746 m, n = 257) and so ties that column to mean sea level; (3) the same team's final relocated catalog (GDR 1739, Header_Description.txt) defines its depth column as hypocentral depth from mean sea level.",
+          "sourceFile": "https://gdr.openei.org/files/1613/Inverted_1D_VelocityModel.csv",
+          "sourceSha256": "806cfad01f65cf9f2dac3376a1bdc458f3bedaf65e359c3e2815e28d249dd994",
+          "topExtension": {
+            "fromElevM": 1800.0,
+            "note": "Vp and Vs above fromElevM are the source's top layer extended upward; the source has no values there",
+            "toElevM": 2375.0
+          },
+          "verifiedBasis": "verified: true means the values, the TVDSS datum and the layer-top reading all come from the GDR 1613 submission itself (the velocity CSV, and the methods report's p. 4 text and p. 5 Fig. 3a). The NAVD88 reading of mean sea level and any top-layer extension are ours; they are stated in datum and topExtension."
+        }
+      },
+      "tables3d": null,
+      "uncertainty": {
+        "calibration": "coverage of the 68% errors is measured, not assumed: the synthetic test records it (fracHWithinHErrM, fracVWithinVErrM) for the geometry it ran on",
+        "chi2_2": 2.27886856637673,
+        "depthOnEdge": "> 0.05 of the mass on the evaluated fine grid's top face or on its bottom face (docs/02)",
+        "depthOnEdgeMassFraction": 0.05,
+        "errConfidence": 0.68,
+        "gridFloor": "lambda_max and the vertical variance are floored at spacing^2 / 12 (flagged)",
+        "hErrM": "sqrt(chi2_2(errConfidence) * lambda_max): semi-major axis of the horizontal marginal's confidence ellipse, lambda_max the largest eigenvalue of the 2x2 horizontal covariance",
+        "mapOnVolumeFace": "separate from depthOnEdge: EventLocation.map_on_volume_top / map_on_volume_bottom and search['mapOnVolumeTop'] / search['mapOnVolumeBottom'] are true when the MAP node lies within mapOnVolumeFaceBandM of the search volume's top / bottom (a PDF pinned there by the volume prior; its formal errors are cut off by it)",
+        "mapOnVolumeFaceBandM": 100.0,
+        "pdf": "node mass proportional to exp(-pdfMisfitScale * misfit); pdfMisfitScale 1 is the Laplace likelihood with scale sigma/prob per pick, profiled over the origin time (weighted median), uniform prior over the fine nodes; normalised to sum to 1 over the evaluated fine nodes. Formal errors only: the hypocentre is the least-misfit node",
+        "pdfMisfitScale": 1.0,
+        "truncation": "the evaluated region grows until no face other than the volume's top or bottom holds a node within pdfCutoff of the minimum; if a lateral volume face or maxPdfNodes stops it, hErrM and vErrM are None and the search record says pdfTruncated",
+        "vErrM": "standard deviation of the vertical marginal (68% in 1D)"
+      },
+      "volume": {
+        "bottomElevM": -7000.0,
+        "coarseSpacingM": 200.0,
+        "configuredTopElevM": 1627.7,
+        "eMaxM": 10000.0,
+        "eMinM": -10000.0,
+        "fineSpacingM": 25.0,
+        "nMaxM": 10000.0,
+        "nMinM": -10000.0,
+        "topElevM": 1625.0
+      }
+    },
+    "matching": {
+      "catalog": {
+        "config": {
+          "arrivalsProductType": "phase-data",
+          "datums": {
+            "uu": {
+              "description": "km below sea level. UUSS Catalog Details, \"Format for Earthquake Summary Data\", Depth column: the depth datum is sea level for earthquakes from Oct 1, 2012 on (1.5 km above sea level before that in the Utah region). ComCat: the depth datum depends on the contributing network. ComCat serves QuakeML 1.2, which defines Origin.depth relative to nominal sea level (WGS84 geoid); UUSS's own statement above agrees.",
+              "label": "km below sea level (UUSS catalog depth datum)",
+              "sourceUrls": [
+                "https://quake.utah.edu/resources/catalog-details/",
+                "https://earthquake.usgs.gov/data/comcat/index.php#depth",
+                "https://quake.ethz.ch/quakeml/Documents"
+              ],
+              "surfaceElevM": 0.0,
+              "validFrom": "2012-10-02T00:00:00Z"
+            }
+          },
+          "eventTypes": [
+            "earthquake"
+          ],
+          "maxMagnitude": null,
+          "minMagnitude": null,
+          "provider": "USGS",
+          "providerLabel": "USGS ComCat",
+          "timeoutS": 120.0
+        },
+        "idsWithArrivalsProduct": [],
+        "noDataFromProvider": true,
+        "provenance": {
+          "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+          "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
+          "softwareVersions": {
+            "numpy": "2.5.3",
+            "obspy": "1.5.1",
+            "pandas": "3.0.6",
+            "pyarrow": "25.0.1",
+            "pydantic": "2.13.5",
+            "pyocto": "0.2.0",
+            "pyproj": "3.8.0",
+            "python": "3.13.12",
+            "scikit-fmm": "2025.6.23",
+            "scipy": "1.18.1",
+            "seisbench": "0.12.6",
+            "torch": "2.14.0"
+          },
+          "uncommittedChanges": false
+        },
+        "providerUrl": "https://earthquake.usgs.gov",
+        "quakemlSha256": "89afdaff2cc593600224b0bb14add97c2e421a2bd4b5f2974440114a2f0c74e3",
+        "query": {
+          "endtime": "2026-09-27T01:30:00.000000Z",
+          "maxlatitude": 38.74,
+          "maxlongitude": -112.6,
+          "minlatitude": 38.28,
+          "minlongitude": -113.2,
+          "starttime": "2026-09-26T23:30:00.000000Z"
+        },
+        "windowEnd": "2026-09-27T01:30:00+00:00",
+        "windowEndExclusive": true,
+        "windowStart": "2026-09-26T23:30:00+00:00"
+      },
+      "magnitude": {
+        "removedMagnitudeJson": false,
+        "status": "none: stage tier rewrote events.parquet with every magnitude null; stage magnitude (MAG-01) fills them, writes magnitude.json and replaces this record"
+      },
+      "match": {
+        "admissible": "|dt| <= maxDtS and distance <= maxDistM (edges admissible)",
+        "arrivalWindows": {
+          "padS": 1.0,
+          "rule": "[t + R / vMax + static - pad, t + straight-ray time + static + pad] per phase (static: the station-phase's statics.parquet term, 0 without one), clipped to the run window",
+          "velocityModel": "forge_1d_gdr1613_ver1",
+          "vpMaxMPerS": 5615.0,
+          "vsMaxMPerS": 3374.0
+        },
+        "chanceTimeCoincidences": {
+          "perPublicEvent": 0.0005555555555555556,
+          "rule": "nLocated * 2 * maxDtS / window length: located origin times uniform over the run window; the distance limit is ignored",
+          "total": 0.0
+        },
+        "checksRun": [
+          "window",
+          "bbox",
+          "oneToOne",
+          "tolerance",
+          "arrivalWindows",
+          "waveformData",
+          "picks",
+          "association",
+          "location"
+        ],
+        "checksSkipped": {},
+        "config": {
+          "distScaleM": 5000.0,
+          "dtScaleS": 2.0,
+          "enuConsistencyM": 1.0,
+          "maxDistM": 5000.0,
+          "maxDtS": 2.0,
+          "reasons": {
+            "arrivalPadS": 1.0,
+            "maxCandidateDtS": 10.0,
+            "minPickProb": 0.3,
+            "minStations": 4
+          },
+          "sensitivity": [
+            {
+              "distM": 3000.0,
+              "dtS": 1.0
+            },
+            {
+              "distM": 5000.0,
+              "dtS": 2.0
+            },
+            {
+              "distM": 8000.0,
+              "dtS": 3.0
+            }
+          ]
+        },
+        "cost": "|dt| / dtScaleS + epicentral distance / distScaleM (magnitude not used)",
+        "distance": "horizontal ENU (EPSG:32612 minus run origin); grid scale factor negligible",
+        "dtSign": "located t minus public t",
+        "evidenceFiles": {
+          "assoc_picks": "assoc_picks.parquet",
+          "gaps": "gaps.parquet",
+          "picks": "picks.parquet",
+          "statics": "statics.parquet",
+          "stations": "stations.parquet"
+        },
+        "lowestCost": "in unmatched reasons, the located event (or associated candidate) with the lowest cost; it can be far from the public event in time or space",
+        "objective": "most admissible one-to-one pairs, then least total cost (scipy.optimize.linear_sum_assignment)",
+        "provenance": {
+          "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+          "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
+          "softwareVersions": {
+            "numpy": "2.5.3",
+            "obspy": "1.5.1",
+            "pandas": "3.0.6",
+            "pyarrow": "25.0.1",
+            "pydantic": "2.13.5",
+            "pyocto": "0.2.0",
+            "pyproj": "3.8.0",
+            "python": "3.13.12",
+            "scikit-fmm": "2025.6.23",
+            "scipy": "1.18.1",
+            "seisbench": "0.12.6",
+            "torch": "2.14.0"
+          },
+          "uncommittedChanges": false
+        },
+        "reasonPrefixes": {
+          "arrivalsOutsideWindow": "arrivals outside run window",
+          "associatedNotLocated": "associated, not located",
+          "locatedOutOfTolerance": "located out of tolerance",
+          "lostOneToOne": "lost one-to-one",
+          "noCandidate": "no candidate within",
+          "noWaveformData": "no waveform data",
+          "outsideBbox": "outside run bbox",
+          "outsideWindow": "outside run window",
+          "picksBelowThreshold": "picks below threshold",
+          "picksNotAssociated": "picks not associated",
+          "tooFewPicks": "too few picks",
+          "tooFewUsedStations": "too few used stations"
+        },
+        "sensitivity": [
+          {
+            "distM": 3000.0,
+            "dtS": 1.0,
+            "recovered": 0
+          },
+          {
+            "distM": 5000.0,
+            "dtS": 2.0,
+            "recovered": 0
+          },
+          {
+            "distM": 8000.0,
+            "dtS": 3.0,
+            "recovered": 0
+          }
+        ],
+        "sensitivityRule": "each pair reruns the assignment as both limit and cost scale",
+        "unmatched": {},
+        "window": "[2026-09-26T23:30:00Z, 2026-09-27T01:30:00Z)"
+      }
+    },
+    "mode": "live",
+    "picker": {
+      "ab": {
+        "arrivalWindow": {
+          "minVelocityMps": 2000.0,
+          "postMarginS": 5.0,
+          "preOriginS": 2.0
+        },
+        "checkB": {
+          "minEventsPass": 3,
+          "minRho": 0.8,
+          "minStationsPS": 8
+        },
+        "minStationsForRho": 3,
+        "profileVariants": {
+          "borehole-A": [
+            "borehole-B"
+          ]
+        },
+        "recordSection": {
+          "bandHz": [
+            2.0,
+            20.0
+          ],
+          "component": "Z",
+          "dpi": 120,
+          "heightPerTraceIn": 0.45,
+          "minHeightIn": 4.0,
+          "padS": 5.0,
+          "traceHalfHeight": 0.45,
+          "widthIn": 10.0,
+          "windowS": [
+            -5.0,
+            30.0
+          ]
+        }
+      },
+      "batchSize": 256,
+      "candidateWeights": [
+        "instance",
+        "stead",
+        "original",
+        "scedc"
+      ],
+      "chunks": {
+        "edgeProbeS": 1.0,
+        "lengthS": 3600.0,
+        "minOverlapS": 32.0,
+        "overlapS": 60.0
+      },
+      "defaultWeights": "instance",
+      "download": {
+        "backoffBaseS": 5.0,
+        "backoffMaxS": 120.0,
+        "chunkS": 3600,
+        "client": "EARTHSCOPE",
+        "maxGapFraction": 0.2,
+        "maxRetries": 4,
+        "maxWorkers": 6,
+        "minGapSamples": 1.5,
+        "minUsefulStations": 12,
+        "padS": 300.0,
+        "provisionalLagS": 3600.0,
+        "timeoutS": 180.0
+      },
+      "gapEdgeS": 1.0,
+      "inventory": {
+        "availability": {
+          "backoffS": 2.0,
+          "cacheFile": "availability_mustang.json",
+          "metric": "percent_availability",
+          "onMissing": "used",
+          "onMissingNoProbeData": "unused",
+          "retries": 3,
+          "timeoutS": 60.0,
+          "url": "https://service.earthscope.org/mustang/measurements/1/query"
+        },
+        "channels": {
+          "accelerometerCodes": [
+            "GN",
+            "DN",
+            "CN",
+            "HN",
+            "EN"
+          ],
+          "componentDepthTolM": 1.0,
+          "coordTolM": 50.0,
+          "horizontalPairs": [
+            [
+              "N",
+              "E"
+            ],
+            [
+              "1",
+              "2"
+            ]
+          ],
+          "locationDepthTolM": 5.0,
+          "velocityCodes": [
+            "GH",
+            "GP",
+            "DH",
+            "DP",
+            "CH",
+            "CP",
+            "HH",
+            "HP",
+            "EH",
+            "EP",
+            "SH",
+            "SP"
+          ],
+          "verticalComponents": [
+            "Z"
+          ]
+        },
+        "elevation": {
+          "demBackoffS": 2.0,
+          "demCacheFile": "surface_elev_dem.json",
+          "demKeyDecimals": 5,
+          "demNoDataValue": -1000000.0,
+          "demRetries": 3,
+          "demTimeoutS": 30.0,
+          "demUrl": "https://epqs.nationalmap.gov/v1/json",
+          "maxShallowMismatchM": 50.0,
+          "onAmbiguous": "error",
+          "onShallowMismatch": "dem",
+          "toleranceM": 15.0
+        },
+        "kind": {
+          "boreholeLookingCodes": [
+            "GH",
+            "GP",
+            "DH",
+            "DP"
+          ],
+          "boreholeMinDepthM": 10.0,
+          "strongMotionInstrumentCodes": [
+            "N"
+          ]
+        },
+        "profiles": [
+          {
+            "maxRateHz": 100.0,
+            "minRateHz": 100.0,
+            "profile": "surface-100"
+          },
+          {
+            "maxRateHz": 250.0,
+            "minRateHz": 200.0,
+            "profile": "surface-hi"
+          },
+          {
+            "maxRateHz": 1000.0,
+            "minRateHz": 500.0,
+            "profile": "borehole-A"
+          }
+        ],
+        "query": {
+          "backoffS": 5.0,
+          "channel": "*",
+          "excludeNetworks": [
+            "SY"
+          ],
+          "fdsnClient": "EARTHSCOPE",
+          "location": "*",
+          "network": "*",
+          "retries": 3,
+          "skipRestricted": true,
+          "station": "*",
+          "timeoutS": 180.0
+        },
+        "rateCheck": {
+          "backoffS": 2.0,
+          "cacheFile": "rate_probe.json",
+          "onMismatch": "data",
+          "onNoData": "metadata",
+          "probeOffsetsS": [
+            0.0,
+            21600.0,
+            43200.0,
+            64800.0
+          ],
+          "probeS": 5.0,
+          "relTol": 0.0001,
+          "retries": 2,
+          "timeoutS": 60.0
+        }
+      },
+      "model": "seisbench.PhaseNet",
+      "pThreshold": 0.1,
+      "run": {
+        "onCacheMiss": "error",
+        "torchThreadsPerWorker": 3,
+        "workers": 6
+      },
+      "sThreshold": 0.1,
+      "seed": 0,
+      "seisbench": {
+        "blinding": [
+          250,
+          250
+        ],
+        "flexibleHorizontalComponents": false,
+        "overlap": 1500,
+        "stacking": "avg",
+        "strict": true
+      },
+      "torchThreads": 4,
+      "weightsByProfile": {
+        "borehole-A": "instance",
+        "borehole-B": "instance",
+        "surface-100": "instance",
+        "surface-hi": "instance"
+      },
+      "weightsUsedByProfile": {
+        "borehole-A": "instance",
+        "surface-100": "instance",
+        "surface-hi": "instance"
+      },
+      "weightsVersion": "2"
+    },
+    "pickerModel": "seisbench.PhaseNet",
+    "pickerWeights": "instance",
+    "runtimeS": {
+      "associate": 0.6994798329978948,
+      "catalog": 0.21389674999227282,
+      "download": 9.59618274999957,
+      "inventory": 0.8984176670055604,
+      "locate": 140.51676037498692,
+      "match": 0.04040737499599345,
+      "pick": 32.607457124991925,
+      "tier": 0.026049583000713028
+    },
+    "softwareVersions": {
+      "numpy": "2.5.3",
+      "obspy": "1.5.1",
+      "pandas": "3.0.6",
+      "pyarrow": "25.0.1",
+      "pydantic": "2.13.5",
+      "pyocto": "0.2.0",
+      "pyproj": "3.8.0",
+      "python": "3.13.12",
+      "scikit-fmm": "2025.6.23",
+      "scipy": "1.18.1",
+      "seisbench": "0.12.6",
+      "torch": "2.14.0"
+    },
+    "stationIds": [],
+    "tiering": {
+      "calibration": {
+        "locatorMethod": "grid1d",
+        "nonZero": 46,
+        "note": "bars are the calibration run's ProcessingRun.tiering thresholds (its matched set), applied unchanged; none derived from this window",
+        "runDir": "showcase/runs/20260926-0210-a04c611",
+        "runId": "20260926-0210-a04c611",
+        "staticsSha256": "fd15b2e7bb4f77e920cccb74fda6e772704c702f34a7442fde52ac97a29e17a6",
+        "staticsTable": "statics.parquet",
+        "stationPhases": 50,
+        "thresholdsNMatched": 43
+      },
+      "caveat": "Public regional catalog events are the larger ones, so bars drawn from the recovered public events are conservative for small candidate events.",
+      "claim": "Strict (Tier A): on each metric separately, at least as good as a bar that at least 75% of the recovered public regional catalog events with a value on that metric meet or beat.",
+      "config": {
+        "consistencyTolM": 0.001,
+        "minMatched": 10,
+        "quantiles": {
+          "A": 0.25,
+          "B": 0.0
+        },
+        "strictNearestStationFactor": 2.0,
+        "sweep": {
+          "enabled": false
+        }
+      },
+      "counts": {
+        "additional": {
+          "A": 0,
+          "B": 0,
+          "C": 1
+        },
+        "all": {
+          "A": 0,
+          "B": 0,
+          "C": 1
+        },
+        "events": 1,
+        "matched": {
+          "A": 0,
+          "B": 0,
+          "C": 0
+        }
+      },
+      "definition": "Per metric and tier, the bar is an actual matched event's value: sort the events of the matched set M with a value on the metric from best to worst and take the ceil((1 - q) * n)-th, n = their count, q = tiering.quantiles[tier]; at least (1 - q) of them meets or beats the bar (boundary equality passes). A (Strict): every A bar, depthOnEdge false, mapOnVolumeTop false when locate flags are given, and quality.minEpiDistM <= strictNearestStationFactor * focal depth. B (Good): every B bar. C (Candidate): associated and located, outside those ranges.",
+      "eventPicks": "one Pick per id in each final event's pickIds (picks used in the final location); eventId set, residualS from arrivals.parquet",
+      "final": "SeismicEvent rows as this stage writes them: located columns unchanged, tier, tierReasons, catalogMatch from matches.parquet, magnitude null (stage magnitude, MAG-01, fills it afterwards), revealOrder -1",
+      "input": {
+        "arrivals": "arrivals.parquet",
+        "catalog": "catalog.parquet",
+        "eventsLocated": "events_located.parquet",
+        "flags": "locate_flags.parquet",
+        "matches": "matches.parquet",
+        "picks": "picks.parquet",
+        "stations": "stations.parquet"
+      },
+      "matchedSet": {
+        "definition": "located candidate events with a public regional catalog match (matches eventId not null)",
+        "meetingEveryBar": {
+          "A": 0,
+          "B": 0
+        },
+        "meetingEveryBarNote": "matched events meeting every metric bar of the tier at once (the A rules are not applied here; counts.matched has the matched events' tiers)",
+        "n": 0
+      },
+      "matchesChecked": "every matched row's dtS / distM equals what events_located and catalog give now (a match from before stage locate's statics pass 2 is refused)",
+      "note": null,
+      "outputs": [
+        "events.parquet",
+        "event_picks.parquet"
+      ],
+      "provenance": {
+        "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+        "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
+        "softwareVersions": {
+          "numpy": "2.5.3",
+          "obspy": "1.5.1",
+          "pandas": "3.0.6",
+          "pyarrow": "25.0.1",
+          "pydantic": "2.13.5",
+          "pyocto": "0.2.0",
+          "pyproj": "3.8.0",
+          "python": "3.13.12",
+          "scikit-fmm": "2025.6.23",
+          "scipy": "1.18.1",
+          "seisbench": "0.12.6",
+          "torch": "2.14.0"
+        },
+        "uncommittedChanges": false
+      },
+      "removedMagnitudeJson": false,
+      "rules": {
+        "A": {
+          "depthOnEdge": "must be false",
+          "mapOnVolumeTop": {
+            "applied": true,
+            "note": "from locate_flags.parquet (MAP within locator.mapOnVolumeFaceBandM of the search-volume top)",
+            "rule": "must be false"
+          },
+          "nearestStation": {
+            "factor": 2.0,
+            "focalDepth": "sensorElevM - elevM of the epicentrally nearest station with a pick used in the final location (arrivals.usedInLocation, stations.parquet): the event's depth below that station's sensor, a borehole's depth included; an event at or above the sensor fails the rule",
+            "focalDepthBelow": "nearestUsedSensor",
+            "test": "quality.minEpiDistM <= factor * focal depth (epicentral distance to the nearest station with a pick used in the final location)"
+          }
+        },
+        "nullErrors": "a null hErrM or vErrM fails A and B on that metric; bars on those metrics are drawn from the matched events with a value (nUsed of n; nNull recorded), so a null never loosens a bar"
+      },
+      "sweep": {
+        "enabled": false,
+        "removedEarlierSweep": false
+      },
+      "thresholdSource": "supplied",
+      "thresholds": {
+        "A": {
+          "gapDeg": {
+            "excludesNothing": false,
+            "label": "p75 of matched",
+            "n": 43,
+            "nMeeting": 33,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": "<=",
+            "quantile": 0.75,
+            "value": 53.4851737567233
+          },
+          "hErrM": {
+            "excludesNothing": false,
+            "label": "p75 of matched",
+            "n": 43,
+            "nMeeting": 33,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": "<=",
+            "quantile": 0.75,
+            "value": 69.57730720009222
+          },
+          "nP": {
+            "excludesNothing": false,
+            "label": "p25 of matched",
+            "n": 43,
+            "nMeeting": 34,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": ">=",
+            "quantile": 0.25,
+            "value": 19.0
+          },
+          "nS": {
+            "excludesNothing": false,
+            "label": "p25 of matched",
+            "n": 43,
+            "nMeeting": 34,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": ">=",
+            "quantile": 0.25,
+            "value": 18.0
+          },
+          "nStations": {
+            "excludesNothing": false,
+            "label": "p25 of matched",
+            "n": 43,
+            "nMeeting": 35,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": ">=",
+            "quantile": 0.25,
+            "value": 20.0
+          },
+          "rmsS": {
+            "excludesNothing": false,
+            "label": "p75 of matched",
+            "n": 43,
+            "nMeeting": 33,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": "<=",
+            "quantile": 0.75,
+            "value": 0.029751192549434317
+          },
+          "vErrM": {
+            "excludesNothing": false,
+            "label": "p75 of matched",
+            "n": 43,
+            "nMeeting": 33,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": "<=",
+            "quantile": 0.75,
+            "value": 79.69504669021534
+          }
+        },
+        "B": {
+          "gapDeg": {
+            "excludesNothing": false,
+            "label": "worst of matched",
+            "n": 43,
+            "nMeeting": 43,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": "<=",
+            "quantile": 1.0,
+            "value": 98.16637166957634
+          },
+          "hErrM": {
+            "excludesNothing": false,
+            "label": "worst of matched",
+            "n": 43,
+            "nMeeting": 43,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": "<=",
+            "quantile": 1.0,
+            "value": 96.79234444558408
+          },
+          "nP": {
+            "excludesNothing": false,
+            "label": "worst of matched",
+            "n": 43,
+            "nMeeting": 43,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": ">=",
+            "quantile": 0.0,
+            "value": 13.0
+          },
+          "nS": {
+            "excludesNothing": false,
+            "label": "worst of matched",
+            "n": 43,
+            "nMeeting": 43,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": ">=",
+            "quantile": 0.0,
+            "value": 11.0
+          },
+          "nStations": {
+            "excludesNothing": false,
+            "label": "worst of matched",
+            "n": 43,
+            "nMeeting": 43,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": ">=",
+            "quantile": 0.0,
+            "value": 15.0
+          },
+          "rmsS": {
+            "excludesNothing": false,
+            "label": "worst of matched",
+            "n": 43,
+            "nMeeting": 43,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": "<=",
+            "quantile": 1.0,
+            "value": 0.04673244574700107
+          },
+          "vErrM": {
+            "excludesNothing": false,
+            "label": "worst of matched",
+            "n": 43,
+            "nMeeting": 43,
+            "nNull": 0,
+            "nUsed": 43,
+            "op": "<=",
+            "quantile": 1.0,
+            "value": 176.67516882823358
+          }
+        },
+        "method": "rank ceil((1 - q) * n) from the best: numpy inverted_cdf at 1 - q for lower-is-better metrics; for higher-is-better ones its mirror -inverted_cdf(-v, 1 - q), the largest value at least (1 - q) of M meet or beat (one rank above inverted_cdf at q when q * n is an integer)",
+        "nMatched": 43,
+        "quantiles": {
+          "A": 0.25,
+          "B": 0.0
+        }
+      }
+    },
+    "velocityModel": {
+      "boundaryConvention": "layer i spans topElevM[i+1] < elevM <= topElevM[i]: a point exactly on a boundary takes the layer below; the deepest layer is a half-space; above the top of the model is an error",
+      "conversion": "topElevM = -TVDSS, in m above mean sea level with up positive. vpMPerS and vsMPerS are the source vp and vs unchanged (the source is already in m/s, so no unit conversion was needed). No value was edited, smoothed or resampled.",
+      "datum": "topElevM is the top of each layer in metres above mean sea level (up positive), converted as elevM = -TVDSS, with mean sea level taken as NAVD88 orthometric height (the vertical of USGS 3DEP and run.yaml); the TVDSS datum (mean sea level, positive down) is established by the GDR 1613 methods report (p. 4 text ties the TVDSS column to mean sea level; p. 5 Fig. 3a shows it positive down with these layer tops), not by the velocity CSV, which only labels the column; the deepest layer is a half-space.",
+      "layerConvention": "each source row is the top of one layer carrying that layer's constant Vp and Vs; the deepest row is the top of a half-space. The CSV does not state this; Fig. 3a of the same submission (methods report p. 5) shows it: its interfaces (green lines, digitized at TVDSS about -1598, -1230, -1030, -447, -316, 215 and 610 m) match rows 2-8, and the step velocities above the first interface (Vp about 2280 m/s, Vs about 1160 m/s) and below the last (Vp about 5520 m/s, Vs about 3330 m/s) match rows 1 (Vp 2296, Vs 1163 m/s) and 8 (Vp 5521, Vs 3334 m/s), which reading the rows as layer bottoms would contradict. The report (p. 4, Results) also describes eight layers about 130-580 m thick with Vp/Vs ratios of about 1.63-2.2. Row 1 (TVDSS -1800 m) is the model's formal top, not a resolved interface: Fig. 3a starts at about 1700 m ASL, near the local ground (1692.7 m ASL over the event-cloud centroid, USGS 3DEP 1 m via EPQS).",
+      "layers": [
+        {
+          "topElevM": 2375.0,
+          "vpMPerS": 2296.0,
+          "vsMPerS": 1163.0
+        },
+        {
+          "topElevM": 1595.0,
+          "vpMPerS": 2600.0,
+          "vsMPerS": 1203.0
+        },
+        {
+          "topElevM": 1227.0,
+          "vpMPerS": 3097.0,
+          "vsMPerS": 1808.0
+        },
+        {
+          "topElevM": 1027.0,
+          "vpMPerS": 4319.0,
+          "vsMPerS": 2339.0
+        },
+        {
+          "topElevM": 445.0,
+          "vpMPerS": 5272.0,
+          "vsMPerS": 2444.0
+        },
+        {
+          "topElevM": 315.0,
+          "vpMPerS": 5113.0,
+          "vsMPerS": 3138.0
+        },
+        {
+          "topElevM": -217.0,
+          "vpMPerS": 5615.0,
+          "vsMPerS": 3374.0
+        },
+        {
+          "topElevM": -610.0,
+          "vpMPerS": 5521.0,
+          "vsMPerS": 3334.0
+        }
+      ],
+      "license": "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), as stated on the GDR 1613 submission page",
+      "name": "forge_1d_gdr1613_ver1",
+      "notes": "Inverted jointly with the locations of 5 events (methods report p. 2, \"Joint event location and velocity model inversion\"; also Vera Rodriguez et al., SGW 2025, section 2.2, in GDR 1739) from DAS picks in wells 16B(78)-32 and 78B-32; the 257 events in the GDR 1613 DAS catalog lie at TVDSS 576-871 m (elevM -576 to -871). Rays therefore sample only the paths between that event cloud and those two wells, from the local ground (about 1693 m ASL there, so the first layer is sampled over only about 100 m) down to about -870 m ASL. Elsewhere, and deeper, the layer values and the half-space are extrapolation. Two velocity inversions are as published: layer 5 (Vp 5272) over layer 6 (Vp 5113), and layer 7 (Vp 5615, Vs 3374) over the half-space (Vp 5521, Vs 3334); the half-space Vp is about 5% below the 5.8 km/s basement of the GDR 1800 3D model. The same team later relocated these events with a dipping-layer 3D model from 2024 data, after the 1D locations disagreed with surface-network locations (Vera Rodriguez et al., SGW 2025, in GDR 1739); that 3D model is not published as a file. The GDR 1613 README calls the submission a preliminary data archive and its curator note anticipates updated VerX velocity-model files; none was published as of retrieval (2026-09-25: the submission lists only Inverted_1D_VelocityModel.csv, and GDR 1739 adds no velocity file).",
+      "source": {
+        "citation": "Vera Rodriguez, I., Wolpert, J., Podrasky, D., Coleman, T., Maldaner, C., Ma, Y., Chamarczuk, M., Becker, M., & Ajo-Franklin, J. (2024). Utah FORGE 3-2417: DAS Microseismic Event Catalog from the 16A/16B Circulation Test, 2023 [Data set]. Geothermal Data Repository, Rice University. https://doi.org/10.15121/2376139",
+        "url": "https://gdr.openei.org/submissions/1613",
+        "verified": true
+      },
+      "sourceDatum": "TVDSS is true vertical depth below mean sea level, positive down, so negative values lie above sea level. The velocity CSV only labels the column \"TVDSS (m)\"; the methods report of the same submission (FOGMORE_MEQ_Circulation2023.pdf) establishes the datum. Evidence: (1) p. 5, Fig. 3a plots this model's P and S step velocities and layer interfaces on an axis labelled only \"TVDSS (km)\" that runs from about -1.70 km at the top to about +0.90 km at the bottom, which shows the sign (positive down) but does not name the datum; (2) p. 4 (Results) gives the located microseismicity a \"depth range of 570 m to 750 m from mean sea level\", which matches the \"TVDSS (m)\" column of the same submission's event catalog (FORGE_DAS_event_catalogue_circulation.csv, 5th-95th percentile 584-746 m, n = 257) and so ties that column to mean sea level; (3) the same team's final relocated catalog (GDR 1739, Header_Description.txt) defines its depth column as hypocentral depth from mean sea level.",
+      "sourceFile": "https://gdr.openei.org/files/1613/Inverted_1D_VelocityModel.csv",
+      "sourceSha256": "806cfad01f65cf9f2dac3376a1bdc458f3bedaf65e359c3e2815e28d249dd994",
+      "topExtension": {
+        "fromElevM": 1800.0,
+        "note": "Vp and Vs above fromElevM are the source's top layer extended upward; the source has no values there",
+        "toElevM": 2375.0
+      },
+      "verifiedBasis": "verified: true means the values, the TVDSS datum and the layer-top reading all come from the GDR 1613 submission itself (the velocity CSV, and the methods report's p. 4 text and p. 5 Fig. 3a). The NAVD88 reading of mean sea level and any top-layer extension are ours; they are stated in datum and topExtension."
+    },
+    "windowEnd": 1790472600.0,
+    "windowLabel": "2026-09-26 23:30-2026-09-27 01:30 UTC",
+    "windowStart": 1790465400.0
+  },
+  "scene": {
+    "depthLabel": "Depth below site surface (ref 1627.7 m ASL)",
+    "heroEventId": null,
+    "isSynthetic": false,
+    "originElevM": 1627.7,
+    "originLat": 38.51,
+    "originLon": -112.9,
+    "projection": "EPSG:32612 minus origin",
+    "refSurfaceElevM": 1627.7,
+    "runId": "20260927-0221-615e997",
+    "verticalExaggeration": 1.0
+  },
+  "schemaVersion": "1.0",
+  "summary": {
+    "additional": {
+      "A": 0,
+      "B": 0,
+      "C": 1
+    },
+    "additionalCount": 1,
+    "baseline": null,
+    "candidateCount": 1,
+    "medianRmsS": 0.044,
+    "medianStations": 6.0,
+    "publicCatalogCount": 0,
+    "recall": 0.0,
+    "recoveredCatalogCount": 0,
+    "runId": "20260927-0221-615e997",
+    "strictAdditionalCount": 0,
+    "strictQualityCount": 0,
+    "unmatchedPublicIds": []
+  }
+}
