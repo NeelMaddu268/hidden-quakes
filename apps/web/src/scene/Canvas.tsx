@@ -28,6 +28,7 @@ import { sceneFx } from "./fx";
 import { depthFogPerSceneUnit, LOOK } from "./look";
 
 import { Picker } from "./picking/Picker";
+import { HiddenHeroKey } from "./HiddenHeroKey";
 import { DepthSection } from "./plan/DepthSection";
 import { Tour } from "./tour/Tour";
 import { buildPlanHaloInstances } from "./plan/halos";
@@ -210,6 +211,7 @@ export function Scene() {
       <Post />
     </Canvas>
     <DepthSection />
+    <HiddenHeroKey />
     <Tour />
     </>
   );
