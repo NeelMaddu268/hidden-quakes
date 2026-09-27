@@ -280,3 +280,53 @@
   color: var(--hq-text);
   overflow-wrap: anywhere;
 }
+
+/* Phone (DEMO-04 item 3): the header takes the full width, the counters drop below it, and a
+   short note says the 3D view is best on a laptop. The reveal, the drawer and the keys still work. */
+.phoneNote {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .title {
+    font-size: 0.85rem;
+  }
+
+  .subtitle {
+    font-size: 0.78rem;
+  }
+
+  .modeLabel {
+    font-size: 0.66rem;
+  }
+
+  .phoneNote {
+    display: block;
+    margin-top: 0.3rem;
+    font-size: 0.7rem;
+    color: var(--hq-text-dim);
+    text-shadow: var(--hq-text-halo);
+  }
+
+  .topRight {
+    top: calc(var(--shell-top) + 13.25rem);
+    left: var(--shell-inset);
+    align-items: flex-start;
+    gap: 0.6rem;
+  }
+
+  .counters {
+    gap: 1.25rem;
+    text-align: left;
+  }
+
+  .counterValue {
+    font-size: 1.9rem;
+  }
+
+  .reveal {
+    padding: 0.8rem 1.4rem;
+    font-size: 0.95rem;
+    letter-spacing: 0.16em;
+  }
+}
