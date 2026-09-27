@@ -26,6 +26,11 @@ unless no matched event moved (a pass 2 rerun on the same inputs). Such a rerun 
 ``events_located.parquet`` already located with statics, so the no-statics median rmsS for
 diagnostics.md comes from run.json (``carried_previous_rms``).
 
+Run mode live (``hq.locate.calibration``): every event is located once with the terms of the
+calibration run (``seismology.yaml`` ``live.calibrationRun``, its ``statics.parquet``), whatever
+``statics.mode`` says; ``matches.parquet`` is never read, so the runner's second pass repeats the
+first. ``ProcessingRun.locator["calibration"]`` records the run id and the table's SHA-256.
+
 With ``locator.method`` grid3d (LOC-07) the stage also locates the same association with grid1d,
 the same statics configuration and the same reference events (``grid1d_comparison``; about one
 more locate pass, nothing of it written) for diagnostics.md's 1D vs 3D section, so every grid3d
@@ -56,6 +61,7 @@ import pandas as pd
 from hq_contracts.io import read_table, write_table
 
 from hq.locate import LocateDetails
+from hq.locate.calibration import load_calibration
 from hq.locate.diagnostics import (
     KNOWN_WINDOWS_FILE,
     Comparison1d,
@@ -69,6 +75,7 @@ from hq.locate.result import ARRIVALS_MODEL, EVENTS_MODEL, FLAGS_MODEL, STATICS_
 from hq.locate.statics import (
     REFERENCE_EVENTS,
     StaticsOutcome,
+    locate_with_borrowed_statics,
     locate_with_statics,
     reference_pairs,
 )
@@ -292,12 +299,21 @@ def run(ctx: "RunContext") -> None:
     log.info("locate: %d association events, %d picks from %s, %d stations",
              len(assoc.events), len(picks), picks_path, len(stations))
 
-    reference = reference_input(ctx)
+    calibration = load_calibration(ctx)  # None unless run mode live
     previous = (_read(ctx.path(EVENTS_TABLE), "events_located")
                 if ctx.path(EVENTS_TABLE).is_file() else None)
-    outcome = carried_previous_rms(ctx, locate_with_statics(
-        assoc, picks, stations, cfg, run_cfg, run_id=ctx.run_id, cache_dir=ctx.cache_dir,
-        reference=reference, previous_events=previous), previous)
+    if calibration is not None:
+        # Live: the calibration run's terms, never this window's matches (a second runner pass
+        # finds matches.parquet and repeats this pass unchanged).
+        reference = None
+        outcome = locate_with_borrowed_statics(
+            assoc, picks, stations, cfg, run_cfg, calibration.terms(), calibration.run_id,
+            run_id=ctx.run_id, cache_dir=ctx.cache_dir, previous_events=previous)
+    else:
+        reference = reference_input(ctx)
+        outcome = carried_previous_rms(ctx, locate_with_statics(
+            assoc, picks, stations, cfg, run_cfg, run_id=ctx.run_id, cache_dir=ctx.cache_dir,
+            reference=reference, previous_events=previous), previous)
     details = outcome.details
     grid1d = grid1d_comparison(ctx, assoc, picks, stations, reference)
     synthetic = synthetic_test(ctx, details, picks, stations)
@@ -378,6 +394,8 @@ def run(ctx: "RunContext") -> None:
         "provenance": stage_provenance(),
         "grid1dComparisonRuntimeS": None if grid1d is None else grid1d.runtime_s,
     }
+    if calibration is not None:  # live only, so a showcase record keeps its keys
+        params["calibration"] = calibration.to_record()
     log.info("locate: wrote %s in %.1f s", ", ".join(p.name for p in targets), runtime_s)
     if reference is not None:
         log.warning("locate: pass 2 relocated every event; %s holds the match made before this "

@@ -595,3 +595,14 @@ magnitude:
     # leave-one-event-out MAE cannot test it; magnitudes far from the calibration events rest on it.
     stationTermRidge: 1.0
     minStationObs: 5
+
+# Run mode live (hq run --mode live; the API worker's 2-hour windows, hq.locate.calibration). A
+# 2-hour window holds about 0-3 public regional catalog events: too few for referenceEvents
+# station terms (minReferenceEvents per station-phase) or for tier bars (tiering.minMatched). A
+# live run therefore borrows both from this showcase run, read from
+# <data>/showcase/runs/<calibrationRun>: its statics.parquet in stage locate (applied to every
+# event; no terms are fit on the window) and its ProcessingRun.tiering thresholds in stage tier.
+# The run id is recorded in the live run's locator.statics and tiering records. A missing
+# calibration run fails the stage. Showcase runs ignore this section.
+live:
+  calibrationRun: "20260926-0210-a04c611"

@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -13,6 +15,10 @@ const nextConfig: NextConfig = {
   images: { unoptimized: true },
   // Workspace packages ship .ts source, not built JS.
   transpilePackages: ["@hq/visualization", "@hq/contracts"],
+  // WEB-12: the TONIGHT pill (`?mode=snapshot`) appears only when the export carries a snapshot.
+  env: {
+    NEXT_PUBLIC_SNAPSHOT_AVAILABLE: existsSync(join(__dirname, "public/data/snapshot/meta.json")) ? "1" : "",
+  },
 };
 
 export default nextConfig;
