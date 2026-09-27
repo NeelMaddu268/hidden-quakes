@@ -32,7 +32,7 @@ import { HiddenHeroKey } from "./HiddenHeroKey";
 import { DepthSection } from "./plan/DepthSection";
 import { HoverTooltip } from "./picking/HoverTooltip";
 import { Tour } from "./tour/Tour";
-import { StationDayPanel } from "./stationday/StationDayPanel";
+import { StationDayPanel, StationDayRunSync } from "./stationday/StationDayPanel";
 import { buildPlanHaloInstances } from "./plan/halos";
 import { PlanCamera } from "./plan/PlanCamera";
 import { PlanRingsLayer } from "./plan/PlanRingsLayer";
@@ -218,6 +218,7 @@ export function Scene() {
     <HiddenHeroKey />
     {/* WEB-10: before the tour, so its modal key listener (window, capture) runs first. */}
     <StationDayPanel />
+    <StationDayRunSync />
     <Tour />
     </>
   );

@@ -2,11 +2,19 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FetchLike } from "../../providers/fetch";
 import { initialDemoState, useDemo } from "../../state/demo";
+import type { BundleState } from "../types";
 import { useTour } from "../tour/store";
 import { StationDayButton } from "./StationDayButton";
-import { StationDayPanel } from "./StationDayPanel";
-import { useStationDay } from "./store";
+import { StationDayPanel, StationDayRunSync } from "./StationDayPanel";
+import { openStationDay, setStationDayRun, useStationDay } from "./store";
 import { syntheticManifest } from "./test-fixture";
+
+// The run sync reads the bundle only through scene/data.ts; the test swaps that module for controllable state.
+const data = vi.hoisted(() => ({ bundle: { status: "loading" } as BundleState }));
+vi.mock("../data", () => ({ useBundle: () => data.bundle }));
+
+/** The synthetic manifest's own run: the button belongs to it. */
+const RUN = syntheticManifest().runId as string;
 
 // The corner wrapper (drei <Html> in the canvas) needs WebGL; the button and the panel are plain DOM.
 
@@ -48,7 +56,8 @@ function shellKeys() {
 beforeEach(() => {
   useDemo.setState({ ...initialDemoState, phase: "revealed", revealProgress: 1 });
   useTour.setState({ running: false, step: null, runs: 0 });
-  useStationDay.setState({ manifest: null, open: false });
+  useStationDay.setState({ manifest: null, runId: RUN, open: false });
+  data.bundle = { status: "loading" } as BundleState;
 });
 
 afterEach(() => {
@@ -197,5 +206,50 @@ describe("station-day panel", () => {
     expect(document.activeElement).toBe(controls[0]);
     expect(key("Tab", { shiftKey: true }).defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(controls[controls.length - 1]);
+  });
+});
+
+describe("station-day run fit", () => {
+  it("is absent when another run is loaded (Today), and cannot be opened there", async () => {
+    useStationDay.setState({ runId: "another-run" });
+    await mount(serve(200, syntheticManifest()));
+    expect(button()).toBeNull();
+    act(() => openStationDay(null));
+    expect(dialog()).toBeNull();
+  });
+
+  it("is absent until a bundle is loaded", async () => {
+    useStationDay.setState({ runId: null });
+    await mount(serve(200, syntheticManifest()));
+    expect(button()).toBeNull();
+  });
+
+  it("switching to another run closes the panel and hides the button; switching back shows the button", async () => {
+    await mount(serve(200, syntheticManifest()));
+    fireEvent.click(button()!);
+    expect(dialog()).not.toBeNull();
+    act(() => setStationDayRun("another-run"));
+    expect(dialog()).toBeNull();
+    expect(button()).toBeNull();
+    const shell = shellKeys();
+    key("e", {}, document.body);
+    shell.off();
+    expect(shell.seen).toEqual(["e"]);
+    act(() => setStationDayRun(RUN));
+    expect(button()).not.toBeNull();
+    expect(dialog()).toBeNull();
+  });
+
+  it("StationDayRunSync records the loaded bundle's run, and null while none is ready", () => {
+    useStationDay.setState({ runId: null });
+    data.bundle = { status: "ready", meta: { scene: { runId: RUN } } } as unknown as BundleState;
+    const { rerender } = render(<StationDayRunSync />);
+    expect(useStationDay.getState().runId).toBe(RUN);
+    data.bundle = { status: "ready", meta: { scene: { runId: "another-run" } } } as unknown as BundleState;
+    rerender(<StationDayRunSync />);
+    expect(useStationDay.getState().runId).toBe("another-run");
+    data.bundle = { status: "loading" } as BundleState;
+    rerender(<StationDayRunSync />);
+    expect(useStationDay.getState().runId).toBeNull();
   });
 });

@@ -8,7 +8,7 @@ import { cornerNoteAnchor } from "../references/CornerNote";
 import { LABEL_Z_RANGE } from "../references/labels";
 import { SceneHtml as Html } from "../references/SceneHtml";
 import { useTour } from "../tour/store";
-import { openStationDay, useStationDay } from "./store";
+import { fittingManifest, openStationDay, useStationDay } from "./store";
 
 /** The button's accessible name and label (a label, not data). */
 export const STATION_DAY_BUTTON_LABEL = "Station day";
@@ -32,12 +32,13 @@ const buttonStyle: CSSProperties = {
 };
 
 /**
- * Opens the station-day panel. Nothing at all without a valid manifest, and nothing before the reveal:
+ * Opens the station-day panel. Nothing at all without a valid manifest or when another run is loaded
+ * (the picture is one run's day), and nothing before the reveal:
  * the picture carries the candidate-event ticks the reveal introduces. Hidden (space kept) while the
  * guided tour plays, so a recording shows the scene and the captions only.
  */
 export function StationDayButton({ style }: { style?: CSSProperties }) {
-  const hasManifest = useStationDay((s) => s.manifest !== null);
+  const hasManifest = useStationDay((s) => fittingManifest(s) !== null);
   const open = useStationDay((s) => s.open);
   const revealed = useDemo((s) => s.phase !== "public");
   const touring = useTour((s) => s.running);
