@@ -4,24 +4,24 @@ Every `{value}` is read off the screen at demo time, never memorized and never t
 
 ## 10-second pitch
 
-"The public regional catalog lists {publicCatalogCount} events under Utah's geothermal frontier on {windowLabel}. We rebuilt the catalog from raw public seismometers with neural phase picking, multi-station association and relocation: {candidateCount} candidate events, {strictQualityCount} at strict quality, underground where the public view is nearly empty."
+"The public regional catalog lists {publicCatalogCount} events under Utah's geothermal frontier on {windowDate}. We rebuilt the catalog from raw public seismometers with neural phase picking, multi-station association and relocation: {candidateCount} candidate events, {strictQualityCount} at strict quality, a much denser view of the same volume the public events sit in."
 
 ## 30-second pitch
 
-"Enhanced geothermal is expanding around Milford, Utah. Operators have dense downhole monitoring. Someone without operator data, a county official or a reporter, gets the public regional catalog: {publicCatalogCount} events here on {windowLabel}. *(REVEAL)* Hidden Quakes pulls raw waveforms from the public seismic network, picks P and S arrivals with a neural network, associates them across stations, relocates them underground and scores every one. We recover {recoveredCatalogCount} of the {publicCatalogCount} public events, plus {additionalCount} more candidates, {strictAdditionalCount} of them strict. Click any dot and you see the waveforms that put it there."
+"Enhanced geothermal is expanding near Milford, Utah, and its oversight is built on tiny earthquakes. Operators watch them with dense downhole sensors. Everyone else, a county official or a reporter, gets the public regional catalog: {publicCatalogCount} events here on {windowDate}. *(REVEAL)* Hidden Quakes pulls raw waveforms from the public seismic network, picks P and S arrivals with a neural network, associates them across stations, relocates them underground and scores every one. We recover {recoveredCatalogCount} of the {publicCatalogCount} public events, plus {additionalCount} more candidates, {strictAdditionalCount} of them strict. *(Press H.)* Here's one the public catalog doesn't list, with the waveforms that put it there."
 
 ## 2-minute pitch
 
 | Time | Screen | Say |
 | --- | --- | --- |
-| 0:00–0:10 | Start frame: terrain, the geothermal reference, PUBLIC {N}, the REVEAL button | "This is Utah's geothermal frontier near Milford. The public regional catalog lists {publicCatalogCount} events here on {windowLabel}." |
-| 0:10–0:25 | Space (or REVEAL HIDDEN SIGNAL): the counter climbs, the camera dollies to the side view | "That's what the public regional catalog shows. We went straight to the raw public seismometers." *(Let the counter finish. Say nothing for two seconds.)* |
-| 0:25–0:40 | Space again (STRICT), orbit slowly | "These are the strict ones: every quality metric within the range reached by three-quarters of the public events we recovered. They sit {depthBand} below the surface; read it off the ruler." Say only what is on screen: the depth band, and whether the points bunch or spread. Never what the pattern means, never a geometry, never a mechanism. |
-| 0:40–1:00 | E: the evidence drawer on the hero event | "How do we know this dot is an event and not noise? {nStations} stations agreed. The neural picker marks P and S on each, and the lines are the arrivals the final location implies. They agree." |
-| 1:00–1:15 | Validation card (bottom-left since the reveal); D opens Run details if asked | "We recover {recoveredCatalogCount} of {publicCatalogCount} public events. This station geometry resolves depth to about ±{medianVErrM} m in the synthetic test, where every event is recorded on every station; a typical candidate, recorded on fewer stations, resolves less finely." Read any other row exactly as the card shows it: if the "STA/LTA strict events" row is there, say "the energy-ratio picker gave {strictStalta} strict events out of {staltaCandidates} candidates" and stop; a gain only if the gain row is on the card; the null test only if the chance-associations row is. |
-| 1:15–1:30 | Esc, then Space (TIME): the scrubber replays the window | "Same events, replayed over the day." Say what the histogram shows: bursts or a steady trickle, and when. Nothing about why. |
-| 1:30–1:40 | Optional beat: the LIVE pill, only if it is up (docs/03 kill switch: unstable, or latency over about ten minutes, and the pill is cut) | "It runs on rolling windows too: the last two hours, updated {n} minutes ago." Without LIVE, spend this time in the drawer or the scrubber. |
-| 1:40–2:00 | Full scene, orbit | "Operators can see underground. Regulators, journalists and communities mostly can't. This is an open, public-data-only window into what the public network is already hearing." Stop. |
+| 0:00–0:15 | Start frame: terrain, the geothermal reference, PUBLIC {N}, the REVEAL button | "Enhanced geothermal is expanding near Milford, Utah, and its oversight is built on tiny earthquakes. Operators watch them with dense downhole sensors. Everyone else gets the public regional catalog: {publicCatalogCount} events here on {windowDate}." |
+| 0:15–0:27 | Space (or REVEAL HIDDEN SIGNAL): the counter climbs, the camera dollies to the side view | "That's what the public regional catalog shows. We went straight to the raw public seismometers." *(Let the counter finish. Say nothing for two seconds.)* |
+| 0:27–0:40 | Space again (STRICT), orbit slowly | "These are the strict ones: every quality metric within the range reached by three-quarters of the public events we recovered. They sit {depthBand} below the surface; read it off the ruler." Say only what is on screen: the depth band, and whether the points bunch or spread. Never what the pattern means, never a geometry, never a mechanism. |
+| 0:40–1:00 | H: the evidence drawer on the hidden hero, "Not in the public regional catalog", its {confidenceLabel} score beside the depth (E on the hero only if time is left) | "Here's one the public regional catalog doesn't list. {hiddenHeroStations} stations agreed. The neural picker marks P and S on each, and the lines are the arrivals its location implies. They agree. The {confidenceLabel} score beside its depth rates its timing against scrambled-clock decoys." |
+| 1:00–1:20 | Esc, then the Validation card (bottom-left since the reveal): the chance-associations row and the "(held-out ROC AUC)" row; D opens Run details if asked | "We recover {recoveredCatalogCount} of {publicCatalogCount} public events. Then we scrambled every station's clock, {nShuffles} times: about {meanChanceEvents} chance events each time, zero strict. And a classifier trained tonight on {confidenceDecoys} scrambled-clock decoys separates real timing at held-out AUC {heldOutRocAuc}." Any other row is read exactly as the card shows it, and only if asked. |
+| 1:20–1:30 | Space (TIME): the scrubber replays the window | "Same events, replayed over the day." Say what the histogram shows: bursts or a steady trickle, and when. Nothing about why. |
+| 1:30–1:42 | Download candidate catalog (CSV), then click any strict dot: the address bar carries that event's link | "Anyone can download the candidate catalog, or send a link that opens any event's evidence." |
+| 1:42–2:00 | Full scene, orbit | "Operators can see underground. Regulators, journalists and communities mostly can't. This is an open, public-data-only window into what the public network is already hearing." Stop. |
 
 ## Hostile judge questions
 
@@ -75,15 +75,15 @@ Answer in one or two sentences, then show something on screen. If the honest ans
 
 ## Devpost outline
 
-1. **Title + tagline:** "Hidden Quakes: what the public can't see beneath Utah's geothermal frontier."
+1. **Title + tagline:** "Hidden Quakes". The public regional catalog lists {publicCatalogCount} quakes under Utah's geothermal frontier; the same public data holds {candidateCount} candidate events.
 2. **Thumbnail:** semi-transparent terrain, the geothermal reference, public points in white, strict candidate events in amber below, and a "{publicCatalogCount} PUBLIC → {candidateCount} RECOVERED" counter. It has to read with no video; if it looks like random dots, redesign.
 3. **Inspiration:** enhanced geothermal is expanding; operators see underground and the public doesn't.
-4. **What it does:** the 10-second pitch, then the three interactions (reveal, evidence, time).
+4. **What it does:** results at a glance, the 10-second pitch, the scramble test in one sentence, then what a judge can try in a minute (Space, G, H, E, P, the drawer's score, download, share links).
 5. **How we built it:** pipeline diagram, stack, data sources.
 6. **Validation:** recall, strict count, depth resolution, plus baseline and null test if measured. Numbers copied from the validation panel.
 7. **Limits (its own heading):** candidate events, sparse public geometry, no attribution, pretrained picker.
 8. **Challenges:** borehole sample rates, depth credibility, datum handling.
-9. **What's next:** other public-network sites, relative relocation, continuous live operation.
+9. **What's next:** other public-network sites, relative relocation, live mode as future work.
 10. **Built with:** Python (ObsPy, SeisBench, PyOcto, scikit-fmm, SciPy, Pydantic, FastAPI), TypeScript (Next.js, React, three.js, React Three Fiber, zustand); the full list is in `docs/demo/devpost.md`.
 11. **Links:** deployed URL, repo, 2-minute video.
 12. **HackGT compliance line:** what was pre-event research vs what was built during the event.
@@ -133,9 +133,10 @@ Every spoken `{value}` above is read off the screen at demo time. This table map
 | `{depthBand}` | No bundle field. Read it off the depth ruler with STRICT on; say what is visible (a depth band, bunched or spread), never a geometry and never a mechanism | Scene, depth ruler and slices |
 | `{n}` minutes ago (Live) | `/api/live/status` → `updatedAt` | Live mode label |
 | `{latency}` (Q19) | `/api/live/status` → `latencyS`, and `/health` → `served.latencyS` | Not on screen; read from the API |
-| The window date spoken in the pitches | `meta.json` → `run.windowLabel` | Showcase mode label |
+| `{windowDate}` (the date spoken in the pitches) | `meta.json` → `run.windowStart`, as its UTC day in words; only while the window is inside one UTC day, otherwise say `{windowLabel}` (`meta.json` → `run.windowLabel`) | Showcase mode label (as the window label) |
 | Tier thresholds and their quantiles (Q33) | `meta.json` → `run.tiering` | Run details (D) |
 | Velocity model source (Q22) | `meta.json` → `run.velocityModel` | Run details (D) |
 | 1D vs 3D cross-check (Q23) | Not in the run of record: LOC-07's comparison, recorded in `docs/lanes/H2-seismology.md` (LOC-07 status). Say "in H2's lane doc", never "in Run details" | Not on screen |
+| `{hiddenHeroStations}` (the H beat) | `events.json` → the hidden hero's `quality.nStations` (the event `{hiddenHeroId}` below: what H opens) | Evidence drawer header after H |
 | `{hiddenHeroId}` (Q37) | `events.json`: the Tier A event with `catalogMatch` null and the most `quality.nStations`, ties broken by the smallest `quality.rmsS`, then time, then id (the hero's rule, `choose_hero` in `services/seismic/hq/export/summary.py`); `make story` derives it from the bundle, so it follows any rerun | Evidence drawer header (no "Matched" line) |
 | G-R curve (Q28) | `validation.json` → `gr` (only when present); its `publicCum` counts the public regional catalog's magnitudes of `{magType}` only (`REQ-H2-13`) | No G-R panel exists in the shell; say "in the bundle" |
