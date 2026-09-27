@@ -3,8 +3,8 @@
 Offline and seeded. ``read_window`` (SEIS-05) is replaced by a fake that returns segmented
 streams the way the real cache does: gaps as separate traces, never zero-filled, trimmed to the
 window. The download manifests are replaced by a fake that lists the fetched spans, or by a fake
-``hq.ingest.cache`` module plus manifest files on disk. Tests that need ``hq_contracts.io``
-(CONTRACT-01) skip until it lands.
+``hq.ingest.cache`` module plus manifest files on disk. The end-to-end test uses the real
+``hq_contracts.io`` (a hard dependency: a broken package fails, never skips).
 """
 
 import json
@@ -917,12 +917,12 @@ def test_pass_fail_against_min_stations(signal_cfg: SignalConfig) -> None:
     assert overall_pass(_doc_with_usable([[True] * 9]), cfg) is False
 
 
-# --- end to end (needs CONTRACT-01's hq_contracts.io) -----------------------------------------------
+# --- end to end (the real hq_contracts.io) -------------------------------------------------------
 
 
 @pytest.mark.smoke
 def test_run_known_windows_end_to_end(fake_ctx, run_section: RunSection) -> None:
-    io = pytest.importorskip("hq_contracts.io")
+    from hq_contracts import io
     from hq_contracts.models import CatalogEvent, Enu, Station
 
     from hq.ingest.windows import run_known_windows
