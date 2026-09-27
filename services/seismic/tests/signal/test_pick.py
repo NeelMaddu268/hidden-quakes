@@ -955,14 +955,15 @@ def test_stage_run_returns_none_and_records(fake_ctx: Any, monkeypatch: pytest.M
     )
     assert record["counts"]["checkBEventsPassed"] == 3 and record["runtimeS"] > 0
     assert record["params"]["candidateWeights"]
+    preprocess = fake_ctx.config.signal.preprocess.model_dump(mode="json")
+    assert record["params"]["preprocess"] == preprocess  # every knob (CLAUDE.md rule 8)
 
 
-# --- contracts I/O (runs once CONTRACT-01 lands) --------------------------------------------------
+# --- contracts I/O (hq_contracts is a hard dependency: a broken package fails, never skips) -------
 
 
 @pytest.mark.smoke
 def test_known_picks_round_trip_through_contracts(tmp_path: Path) -> None:
-    pytest.importorskip("hq_contracts.io")
     from hq_contracts.io import from_frame, read_table
     from hq_contracts.models import Pick
 
