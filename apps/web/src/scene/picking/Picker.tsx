@@ -10,7 +10,8 @@ import { LOOK } from "../look";
 import { sceneFx } from "../fx";
 import type { CatalogEvent } from "../types";
 import { shownAt } from "../time/clock";
-import { betterHit, isClick, pickNearest, PICK_THRESHOLD_PX, type PickHit, type PickQuery } from "./pick";
+import { betterHit, isClick, pickNearest, PICK_THRESHOLD_PX, type PickQuery } from "./pick";
+import { setHover } from "./hover";
 import { candidatePickable, publicSelectTargets } from "./selection";
 
 export interface PickerProps {
@@ -26,7 +27,9 @@ export interface PickerProps {
  * Click-to-select on the event layers (WEB-05). Listens on the canvas element: a pointer that goes down
  * and up without dragging picks the nearest visible glyph within PICK_THRESHOLD_PX and calls
  * `select(id)`. A public-catalog point selects its matched candidate. Empty space does nothing (Esc
- * deselects). Work happens only on click; nothing runs per frame.
+ * deselects). Hovering publishes the event under the pointer for HoverTooltip (any drawn glyph,
+ * including public points before the reveal, which a click doesn't select). Work happens only on
+ * click and on pointer moves (at most once per frame); nothing runs per frame otherwise.
  */
 export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProps) {
   const gl = useThree((s) => s.gl);
@@ -47,8 +50,13 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
     const onCancel = () => {
       down = null;
     };
-    /** The candidate event a pointer at (clientX, clientY) would select, or null for empty space. */
-    const pickAt = (clientX: number, clientY: number): string | null => {
+    type Hit = { kind: "candidate" | "public"; index: number };
+    /**
+     * The glyph nearest a pointer at (clientX, clientY), or null for empty space. "select" sees what a
+     * click may select; "hover" also sees public points a click skips (before the reveal, or with no
+     * matched candidate): the tooltip describes whatever is drawn.
+     */
+    const hitAt = (clientX: number, clientY: number, mode: "select" | "hover"): Hit | null => {
       const rect = el.getBoundingClientRect();
       camera.updateMatrixWorld();
       viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -75,11 +83,17 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
       const pub = pickNearest(publicEvents.positions, {
         ...base,
         radius: (i) => sizeKm.public * publicEvents.scales[i],
-        visible: (i) => phase !== "public" && publicTargets[i] !== null && shownAt(publicEvents.times[i], now),
+        visible: (i) =>
+          (mode === "hover" || (phase !== "public" && publicTargets[i] !== null)) && shownAt(publicEvents.times[i], now),
       });
-      const best: PickHit | null = pub && betterHit(pub, cand) ? pub : cand;
-      if (!best) return null;
-      return best === pub ? publicTargets[best.index] : candidates.ids[best.index];
+      if (pub && betterHit(pub, cand)) return { kind: "public", index: pub.index };
+      return cand ? { kind: "candidate", index: cand.index } : null;
+    };
+    /** The candidate event a click at (clientX, clientY) would select, or null for empty space. */
+    const pickAt = (clientX: number, clientY: number): string | null => {
+      const hit = hitAt(clientX, clientY, "select");
+      if (!hit) return null;
+      return hit.kind === "public" ? publicTargets[hit.index] : candidates.ids[hit.index];
     };
 
     const onUp = (e: PointerEvent) => {
@@ -91,40 +105,70 @@ export function Picker({ candidates, publicEvents, catalog, sizeKm }: PickerProp
       if (id) useDemo.getState().select(id); // empty space keeps the current selection
     };
 
-    // Hover affordance: a pointer cursor over anything a click would select. At most one pick per
-    // animation frame, only while the pointer moves with no button held (orbiting keeps its cursor).
+    // Hover: a pointer cursor over anything a click would select, and the tooltip's event. At most one
+    // pick per animation frame, only while the pointer moves with no button held (orbiting keeps its
+    // cursor and hides the tooltip).
     let hoverRaf = 0;
     let hoverX = 0;
     let hoverY = 0;
     const onMove = (e: PointerEvent) => {
-      if (e.buttons !== 0 || e.pointerType === "touch") return;
+      if (e.buttons !== 0 || e.pointerType === "touch") {
+        setHover(null);
+        return;
+      }
       hoverX = e.clientX;
       hoverY = e.clientY;
       if (hoverRaf) return;
       hoverRaf = requestAnimationFrame(() => {
         hoverRaf = 0;
         el.style.cursor = pickAt(hoverX, hoverY) ? "pointer" : "";
+        const hit = hitAt(hoverX, hoverY, "hover");
+        setHover(
+          hit === null
+            ? null
+            : {
+                kind: hit.kind,
+                id: hit.kind === "public" ? catalog[hit.index]!.id : candidates.ids[hit.index]!,
+                x: hoverX,
+                y: hoverY,
+              },
+        );
       });
     };
     const onLeave = () => {
       el.style.cursor = "";
+      setHover(null);
     };
+    // Anything that moves the glyphs under a still pointer ends the hover: a drag or zoom starting, and
+    // the scene changing state (reveal, filter, time mode, view, reset).
+    const onGesture = () => setHover(null);
+    const offStore = useDemo.subscribe((s, prev) => {
+      if (s.phase !== prev.phase || s.filter !== prev.filter || s.timeMode !== prev.timeMode || s.view !== prev.view) {
+        setHover(null);
+      }
+    });
 
     el.addEventListener("pointerdown", onDown);
     el.addEventListener("pointerup", onUp);
     el.addEventListener("pointercancel", onCancel);
     el.addEventListener("pointermove", onMove);
     el.addEventListener("pointerleave", onLeave);
+    el.addEventListener("pointerdown", onGesture);
+    el.addEventListener("wheel", onGesture, { passive: true });
     return () => {
       cancelAnimationFrame(hoverRaf);
+      offStore();
+      setHover(null);
       el.style.cursor = "";
+      el.removeEventListener("pointerdown", onGesture);
+      el.removeEventListener("wheel", onGesture);
       el.removeEventListener("pointerdown", onDown);
       el.removeEventListener("pointerup", onUp);
       el.removeEventListener("pointercancel", onCancel);
       el.removeEventListener("pointermove", onMove);
       el.removeEventListener("pointerleave", onLeave);
     };
-  }, [gl, camera, candidates, publicEvents, publicTargets, sizeKm.candidate, sizeKm.public]);
+  }, [gl, camera, candidates, publicEvents, publicTargets, catalog, sizeKm.candidate, sizeKm.public]);
 
   return null;
 }
