@@ -43,6 +43,17 @@ export const DRAWER_CSS = `
   color: ${colors.alert}; border: 1px solid ${colors.alert}; border-radius: 3px;
   padding: 1px 5px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
 }
+.hqd-copy {
+  margin-left: auto; flex: none; height: 24px; padding: 0 9px; border-radius: 12px; cursor: pointer;
+  border: 1px solid ${colors.contour}; background: transparent; color: ${colors.textDim};
+  font: 600 10.5px/1 ${fonts.ui}; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap;
+  transition: color ${motion.micro}ms ${motion.ease}, border-color ${motion.micro}ms ${motion.ease};
+}
+.hqd-copy:hover { color: ${colors.text}; border-color: ${colors.textDim}; }
+.hqd-copy:focus-visible { outline: 1px solid ${colors.textDim}; outline-offset: 1px; }
+.hqd-copy[data-state="copied"] { color: ${colors.recovered}; border-color: ${colors.recovered}; }
+.hqd-copy[data-state="failed"] { color: ${colors.alert}; border-color: ${colors.alert}; }
+.hqd-copy + .hqd-close { margin-left: 0; }
 .hqd-close {
   margin-left: auto; width: 28px; height: 28px; flex: none; border-radius: 4px; cursor: pointer;
   border: 1px solid transparent; background: transparent; color: ${colors.textDim};
