@@ -20,7 +20,7 @@ import {
   RULER_TITLE_RISE_PX,
   type RectList,
 } from "./labelPlacement";
-import { LABEL_Z_RANGE, labelStyle, numericLabelStyle } from "./labels";
+import { LABEL_PLATE, LABEL_Z_RANGE, labelStyle, numericLabelStyle } from "./labels";
 import { useLabelElements } from "./useLabelElements";
 import { declutterLabels, rulerAnchor, rulerLayout, rulerRevealOpacity, stickyTitleT } from "./ruler";
 
@@ -181,6 +181,7 @@ export function DepthRuler({
             data-testid="depth-ruler-title"
             style={{
               ...labelStyle,
+              ...LABEL_PLATE,
               opacity: 0,
               transform: `translate(-${RULER_TITLE_INSET_PX}px, calc(-100% - ${RULER_TITLE_RISE_PX}px))`,
             }}
@@ -194,7 +195,7 @@ export function DepthRuler({
           <div
             ref={labels.ref(i + 1)}
             data-testid="depth-ruler-tick"
-            style={{ ...numericLabelStyle, opacity: 0, transform: `translate(calc(-100% - ${RULER_TICK_GAP_PX}px), -50%)` }}
+            style={{ ...numericLabelStyle, ...LABEL_PLATE, opacity: 0, transform: `translate(calc(-100% - ${RULER_TICK_GAP_PX}px), -50%)` }}
           >
             {t.label}
           </div>

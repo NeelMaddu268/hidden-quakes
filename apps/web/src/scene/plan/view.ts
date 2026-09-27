@@ -1,6 +1,7 @@
 // The plan camera's pose for a viewport, from the tested planFrame. R3F sizes a default orthographic
 // camera's frustum in CSS pixels, so `zoom` is pixels per scene km. The depth-section panel covers
-// the left `reserveLeftPx`; the framed data is centered in the remaining region.
+// the left `reserveLeftPx` (or the right `reserveRightPx`: the depth section docks on one side); the
+// framed data is centered in the remaining region.
 
 import type { SceneBounds } from "../camera/bounds";
 import { planFrame } from "./geometry";
@@ -26,14 +27,19 @@ export function planView(
   widthPx: number,
   heightPx: number,
   reserveLeftPx: number,
+  reserveRightPx = 0,
 ): PlanView {
   if (!(widthPx > 0) || !(heightPx > 0)) throw new Error("planView: invalid viewport");
-  const reserve = reserveLeftPx > 0 && reserveLeftPx < widthPx * 0.6 ? reserveLeftPx : 0;
-  const freeWidth = widthPx - reserve;
+  let left = reserveLeftPx > 0 && reserveLeftPx < widthPx * 0.6 ? reserveLeftPx : 0;
+  let right = reserveRightPx > 0 && reserveRightPx < widthPx * 0.6 ? reserveRightPx : 0;
+  // Never leave the data less than a quarter of the width: drop the reserves rather than squeeze it.
+  if (widthPx - left - right < widthPx * 0.25) left = right = 0;
+  const freeWidth = widthPx - left - right;
   const frame = planFrame(bounds, freeWidth / heightPx, clipBounds);
   const zoom = heightPx / frame.height;
-  // Screen center sits `reserve / 2` px left of the free region's center: shift the camera left by that.
-  const x = frame.centerX - reserve / 2 / zoom;
+  // The free region's center sits (left − right) / 2 px right of the screen center: shift the camera
+  // the other way by that.
+  const x = frame.centerX - (left - right) / 2 / zoom;
   return {
     zoom,
     x,

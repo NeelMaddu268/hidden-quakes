@@ -56,6 +56,20 @@ describe("planView", () => {
     expect(s.y).toBeCloseTo(H / 2, 6);
   });
 
+  it("with the panel docked right, fits and centers the data in the region left of it", () => {
+    const W = 1280, H = 720, right = 408;
+    const v = planView(bounds, bounds, W, H, 0, right);
+    const cam = camera(W, H, v);
+    for (const x of [bounds.min[0], bounds.max[0]])
+      for (const z of [bounds.min[2], bounds.max[2]]) {
+        const s = screen(cam, W, H, [x, bounds.center[1], z]);
+        expect(s.x).toBeGreaterThanOrEqual(-1e-6);
+        expect(s.x).toBeLessThanOrEqual(W - right + 1e-6);
+      }
+    const c = screen(cam, W, H, [bounds.center[0], bounds.center[1], bounds.center[2]]);
+    expect(c.x).toBeCloseTo((W - right) / 2, 6);
+  });
+
   it("is grid north up and grid east right, at equal scale on both axes", () => {
     const W = 1280, H = 720;
     const v = planView(bounds, bounds, W, H, 0);
