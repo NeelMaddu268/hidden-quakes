@@ -28,3 +28,7 @@ out/
 .env
 .env.local
 .DS_Store
+
+# Agent instruction files that Next.js tooling regenerates locally
+apps/web/AGENTS.md
+apps/web/CLAUDE.md
