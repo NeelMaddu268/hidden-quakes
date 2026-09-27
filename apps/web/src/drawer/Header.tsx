@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { eventShareLink } from "../shell/share";
 import type { BundleMeta, SceneMeta, SeismicEvent } from "../scene/types";
 import { depthKmOfElev } from "./geometry";
 import { DASH, fmtFixed, fmtMagnitude, fmtPlusMinusM, fmtUnit, fmtUtahLocal, fmtUtc, isNum } from "./format";
@@ -41,12 +42,74 @@ export function Header({ eventId, event, meta, confidence = null, onClose }: Hea
           {eventId}
         </span>
         {synthetic && <span className="hqd-synth">Synthetic</span>}
+        <CopyLinkButton eventId={eventId} />
         <button type="button" className="hqd-close" onClick={onClose} aria-label="Close evidence drawer">
           ×
         </button>
       </div>
       {event && meta ? <EventSummary event={event} scene={meta.scene} confidence={confidence} /> : null}
     </header>
+  );
+}
+
+/** How long "Copied" (or the failure note) shows before the button reads "Copy link" again (ms). */
+export const COPIED_MS = 1600;
+
+type CopyState = "idle" | "copied" | "failed";
+
+const COPY_LABEL: Readonly<Record<CopyState, string>> = {
+  idle: "Copy link",
+  copied: "Copied",
+  failed: "Copy failed",
+};
+
+/**
+ * Copies this event's share link (REQ-H4-3): the page with `?event=<id>`, from the shell's
+ * `eventShareLink`, which opens this drawer for whoever follows it. "Copied" for a moment after; a
+ * refused clipboard (permissions, an insecure page) says so and logs why, rather than pretending.
+ */
+function CopyLinkButton({ eventId }: { eventId: string }) {
+  const [state, setState] = useState<CopyState>("idle");
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  // A different event's drawer starts fresh.
+  const [shownFor, setShownFor] = useState(eventId);
+  if (shownFor !== eventId) {
+    setShownFor(eventId);
+    setState("idle");
+  }
+  const settle = (next: CopyState) => {
+    setState(next);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setState("idle"), COPIED_MS);
+  };
+  const copy = () => {
+    const link = eventShareLink(eventId);
+    const write = navigator.clipboard?.writeText(link);
+    if (!write) {
+      console.error("Copy link: the clipboard is unavailable on this page");
+      settle("failed");
+      return;
+    }
+    write.then(
+      () => settle("copied"),
+      (err: unknown) => {
+        console.error("Copy link: the clipboard refused the write", err);
+        settle("failed");
+      },
+    );
+  };
+  return (
+    <button
+      type="button"
+      className="hqd-copy"
+      data-state={state}
+      data-testid="copy-link"
+      onClick={copy}
+      title="Copy a link that opens this event"
+    >
+      <span aria-live="polite">{COPY_LABEL[state]}</span>
+    </button>
   );
 }
 
