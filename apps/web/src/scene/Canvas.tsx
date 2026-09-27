@@ -28,6 +28,7 @@ import { sceneFx } from "./fx";
 import { depthFogPerSceneUnit, LOOK } from "./look";
 
 import { Picker } from "./picking/Picker";
+import { HiddenHeroKey } from "./HiddenHeroKey";
 import { DepthSection } from "./plan/DepthSection";
 import { HoverTooltip } from "./picking/HoverTooltip";
 import { Tour } from "./tour/Tour";
@@ -212,6 +213,7 @@ export function Scene() {
     </Canvas>
     <DepthSection />
     <HoverTooltip />
+    <HiddenHeroKey />
     <Tour />
     </>
   );
