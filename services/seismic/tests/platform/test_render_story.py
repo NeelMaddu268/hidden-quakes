@@ -360,3 +360,60 @@ def test_decoy_test_sentence_needs_confidence_json(story: ModuleType, tmp_path: 
     rows, _ = story.render(bundle, tmp_path / "no-auc")
     row = {(r.doc, r.name): r for r in rows}[("pitch-and-qa.md", "{heldOutRocAuc}")]
     assert row.status == story.STATUS_CONDITION
+
+
+def test_window_date_and_hidden_hero_stations(story: ModuleType, tmp_path: Path) -> None:
+    """The date spoken in the pitches is the window's UTC day in words (never the window label),
+    only for a window inside one UTC day; the H beat's station count is the hidden hero's own
+    ``quality.nStations``, the event ``{hiddenHeroId}`` names."""
+    bundle = tmp_path / "bundle"
+    shutil.copytree(MOCK_BUNDLE, bundle)
+    meta = json.loads((bundle / "meta.json").read_text(encoding="utf-8"))
+    day = 86_400
+    meta["run"]["windowStart"] = 1_788_998_400.0  # 2026-09-10 00:00 UTC
+    meta["run"]["windowEnd"] = 1_788_998_400.0 + day  # exclusive: the next midnight
+    (bundle / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    rows, _ = story.render(bundle, tmp_path / "one-day")
+    by_name = {(r.doc, r.name): r for r in rows}
+    for key in (
+        ("pitch-and-qa.md", "{windowDate}"),
+        ("devpost.md", "<from meta.json: run.windowStart, as a date>"),
+    ):
+        assert by_name[key].status == story.STATUS_VALUE, key
+        assert by_name[key].text == "September 10", key
+    events = json.loads((bundle / "events.json").read_text(encoding="utf-8"))
+    hidden = [e for e in events if e["tier"] == "A" and e["catalogMatch"] is None]
+    best = min(
+        hidden, key=lambda e: (-e["quality"]["nStations"], e["quality"]["rmsS"], e["t"], e["id"])
+    )
+    stations = by_name[("pitch-and-qa.md", "{hiddenHeroStations}")]
+    assert stations.status == story.STATUS_VALUE
+    assert stations.text == str(best["quality"]["nStations"])
+    assert by_name[("pitch-and-qa.md", "{hiddenHeroId}")].text == best["id"]
+
+    meta["run"]["windowEnd"] = 1_788_998_400.0 + 2 * day
+    (bundle / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    rows, _ = story.render(bundle, tmp_path / "two-days")
+    row = {(r.doc, r.name): r for r in rows}[("pitch-and-qa.md", "{windowDate}")]
+    assert row.status == story.STATUS_NOT_AVAILABLE and "more than one UTC day" in row.text
+
+
+@needs_showcase
+def test_devpost_joint_share_and_final_copy(story: ModuleType, tmp_path: Path) -> None:
+    """The Devpost quotes the recovered public events meeting every strict bar at once from
+    ``run.tiering.matchedSet``, and on the run of record everything above the fill-in checklist
+    renders as final copy: no marker but the video URL."""
+    out = tmp_path / "out"
+    rows, _ = story.render(SHOWCASE_BUNDLE, out)
+    meta = json.loads((SHOWCASE_BUNDLE / "meta.json").read_text(encoding="utf-8"))
+    matched = meta["run"]["tiering"]["matchedSet"]
+    value = {(r.doc, r.name): r.text for r in rows}
+    assert value[
+        ("devpost.md", "<from meta.json: run.tiering.matchedSet.meetingEveryBar.A>")
+    ] == str(matched["meetingEveryBar"]["A"])
+    assert value[("devpost.md", "<from meta.json: run.tiering.matchedSet.n>")] == str(matched["n"])
+    devpost = (out / story.DEVPOST_FILLED_MD).read_text(encoding="utf-8")
+    copy = devpost.split("## Fill-in checklist")[0].split("-->", 1)[1]
+    markers = re.findall(r"\[(?:manual|not available|condition not met):[^\]]*\]", copy)
+    assert markers == ["[manual: the uploaded video URL]"]
+    assert "only if" not in copy and "run.json" not in copy
