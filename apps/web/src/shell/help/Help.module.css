@@ -1,0 +1,120 @@
+/* "How it works" overlay: centred, one screen, tokens only (--hq-*), like RunDetails.module.css. */
+
+.panel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(36rem, calc(100vw - 2 * var(--shell-inset)));
+  max-height: calc(100vh - 2 * var(--shell-inset));
+  overflow: auto;
+  padding: 1.1rem 1.3rem 1.3rem;
+  border: 1px solid var(--hq-contour);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--hq-surface) 95%, transparent);
+  color: var(--hq-text);
+  pointer-events: auto;
+  user-select: text;
+  z-index: 2;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.steps {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  counter-reset: step;
+  list-style: none;
+  padding: 0;
+}
+
+.step {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 1.6rem 1fr;
+  column-gap: 0.4rem;
+}
+
+.step::before {
+  content: counter(step);
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--hq-recovered);
+  color: var(--hq-recovered);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.stepTitle {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.stepLine {
+  font-size: 0.85rem;
+  color: var(--hq-text-dim);
+  line-height: 1.4;
+}
+
+.caveat {
+  margin-top: 0.9rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--hq-text);
+}
+
+.keysTitle {
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hq-text-dim);
+}
+
+.keys {
+  margin-top: 0.5rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.35rem 1rem;
+}
+
+.keyRow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.kbd {
+  display: inline-block;
+  min-width: 2.6rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--hq-contour);
+  border-radius: 4px;
+  font-family: var(--hq-font-mono);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.action {
+  font-size: 0.82rem;
+  color: var(--hq-text-dim);
+}

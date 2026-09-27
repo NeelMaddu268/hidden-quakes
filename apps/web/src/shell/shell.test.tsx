@@ -3,7 +3,7 @@
  * `revealProgress`; the SYNTHETIC banner, the mode label, the loading line and the error panel
  * all come from the provider. The bundle is the tiny hand-made one in `./test-fixture.ts`.
  */
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderRoot, SCHEMA_VERSION, StaticBundleProvider, type FetchLike, type StaticMode } from "@/providers";
 import { useDemo } from "@/state/demo";
@@ -348,5 +348,45 @@ describe("share links (overnight feature 3)", () => {
     expect(window.location.search).toBe(`?mode=mock&event=${HERO_EVENT_ID}`);
     press("Escape");
     expect(window.location.search).toBe("?mode=mock");
+  });
+});
+
+describe("how it works (DEMO-04 item 1)", () => {
+  it("the ? button and the ? key open it; Esc closes it; it lists the three steps and the keys", async () => {
+    await mountReady();
+    expect(screen.queryByTestId("help-overlay")).toBeNull();
+    fireEvent.click(screen.getByTestId("help-button"));
+    const overlay = screen.getByTestId("help-overlay");
+    expect(overlay.textContent).toContain("Public seismometers");
+    expect(overlay.textContent).toContain("public regional catalog");
+    for (const key of ["Space", "G", "H", "E", "P", "R", "D"]) expect(overlay.textContent).toContain(key);
+    press("Escape");
+    expect(screen.queryByTestId("help-overlay")).toBeNull();
+    press("?");
+    expect(screen.getByTestId("help-overlay")).toBeTruthy();
+    press("?");
+    expect(screen.queryByTestId("help-overlay")).toBeNull();
+  });
+});
+
+describe("event list (DEMO-04 item 2)", () => {
+  it("lists the bundle's events and a row click reveals and opens that event's drawer", async () => {
+    await mountReady();
+    fireEvent.click(screen.getByTestId("event-list-button"));
+    expect(screen.getByTestId("event-list-count").textContent).toBe("2");
+    fireEvent.click(screen.getByTestId("event-row-ev-1"));
+    expect(state().phase).toBe("revealing");
+    sceneFinishesReveal();
+    expect(state().selectedEventId).toBe("ev-1");
+  });
+
+  it("filters by tier", async () => {
+    await mountReady();
+    fireEvent.click(screen.getByTestId("event-list-button"));
+    const tiers = within(screen.getByRole("group", { name: "Tier filter" }));
+    fireEvent.click(tiers.getByRole("button", { name: "Tier C" }));
+    expect(screen.getByTestId("event-list-count").textContent).toBe("0");
+    fireEvent.click(tiers.getByRole("button", { name: "Strict" }));
+    expect(screen.getByTestId("event-list-count").textContent).toBe("2");
   });
 });
