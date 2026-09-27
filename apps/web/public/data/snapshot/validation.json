@@ -5,11 +5,11 @@
   "nullTest": null,
   "sweep": [],
   "synthetic": {
-    "medianDepthBiasM": -2.7183043324914706,
-    "medianHErrM": 60.453903468795396,
-    "medianVErrM": 68.29078839069302,
+    "medianDepthBiasM": 8.409401613927002,
+    "medianHErrM": 48.62035368887667,
+    "medianVErrM": 64.36493523016702,
     "nEvents": 200,
-    "p90VErrM": 163.8713744668612,
+    "p90VErrM": 159.96078274396058,
     "pickSigmaS": {
       "P": 0.02,
       "S": 0.04

@@ -37,10 +37,10 @@ export function FilterPills() {
 }
 
 /** What a mode pill says when it is not the mode's own name. */
-const PILL_LABELS: Partial<Record<DataMode, string>> = { snapshot: "tonight" };
+const PILL_LABELS: Partial<Record<DataMode, string>> = { snapshot: "today" };
 
 /**
- * Data-mode switch, bottom-left and small. SHOWCASE always; TONIGHT (`?mode=snapshot`, WEB-12)
+ * Data-mode switch, bottom-left and small. SHOWCASE always; TODAY (`?mode=snapshot`, WEB-12)
  * when the build carries a snapshot bundle or snapshot is the current mode; LIVE only when the
  * build set `NEXT_PUBLIC_LIVE_ENABLED=1` (API-04); MOCK only while mock is the current mode.
  * During live failover LIVE stays pressed and the label alone says Snapshot (API-05).

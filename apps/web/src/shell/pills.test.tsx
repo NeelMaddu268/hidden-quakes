@@ -1,5 +1,5 @@
 /**
- * Mode pills: SHOWCASE always, TONIGHT (snapshot) behind the build's snapshot flag or as the
+ * Mode pills: SHOWCASE always, TODAY (snapshot) behind the build's snapshot flag or as the
  * current mode (WEB-12), LIVE only behind the API-04 flag, MOCK only as the current mode; a
  * switch is a full navigation through `navigateToMode`. API-05: during live failover the label
  * says Snapshot while LIVE stays the pressed pill.
@@ -58,18 +58,18 @@ describe("mode pills", () => {
     expect(pills.map((b) => b.textContent)).toEqual(["showcase", "live"]);
   });
 
-  it("offers TONIGHT only when the build carries a snapshot, and it switches to ?mode=snapshot", async () => {
+  it("offers TODAY only when the build carries a snapshot, and it switches to ?mode=snapshot", async () => {
     vi.stubEnv("NEXT_PUBLIC_SNAPSHOT_AVAILABLE", "1");
     const pills = await mountReady("showcase", { isSynthetic: false });
-    expect(pills.map((b) => b.textContent)).toEqual(["showcase", "tonight"]);
+    expect(pills.map((b) => b.textContent)).toEqual(["showcase", "today"]);
     expect(pills.map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
     fireEvent.click(pills[1]);
     expect(navigateToMode).toHaveBeenCalledWith("snapshot");
   });
 
-  it("presses TONIGHT in snapshot mode, SHOWCASE goes back, and the label is the snapshot's window and run", async () => {
+  it("presses TODAY in snapshot mode, SHOWCASE goes back, and the label is the snapshot's window and run", async () => {
     const pills = await mountReady("snapshot", { isSynthetic: false });
-    expect(pills.map((b) => b.textContent)).toEqual(["showcase", "tonight"]);
+    expect(pills.map((b) => b.textContent)).toEqual(["showcase", "today"]);
     expect(pills.map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
     expect(screen.getByTestId("mode-label").textContent).toBe("Snapshot · window · run snapshot-run");
     fireEvent.click(pills[0]);
