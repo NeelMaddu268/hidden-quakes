@@ -3,6 +3,7 @@
 import type { SceneMeta } from "../types";
 import { verticalBadgeText } from "./badge";
 import { CornerNote } from "./CornerNote";
+import { LEGEND_SLOTS } from "./SceneLegend";
 
 /**
  * Permanent "Vertical ×N" badge in the canvas's bottom-right corner whenever the scene is vertically
@@ -12,7 +13,7 @@ export function VerticalBadge({ scene }: { scene: SceneMeta }) {
   const text = verticalBadgeText(scene);
   if (!text) return null;
   return (
-    <CornerNote slot={0} testId="vertical-badge">
+    <CornerNote slot={LEGEND_SLOTS} testId="vertical-badge">
       {text}
     </CornerNote>
   );
