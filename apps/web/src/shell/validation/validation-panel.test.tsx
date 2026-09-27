@@ -12,7 +12,7 @@ import mockValidation from "../../../public/data/mock/validation.json";
 import { Shell } from "../Shell";
 import { bundleFiles, fakeFetch, type FixtureOptions } from "../test-fixture";
 import { formatNumber } from "./format";
-import { chanceNote, DEPTH_NOTE, STRICT_COMPARE_NOTE } from "./rows";
+import { chanceNote } from "./rows";
 
 const validation = mockValidation as unknown as Validation;
 const summary = mockMeta.summary as unknown as AnalysisSummary;
@@ -58,27 +58,26 @@ describe("validation panel", () => {
       "Catalog recall",
       "Strict events",
       "Median stations",
-      "Median residual",
-      "Depth resolution",
-      "Strict events, PhaseNet vs STA/LTA",
+      "Median timing misfit",
+      "Depth resolution (synthetic, all stations)",
+      "STA/LTA strict events",
       "PhaseNet vs STA/LTA gain",
       "Chance associations",
     ]);
     expect(rowText("recall")).toBe(`${formatNumber(summary.recoveredCatalogCount, 0)} / ${formatNumber(summary.publicCatalogCount, 0)}`);
-    expect(rowText("strict")).toBe(formatNumber(summary.strictQualityCount, 0));
+    expect(rowText("strict")).toBe(
+      `${formatNumber(summary.strictQualityCount, 0)} (${formatNumber(summary.strictAdditionalCount, 0)} not in public catalog)`,
+    );
     expect(rowText("stations")).toBe(formatNumber(summary.medianStations, 1));
     expect(rowText("residual")).toBe(`${formatNumber(summary.medianRmsS, 3)} s`);
     expect(rowText("depth")).toBe(`±${formatNumber(validation.synthetic.medianVErrM, 0)} m`);
-    const full = (method: "phasenet" | "stalta") =>
-      validation.baseline.find((r) => r.method === method && r.associationProfile === "full")!.tiers.A;
-    expect(rowText("strictCompare")).toBe(`${formatNumber(full("phasenet"), 0)} vs ${formatNumber(full("stalta"), 0)}`);
+    const staltaFull = validation.baseline.find((r) => r.method === "stalta" && r.associationProfile === "full")!;
+    expect(rowText("stalta")).toBe(`${formatNumber(staltaFull.tiers.A, 0)} of ${formatNumber(staltaFull.candidates, 0)} candidates`);
     expect(rowText("gain")).toBe(`${formatNumber(summary.baseline!.gain, 2)}×`);
     expect(rowText("chance")).toBe(formatNumber(validation.nullTest!.meanChanceEvents, 1));
-    // The comparison's PhaseNet count is a rerun on one statics table, so its row carries the
-    // note that keeps it from being read against "Strict events" unqualified; no other row does.
-    expect(screen.getByTestId("validation-note-strictCompare").textContent).toBe(STRICT_COMPARE_NOTE);
-    // The depth figure comes from the synthetic test with every station recording; its row says so.
-    expect(screen.getByTestId("validation-note-depth").textContent).toBe(DEPTH_NOTE);
+    // Only the chance row carries a note; the other qualifiers live in the labels.
+    expect(screen.queryByTestId("validation-note-stalta")).toBeNull();
+    expect(screen.queryByTestId("validation-note-depth")).toBeNull();
     expect(screen.queryByTestId("validation-note-strict")).toBeNull();
     // The chance value is a mean over the null test's scrambles; its note says so from the data.
     expect(screen.getByTestId("validation-note-chance").textContent).toBe(chanceNote(validation.nullTest));
@@ -101,5 +100,46 @@ describe("validation panel", () => {
     const value = screen.getByTestId("validation-row-strict").querySelector("dd")!;
     expect(value.style.fontFamily).toMatch(/JetBrains Mono/);
     expect(value.style.fontVariantNumeric).toBe("tabular-nums");
+  });
+});
+
+describe("validation panel: the ML-01 decoy-test row", () => {
+  async function mountWithConfidence(confidence: unknown) {
+    const files = { ...bundleFiles("mock-run", { validation, summary }), "confidence.json": confidence };
+    const provider = new StaticBundleProvider("mock", { fetchImpl: fakeFetch({ mock: files }) });
+    render(
+      <ProviderRoot mode="mock" provider={provider}>
+        <Shell />
+      </ProviderRoot>,
+    );
+    await screen.findByTestId("counter-public");
+    await act(async () => {});
+    act(() => useDemo.getState().reveal());
+  }
+
+  const file = (rocAuc: unknown) => ({
+    schema: "hq.confidence/1",
+    runId: "mock-run",
+    model: { heldOut: { rocAuc } },
+    label: "Decoy test",
+    description: "How much this event looks like real timing rather than a decoy",
+    events: {},
+  });
+
+  it("adds one last row from confidence.json: its label and the held-out AUC", async () => {
+    await mountWithConfidence(file(0.8125));
+    const labels = Array.from(screen.getByTestId("validation-panel").querySelectorAll("dt")).map((dt) => dt.textContent);
+    expect(labels.at(-1)).toBe("Decoy test (held-out ROC AUC)");
+    expect(rowText("confidence")).toBe((0.8125).toFixed(2));
+    expect(screen.getByTestId("validation-note-confidence").textContent).not.toMatch(/\d/);
+  });
+
+  it("shows no such row when the file is another run's or has no usable AUC", async () => {
+    await mountWithConfidence({ ...file(0.8125), runId: "other-run" });
+    expect(screen.getByTestId("validation-panel")).toBeTruthy();
+    expect(screen.queryByTestId("validation-row-confidence")).toBeNull();
+    cleanup();
+    await mountWithConfidence(file("high"));
+    expect(screen.queryByTestId("validation-row-confidence")).toBeNull();
   });
 });

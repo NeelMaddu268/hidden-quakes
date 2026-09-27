@@ -4,7 +4,7 @@
  * so a missing file, a null field or a hand-edited bundle hides the row instead of rendering
  * "NaN". Labels are words; every digit in a value comes from the data.
  */
-import type { AnalysisSummary, BaselineRow, Validation } from "@/providers";
+import type { AnalysisSummary, BaselineRow, Confidence, Validation } from "@/providers";
 import { formatNumber, isFiniteNumber } from "./format";
 
 type Nullable<T> = { [K in keyof T]?: T[K] | null };
@@ -18,7 +18,10 @@ export type ValidationInput =
   | null
   | undefined;
 
-export type RowId = "recall" | "strict" | "stations" | "residual" | "depth" | "strictCompare" | "gain" | "chance";
+/** The part of ML-01's `confidence.json` the card reads (`useConfidence`); null without the file. */
+export type ConfidenceInput = Pick<Confidence, "label" | "rocAuc"> | null | undefined;
+
+export type RowId = "recall" | "strict" | "stations" | "residual" | "depth" | "stalta" | "gain" | "chance" | "confidence";
 
 export interface ValidationRow {
   id: RowId;
@@ -28,54 +31,40 @@ export interface ValidationRow {
   note?: string;
 }
 
-/**
- * Why the comparison's PhaseNet count can differ from "Strict events": the baseline rerun applies
- * one statics table to every event, while the published run leaves each matched event out of its
- * own statics (VAL-01 → `validation_notes.json`). Shown under the row so the two counts never sit
- * on the card side by side without it.
- */
-export const STRICT_COMPARE_NOTE = "Rerun with one statics table for every event; the count differs from the strict count above";
-
-/**
- * Why the depth-resolution figure is an upper bound on what a typical candidate gets: the
- * synthetic test records every event on every station, while a typical candidate has fewer
- * stations and resolves less finely (H2's 5:50 PM Sat note). Shown under the row.
- */
-export const DEPTH_NOTE = "Synthetic test with every event on every station; a typical candidate, on fewer stations, resolves less finely";
-
 /** Display precision per row (decimals shown), not a data threshold. */
-const DECIMALS = { count: 0, stations: 1, residual: 3, depth: 0, gain: 2, chance: 1 } as const;
+const DECIMALS = { count: 0, stations: 1, residual: 3, depth: 0, gain: 2, chance: 1, auc: 2 } as const;
+
+/** The confidence row's label when `confidence.json` carries none of its own. */
+const CONFIDENCE_FALLBACK_LABEL = "Decoy test";
 
 /** Both association profiles of the contract (`BaselineRow.associationProfile`). */
 const ASSOCIATION_PROFILES = ["full", "p_only"] as const satisfies readonly BaselineRow["associationProfile"][];
 
-/** The profile the strict-events comparison is quoted on (the one `BaselineGain` is quoted on too). */
+/** The profile the STA/LTA row is quoted on (the one `BaselineGain` is quoted on too). */
 const COMPARISON_PROFILE = "full" satisfies BaselineRow["associationProfile"];
 
 /**
- * The strict (Tier A) counts of the `full` profile's PhaseNet and STA/LTA rows, when both rows
- * exist with a finite count; the comparison is shown from the table itself, so it survives when
- * no gain can be claimed (STA/LTA with no strict event at all, REQ-H1-5).
+ * The STA/LTA baseline's strict (Tier A) count and its candidate count, from the `full` profile
+ * row, when both are finite. The card shows "A of N candidates" (H2's card copy, Sat evening):
+ * the same downstream code and tier bars, an energy-ratio picker instead of PhaseNet. It never
+ * shows the rerun's PhaseNet strict count, which is not the STRICT counter (the rerun applies
+ * one statics table to every event; the published run leaves each matched event out of its own).
  */
-export function strictComparison(
+export function staltaStrict(
   rows: readonly Nullable<BaselineRow>[] | null | undefined,
-): { phasenet: number; stalta: number } | null {
+): { strict: number; candidates: number } | null {
   if (!rows) return null;
-  const strictOf = (method: BaselineRow["method"]): number | null => {
-    const row = rows.find((r) => r.method === method && r.associationProfile === COMPARISON_PROFILE);
-    const tierA = row?.tiers?.A;
-    return isFiniteNumber(tierA) ? tierA : null;
-  };
-  const phasenet = strictOf("phasenet");
-  const stalta = strictOf("stalta");
-  if (phasenet === null || stalta === null) return null;
-  return { phasenet, stalta };
+  const row = rows.find((r) => r.method === "stalta" && r.associationProfile === COMPARISON_PROFILE);
+  const strict = row?.tiers?.A;
+  const candidates = row?.candidates;
+  if (!isFiniteNumber(strict) || !isFiniteNumber(candidates)) return null;
+  return { strict, candidates };
 }
 
 /**
  * "The baseline ran": a presence check only. The table has a PhaseNet row and an STA/LTA row for
- * each association profile. Whether the gain holds in both profiles is VAL-01's call: the
- * exporter writes `summary.baseline` only then, and the UI never recomputes the ratio.
+ * both association profiles. Used by the gain row: the exporter writes `summary.baseline` only
+ * then, and the UI never recomputes the ratio.
  */
 export function baselineRan(rows: readonly Nullable<BaselineRow>[] | null | undefined): boolean {
   if (!rows) return false;
@@ -102,7 +91,7 @@ export function chanceNote(nullTest: Nullable<NonNullable<Validation["nullTest"]
   return `${scrambles}; about ${formatNumber(strict, DECIMALS.chance)} per scramble reached the strict tier`;
 }
 
-export function rows(summary: SummaryInput, validation: ValidationInput): ValidationRow[] {
+export function rows(summary: SummaryInput, validation: ValidationInput, confidence?: ConfidenceInput): ValidationRow[] {
   const s = summary ?? {};
   const v = validation ?? {};
   const out: ValidationRow[] = [];
@@ -114,33 +103,37 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
       value: `${formatNumber(s.recoveredCatalogCount, DECIMALS.count)} / ${formatNumber(s.publicCatalogCount, DECIMALS.count)}`,
     });
   }
+  // "32 (14 not in public catalog)": the additional strict count rides along when it is present.
   if (isFiniteNumber(s.strictQualityCount)) {
-    out.push({ id: "strict", label: "Strict events", value: formatNumber(s.strictQualityCount, DECIMALS.count) });
+    const strict = formatNumber(s.strictQualityCount, DECIMALS.count);
+    const additional = isFiniteNumber(s.strictAdditionalCount)
+      ? ` (${formatNumber(s.strictAdditionalCount, DECIMALS.count)} not in public catalog)`
+      : "";
+    out.push({ id: "strict", label: "Strict events", value: `${strict}${additional}` });
   }
   if (isFiniteNumber(s.medianStations)) {
     out.push({ id: "stations", label: "Median stations", value: formatNumber(s.medianStations, DECIMALS.stations) });
   }
   if (isFiniteNumber(s.medianRmsS)) {
-    out.push({ id: "residual", label: "Median residual", value: `${formatNumber(s.medianRmsS, DECIMALS.residual)} s` });
+    out.push({ id: "residual", label: "Median timing misfit", value: `${formatNumber(s.medianRmsS, DECIMALS.residual)} s` });
   }
   const medianVErrM = v.synthetic?.medianVErrM;
   if (isFiniteNumber(medianVErrM)) {
+    // The synthetic test records every event on every station; a typical candidate has fewer.
     out.push({
       id: "depth",
-      label: "Depth resolution",
+      label: "Depth resolution (synthetic, all stations)",
       value: `±${formatNumber(medianVErrM, DECIMALS.depth)} m`,
-      note: DEPTH_NOTE,
     });
   }
-  // Lane doc: the strict counts side by side whenever the full profile has both rows; the table
-  // is the source, so the row also shows when STA/LTA's strict count is zero and no gain exists.
-  const comparison = strictComparison(v.baseline);
-  if (comparison) {
+  // The STA/LTA baseline from the table itself, so the row also shows when STA/LTA has no strict
+  // event at all and no gain exists (REQ-H1-5).
+  const stalta = staltaStrict(v.baseline);
+  if (stalta) {
     out.push({
-      id: "strictCompare",
-      label: "Strict events, PhaseNet vs STA/LTA",
-      value: `${formatNumber(comparison.phasenet, DECIMALS.count)} vs ${formatNumber(comparison.stalta, DECIMALS.count)}`,
-      note: STRICT_COMPARE_NOTE,
+      id: "stalta",
+      label: "STA/LTA strict events",
+      value: `${formatNumber(stalta.strict, DECIMALS.count)} of ${formatNumber(stalta.candidates, DECIMALS.count)} candidates`,
     });
   }
   // Lane doc: "Baseline ran and gain > 1 in both profiles". The value is summary.baseline.gain;
@@ -156,6 +149,17 @@ export function rows(summary: SummaryInput, validation: ValidationInput): Valida
       label: "Chance associations",
       value: formatNumber(meanChanceEvents, DECIMALS.chance),
       note: chanceNote(v.nullTest),
+    });
+  }
+  // ML-01: how well the decoy test tells real timing from scrambled-clock decoys on held-out
+  // events. Fixed decimals: an AUC reads as a score, never as a percentage or a probability.
+  const rocAuc = confidence?.rocAuc;
+  if (isFiniteNumber(rocAuc)) {
+    out.push({
+      id: "confidence",
+      label: `${confidence?.label ?? CONFIDENCE_FALLBACK_LABEL} (held-out ROC AUC)`,
+      value: rocAuc.toFixed(DECIMALS.auc),
+      note: "How well it separates real timing from scrambled-clock decoys",
     });
   }
   return out;

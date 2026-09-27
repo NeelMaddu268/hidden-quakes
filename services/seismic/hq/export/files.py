@@ -7,4 +7,5 @@ CATALOG_JSON = "catalog.json"
 EVENTS_JSON = "events.json"
 FEATURES_JSON = "features.json"
 VALIDATION_JSON = "validation.json"
+CONFIDENCE_JSON = "confidence.json"  # optional, ML-01 (hq.export.confidence)
 EVIDENCE_DIR = "evidence"

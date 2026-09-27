@@ -4,5 +4,11 @@
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter web build",
   "outputDirectory": "out",
-  "ignoreCommand": "case \"$VERCEL_GIT_COMMIT_REF\" in main|feat/*) exit 1 ;; *) exit 0 ;; esac"
+  "ignoreCommand": "case \"$VERCEL_GIT_COMMIT_REF\" in main|feat/*) exit 1 ;; *) exit 0 ;; esac",
+  "git": {
+    "deploymentEnabled": {
+      "**": false,
+      "main": true
+    }
+  }
 }
