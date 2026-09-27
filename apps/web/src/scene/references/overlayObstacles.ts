@@ -1,8 +1,9 @@
 // The DOM overlays the scene's feature labels keep clear of (WEB-08): H4's shell blocks (SYNTHETIC
 // banner, title block, counters and filter pills, REVEAL, validation card, mode pills: the direct
 // children of the shell root, found through the shell's `mode-label` test id) and H3's own panels
-// (depth section, time scrubber, open evidence drawer). Read-only: it measures rects and never touches
-// another lane's DOM. On real data a wellhead label was placed under the PUBLIC counter; this is why.
+// (legend and corner notes, depth section, time scrubber, open evidence drawer, the tour's caption).
+// Read-only: it measures rects and never touches another lane's DOM. On real data a wellhead label was
+// placed under the PUBLIC counter; this is why.
 
 import { clearRects, makeRectList, pushRect, type RectList } from "./labelPlacement";
 
@@ -14,6 +15,7 @@ export const H3_OVERLAY_SELECTORS: readonly string[] = Object.freeze([
   '[data-testid="depth-section"]',
   '[data-testid="time-scrubber"]',
   '.hqd[data-open="true"]',
+  '[data-testid="tour-caption"]',
 ]);
 
 /** The shell root: the element whose children are the shell's overlay blocks (header → shell). */
