@@ -708,6 +708,17 @@ class MagnitudeConfig(BaseModel):
     fit: MagnitudeFitConfig
 
 
+class LiveConfig(BaseModel):
+    """Run mode ``live`` (``hq.locate.calibration``): a short window holds too few public regional
+    catalog events to fit station terms or derive tier bars, so stages locate and tier borrow
+    them from this showcase run (``<data>/showcase/runs/<calibrationRun>``). Other modes never
+    read it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    calibrationRun: str = Field(pattern=r"^\d{8}-\d{4}-[0-9a-z]{7}$")
+
+
 class SeismologyConfig(BaseModel):
     """Contents of ``seismology.yaml``."""
 
@@ -725,6 +736,7 @@ class SeismologyConfig(BaseModel):
     statics: StaticsConfig
     tiering: TieringConfig
     magnitude: MagnitudeConfig
+    live: LiveConfig
 
     @model_validator(mode="after")
     def _consistent(self) -> "SeismologyConfig":

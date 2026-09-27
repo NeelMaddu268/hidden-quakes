@@ -1372,6 +1372,18 @@ def statics_section(inputs: DiagnosticsInputs) -> list[str]:
             "",
             *_offsets_lines(rep),
         ]
+    elif rep.mode == "calibrationRun":
+        missing = rep.extra.get("stationPhasesWithoutTerm") or []
+        lines += [
+            (f"Method (run mode live): the terms of calibration run "
+             f"`{rep.extra.get('calibrationRun')}` (its statics.parquet, fit there at the public "
+             "regional catalog's hypocentres of its matched events) applied to every event of "
+             "this window; none fit here, since a short window holds too few public events. "
+             "nEvents below counts the calibration run's reference events. Positions are tied "
+             "to the public regional catalog's frame as in that run."
+             + (f" Used station-phases without a term there (0 applied): {', '.join(missing)}."
+                if missing else "")), "",
+        ]
     else:
         hist = rep.history
         lines += [
