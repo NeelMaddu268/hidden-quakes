@@ -71,7 +71,7 @@ describe("mode pills", () => {
     const pills = await mountReady("snapshot", { isSynthetic: false });
     expect(pills.map((b) => b.textContent)).toEqual(["showcase", "today"]);
     expect(pills.map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
-    expect(screen.getByTestId("mode-label").textContent).toBe("Snapshot · window · run snapshot-run");
+    expect(screen.getByTestId("mode-label").textContent).toBe("Today · window · run snapshot-run");
     fireEvent.click(pills[0]);
     expect(navigateToMode).toHaveBeenCalledWith("showcase");
   });
@@ -104,7 +104,7 @@ describe("mode pills", () => {
       </ProviderRoot>,
     );
     await screen.findByTestId("counter-public");
-    await waitFor(() => expect(screen.getByTestId("mode-label").textContent).toMatch(/^Snapshot/));
+    await waitFor(() => expect(screen.getByTestId("mode-label").textContent).toMatch(/^Today/));
     expect(screen.getByTestId("mode-label").textContent).toContain("snapshot-run");
     const pills = Array.from(screen.getByRole("group", { name: "Data mode" }).querySelectorAll("button"));
     expect(pills.map((b) => b.textContent)).toEqual(["showcase", "live"]);
