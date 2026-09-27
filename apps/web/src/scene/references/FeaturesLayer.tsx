@@ -8,13 +8,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AdditiveBlending, Color, Vector3, type ShaderMaterial } from "three";
 import { verticalExaggerationOf } from "../coords";
 import type { GeoFeature, SceneMeta } from "../types";
-import { sectionPanelRect } from "../plan/layout";
+import { usePlanDock } from "../plan/dock";
 import { RENDER_ORDER } from "../terrain/renderOrder";
 import { featureGeometry, featureIssue, featureLabelAnchor, featureStyle, type FeatureGeometry, type FeatureStyle } from "./features";
 import {
   appendRects,
   cameraMoved,
   clearRects,
+  clearSegments,
   LABEL_GAP_PX,
   LABEL_SLOTS,
   labelPriority,
@@ -22,14 +23,19 @@ import {
   makeCameraTrack,
   makeLabelPlacement,
   makeRectList,
+  makeSegmentList,
   placeLabels,
+  PLACEMENT_SEGMENTS_PER_LINE,
   pushRect,
+  pushSegment,
   slotOffsetX,
   slotOffsetY,
+  thinnedSegments,
   type LabelPlacement,
   type RectList,
+  type SegmentList,
 } from "./labelPlacement";
-import { LABEL_Z_RANGE, labelStyle } from "./labels";
+import { LABEL_PLATE, LABEL_Z_RANGE, labelStyle } from "./labels";
 import { OVERLAY_MEASURE_MS, OverlayObstacles } from "./overlayObstacles";
 import { useLabelElements } from "./useLabelElements";
 
@@ -172,10 +178,15 @@ interface LabelFrameState {
   hidden: boolean[];
   /** Last frame's camera (world + projection matrices, viewport size), to tell a moving camera. */
   lastCamera: Float64Array;
+  /** The feature lines on screen this frame (CSS px), for the placement's crossing cost. */
+  lines: SegmentList;
 }
 
-/** `obstacleCapacity`: rects the ruler can publish plus the overlay rects; one more for the plan panel. */
-function makeLabelFrameState(n: number, obstacleCapacity: number): LabelFrameState {
+/**
+ * `obstacleCapacity`: rects the ruler can publish plus the overlay rects; one more for the plan panel.
+ * `segmentCapacity`: the feature-line segments projected each frame.
+ */
+function makeLabelFrameState(n: number, obstacleCapacity: number, segmentCapacity: number): LabelFrameState {
   return {
     placement: makeLabelPlacement(n),
     fixed: makeRectList(obstacleCapacity + 1),
@@ -186,6 +197,7 @@ function makeLabelFrameState(n: number, obstacleCapacity: number): LabelFrameSta
     version: -1,
     hidden: new Array<boolean>(n).fill(false),
     lastCamera: makeCameraTrack(),
+    lines: makeSegmentList(segmentCapacity),
   };
 }
 
@@ -195,21 +207,23 @@ interface FeatureLabelsProps {
   obstacles?: RectList;
   /** Plan view: the labels also keep clear of the depth-section panel. */
   planView: boolean;
+  /** The feature lines in world space, [x0, y0, z0, x1, y1, z1] per segment (thinnedSegments). */
+  lineSegments: Float32Array;
 }
 
 /**
  * The feature names, placed each frame so they never sit on each other, on the depth ruler's labels,
- * on another feature's anchor, under the plan panel, or off screen (labelPlacement). A label moved off
+ * on another feature's anchor, under the plan panel, or off screen, and where they can, not on a
+ * feature line (labelPlacement). A label moved off
  * its anchor's line gets a thin leader back to it. Style is written only when a label's slot or size
  * changes, so a still camera writes nothing.
  */
-function FeatureLabels({ labels, obstacles, planView }: FeatureLabelsProps) {
+function FeatureLabels({ labels, obstacles, planView, lineSegments }: FeatureLabelsProps) {
   const n = labels.length;
   const els = useLabelElements();
   const leaders = useLabelElements();
-  const width = useThree((s) => s.size.width);
-  const height = useThree((s) => s.size.height);
-  const panel = useMemo(() => (planView ? sectionPanelRect(width, height) : null), [planView, width, height]);
+  const dock = usePlanDock((s) => s.dock);
+  const panel = planView ? dock : null;
   const frame = useRef<LabelFrameState | null>(null);
   // DOM overlays (the shell's blocks, H3's panels) the labels keep clear of, re-measured a few times a
   // second outside the frame loop.
@@ -229,8 +243,14 @@ function FeatureLabels({ labels, obstacles, planView }: FeatureLabelsProps) {
 
   useFrame(({ camera, size }) => {
     const capacity = (obstacles ? obstacles.rects.length / 4 : 0) + overlays.list.rects.length / 4;
-    if (!frame.current || frame.current.placement.n !== n || frame.current.fixed.rects.length / 4 !== capacity + 1) {
-      frame.current = makeLabelFrameState(n, capacity);
+    const segCapacity = lineSegments.length / 6;
+    if (
+      !frame.current ||
+      frame.current.placement.n !== n ||
+      frame.current.fixed.rects.length / 4 !== capacity + 1 ||
+      frame.current.lines.xy.length / 4 !== segCapacity
+    ) {
+      frame.current = makeLabelFrameState(n, capacity, segCapacity);
     }
     const st = frame.current;
     const { placement: p, fixed, v } = st;
@@ -250,9 +270,23 @@ function FeatureLabels({ labels, obstacles, planView }: FeatureLabelsProps) {
       p.h[i] = els.height(i);
       p.droppable[i] = labels[i].droppable ? 1 : 0;
     }
+    // The feature lines on screen: segments with an end behind the camera (or past the far plane) are
+    // left out rather than wrapped around.
+    const lines = st.lines;
+    clearSegments(lines);
+    for (let k = 0; k < segCapacity; k++) {
+      const o = k * 6;
+      v.set(lineSegments[o], lineSegments[o + 1], lineSegments[o + 2]).project(camera);
+      if (!(v.z > -1 && v.z < 1)) continue;
+      const x0 = (v.x * 0.5 + 0.5) * size.width;
+      const y0 = (-v.y * 0.5 + 0.5) * size.height;
+      v.set(lineSegments[o + 3], lineSegments[o + 4], lineSegments[o + 5]).project(camera);
+      if (!(v.z > -1 && v.z < 1)) continue;
+      pushSegment(lines, x0, y0, (v.x * 0.5 + 0.5) * size.width, (-v.y * 0.5 + 0.5) * size.height);
+    }
     // Hold slots only mid-move (no hopping); a still camera gets the canonical layout.
     const moving = cameraMoved(st.lastCamera, camera.matrixWorld.elements, camera.projectionMatrix.elements, size.width, size.height);
-    placeLabels(p, fixed, size.width, size.height, moving);
+    placeLabels(p, fixed, size.width, size.height, moving, lines);
 
     const version = els.version + leaders.version;
     const remount = version !== st.version;
@@ -309,7 +343,7 @@ function FeatureLabels({ labels, obstacles, planView }: FeatureLabelsProps) {
           <div
             ref={els.ref(i)}
             data-testid="feature-label"
-            style={{ ...labelStyle, color: colors.geo, opacity: 0.9, transform: `translate(${LABEL_GAP_PX}px, -50%)` }}
+            style={{ ...labelStyle, ...LABEL_PLATE, color: colors.geo, opacity: 0.9, transform: `translate(${LABEL_GAP_PX}px, -50%)` }}
           >
             {l.text}
           </div>
@@ -363,6 +397,16 @@ export function FeaturesLayer({
     [drawables],
   );
 
+  // The lines' course for label placement (thinned: a well trajectory has hundreds of vertices).
+  const lineSegments = useMemo(
+    () =>
+      thinnedSegments(
+        drawables.flatMap((d) => (d.geom.type === "line" ? [d.geom.points] : [])),
+        PLACEMENT_SEGMENTS_PER_LINE,
+      ),
+    [drawables],
+  );
+
   useEffect(() => {
     const issues = features.map(featureIssue).filter((m): m is string => m !== null);
     if (issues.length) console.error(`[features] not drawn: ${issues.join("; ")}`);
@@ -375,7 +419,7 @@ export function FeaturesLayer({
         d.geom.type === "line" ? <FeatureLine key={d.feature.id} points={d.geom.points} style={d.style} /> : null,
       )}
       {markers.length > 0 && <FacilityMarkers points={markers} />}
-      <FeatureLabels labels={labels} obstacles={obstacles} planView={planView} />
+      <FeatureLabels labels={labels} obstacles={obstacles} planView={planView} lineSegments={lineSegments} />
     </group>
   );
 }

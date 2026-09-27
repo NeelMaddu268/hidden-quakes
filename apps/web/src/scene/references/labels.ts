@@ -34,6 +34,17 @@ export const labelStyle: CSSProperties = {
   userSelect: "none",
 };
 
+/**
+ * A faint plate in the background colour behind the labels that sit in the scene (feature names, the
+ * depth ruler's title and ticks). Placement keeps them off the feature lines where it can
+ * (labelPlacement); where it can't, a dashed line passes behind the plate instead of through the text.
+ */
+export const LABEL_PLATE: CSSProperties = {
+  background: `${colors.bg}B8`,
+  padding: "0 4px",
+  borderRadius: 3,
+};
+
 export const numericLabelStyle: CSSProperties = {
   ...labelStyle,
   fontFamily: fonts.mono,
