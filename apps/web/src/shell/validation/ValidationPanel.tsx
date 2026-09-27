@@ -20,7 +20,8 @@ export function ValidationPanel() {
   const validation = useValidation();
   const confidence = useConfidence();
   const phase = useDemo((s) => s.phase);
-  if (bundle.status !== "ready" || phase === "public") return null;
+  // REQ-H3-14: only once the reveal has settled, so the card never competes with the counters.
+  if (bundle.status !== "ready" || phase !== "revealed") return null;
 
   const list = rows(bundle.meta.summary, validation, confidence);
   if (list.length === 0) return null;

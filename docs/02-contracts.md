@@ -492,6 +492,9 @@ export const motion: { micro: 150; state: 600; scene: 1200; ease: string };
 | S | `setFilter("strict")` (again → `"all"`) |
 | T | toggle `setTimeMode` |
 | E | `select(meta.scene.heroEventId)` |
+| H | open the strict event with no public-catalog match that most stations agreed on (bound by H3, `scene/HiddenHeroKey.tsx`; only after the reveal has begun) |
+| G | play the guided tour; any key, click or scroll stops it (bound by H3, `scene/tour/`) |
+| D | toggle Run details |
 | P | toggle `setView("plan")` / `"oblique"` |
 | Esc | `select(null)` |
 

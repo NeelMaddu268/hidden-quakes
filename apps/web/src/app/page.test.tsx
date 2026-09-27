@@ -12,6 +12,8 @@ import Page from "./page";
 
 vi.mock("@/scene", () => ({
   Scene: () => <div data-testid="scene-stub" />,
+  // The shell mounts H3's tour button (REQ-H3-15); the stub keeps WebGL out of jsdom.
+  TourButton: () => <button type="button" data-testid="tour-button-stub" />,
 }));
 
 beforeEach(() => {
