@@ -23,9 +23,14 @@ base profile.
 Writes to ``runs/<id>/known/``: ``ab.csv`` (one row per event x weights x profile, one summary
 row per weights x profile, and the like-for-like variant comparison rows), ``ab.json`` (chosen
 weights, adopted profiles, Check B), ``picks.parquet`` (every pick >= threshold from the chosen
-combination, ``Pick`` schema) and one ``record_section_<eventId>.png`` per event.
+combination, ``Pick`` schema) and one ``record_section_<eventId>.png`` per event; ``run(ctx)``
+also writes ``pick_known.record.json`` (runtime, counts, params).
 
-CLI (does not update ``run.json``; the stage entry point ``run(ctx)`` does)::
+CLI: writes everything above except ``known/pick_known.record.json``. Only ``run(ctx)`` writes
+that record, and nothing calls ``run(ctx)`` outside the tests: ``hq.runs.STAGES`` has no
+``pick_known`` and ``hq run`` rejects the name. A real run therefore has no record of this
+sub-step's runtime, counts or params (flagged in the SEIS-08 PR). Neither touches ``run.json``
+(pick_known is a sub-step, not a registered stage)::
 
     uv run python -m hq.pick.ab --run-dir <dir> --config-dir configs/showcase --cache-dir <dir>
 """
@@ -1168,6 +1173,8 @@ class StageContext(Protocol):
     @property
     def config(self) -> Any: ...
 
+    def path(self, name: str) -> Path: ...
+
     def record(
         self,
         stage: str,
@@ -1186,14 +1193,13 @@ def run(ctx: StageContext) -> None:
     """
     from hq.ingest.windows import KNOWN_DIR, write_step_record
 
-    result = run_ab(ctx.run_dir, ctx.cache_dir, ctx.config.signal)
-    write_step_record(
-        ctx.path(KNOWN_DIR),
-        STAGE,
-        result.runtimeS,
-        result.counts,
-        ctx.config.signal.picker.model_dump(mode="json"),
-    )
+    signal = ctx.config.signal
+    result = run_ab(ctx.run_dir, ctx.cache_dir, signal)
+    params = {
+        **signal.picker.model_dump(mode="json"),
+        "preprocess": signal.preprocess.model_dump(mode="json"),  # the profiles decide the picks
+    }
+    write_step_record(ctx.path(KNOWN_DIR), STAGE, result.runtimeS, result.counts, params)
 
 
 def load_signal_config(config_dir: Path) -> SignalConfig:
@@ -1227,7 +1233,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print()
     for name, path in result.paths.items():
         print(f"{name}: {path}")
-    print("(CLI run: run.json is not updated; run the stage through hq to record it)")
+    print(
+        "(known/pick_known.record.json not written: only hq.pick.ab.run(ctx) writes it, and no "
+        "stage or CLI calls that)"
+    )
     return 0
 
 

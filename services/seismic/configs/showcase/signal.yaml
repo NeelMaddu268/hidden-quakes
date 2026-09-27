@@ -64,7 +64,10 @@ stations:
     backoffS: 2.0
     cacheFile: availability_mustang.json   # raw replies; delete it to re-query
     onMissing: used             # no measurement (MUSTANG lag): coverage null, usedInRun true
-    onMissingNoProbeData: unused  # ...unless no rate probe got data either (full-day window)
+    onMissingNoProbeData: unused  # ...unless no rate probe got data either (full-day window).
+                                  # Added after run 20260926-0210-a04c611's inventory, which behaved
+                                  # as "used" (its run.json has no such key): rerunning that
+                                  # inventory marks its station with no data usedInRun false
   rateCheck:
     # StationXML can disagree with the data (an epoch saying 200 Hz that serves 100 Hz). The
     # profile follows the rate, so each chosen triplet is probed with a few seconds of dataselect.
@@ -102,8 +105,13 @@ known:
   preS: 120.0           # s before the catalog origin time (noise context ahead of the P arrival)
   postS: 480.0          # s after it; preS + postS = 600 s, the ticket's 10-minute window
   minGapSamples: 1.5    # a hole longer than (minGapSamples - 1) sample intervals is a gap, so one
-                        # missing sample is a gap and sub-sample jitter is not; same rule as SEIS-05
+                        # missing sample is a gap and sub-sample jitter is not. SEIS-05's
+                        # download.channel_gaps applies the same interior rule with its own knob,
+                        # download.minGapSamples, but not the same leading edge: here a leading
+                        # hole must exceed minGapSamples intervals, there it needs at least
+                        # download.minGapSamples - 0.5
   maxGapFraction: 0.2   # a station is usable only if its gappiest component misses <= 20 %
+                        # (Check A, download.maxGapFraction, counts a station useful only below it)
   minStations: 8        # usable three-component stations a window needs to PASS
   usedInRunOnly: true   # consider only stations.parquet rows with usedInRun = true
 
@@ -180,12 +188,18 @@ picker:
   model: seisbench.PhaseNet
   weightsVersion: "2"                      # pinned; from_pretrained never queries the remote
   candidateWeights: [instance, stead, original, scedc]
-  defaultWeights: instance                 # placeholder until known/ab.csv names the winners
-  weightsByProfile:                        # placeholders; copy the A/B winners in here
+  defaultWeights: instance                 # run.json pickerWeights, and the weights of a profile
+                                           # with no weightsByProfile entry
+  weightsByProfile:                        # SEIS-04 A/B winners (known/ab.json
+                                           # chosenWeightsByProfile, run 20260926-0210-a04c611),
+                                           # copied by hand; hq.pick.run warns while they disagree
+                                           # for a profile a picked station uses
     surface-100: instance
     surface-hi: instance
     borehole-A: instance
-    borehole-B: instance
+    borehole-B: instance                   # unused: borehole-B lost the like-for-like A/B to
+                                           # borehole-A, so no station runs it (its own A/B winner
+                                           # was original; this value was left as it was)
   pThreshold: 0.1                          # store everything >= 0.1; H2 filters later
   sThreshold: 0.1
   gapEdgeS: 1.0                            # real s; picks this close to a block edge (A/B) or to a
@@ -311,10 +325,14 @@ baseline:
   minSMinusPS: 0.15
   maxSMinusPS: 5.0
   # Thresholds of picks_stalta.parquet; must be a point of the sweep grid, and the start of the
-  # coordinate search below. Provisional: the lane doc asks for the sweep point with the most Tier A
-  # events. A scored sweep logs its best Tier A point (ties keep this one) and warns while it differs
-  # from this one; copy it here once the scoring run is done (step 2 below). When every scored point
-  # has the same Tier A count the sweep names no best point and warns instead: nothing to copy.
+  # coordinate search below. The lane doc asks for the sweep point with the most Tier A events. A
+  # scored sweep logs its best Tier A point (ties keep this one) and warns while it differs from this
+  # one; copy it here once the scoring run is done (step 2 below). When every scored point has the
+  # same Tier A count the sweep names no best point and warns instead: nothing to copy.
+  # Final (SEIS-07/08): scored on the showcase run's statics scale (REQ-H1-5 option (a): H2's
+  # locate(statics=), the run's own tier bars) over the busiest 6 h block, the coordinate search gave
+  # the same Tier A count at every point it visited (pOn, sOn and off axes), so these values stay.
+  # The record is in docs/requests/H4.md REQ-H1-5 and the lane doc's Definition-of-done notes.
   chosen:
     pOn: 5.0
     pOff: 1.5
@@ -335,11 +353,19 @@ baseline:
     # exactly as H4's VAL-01 scores its BaselineRow (the run's own tier bars from
     # ProcessingRun.tiering), and PhaseNet's picks.parquet is scored once the same way, first and
     # alone, as the reference (baseline_reference.json). Association profile full only: VAL-01 also
-    # needs p_only for its gain claim, and these thresholds are not optimised for it. The run's tier
-    # bars exist only after stage tier, which the pipeline runs after this stage, so a fresh `hq run`
-    # cannot score: scoreMode stays none here (a test pins it), and scoring is a CLI rerun of this
-    # stage on a run that went through tier (the CLI records into that run's run.json unless
-    # --stations, --start or --end pick a subset):
+    # needs p_only for its gain claim, and these thresholds are not optimised for it.
+    # Statics: the run's bars come from statics-corrected events, but this locate runs WITHOUT
+    # station statics: under seismology.yaml statics.mode referenceEvents, hq.locate.locate has no
+    # match pass and locates with none (VAL-01's rerun notes say so), and real_api passes no
+    # statics table. That holds until hq.baseline.score passes the run's statics.parquet to locate
+    # as REQ-H1-5 option (a) decided (H2 PR #94); check the notes in baseline_reference.json before
+    # trusting the scale. The run's terms are residuals of PhaseNet picks at the public regional
+    # catalog's hypocentres of matched events, so they absorb PhaseNet's station timing bias and
+    # favour PhaseNet.
+    # The run's tier bars exist only after stage tier, which the pipeline runs after this stage, so
+    # a fresh `hq run` cannot score: scoreMode stays none here (a test pins it), and scoring is a CLI
+    # rerun of this stage on a run that went through tier (the CLI records into that run's run.json
+    # unless --stations, --start or --end pick a subset):
     #   1. python -m hq.baseline.run --run-dir <run> --config-dir configs/showcase --cache-dir <cache>
     #        --score-mode coordinate --score-only
     #      (--score-only needs picks_stalta.parquet to hold the chosen thresholds' picks with this
@@ -361,3 +387,88 @@ baseline:
                              # product is logged, with a WARNING above the CPU count). 1 scores in this
                              # process
     maxPasses: 3             # coordinate mode: at most this many passes over pOn, sOn and off
+
+# --- SEIS-09: sonification ---------------------------------------------------------------------------
+# Audio renderings of the cached public waveforms for the web app (hq.preprocess.sonify). A sped-up
+# rendering of recorded ground motion, never "the sound of" an event. Not a pipeline stage: it reads
+# the run's stations.parquet / picks.parquet, the bundle's events.json / meta.json and the cache, and
+# writes only the audio files and their manifests. No stage records this block.
+# Per gap-separated segment of the vertical channel: detrend, taper, zero-phase Butterworth bandpass,
+# resample_poly to the real-axis rate audioRateHz / speed, then placement on a zero timeline at the
+# segment's true time, so gaps (and missing data at the window ends) are exact digital silence, never
+# interpolated or bridged. Then robust level, soft-knee compression, edge fades, peak normalization.
+sonify:
+  component: Z                 # vertical channel (stations.parquet channels ending in this letter)
+  stationKind: borehole
+  usedInRunOnly: true
+  padS: 10.0                   # real s read beyond each window end: taper and filter edges fall outside
+  detrend: linear
+  taper:                       # per segment, ObsPy Trace.taper, before the bandpass
+    type: hann
+    maxPercentage: 0.05
+    maxLengthS: 1.0
+  bandpassCorners: 4           # zero-phase (sosfiltfilt), so the magnitude response is squared
+  joinMisalignmentSamples: 0.01   # pieces of one channel that abut within this fraction of a sample join
+  resample:
+    kaiserBeta: 5.0            # scipy.signal.resample_poly's default anti-alias window, made explicit
+    maxFactor: 1000            # largest up or down factor; 1000 Hz -> 240 Hz is up 6 / down 25
+    rateRelTol: 1.0e-9
+  oggStreamSerial: 1213284673  # libsndfile draws a random Ogg serial per file; this fixed one makes
+                               # re-encodes byte-identical (page CRCs are recomputed)
+  truePeakOversample: 4        # decoded files are oversampled this much (resample_poly) for
+                               # their true peak, checked against maxTruePeakDbtp
+  # Main clip. The busiest bin of candidate events in the bundle's events.json (ties: earliest), then
+  # the station of stationKind with the most picks.parquet picks (any phase) inside it (ties: id order).
+  busiestHour:
+    binS: 3600.0               # epoch-aligned bins: UTC clock hours [HH:00, HH+1:00)
+    render:
+      fileStem: hidden-quakes-busiest-hour
+      speed: 200               # 3600 s -> 18 s
+      audioRateHz: 48000       # real-axis rate 240 Hz: the band must stay below 120 Hz real
+      bandHz: [10.0, 80.0]     # real Hz -> 2-16 kHz audio. Measured on the busiest hour at the chosen
+                               # station: a 10 Hz low corner gives its P picks a higher median SNR than
+                               # 2 Hz (strong 5-10 Hz noise there); 16 kHz audio stays audible after MP3
+      edgeFadeMs: 5.0          # audio ms (1 s real at 200x)
+      levelPercentile: 50.0    # robust level = median |x| over samples with data: the noise floor,
+                               # even in an hour dense with candidate events
+      compressor:
+        thresholdDb: 18.0      # above the median: clears the noise envelope (its running maximum)
+        ratio: 3.0             # gentle: a loud event keeps its lead, small ones come up relative to it.
+                               # Checked on this clip: P-pick peaks sit well above the noise floor with
+                               # 3 (ratio 1 leaves the small ones near the noise); 4 flattens more
+        kneeDb: 12.0
+        lookaheadMs: 0.5       # audio ms (0.1 s real): the gain starts to fall at most this long
+                               # before the sample that drives it; one cycle of the 2 kHz low corner
+        releaseMs: 10.0        # audio ms (2 s real): the gain recovers slower than a pop decays, so
+                               # pops keep their shape; the noise envelope stays below the knee
+      peakDbfs: -1.0
+      maxTruePeakDbtp: -0.5    # decoded OGG / MP3, oversampled: headroom for codec overshoot
+      oggQuality: 0.6          # Vorbis quality (oggenc -q 6)
+      mp3BitrateKbps: 192      # constant bitrate
+      maxBytes: 2000000
+  # Optional clip around the hero event (meta.json scene.heroEventId, origin time from events.json):
+  # the nearest station of stationKind (epicentral ENU distance; ties: id order) whose vertical channel
+  # covers at least minCoverageFraction of the window.
+  hero:
+    preS: 30.0
+    postS: 30.0                # 60 s real -> 0.6 s of audio at 100x. For a longer clip lower
+                               # render.speed and keep bandHz[1] below audioRateHz / speed / 2
+    minCoverageFraction: 0.5
+    render:
+      fileStem: hidden-quakes-hero
+      speed: 100
+      audioRateHz: 48000       # real-axis rate 480 Hz: the band must stay below 240 Hz real
+      bandHz: [10.0, 160.0]    # real Hz -> 1-16 kHz audio
+      edgeFadeMs: 5.0          # audio ms (0.5 s real at 100x)
+      levelPercentile: 50.0
+      compressor:
+        thresholdDb: 18.0
+        ratio: 3.0
+        kneeDb: 12.0
+        lookaheadMs: 0.5       # audio ms (0.05 s real): an emergent arrival's start keeps its level
+        releaseMs: 10.0        # audio ms (1 s real)
+      peakDbfs: -1.0
+      maxTruePeakDbtp: -0.5
+      oggQuality: 0.6
+      mp3BitrateKbps: 192
+      maxBytes: 2000000
