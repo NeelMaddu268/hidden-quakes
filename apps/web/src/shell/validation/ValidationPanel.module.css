@@ -60,3 +60,19 @@
   color: var(--hq-text);
   white-space: nowrap;
 }
+
+/* Phone: the card stays readable but smaller, so the scene keeps some room above it. */
+@media (max-width: 640px) {
+  .panel {
+    min-width: 0;
+    padding: 0.5rem 0.65rem 0.55rem;
+  }
+
+  .rows {
+    gap: 0.15rem;
+  }
+
+  .note {
+    display: none;
+  }
+}
