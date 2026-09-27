@@ -15,6 +15,7 @@ import { DepthSlices } from "./DepthSlices";
 import { FeaturesLayer } from "./FeaturesLayer";
 import { StationsLayer } from "./StationsLayer";
 import { VerticalBadge } from "./VerticalBadge";
+import { StationDayCorner } from "../stationday/StationDayButton";
 
 export interface ReferencesProps {
   bundle: { meta: { scene: SceneMeta }; stations: Station[]; features: GeoFeature[] };
@@ -53,6 +54,8 @@ export function References({ bundle, bounds, rulerDepthKm, planView = false }: R
           {ABSTRACT_SURFACE_LABEL}
         </CornerNote>
       )}
+      {/* WEB-10: the station-day button tops the stack; it renders nothing without a valid manifest. */}
+      <StationDayCorner slot={LEGEND_SLOTS + (verticalBadgeText(scene) ? 1 : 0) + (choice === "slab" ? 1 : 0)} />
     </group>
   );
 }
