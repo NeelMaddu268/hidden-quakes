@@ -36,15 +36,17 @@ export function evidenceUnavailable(message: string | undefined): { text: string
 
 /**
  * The record section's caption for `shown` traces (the closest stations), `picked` of them with a pick,
- * and `agreed` stations that agreed on the event. A trace with a pick is one of the agreeing stations,
- * so "k of N agreeing stations shown" is only said when every shown trace has one; otherwise the caption
- * says how many of the shown stations agreed.
+ * and `agreed` stations that agreed on the event: "16 of 23 stations shown, closest first". A trace
+ * with a pick is one of the agreeing stations; a close station without one is not, so it is counted
+ * apart ("15 of 23 stations shown, closest first, plus 1 without a pick") rather than inflating the
+ * "of 23".
  */
 export function recordCaption(shown: number, picked: number, agreed: number | null | undefined): string {
   const stations = (k: number) => `${k} ${k === 1 ? "station" : "stations"}`;
   if (!isFiniteCount(agreed)) return `${stations(shown)} shown, closest first, ${picked} with a pick`;
-  if (picked === shown) return `${shown} of ${agreed} agreeing stations shown, closest first`;
-  return `${stations(shown)} shown, closest first; ${picked} of the ${agreed} that agreed are among them`;
+  if (picked === 0) return `${stations(shown)} shown, closest first, none with a pick`;
+  const lead = `${picked} of ${agreed} ${agreed === 1 ? "station" : "stations"} shown, closest first`;
+  return picked === shown ? lead : `${lead}, plus ${shown - picked} without a pick`;
 }
 
 function isFiniteCount(v: number | null | undefined): v is number {

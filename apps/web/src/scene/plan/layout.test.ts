@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { drawerWidthPx, planReserveLeftPx, SECTION_LAYOUT, sectionPanelRect } from "./layout";
+import { scrubberRect } from "../time/layout";
+import {
+  drawerWidthPx,
+  NO_EDGES,
+  planReservePx,
+  SECTION_LAYOUT,
+  sectionDock,
+  sectionPanelRect,
+  type ShellEdges,
+} from "./layout";
 
 type Rect = { left: number; top: number; width: number; height: number };
 const overlaps = (a: Rect, b: Rect) =>
@@ -21,9 +30,8 @@ function reserved(W: number, H: number): Record<string, Rect> {
   };
 }
 
-describe("sectionPanelRect", () => {
+describe("sectionPanelRect (the left-column dock alone)", () => {
   for (const [W, H] of [
-    [1280, 720],
     [1440, 900],
     [1920, 1080],
     [2560, 1440],
@@ -41,38 +49,101 @@ describe("sectionPanelRect", () => {
   }
 
   it("grows with the viewport but stays capped for 4K", () => {
-    const small = sectionPanelRect(1280, 720)!;
+    const small = sectionPanelRect(1440, 900)!;
     const large = sectionPanelRect(3840, 2160)!;
     expect(large.width).toBeGreaterThan(small.width);
     expect(large.width).toBeLessThanOrEqual(SECTION_LAYOUT.maxWidth);
     expect(large.height).toBeLessThanOrEqual(SECTION_LAYOUT.maxHeight);
   });
 
-  it("hides the panel rather than covering the shell on a tiny viewport", () => {
+  it("stops above a measured card, and is null when the left column is too short", () => {
+    const fitted = sectionPanelRect(1920, 1080, 680.6)!;
+    expect(fitted.top + fitted.height).toBeLessThanOrEqual(680.6 - SECTION_LAYOUT.cardGap);
+    expect(sectionPanelRect(1280, 720, 320.6)).toBeNull();
     expect(sectionPanelRect(700, 500)).toBeNull();
     expect(sectionPanelRect(0, 0)).toBeNull();
   });
 });
 
-describe("sectionPanelRect with the validation card's measured top", () => {
-  it("stops above a taller card, and hides when there's no room left", () => {
-    const free = sectionPanelRect(1280, 720)!;
-    const card = { left: 24, top: 386, width: 352, height: 266 }; // measured on the real bundle at 1280×720
-    const fitted = sectionPanelRect(1280, 720, card.top)!;
-    expect(fitted.top + fitted.height).toBeLessThanOrEqual(card.top - SECTION_LAYOUT.cardGap);
-    expect(overlaps(fitted, card)).toBe(false);
-    expect(fitted.width).toBe(free.width);
-    expect(sectionPanelRect(1280, 720, SECTION_LAYOUT.top + 100)).toBeNull(); // under minHeight
-    expect(sectionPanelRect(1280, 720, null)).toEqual(free);
-    expect(sectionPanelRect(1280, 720, NaN)).toEqual(free);
+// The shell's edges measured on the final build (hidden-quakes.vercel.app, after the reveal): title block
+// bottom, validation card top, counters + pills bottom, legend top.
+const EDGES: Record<string, ShellEdges> = {
+  "1280x720": { headerBottom: 144.4, cardTop: 320.6, topRightBottom: 154.4, cornerTop: 651 },
+  "1440x900": { headerBottom: 144.4, cardTop: 500.6, topRightBottom: 156, cornerTop: 831 },
+  "1920x1080": { headerBottom: 144.4, cardTop: 680.6, topRightBottom: 156, cornerTop: 1011 },
+  "3840x2160": { headerBottom: 144.4, cardTop: 1760.6, topRightBottom: 156, cornerTop: 2091 },
+};
+const size = (key: string) => key.split("x").map(Number) as [number, number];
+const block = (e: ShellEdges, W: number, H: number): Record<string, Rect> => ({
+  titleBlock: { left: 0, top: 0, width: 600, height: e.headerBottom! },
+  card: { left: 24, top: e.cardTop!, width: 352, height: H - 68 - e.cardTop! },
+  countersAndPills: { left: W - 400, top: 0, width: 400, height: e.topRightBottom! },
+  cornerStack: { left: W - 300, top: e.cornerTop!, width: 300, height: H - e.cornerTop! },
+});
+
+describe("sectionDock (left column, else right column)", () => {
+  it("docks left where the left column has room, clear of every measured block", () => {
+    for (const key of ["1440x900", "1920x1080", "3840x2160"]) {
+      const [W, H] = size(key);
+      const d = sectionDock(W, H, EDGES[key])!;
+      expect(d.side, key).toBe("left");
+      expect(d.left).toBe(SECTION_LAYOUT.inset);
+      for (const [name, r] of Object.entries(block(EDGES[key]!, W, H))) expect(overlaps(d, r), `${key} ${name}`).toBe(false);
+    }
+  });
+
+  it("docks right at 1280×720, where the taller card leaves the left column too short", () => {
+    const e = EDGES["1280x720"]!;
+    const d = sectionDock(1280, 720, e)!;
+    expect(d.side).toBe("right");
+    expect(d.left + d.width).toBe(1280 - SECTION_LAYOUT.inset);
+    expect(d.height).toBeGreaterThanOrEqual(SECTION_LAYOUT.minHeight);
+    for (const [name, r] of Object.entries(block(e, 1280, 720))) expect(overlaps(d, r), name).toBe(false);
+  });
+
+  it("never overlaps the time scrubber, drawer closed (both can be up at once)", () => {
+    for (const key of Object.keys(EDGES)) {
+      const [W, H] = size(key);
+      const d = sectionDock(W, H, EDGES[key])!;
+      const scrubber = scrubberRect(W, H, false);
+      if (scrubber) expect(overlaps(d, scrubber), key).toBe(false);
+    }
+  });
+
+  it("is sized the same whatever the drawer does (the camera frames around it once)", () => {
+    for (const key of Object.keys(EDGES)) {
+      const [W] = size(key);
+      const d = sectionDock(W, size(key)[1], EDGES[key])!;
+      expect(d.width).toBeLessThanOrEqual(W - drawerWidthPx(W) - SECTION_LAYOUT.drawerGap - SECTION_LAYOUT.inset);
+    }
+  });
+
+  it("before the reveal (no card yet) plans for where the card will be", () => {
+    // The title block is shorter before the reveal (no download row yet).
+    expect(sectionDock(1280, 720, { ...EDGES["1280x720"]!, headerBottom: 114.4, cardTop: null })!.side).toBe("right");
+    expect(sectionDock(1920, 1080, { ...EDGES["1920x1080"]!, headerBottom: 114.4, cardTop: null })!.side).toBe("left");
+  });
+
+  it("is null when neither column has room, and falls back to fixed edges when nothing is measured", () => {
+    const short: ShellEdges = { headerBottom: 144.4, cardTop: 180, topRightBottom: 154.4, cornerTop: 331 };
+    expect(sectionDock(1280, 400, short)).toBeNull();
+    expect(sectionDock(700, 500)).toBeNull();
+    expect(sectionDock(1920, 1080, NO_EDGES)!.side).toBe("left");
   });
 });
 
-describe("planReserveLeftPx", () => {
-  it("reserves the panel plus a gap, or nothing when the panel is hidden", () => {
-    const rect = sectionPanelRect(1280, 720)!;
-    expect(planReserveLeftPx(1280, 720)).toBe(rect.left + rect.width + SECTION_LAYOUT.inset);
-    expect(planReserveLeftPx(700, 500)).toBe(0);
+describe("planReservePx", () => {
+  it("reserves the panel's side plus a gap, or nothing without a panel", () => {
+    const left = sectionDock(1920, 1080, EDGES["1920x1080"])!;
+    expect(planReservePx(left, 1920)).toEqual({ left: left.left + left.width + SECTION_LAYOUT.inset, right: 0 });
+    const right = sectionDock(1280, 720, EDGES["1280x720"])!;
+    // Docked right, the card's column on the left stays clear too.
+    expect(planReservePx(right, 1280)).toEqual({
+      left: SECTION_LAYOUT.cardColumn,
+      right: 1280 - right.left + SECTION_LAYOUT.inset,
+    });
+    expect(SECTION_LAYOUT.cardColumn).toBeGreaterThanOrEqual(376 + SECTION_LAYOUT.inset); // the card's right edge, measured
+    expect(planReservePx(null, 1280)).toEqual({ left: 0, right: 0 });
   });
 });
 

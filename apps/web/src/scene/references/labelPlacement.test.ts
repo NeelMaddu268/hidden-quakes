@@ -13,15 +13,19 @@ import {
   makeCameraTrack,
   makeLabelPlacement,
   makeRectList,
+  makeSegmentList,
   placeLabels,
   pushRect,
   pushRulerTickRect,
+  pushSegment,
   pushRulerTitleRect,
   RULER_TICK_GAP_PX,
   RULER_TITLE_INSET_PX,
   RULER_TITLE_RISE_PX,
+  segmentLengthInRect,
   slotOffsetX,
   slotOffsetY,
+  thinnedSegments,
   type LabelPlacement,
   type RectList,
 } from "./labelPlacement";
@@ -319,5 +323,85 @@ describe("rect lists", () => {
     expect(title).toEqual({ l: 300 - RULER_TITLE_INSET_PX, t: 200 - RULER_TITLE_RISE_PX - 14, w: 240, h: 14 });
     expect(tick).toEqual({ l: 300 - RULER_TICK_GAP_PX - 36, t: 253, w: 36, h: 14 });
     expect([RULER_TITLE_INSET_PX, RULER_TITLE_RISE_PX, RULER_TICK_GAP_PX]).toEqual([4, 10, 5]);
+  });
+});
+
+describe("segmentLengthInRect", () => {
+  it("measures the part of a segment inside a rect", () => {
+    expect(segmentLengthInRect(-10, 5, 30, 5, 0, 0, 20, 10)).toBeCloseTo(20);
+    expect(segmentLengthInRect(5, -5, 5, 5, 0, 0, 20, 10)).toBeCloseTo(5);
+    expect(segmentLengthInRect(0, 0, 20, 10, 0, 0, 20, 10)).toBeCloseTo(Math.hypot(20, 10));
+    expect(segmentLengthInRect(2, 2, 4, 4, 0, 0, 20, 10)).toBeCloseTo(Math.hypot(2, 2));
+  });
+
+  it("is zero for segments that miss the rect, and for points", () => {
+    expect(segmentLengthInRect(-10, -10, -1, -1, 0, 0, 20, 10)).toBe(0);
+    expect(segmentLengthInRect(25, -5, 40, 30, 0, 0, 20, 10)).toBe(0);
+    expect(segmentLengthInRect(-5, 20, 30, 12, 0, 0, 20, 10)).toBe(0);
+    expect(segmentLengthInRect(5, 5, 5, 5, 0, 0, 20, 10)).toBe(0);
+  });
+});
+
+describe("thinnedSegments", () => {
+  it("keeps short lines whole and thins long ones to the cap, endpoints kept", () => {
+    const short = [[0, 0, 0], [1, 0, 0], [2, 0, 0]];
+    expect(Array.from(thinnedSegments([short], 48))).toEqual([0, 0, 0, 1, 0, 0, 1, 0, 0, 2, 0, 0]);
+    const long = Array.from({ length: 101 }, (_, k) => [k, 0, 0]);
+    const segs = thinnedSegments([long], 10);
+    expect(segs.length / 6).toBe(10);
+    expect(Array.from(segs.slice(0, 3))).toEqual([0, 0, 0]);
+    expect(Array.from(segs.slice(-3))).toEqual([100, 0, 0]);
+    const odd = Array.from({ length: 8 }, (_, k) => [k, 0, 0]);
+    const oddSegs = thinnedSegments([odd], 3);
+    expect(Array.from(oddSegs.slice(-3))).toEqual([7, 0, 0]);
+    expect(thinnedSegments([[[1, 2, 3]]], 4).length).toBe(0);
+  });
+});
+
+describe("placeLabels with feature lines", () => {
+  const W = 800;
+  const H = 600;
+  const one = (droppable = false) => {
+    const p = makeLabelPlacement(1);
+    p.ax[0] = 300;
+    p.ay[0] = 300;
+    p.w[0] = 200;
+    p.h[0] = 14;
+    p.active[0] = 1;
+    p.droppable[0] = droppable ? 1 : 0;
+    return p;
+  };
+  const noRects = makeRectList(0);
+
+  it("keeps the default slot when no line crosses it", () => {
+    const lines = makeSegmentList(2);
+    pushSegment(lines, 0, 100, 800, 100);
+    expect(LABEL_SLOTS[placeLabels(one(), noRects, W, H, false, lines)[0]!]).toEqual({ side: 1, lines: 0 });
+  });
+
+  it("steps off a dashed line running along its text", () => {
+    const lines = makeSegmentList(2);
+    pushSegment(lines, 0, 300, 800, 300); // straight through the default slot's middle
+    const slot = LABEL_SLOTS[placeLabels(one(), noRects, W, H, false, lines)[0]!]!;
+    expect(Math.abs(slot.lines)).toBe(1);
+  });
+
+  it("stays put when a line only clips it (moving would cost more than the crossing)", () => {
+    const lines = makeSegmentList(2);
+    pushSegment(lines, 400, 0, 400, 600); // a vertical line through the text: every same-side slot has it
+    const slot = LABEL_SLOTS[placeLabels(one(), noRects, W, H, false, lines)[0]!]!;
+    expect(slot.lines).toBe(0);
+  });
+
+  it("never drops a label for a line crossing alone", () => {
+    const lines = makeSegmentList(64);
+    for (let y = 0; y <= 600; y += 4) pushSegment(lines, 0, y, 800, y); // lines everywhere
+    expect(placeLabels(one(true), noRects, W, H, false, lines)[0]).toBeGreaterThanOrEqual(0);
+  });
+
+  it("is deterministic and matches the line-free layout when lines are absent", () => {
+    const a = Array.from(placeLabels(one(), noRects, W, H, false));
+    const b = Array.from(placeLabels(one(), noRects, W, H, false, makeSegmentList(0)));
+    expect(a).toEqual(b);
   });
 });
