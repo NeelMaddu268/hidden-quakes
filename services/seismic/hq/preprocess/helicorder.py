@@ -84,10 +84,6 @@ LEGEND_LABELS = {
     "tierC": "Candidate events, Tier C",
     "public": "Public-catalog events",
 }
-SELECTION_RULE = (
-    "Among stations.parquet rows of stationKind used in the run, the station with the most "
-    "picks.parquet picks of pickPhases over the day (ties: station id order); its vertical channel."
-)
 _MINUTE_S = 60.0
 _PT_PER_IN = 72.0
 
@@ -129,6 +125,17 @@ def ranked_by_picks(
     ranked = [(str(sid), int(counts.get(sid, 0))) for sid in elig["id"]]
     ranked.sort(key=lambda item: -item[1])  # stable: equal counts keep id order
     return ranked
+
+
+def selection_rule(cfg: HelicorderConfig) -> str:
+    """The station-choice rule as reader-facing text (the web panel shows it), from the config."""
+    phases = list(cfg.pickPhases)
+    named = phases[0] if len(phases) == 1 else f"{', '.join(phases[:-1])} and {phases[-1]}"
+    used = " used in the run" if cfg.usedInRunOnly else ""
+    return (
+        f"Station chosen by code: the {cfg.stationKind} station{used} with the most {named} "
+        "phase picks over the day (ties go to the first station ID); its vertical channel is shown."
+    )
 
 
 def choose_station(
@@ -348,8 +355,8 @@ def caption_text(
     """One or two sentences built from the manifest's own fields."""
     depth = f", sensor {sensor_depth_m:g} m below the surface" if sensor_depth_m else ""
     return (
-        f"The vertical channel {seed_id} of {station_kind} station {station_id}{depth}, through "
-        f"{day_utc} UTC, bandpassed {band_hz[0]:g}-{band_hz[1]:g} Hz, {row_minutes} minutes per "
+        f"The vertical channel {seed_id} of {station_kind} station {station_id}{depth}, over "
+        f"the UTC day {day_utc}, bandpassed {band_hz[0]:g}-{band_hz[1]:g} Hz, {row_minutes} minutes per "
         "row; gaps in the recording are left blank. Amber ticks mark candidate events at their "
         "origin times (brighter for higher tiers), and hollow diamonds mark public-catalog events."
     )
@@ -425,7 +432,7 @@ def build_manifest(
         "markerTime": MARKER_TIME,
         "legend": legend_entries(markers, cfg),
         "selection": {
-            "rule": SELECTION_RULE,
+            "rule": selection_rule(cfg),
             "pickCount": choice.pickCount,
             "runnersUp": [{"stationId": s, "pickCount": n} for s, n in choice.runnersUp],
         },
@@ -844,8 +851,8 @@ def run(
         t1=inputs.t1,
         day_utc=inputs.dayUtc,
         rows=len(rows),
-        gap_s=day_s - covered,
-        coverage=covered / day_s,
+        gap_s=round(day_s - covered, 6),  # epoch-float noise below a microsecond is not data
+        coverage=round(covered / day_s, 9),
         markers=markers,
         width_px=width,
         height_px=height,
