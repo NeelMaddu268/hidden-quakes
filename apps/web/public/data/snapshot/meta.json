@@ -81,10 +81,10 @@
       "picks": {
         "fromUnusedStations": "drop: picks from stations with usedInRun false (counts.picksFromUnusedStationsDropped)",
         "minPickProb": 0.3,
-        "nIn": 112,
+        "nIn": 936,
         "probMinIn": 0.10002601891756058,
         "tMaxS": 1790472567.23,
-        "tMinS": 1790465453.52,
+        "tMinS": 1790429438.64,
         "weights": "none: PyOcto 0.2.0 has no per-pick weight; prob is only the threshold"
       },
       "postprocess": {
@@ -97,7 +97,7 @@
         "sharedPickRule": "a pick in two events stays with the smaller |PyOcto residual| (ties: more picks, earlier, lower index)"
       },
       "provenance": {
-        "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+        "gitSha": "419132369875931b3a717ca5ac090b97014114e0",
         "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
         "softwareVersions": {
           "numpy": "2.5.3",
@@ -301,7 +301,7 @@
       "window": {
         "endS": 1790472600.0,
         "rule": "events with origin time outside [startS, endS) are dropped after the duplicate merge (counts.droppedOutsideWindow); the bbox is not applied here",
-        "startS": 1790465400.0
+        "startS": 1790429400.0
       }
     },
     "bbox": [
@@ -310,9 +310,9 @@
       -112.6,
       38.74
     ],
-    "createdAt": "2026-09-27T02:21:31Z",
-    "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
-    "id": "20260927-0221-615e997",
+    "createdAt": "2026-09-27T02:35:31Z",
+    "gitSha": "419132369875931b3a717ca5ac090b97014114e0",
+    "id": "20260927-0235-4191323",
     "isSynthetic": false,
     "locator": {
       "calibration": {
@@ -399,7 +399,7 @@
           "phasenet:instance"
         ],
         "refSurfaceElevM": 1627.7,
-        "runId": "20260927-0221-615e997",
+        "runId": "20260927-0235-4191323",
         "source": "hq-pipeline",
         "statics": {
           "applied": true,
@@ -436,7 +436,7 @@
           "nUsed": 23
         }
       },
-      "locateRuntimeS": 0.965789040987147,
+      "locateRuntimeS": 4.220409583009314,
       "method": "grid1d",
       "misfit": "sum_i w_i |t_obs_i - T_i - static_i - t0|, w_i = prob_i / sigma_i; t0 = lower weighted median of (t_obs_i - T_i - static_i) (eliminated analytically)",
       "outliers": "drop |residual| > max(madK * MAD, floorS), MAD unscaled over both phases; relocate once",
@@ -449,7 +449,7 @@
         "diagnostics.md"
       ],
       "provenance": {
-        "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+        "gitSha": "419132369875931b3a717ca5ac090b97014114e0",
         "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
         "softwareVersions": {
           "numpy": "2.5.3",
@@ -499,7 +499,7 @@
         "explanations": [
           {
             "aboveModelTopM": -213.38232399999993,
-            "distanceM": 1005.0263436793075,
+            "distanceM": 758.5763939861662,
             "explanation": "S arrives 0.245 s late against the 1D model (n 43). Its nearest stations with a S term within 8 km (UU.FORK3, UU.FSB1, UU.FORK) have a median +0.049 s: they don't share it. S/P term ratio 3.62 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1587 m ASL, 213 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -515,7 +515,7 @@
           },
           {
             "aboveModelTopM": -327.6552730000001,
-            "distanceM": 6782.159737949364,
+            "distanceM": 6354.771641221802,
             "explanation": "S arrives 0.588 s late against the 1D model (n 42). Its nearest stations with a S term within 8 km (UU.FORW, UU.FORK2, UU.FORK3) have a median +0.089 s: they don't share it. S/P term ratio 6.64 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1472 m ASL, 328 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -531,7 +531,7 @@
           },
           {
             "aboveModelTopM": 30.392090000000053,
-            "distanceM": 7512.954167757816,
+            "distanceM": 7116.888791635607,
             "explanation": "P arrives 0.248 s early against the 1D model (n 43). Its nearest stations with a P term within 8 km (UU.NMU, UU.FOR5, UU.FSB3) have a median -0.189 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.01 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1830 m ASL, 30 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -547,7 +547,7 @@
           },
           {
             "aboveModelTopM": 30.392090000000053,
-            "distanceM": 7512.954167757816,
+            "distanceM": 7116.888791635607,
             "explanation": "S arrives 0.498 s early against the 1D model (n 43). Its nearest stations with a S term within 8 km (UU.NMU, UU.FOR5, UU.FSB3) have a median -0.472 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.01 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1830 m ASL, 30 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -563,7 +563,7 @@
           },
           {
             "aboveModelTopM": -248.60705600000006,
-            "distanceM": 4038.678107104796,
+            "distanceM": 4383.1659897657555,
             "explanation": "P arrives 0.233 s late against the 1D model (n 41). Its nearest stations with a P term within 8 km (6K.CS04, 6K.CS01, UU.FSB4) have a median +0.068 s: they don't share it. S/P term ratio 2.77 against the model's Vp/Vs 2.16 at the sensor: P and S slowed in proportion, consistent with a velocity anomaly near the station. Sensor at 1551 m ASL, 249 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -579,7 +579,7 @@
           },
           {
             "aboveModelTopM": -248.60705600000006,
-            "distanceM": 4038.678107104796,
+            "distanceM": 4383.1659897657555,
             "explanation": "S arrives 0.645 s late against the 1D model (n 39). Its nearest stations with a S term within 8 km (6K.CS04, 6K.CS01, UU.FSB4) have a median +0.245 s: they don't share it. S/P term ratio 2.77 against the model's Vp/Vs 2.16 at the sensor: P and S slowed in proportion, consistent with a velocity anomaly near the station. Sensor at 1551 m ASL, 249 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -595,8 +595,8 @@
           },
           {
             "aboveModelTopM": -158.0,
-            "distanceM": 21371.95838701254,
-            "explanation": "P arrives 0.265 s early against the 1D model (n 16). Its nearest stations with a P term within 8 km (UU.MHS2) have a median +0.193 s: they don't share it. S/P term ratio 1.33 against the model's Vp/Vs 1.97 at the sensor: neither proportional to the slownesses nor equal. The station lies 21.4 km from the events' median epicentre (more than 15 km), so most of its ray length lies in the model's half-space, which the layer file marks as extrapolation; faster rock there would make distant stations early. No other station that far has a P term later than +0.15 s, so the table doesn't contradict that; nothing here tests it further. Sensor at 1642 m ASL, 158 m below the velocity model's own top.",
+            "distanceM": 21696.873936821223,
+            "explanation": "P arrives 0.265 s early against the 1D model (n 16). Its nearest stations with a P term within 8 km (UU.MHS2) have a median +0.193 s: they don't share it. S/P term ratio 1.33 against the model's Vp/Vs 1.97 at the sensor: neither proportional to the slownesses nor equal. The station lies 21.7 km from the events' median epicentre (more than 15 km), so most of its ray length lies in the model's half-space, which the layer file marks as extrapolation; faster rock there would make distant stations early. No other station that far has a P term later than +0.15 s, so the table doesn't contradict that; nothing here tests it further. Sensor at 1642 m ASL, 158 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
             "nEvents": 16,
@@ -611,8 +611,8 @@
           },
           {
             "aboveModelTopM": -158.0,
-            "distanceM": 21371.95838701254,
-            "explanation": "S arrives 0.353 s early against the 1D model (n 5). Its nearest stations with a S term within 8 km (UU.MHS2) have a median +0.751 s: they don't share it. S/P term ratio 1.33 against the model's Vp/Vs 1.97 at the sensor: neither proportional to the slownesses nor equal. The station lies 21.4 km from the events' median epicentre (more than 15 km), so most of its ray length lies in the model's half-space, which the layer file marks as extrapolation; faster rock there would make distant stations early. No other station that far has a S term later than +0.15 s, so the table doesn't contradict that; nothing here tests it further. Sensor at 1642 m ASL, 158 m below the velocity model's own top.",
+            "distanceM": 21696.873936821223,
+            "explanation": "S arrives 0.353 s early against the 1D model (n 5). Its nearest stations with a S term within 8 km (UU.MHS2) have a median +0.751 s: they don't share it. S/P term ratio 1.33 against the model's Vp/Vs 1.97 at the sensor: neither proportional to the slownesses nor equal. The station lies 21.7 km from the events' median epicentre (more than 15 km), so most of its ray length lies in the model's half-space, which the layer file marks as extrapolation; faster rock there would make distant stations early. No other station that far has a S term later than +0.15 s, so the table doesn't contradict that; nothing here tests it further. Sensor at 1642 m ASL, 158 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
             "nEvents": 5,
@@ -627,7 +627,7 @@
           },
           {
             "aboveModelTopM": -40.0,
-            "distanceM": 2551.2196248966156,
+            "distanceM": 2391.2845950060373,
             "explanation": "S arrives 0.237 s early against the 1D model (n 41). Its nearest stations with a S term within 8 km (UU.FORK, UU.FORB, UU.FSB1) have a median +0.002 s: they don't share it. S/P term ratio 3.64 against the model's Vp/Vs 1.97 at the sensor: S changed proportionally more than P, consistent with faster near-station rock with a lower Vp/Vs than the model's (as in crystalline rock under the model's sediment-like top layers), which advances P and advances S more. Sensor at 1760 m ASL, 40 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -643,7 +643,7 @@
           },
           {
             "aboveModelTopM": -60.90000000000009,
-            "distanceM": 10140.55007468539,
+            "distanceM": 9632.707394909576,
             "explanation": "P arrives 0.324 s early against the 1D model (n 43). Its nearest stations with a P term within 8 km (6K.CS03, UU.NMU, UU.FSB3) have a median -0.189 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.79 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1739 m ASL, 61 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -659,7 +659,7 @@
           },
           {
             "aboveModelTopM": -60.90000000000009,
-            "distanceM": 10140.55007468539,
+            "distanceM": 9632.707394909576,
             "explanation": "S arrives 0.581 s early against the 1D model (n 43). Its nearest stations with a S term within 8 km (6K.CS03, UU.NMU, UU.FSB3) have a median -0.472 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.79 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1739 m ASL, 61 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -675,7 +675,7 @@
           },
           {
             "aboveModelTopM": 461.7329101559999,
-            "distanceM": 9722.328933540746,
+            "distanceM": 9732.948159356918,
             "explanation": "P arrives 0.247 s early against the 1D model (n 43). Its nearest stations with a P term within 8 km (UU.FORB, UU.NMU, 6K.CS03) have a median -0.219 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.81 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 2262 m ASL, 462 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -691,7 +691,7 @@
           },
           {
             "aboveModelTopM": 461.7329101559999,
-            "distanceM": 9722.328933540746,
+            "distanceM": 9732.948159356918,
             "explanation": "S arrives 0.447 s early against the 1D model (n 43). Its nearest stations with a S term within 8 km (UU.FORB, UU.NMU, 6K.CS03) have a median -0.472 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.81 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 2262 m ASL, 462 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -707,7 +707,7 @@
           },
           {
             "aboveModelTopM": 164.0,
-            "distanceM": 8218.152014651469,
+            "distanceM": 8723.490548259006,
             "explanation": "P arrives 0.247 s early against the 1D model (n 43). Its nearest stations with a P term within 8 km (6K.CS04, UU.FSB4, UU.FORB) have a median +0.035 s: they don't share it. S/P term ratio 1.83 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1964 m ASL, 164 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -723,7 +723,7 @@
           },
           {
             "aboveModelTopM": 164.0,
-            "distanceM": 8218.152014651469,
+            "distanceM": 8723.490548259006,
             "explanation": "S arrives 0.453 s early against the 1D model (n 43). Its nearest stations with a S term within 8 km (6K.CS04, UU.FSB4, UU.FORB) have a median +0.036 s: they don't share it. S/P term ratio 1.83 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1964 m ASL, 164 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -739,8 +739,8 @@
           },
           {
             "aboveModelTopM": -146.0,
-            "distanceM": 16350.02148142711,
-            "explanation": "P arrives 0.216 s early against the 1D model (n 12). Its nearest stations with a P term within 8 km (UU.FSB5) have a median +0.312 s: they don't share it. The station lies 16.4 km from the events' median epicentre (more than 15 km), so most of its ray length lies in the model's half-space, which the layer file marks as extrapolation; faster rock there would make distant stations early. No other station that far has a P term later than +0.15 s, so the table doesn't contradict that; nothing here tests it further. Sensor at 1654 m ASL, 146 m below the velocity model's own top.",
+            "distanceM": 16169.771467685303,
+            "explanation": "P arrives 0.216 s early against the 1D model (n 12). Its nearest stations with a P term within 8 km (UU.FSB5) have a median +0.312 s: they don't share it. The station lies 16.2 km from the events' median epicentre (more than 15 km), so most of its ray length lies in the model's half-space, which the layer file marks as extrapolation; faster rock there would make distant stations early. No other station that far has a P term later than +0.15 s, so the table doesn't contradict that; nothing here tests it further. Sensor at 1654 m ASL, 146 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
             "nEvents": 12,
@@ -755,7 +755,7 @@
           },
           {
             "aboveModelTopM": 39.09999999999991,
-            "distanceM": 3855.6867807487783,
+            "distanceM": 3841.3813037984555,
             "explanation": "P arrives 0.219 s early against the 1D model (n 7). Its nearest stations with a P term within 8 km (UU.FOR2, UU.NMU, UU.FORK) have a median -0.065 s: they don't share it. S/P term ratio 1.92 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1839 m ASL, 39 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -771,7 +771,7 @@
           },
           {
             "aboveModelTopM": 39.09999999999991,
-            "distanceM": 3855.6867807487783,
+            "distanceM": 3841.3813037984555,
             "explanation": "S arrives 0.421 s early against the 1D model (n 21). Its nearest stations with a S term within 8 km (UU.FOR2, UU.NMU, UU.FORK) have a median -0.237 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 1.92 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1839 m ASL, 39 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -787,7 +787,7 @@
           },
           {
             "aboveModelTopM": -284.0,
-            "distanceM": 9205.619180584494,
+            "distanceM": 8674.443603894575,
             "explanation": "P arrives 0.180 s late against the 1D model (n 42). Its nearest stations with a P term within 8 km (6K.CS02, UU.FSB6, UU.FORK2) have a median +0.089 s: they don't share it. S/P term ratio 4.35 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1516 m ASL, 284 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -803,7 +803,7 @@
           },
           {
             "aboveModelTopM": -284.0,
-            "distanceM": 9205.619180584494,
+            "distanceM": 8674.443603894575,
             "explanation": "S arrives 0.785 s late against the 1D model (n 31). Its nearest stations with a S term within 8 km (6K.CS02, UU.FSB6, UU.FORK2) have a median +0.588 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 4.35 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1516 m ASL, 284 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -819,7 +819,7 @@
           },
           {
             "aboveModelTopM": -128.0,
-            "distanceM": 3499.6451052544467,
+            "distanceM": 3021.3813322735023,
             "explanation": "S arrives 0.161 s early against the 1D model (n 22). Its nearest stations with a S term within 8 km (UU.FORK, UU.FORK2, UU.FORK3) have a median +0.007 s: they don't share it. S/P term ratio 2.88 against the model's Vp/Vs 1.97 at the sensor: S changed proportionally more than P, consistent with faster near-station rock with a lower Vp/Vs than the model's (as in crystalline rock under the model's sediment-like top layers), which advances P and advances S more. Sensor at 1672 m ASL, 128 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -835,7 +835,7 @@
           },
           {
             "aboveModelTopM": -222.0,
-            "distanceM": 7273.436756803747,
+            "distanceM": 7778.096060563362,
             "explanation": "S arrives 0.392 s late against the 1D model (n 37). Its nearest stations with a S term within 8 km (6K.CS06, 6K.CS04, UU.FOR7) have a median +0.036 s: they don't share it. S/P term ratio 4.19 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1578 m ASL, 222 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -851,7 +851,7 @@
           },
           {
             "aboveModelTopM": -326.0,
-            "distanceM": 10228.340933192001,
+            "distanceM": 10109.763715522371,
             "explanation": "P arrives 0.312 s late against the 1D model (n 39). Its nearest stations with a P term within 8 km (UU.FOR8, 6K.CS02) have a median -0.064 s: they don't share it. S/P term ratio 2.80 against the model's Vp/Vs 2.16 at the sensor: P and S slowed in proportion, consistent with a velocity anomaly near the station. Sensor at 1474 m ASL, 326 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -867,7 +867,7 @@
           },
           {
             "aboveModelTopM": -326.0,
-            "distanceM": 10228.340933192001,
+            "distanceM": 10109.763715522371,
             "explanation": "S arrives 0.875 s late against the 1D model (n 38). Its nearest stations with a S term within 8 km (6K.CS02) have a median +0.588 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.80 against the model's Vp/Vs 2.16 at the sensor: P and S slowed in proportion, consistent with a velocity anomaly near the station. Sensor at 1474 m ASL, 326 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -883,7 +883,7 @@
           },
           {
             "aboveModelTopM": -338.0,
-            "distanceM": 13476.883279838243,
+            "distanceM": 12930.312283014186,
             "explanation": "P arrives 0.160 s late against the 1D model (n 40). Its nearest stations with a P term within 8 km (UU.FORW, 6K.CS02) have a median +0.134 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 4.49 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1462 m ASL, 338 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -899,7 +899,7 @@
           },
           {
             "aboveModelTopM": -338.0,
-            "distanceM": 13476.883279838243,
+            "distanceM": 12930.312283014186,
             "explanation": "S arrives 0.721 s late against the 1D model (n 21). Its nearest stations with a S term within 8 km (UU.FORW, 6K.CS02) have a median +0.687 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 4.49 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1462 m ASL, 338 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -915,7 +915,7 @@
           },
           {
             "aboveModelTopM": -271.0,
-            "distanceM": 13785.767838328498,
+            "distanceM": 14162.450872477197,
             "explanation": "P arrives 0.193 s late against the 1D model (n 16). Its nearest stations with a P term within 8 km (UU.FSB4, UU.FOR1) have a median -0.086 s: they don't share it. S/P term ratio 3.90 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1529 m ASL, 271 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -931,7 +931,7 @@
           },
           {
             "aboveModelTopM": -271.0,
-            "distanceM": 13785.767838328498,
+            "distanceM": 14162.450872477197,
             "explanation": "S arrives 0.751 s late against the 1D model (n 14). Its nearest stations with a S term within 8 km (UU.FSB4, UU.FOR1) have a median +0.019 s: they don't share it. S/P term ratio 3.90 against the model's Vp/Vs 2.16 at the sensor: S changed proportionally more than P, consistent with slower near-station rock with a higher Vp/Vs than the model's (as in unconsolidated sediment), which delays P and delays S more. Sensor at 1529 m ASL, 271 m below the velocity model's own top.",
             "farContradictedBy": "",
             "modelVpVs": 2.1612635078969245,
@@ -947,7 +947,7 @@
           },
           {
             "aboveModelTopM": 53.0,
-            "distanceM": 5490.073969942565,
+            "distanceM": 5173.036432739484,
             "explanation": "P arrives 0.189 s early against the 1D model (n 37). Its nearest stations with a P term within 8 km (6K.CS03, UU.FSB3, UU.FORB) have a median -0.219 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.50 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1853 m ASL, 53 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -963,7 +963,7 @@
           },
           {
             "aboveModelTopM": 53.0,
-            "distanceM": 5490.073969942565,
+            "distanceM": 5173.036432739484,
             "explanation": "S arrives 0.472 s early against the 1D model (n 38). Its nearest stations with a S term within 8 km (6K.CS03, UU.FSB3, UU.FORB) have a median -0.421 s: they share it, consistent with lateral structure the 1D model can't hold (row 7) rather than a station fault. S/P term ratio 2.50 against the model's Vp/Vs 1.97 at the sensor: P and S sped up in proportion, consistent with a velocity anomaly near the station. Sensor at 1853 m ASL, 53 m above the velocity model's own top (1800 m ASL), where its top layer is extended upward and stands in for whatever rock is there.",
             "farContradictedBy": "",
             "modelVpVs": 1.9742046431642304,
@@ -982,7 +982,7 @@
           {
             "iteration": 1,
             "maxAbsS": 0.8750543594360352,
-            "medianRmsS": 0.04432027667012297,
+            "medianRmsS": 0.038174954519408985,
             "nCalibration": 0,
             "nNonZero": 44
           }
@@ -999,21 +999,21 @@
           {
             "configuredS": 0.02,
             "events": "all located events",
-            "nPicks": 4,
+            "nPicks": 75,
             "phase": "P",
-            "ratio": 0.015650299787521364,
-            "robustSigmaRoundedS": 0.0,
-            "robustSigmaS": 0.00031300599575042725,
+            "ratio": 0.7588848924636841,
+            "robustSigmaRoundedS": 0.015,
+            "robustSigmaS": 0.015177697849273681,
             "wellAbove": false
           },
           {
             "configuredS": 0.04,
             "events": "all located events",
-            "nPicks": 5,
+            "nPicks": 69,
             "phase": "S",
-            "ratio": 0.809971500635147,
-            "robustSigmaRoundedS": 0.032,
-            "robustSigmaS": 0.03239886002540588,
+            "ratio": 1.0606944286823272,
+            "robustSigmaRoundedS": 0.042,
+            "robustSigmaS": 0.04242777714729309,
             "wellAbove": false
           }
         ],
@@ -1426,46 +1426,50 @@
         "depthBiasSign": "elevM_true - elevM_located; positive = located too deep",
         "forwardModel": "exact 1D layered first arrivals (tt_grid.layered_first_arrival) on the tables' top-extended velocity model, plus Gaussian noise at the locator's sigma per station and phase (pickSigmaS or the profilePickSigmaS override)",
         "method": "grid1d",
-        "nPicksMean": 34.945,
-        "nSMean": 15.945,
-        "nStations": 19,
+        "nPicksMean": 41.68,
+        "nSMean": 18.68,
+        "nStations": 23,
         "nWorkers": 8,
         "noiseFree": {
           "fracHWithinHErrM": 1.0,
           "fracVWithinVErrM": 1.0,
-          "meanDepthBiasM": 4.1598369285608285,
-          "medianDepthBiasM": 4.839762885952496,
-          "medianFormalHErrM": 47.89529034942622,
-          "medianFormalVErrM": 52.467066622436036,
+          "meanDepthBiasM": 4.2848369285608285,
+          "medianDepthBiasM": 4.882495931736685,
+          "medianFormalHErrM": 28.297270164902592,
+          "medianFormalVErrM": 37.32010584265541,
           "medianHErrM": 9.92173102673619,
-          "medianVErrM": 6.959737529829454,
+          "medianVErrM": 7.224902489210081,
           "nDepthOnEdge": 0,
           "nEventsWithDroppedPicks": 0,
           "nMapOnVolumeBottom": 0,
           "nMapOnVolumeTop": 0,
           "nPdfTruncated": 0,
-          "p90HErrM": 14.588280459294165,
-          "p90VErrM": 14.628246190470007
+          "p90HErrM": 13.709923636108268,
+          "p90VErrM": 17.129042466210375
         },
         "noisy": {
-          "fracHWithinHErrM": 0.88,
-          "fracVWithinVErrM": 0.785,
-          "meanDepthBiasM": -2.965163071439172,
-          "medianDepthBiasM": -2.7183043324914706,
-          "medianFormalHErrM": 100.45053785886029,
-          "medianFormalVErrM": 114.1882436917426,
-          "medianHErrM": 60.453903468795396,
-          "medianVErrM": 68.29078839069302,
+          "fracHWithinHErrM": 0.73,
+          "fracVWithinVErrM": 0.705,
+          "meanDepthBiasM": 7.9098369285608285,
+          "medianDepthBiasM": 8.409401613927002,
+          "medianFormalHErrM": 75.44728674743614,
+          "medianFormalVErrM": 96.95098539359887,
+          "medianHErrM": 48.62035368887667,
+          "medianVErrM": 64.36493523016702,
           "nDepthOnEdge": 0,
-          "nEventsWithDroppedPicks": 2,
+          "nEventsWithDroppedPicks": 1,
           "nMapOnVolumeBottom": 0,
           "nMapOnVolumeTop": 0,
           "nPdfTruncated": 0,
-          "p90HErrM": 102.89088994205248,
-          "p90VErrM": 163.8713744668612
+          "p90HErrM": 96.43810939681174,
+          "p90VErrM": 159.96078274396058
         },
         "pickSigmaSByStation": {
           "6K.CS01": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "6K.CS02": {
             "P": 0.02,
             "S": 0.04
           },
@@ -1529,7 +1533,19 @@
             "P": 0.02,
             "S": 0.04
           },
+          "UU.FSB3": {
+            "P": 0.02,
+            "S": 0.04
+          },
           "UU.FSB4": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FSB5": {
+            "P": 0.02,
+            "S": 0.04
+          },
+          "UU.FSB6": {
             "P": 0.02,
             "S": 0.04
           },
@@ -1546,34 +1562,35 @@
           "caveat": "every station gets a P pick, so the synthetic picks are optimistic for weak events",
           "measured": {
             "from": "located events of this run: sKeepProb = median over events of nS / nStations, pickProb = median prob of the picks used in the final locations",
-            "medianNPPerStation": 0.6666666666666666,
-            "medianNS": 5.0,
-            "medianNStations": 6.0,
-            "nEvents": 1,
-            "nUsedPicks": 9,
-            "pickProb": 0.6141995191574097,
-            "sKeepProb": 0.8333333333333334
+            "medianNPPerStation": 0.8571428571428571,
+            "medianNS": 5.5,
+            "medianNStations": 6.5,
+            "nEvents": 10,
+            "nUsedPicks": 144,
+            "pickProb": 0.7459472417831421,
+            "sKeepProb": 0.8090909090909091
           },
-          "pickProb": 0.6141995191574097,
-          "sKeepProb": 0.8333333333333334,
+          "pickProb": 0.7459472417831421,
+          "sKeepProb": 0.8090909090909091,
           "source": "measured from the run"
         },
         "report": {
-          "medianDepthBiasM": -2.7183043324914706,
-          "medianHErrM": 60.453903468795396,
-          "medianVErrM": 68.29078839069302,
+          "medianDepthBiasM": 8.409401613927002,
+          "medianHErrM": 48.62035368887667,
+          "medianVErrM": 64.36493523016702,
           "nEvents": 200,
-          "p90VErrM": 163.8713744668612,
+          "p90VErrM": 159.96078274396058,
           "pickSigmaS": {
             "P": 0.02,
             "S": 0.04
           }
         },
         "reportFields": "synthetic.json medianHErrM/medianVErrM/p90VErrM are TRUE errors of the noisy run; compare Tier A formal vErrM with noisy.medianFormalVErrM",
-        "runtimeS": 72.50336833299662,
+        "runtimeS": 50.05514454199874,
         "stationGeometry": {
           "enuEM": [
             -715.9296968735289,
+            -4334.091133419541,
             5119.699147076928,
             71.45423800346907,
             -3220.0667493927176,
@@ -1589,12 +1606,16 @@
             163.59002486884128,
             -3089.2741617038264,
             696.2168599872966,
+            1692.7364227896323,
             -3130.5075531741604,
+            -9938.257672070176,
+            -3372.6445076052332,
             -10123.953975789715,
             4374.328795633162
           ],
           "enuNM": [
             -2099.285276840441,
+            2424.6918405769393,
             2794.603762664832,
             -5930.956431901082,
             -5120.144364236854,
@@ -1610,15 +1631,19 @@
             -1076.9670574273914,
             5903.80738378223,
             -2796.343946106732,
+            340.1347718136385,
             -9291.196676406078,
+            -546.8960710074753,
+            10285.025412823074,
             -12052.583264384419,
             632.4684274503961
           ],
           "hashOf": "JSON list of [id, enu_e, enu_n, sensorElevM] per station, in frame order",
-          "label": "20260927-0221-615e997",
-          "nBorehole": 8,
+          "label": "20260927-0235-4191323",
+          "nBorehole": 12,
           "sensorElevM": [
             1586.617676,
+            1472.344727,
             1830.39209,
             1652.448975,
             1551.392944,
@@ -1634,13 +1659,17 @@
             1355.5,
             1516.0,
             1668.0,
+            1672.0,
             1578.0,
+            1474.0,
+            1462.0,
             1529.0,
             1853.0
           ],
-          "sha256": "91e4f08893a52f81849370e063c24585451c14746dc02d4c9ed45d0c78b8337b",
+          "sha256": "8feefcbf773a0713322fcbb39c4d19bac28e460412e61c91750cd8e4ce8fe4dd",
           "stationIds": [
             "6K.CS01",
+            "6K.CS02",
             "6K.CS03",
             "6K.CS04",
             "6K.CS06",
@@ -1656,21 +1685,19 @@
             "UU.FORK3",
             "UU.FORW",
             "UU.FSB1",
+            "UU.FSB3",
             "UU.FSB4",
+            "UU.FSB5",
+            "UU.FSB6",
             "UU.MHS2",
             "UU.NMU"
           ]
         },
-        "stationsWithoutPicks": [
-          "6K.CS02",
-          "UU.FSB3",
-          "UU.FSB5",
-          "UU.FSB6"
-        ],
+        "stationsWithoutPicks": [],
         "synthetic": {
           "nEvents": 200,
-          "pickProb": 0.6141995191574097,
-          "sKeepProb": 0.8333333333333334,
+          "pickProb": 0.7459472417831421,
+          "sKeepProb": 0.8090909090909091,
           "seed": 20260925,
           "zone": {
             "bottomElevM": -4500.0,
@@ -1801,7 +1828,7 @@
           ]
         },
         "algorithm": "tt_grid/2: skfmm, cell-mean slowness, exact 1D layered seed",
-        "buildS": 0.17189516698999796,
+        "buildS": 0.03757837500597816,
         "fmmOrder": 2,
         "grid": {
           "bottomElevM": -8000.0,
@@ -2356,7 +2383,7 @@
         "idsWithArrivalsProduct": [],
         "noDataFromProvider": true,
         "provenance": {
-          "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+          "gitSha": "419132369875931b3a717ca5ac090b97014114e0",
           "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
           "softwareVersions": {
             "numpy": "2.5.3",
@@ -2375,18 +2402,18 @@
           "uncommittedChanges": false
         },
         "providerUrl": "https://earthquake.usgs.gov",
-        "quakemlSha256": "89afdaff2cc593600224b0bb14add97c2e421a2bd4b5f2974440114a2f0c74e3",
+        "quakemlSha256": "ab0574cd4681ad43e8c8efdc955afdb91bedaf281a5ab7d99b55f7c9e7cfd54d",
         "query": {
           "endtime": "2026-09-27T01:30:00.000000Z",
           "maxlatitude": 38.74,
           "maxlongitude": -112.6,
           "minlatitude": 38.28,
           "minlongitude": -113.2,
-          "starttime": "2026-09-26T23:30:00.000000Z"
+          "starttime": "2026-09-26T13:30:00.000000Z"
         },
         "windowEnd": "2026-09-27T01:30:00+00:00",
         "windowEndExclusive": true,
-        "windowStart": "2026-09-26T23:30:00+00:00"
+        "windowStart": "2026-09-26T13:30:00+00:00"
       },
       "magnitude": {
         "removedMagnitudeJson": false,
@@ -2402,7 +2429,7 @@
           "vsMaxMPerS": 3374.0
         },
         "chanceTimeCoincidences": {
-          "perPublicEvent": 0.0005555555555555556,
+          "perPublicEvent": 0.000925925925925926,
           "rule": "nLocated * 2 * maxDtS / window length: located origin times uniform over the run window; the distance limit is ignored",
           "total": 0.0
         },
@@ -2458,7 +2485,7 @@
         "lowestCost": "in unmatched reasons, the located event (or associated candidate) with the lowest cost; it can be far from the public event in time or space",
         "objective": "most admissible one-to-one pairs, then least total cost (scipy.optimize.linear_sum_assignment)",
         "provenance": {
-          "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+          "gitSha": "419132369875931b3a717ca5ac090b97014114e0",
           "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
           "softwareVersions": {
             "numpy": "2.5.3",
@@ -2509,7 +2536,7 @@
         ],
         "sensitivityRule": "each pair reruns the assignment as both limit and cost scale",
         "unmatched": {},
-        "window": "[2026-09-26T23:30:00Z, 2026-09-27T01:30:00Z)"
+        "window": "[2026-09-26T13:30:00Z, 2026-09-27T01:30:00Z)"
       }
     },
     "mode": "live",
@@ -2703,6 +2730,67 @@
       },
       "model": "seisbench.PhaseNet",
       "pThreshold": 0.1,
+      "preprocess": {
+        "antiAlias": {
+          "passbandEdgeFraction": 0.8,
+          "passbandLossDb": 1.0,
+          "stopbandAttenuationDb": 60.0,
+          "stopbandEdgeFraction": 1.0
+        },
+        "chunks": {
+          "edgeProbeS": 1.0,
+          "lengthS": 3600.0,
+          "minOverlapS": 32.0,
+          "overlapS": 60.0
+        },
+        "componentRename": {
+          "1": "N",
+          "2": "E"
+        },
+        "detrend": "linear",
+        "joinMisalignmentSamples": 0.01,
+        "maxUpsampleFactor": 2,
+        "minSegmentModelS": 31.0,
+        "modelComponents": "ZNE",
+        "profiles": {
+          "borehole-A": {
+            "lowpassCorners": 4,
+            "lowpassHz": 40.0,
+            "maxRateHz": 1000.0,
+            "method": "decimate",
+            "minRateHz": 500.0
+          },
+          "borehole-B": {
+            "bandpassCorners": 4,
+            "bandpassHz": [
+              5.0,
+              400.0
+            ],
+            "maxRateHz": 1000.0,
+            "method": "stretch",
+            "minRateHz": 1000.0
+          },
+          "surface-100": {
+            "maxRateHz": 100.0,
+            "method": "passthrough",
+            "minRateHz": 100.0
+          },
+          "surface-hi": {
+            "lowpassCorners": 4,
+            "lowpassHz": 40.0,
+            "maxRateHz": 250.0,
+            "method": "decimate",
+            "minRateHz": 200.0
+          }
+        },
+        "rateRelTol": 1e-09,
+        "taper": {
+          "maxLengthS": 1.0,
+          "maxPercentage": 0.05,
+          "type": "hann"
+        },
+        "targetRateHz": 100.0
+      },
       "run": {
         "onCacheMiss": "error",
         "torchThreadsPerWorker": 3,
@@ -2737,14 +2825,14 @@
     "pickerModel": "seisbench.PhaseNet",
     "pickerWeights": "instance",
     "runtimeS": {
-      "associate": 0.6994798329978948,
-      "catalog": 0.21389674999227282,
-      "download": 9.59618274999957,
-      "inventory": 0.8984176670055604,
-      "locate": 140.51676037498692,
-      "match": 0.04040737499599345,
-      "pick": 32.607457124991925,
-      "tier": 0.026049583000713028
+      "associate": 0.6477699999959441,
+      "catalog": 0.5676184170006309,
+      "download": 110.86312845800421,
+      "inventory": 14.096007749991259,
+      "locate": 110.82330391701544,
+      "match": 0.037332333988160826,
+      "pick": 141.7911960420024,
+      "tier": 0.029477375006536022
     },
     "softwareVersions": {
       "numpy": "2.5.3",
@@ -2760,7 +2848,31 @@
       "seisbench": "0.12.6",
       "torch": "2.14.0"
     },
-    "stationIds": [],
+    "stationIds": [
+      "6K.CS01",
+      "6K.CS02",
+      "6K.CS03",
+      "6K.CS04",
+      "6K.CS06",
+      "UU.FOR1",
+      "UU.FOR2",
+      "UU.FOR5",
+      "UU.FOR6",
+      "UU.FOR7",
+      "UU.FOR8",
+      "UU.FORB",
+      "UU.FORK",
+      "UU.FORK2",
+      "UU.FORK3",
+      "UU.FORW",
+      "UU.FSB1",
+      "UU.FSB3",
+      "UU.FSB4",
+      "UU.FSB5",
+      "UU.FSB6",
+      "UU.MHS2",
+      "UU.NMU"
+    ],
     "tiering": {
       "calibration": {
         "locatorMethod": "grid1d",
@@ -2790,15 +2902,15 @@
       "counts": {
         "additional": {
           "A": 0,
-          "B": 0,
-          "C": 1
+          "B": 1,
+          "C": 9
         },
         "all": {
           "A": 0,
-          "B": 0,
-          "C": 1
+          "B": 1,
+          "C": 9
         },
-        "events": 1,
+        "events": 10,
         "matched": {
           "A": 0,
           "B": 0,
@@ -2833,7 +2945,7 @@
         "event_picks.parquet"
       ],
       "provenance": {
-        "gitSha": "615e99700f39a2fdc1911284921107c94a562253",
+        "gitSha": "419132369875931b3a717ca5ac090b97014114e0",
         "note": "the code and software this stage ran with; ProcessingRun.gitSha and softwareVersions describe the run's creation",
         "softwareVersions": {
           "numpy": "2.5.3",
@@ -3107,8 +3219,8 @@
       "verifiedBasis": "verified: true means the values, the TVDSS datum and the layer-top reading all come from the GDR 1613 submission itself (the velocity CSV, and the methods report's p. 4 text and p. 5 Fig. 3a). The NAVD88 reading of mean sea level and any top-layer extension are ours; they are stated in datum and topExtension."
     },
     "windowEnd": 1790472600.0,
-    "windowLabel": "2026-09-26 23:30-2026-09-27 01:30 UTC",
-    "windowStart": 1790465400.0
+    "windowLabel": "2026-09-26 13:30-2026-09-27 01:30 UTC",
+    "windowStart": 1790429400.0
   },
   "scene": {
     "depthLabel": "Depth below site surface (ref 1627.7 m ASL)",
@@ -3119,25 +3231,25 @@
     "originLon": -112.9,
     "projection": "EPSG:32612 minus origin",
     "refSurfaceElevM": 1627.7,
-    "runId": "20260927-0221-615e997",
+    "runId": "20260927-0235-4191323",
     "verticalExaggeration": 1.0
   },
   "schemaVersion": "1.0",
   "summary": {
     "additional": {
       "A": 0,
-      "B": 0,
-      "C": 1
+      "B": 1,
+      "C": 9
     },
-    "additionalCount": 1,
+    "additionalCount": 10,
     "baseline": null,
-    "candidateCount": 1,
-    "medianRmsS": 0.044,
-    "medianStations": 6.0,
+    "candidateCount": 10,
+    "medianRmsS": 0.038,
+    "medianStations": 6.5,
     "publicCatalogCount": 0,
     "recall": 0.0,
     "recoveredCatalogCount": 0,
-    "runId": "20260927-0221-615e997",
+    "runId": "20260927-0235-4191323",
     "strictAdditionalCount": 0,
     "strictQualityCount": 0,
     "unmatchedPublicIds": []

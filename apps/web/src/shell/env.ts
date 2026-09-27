@@ -7,7 +7,7 @@ export function liveEnabled(): boolean {
 
 /**
  * WEB-12: `next.config.ts` sets this when `public/data/snapshot/meta.json` exists at build time,
- * so the TONIGHT pill (`?mode=snapshot`) is only offered when the export actually carries a
+ * so the TODAY pill (`?mode=snapshot`) is only offered when the export actually carries a
  * snapshot bundle.
  */
 export function snapshotAvailable(): boolean {
