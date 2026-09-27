@@ -24,7 +24,7 @@ Semi-transparent terrain, the geothermal reference outline, public points in whi
 
 ## Inspiration
 
-Enhanced geothermal is expanding around Milford, Utah. Operators and research teams see underground: dense downhole geophones and fiber arrays give them detailed pictures of the microseismicity there. The public gets the public regional catalog, which lists a sparse slice of that activity. Microseismicity is also what the oversight of geothermal operations (traffic-light protocols) is built on. We wanted to know how much of the underground picture the public seismic network is already hearing, and to show it in a way a non-seismologist can read in five seconds.
+Enhanced geothermal is expanding around Milford, Utah. Operators and research teams see underground: dense downhole geophones and fiber arrays give them detailed pictures of the microseismicity there. Someone without operator data, a county official asked at a meeting or a reporter checking a claim, gets the public regional catalog, which lists a sparse slice of that activity. Microseismicity is also what the oversight of geothermal operations (traffic-light protocols) is built on. We wanted to know how much of the underground picture the public seismic network is already hearing, and to show it in a way that person can read in five seconds, share by link, and download.
 
 ## What it does
 
