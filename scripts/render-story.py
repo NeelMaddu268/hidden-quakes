@@ -452,41 +452,38 @@ def _confidence_file(bundle: Bundle) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def confidence_auc() -> Resolver:
-    """``confidence.json`` → ``model.heldOut.rocAuc`` at two decimals (the Validation card's
-    "<label> (held-out ROC AUC)" row); the sentence is omitted when the file is absent or the
-    AUC is missing."""
-    source = f"{CONFIDENCE_JSON} → model.heldOut.rocAuc"
-    gate = f"{CONFIDENCE_JSON} present with model.heldOut.rocAuc"
-    note = f"{source} (only with {gate}: the decoy-test sentence)"
+def confidence_field(path: str, *, decimals: int | None = None) -> Resolver:
+    """``confidence.json`` (``hq.confidence/1``) → ``path`` ("model.heldOut.rocAuc",
+    "model.trainedOn.decoys", "label"); the scramble-test sentences are omitted when the file
+    is absent or the field is missing or not a number/string."""
+    source = f"{CONFIDENCE_JSON} → {path}"
+    gate = f"{CONFIDENCE_JSON} present with {path}"
+    note = f"{source} (only with {gate}: the scramble-test sentences)"
 
     def resolve(bundle: Bundle) -> Resolved:
-        data = _confidence_file(bundle)
-        model = data.get("model") if data is not None else None
-        held_out = model.get("heldOut") if isinstance(model, dict) else None
-        auc = held_out.get("rocAuc") if isinstance(held_out, dict) else None
-        if not isinstance(auc, int | float) or isinstance(auc, bool):
-            r = _condition_not_met(source, gate)
-            return Resolved(r.text, note, r.status)
-        return Resolved(fmt(float(auc), 2), note, STATUS_VALUE)
+        node: Any = _confidence_file(bundle)
+        for key in path.split("."):
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, str) and node.strip():
+            return Resolved(node.strip(), note, STATUS_VALUE)
+        if isinstance(node, int | float) and not isinstance(node, bool):
+            return Resolved(
+                fmt(node if decimals is None else float(node), decimals), note, STATUS_VALUE
+            )
+        r = _condition_not_met(source, gate)
+        return Resolved(r.text, note, r.status)
 
     return resolve
+
+
+def confidence_auc() -> Resolver:
+    """The Validation card's "<label> (held-out ROC AUC)" value, two decimals."""
+    return confidence_field("model.heldOut.rocAuc", decimals=2)
 
 
 def confidence_label() -> Resolver:
-    """``confidence.json`` → ``label``: what the drawer and the card call the score."""
-    source = f"{CONFIDENCE_JSON} → label"
-    gate = f"{CONFIDENCE_JSON} present with a label"
-
-    def resolve(bundle: Bundle) -> Resolved:
-        data = _confidence_file(bundle)
-        label = data.get("label") if data is not None else None
-        if not isinstance(label, str) or not label.strip():
-            r = _condition_not_met(source, gate)
-            return Resolved(r.text, f"{source} (only with {gate})", r.status)
-        return Resolved(label.strip(), source, STATUS_VALUE)
-
-    return resolve
+    """What the drawer and the card call the score."""
+    return confidence_field("label")
 
 
 def hero_station_count() -> Resolver:
@@ -628,6 +625,12 @@ PITCH_SPECS: tuple[Spec, ...] = (
     Spec("{staltaCandidates}", baseline_candidates("stalta")),
     Spec("{heldOutRocAuc}", confidence_auc()),
     Spec("{confidenceLabel}", confidence_label()),
+    Spec(
+        "{heldOutRocAucEqualStations}",
+        confidence_field("model.heldOut.rocAucEqualStationCount", decimals=2),
+    ),
+    Spec("{confidencePositives}", confidence_field("model.trainedOn.positives")),
+    Spec("{confidenceDecoys}", confidence_field("model.trainedOn.decoys")),
     Spec("{staltaRecoveredPublic}", baseline_field("stalta", "recoveredPublic")),
     Spec("{phasenetMedianRmsS}", baseline_field("phasenet", "medianRmsS", decimals=3)),
     Spec("{staltaMedianRmsS}", baseline_field("stalta", "medianRmsS", decimals=3)),
@@ -776,6 +779,17 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
     Spec("<from validation.json: nullTest.nShuffles>", none_strict_scrambles()),
     Spec("<from confidence.json: model.heldOut.rocAuc>", confidence_auc()),
     Spec("<from confidence.json: label>", confidence_label()),
+    Spec(
+        "<from confidence.json: model.heldOut.rocAucEqualStationCount>",
+        confidence_field("model.heldOut.rocAucEqualStationCount", decimals=2),
+    ),
+    Spec(
+        "<from confidence.json: model.trainedOn.positives>",
+        confidence_field("model.trainedOn.positives"),
+    ),
+    Spec(
+        "<from confidence.json: model.trainedOn.decoys>", confidence_field("model.trainedOn.decoys")
+    ),
     Spec(
         "<from validation.json: magnitude.n>",
         gated(*MAG_GATE, validation_field("magnitude.n"), sentence=MAG_SENTENCE),
