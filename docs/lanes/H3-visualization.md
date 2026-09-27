@@ -618,3 +618,21 @@ The live site had no key for the hidden hero (REQ-H3-12 was still open). H3 bind
 has begun, and does nothing on the public frame, where no candidate event is on screen to open. It follows the
 shell's key rules (`scene/keys.ts` `isPlainPress`: text fields, repeats and Cmd/Ctrl/Alt combos are left alone).
 While the tour plays, H stops the tour like any other key and opens nothing. H4 lists H in docs/02 §6 and the README.
+
+### WEB-10 · hover tooltip on any event · 2026-09-26 10:00 PM EDT
+
+H2's overnight item 2. Hovering a glyph shows a small card that follows the pointer (`scene/picking/HoverTooltip.tsx`,
+content in `picking/hover.ts`), formatted with the drawer's own functions so the two never disagree.
+
+- **Candidate event:** tier ("Tier A (strict)"), origin time to the second in UTC, depth below the site surface (the
+  display-depth rule), magnitude with its type and sigma, stations that agreed, and "In / Not in the public regional
+  catalog".
+- **Public regional catalog event:** time, depth and the catalog's magnitude. After the reveal it also says whether
+  our pipeline recovered it, and at what tier. Before the reveal it doesn't, so the reveal isn't given away.
+
+The Picker's hover pick (at most once per frame, only while the pointer moves) sees any drawn glyph, including public
+points before the reveal. The click pick is unchanged, so public points still select nothing before the reveal. The
+card flips to the pointer's other side at the viewport edge and before the open drawer. It clears on a drag, a zoom
+and on any phase, filter, time-mode or view change, and stays hidden while the tour plays. On the real bundle
+(`work/web10-hover-check.mjs`) every value matches the bundle in Chrome and WebKit, and a pointer sweep across the
+cluster costs no frame rate.
