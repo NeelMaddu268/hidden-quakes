@@ -487,9 +487,13 @@ def test_live_stage_borrows_the_calibration_terms(
     east = dict(zip(world["stations"]["id"], world["stations"]["enu_e"], strict=True))
     planted = pd.DataFrame([{"stationId": s, "phase": p, "staticS": _delay(e, p), "nEvents": 40}
                             for s, e in east.items() for p in ("P", "S")])
+    # A calibration station that served no data tonight (not in this window's stations): dropped.
+    gone = pd.DataFrame([{"stationId": "XX.GONE", "phase": p, "staticS": 0.05, "nEvents": 40}
+                         for p in ("P", "S")])
     cal_dir = tmp_path / "data" / "showcase" / "runs" / cfg.live.calibrationRun
     cal_dir.mkdir(parents=True)
-    write_table(planted, cal_dir / "statics.parquet", "StationStatic")
+    write_table(pd.concat([planted, gone], ignore_index=True), cal_dir / "statics.parquet",
+                "StationStatic")
     (cal_dir / "run.json").write_text(json.dumps({
         "id": cfg.live.calibrationRun, "mode": "showcase",
         "locator": {"method": cfg.locator.method},
@@ -519,6 +523,7 @@ def test_live_stage_borrows_the_calibration_terms(
     assert params["calibration"]["runId"] == cfg.live.calibrationRun
     assert params["statics"]["mode"] == "calibrationRun"
     assert params["statics"]["calibrationRun"] == cfg.live.calibrationRun
+    assert params["statics"]["stationPhasesNotInUse"] == ["XX.GONE P", "XX.GONE S"]
     assert "calibration run `" in ctx.path("diagnostics.md").read_text()
 
     # Pass 2: one public event matched (too few for referenceEvents terms): ignored, same output.
