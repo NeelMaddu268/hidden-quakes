@@ -6,6 +6,8 @@ import { TourButton } from "@/scene";
 import { useDemo } from "@/state/demo";
 import { Counters } from "./Counters";
 import { DownloadButton } from "./download/DownloadButton";
+import { EventList, EventListButton } from "./events/EventList";
+import { HelpButton, HelpOverlay, useHelpKey } from "./help/HelpOverlay";
 import { FilterPills, ModePills } from "./Pills";
 import { RevealButton } from "./RevealButton";
 import { RunDetailsButton, RunDetailsPanel, useRunDetailsKey } from "./run-details/RunDetailsPanel";
@@ -29,6 +31,10 @@ export function Shell() {
   // DEMO-02: the Run details overlay, toggled by its button under the mode label or by D.
   const [detailsOpen, setDetailsOpen] = useState(false);
   useRunDetailsKey(setDetailsOpen, ready);
+  // DEMO-04: "How it works" (? button and key) and the candidate event list.
+  const [helpOpen, setHelpOpen] = useState(false);
+  useHelpKey(setHelpOpen);
+  const [listOpen, setListOpen] = useState(false);
   // Share links: `?event=<id>` opens that drawer after the reveal; the address bar follows selection.
   const events = ready ? bundle.events : null;
   const eventIds = useMemo(() => (events ? new Set(events.map((e) => e.id)) : null), [events]);
@@ -44,6 +50,7 @@ export function Shell() {
         <h1 className={styles.title}>Hidden Quakes</h1>
         {/* REQ-H3-13: what the first frame shows, in one plain line (H2's wording). */}
         <p className={styles.subtitle}>Seismic events beneath Utah&apos;s geothermal field near Milford, from public data only</p>
+        <p className={styles.phoneNote}>Best on a laptop: the view is three-dimensional and keyboard driven.</p>
         <p className={styles.modeLabel} data-testid="mode-label">
           {bundle.status === "ready" && bundle.info.label}
           {bundle.status === "loading" && (mode ? `Loading ${mode}…` : "Loading…")}
@@ -53,6 +60,8 @@ export function Shell() {
           {ready && <RunDetailsButton open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)} />}
           {/* REQ-H3-15: the guided tour (G); hides itself while the tour plays. */}
           {ready && <TourButton className={`${styles.pill} ${styles.modePill}`} />}
+          {ready && <EventListButton open={listOpen} onToggle={() => setListOpen((open) => !open)} />}
+          <HelpButton open={helpOpen} onToggle={() => setHelpOpen((open) => !open)} />
         </div>
         <DownloadButton />
       </header>
@@ -68,6 +77,8 @@ export function Shell() {
       {/* DEMO-02 panels: validation (bottom-left, after the reveal) and the Run details overlay. */}
       <ValidationPanel />
       {ready && <RunDetailsPanel open={detailsOpen} onClose={() => setDetailsOpen(false)} />}
+      <EventList open={listOpen} onClose={() => setListOpen(false)} />
+      <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {/* The pressed pill is the mode chosen in the URL: during live failover the bundle says
           "snapshot" while LIVE is still what the visitor picked, and the label carries the rest. */}
