@@ -290,15 +290,18 @@ def test_manifest_follows_the_station_day_contract(cfg: HelicorderConfig) -> Non
     opacity = {e["key"]: e["opacity"] for e in man["legend"]}
     assert opacity["tierA"] > opacity["tierB"] > opacity["tierC"]
     assert man["selection"] == {
-        "rule": h.SELECTION_RULE,
+        "rule": h.selection_rule(cfg),
         "pickCount": 5,
         "runnersUp": [{"stationId": "XX.B2", "pickCount": 5}],
     }
+    rule = man["selection"]["rule"]  # reader-facing (the web panel shows it), built from config
+    assert cfg.stationKind in rule and ".parquet" not in rule
+    assert all(phase in rule for phase in cfg.pickPhases)
     caption = man["caption"]
     for part in ("XX.B1", "GHZ", "2001-09-09", "candidate events", "public-catalog events"):
         assert part in caption
     for banned in ("confirmed", "caused by", "predict"):
-        assert banned not in caption.lower()
+        assert banned not in caption.lower() and banned not in rule.lower()
     json.dumps(man, allow_nan=False)  # strict JSON
 
 
