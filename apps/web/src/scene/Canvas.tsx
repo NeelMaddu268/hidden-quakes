@@ -32,6 +32,7 @@ import { HiddenHeroKey } from "./HiddenHeroKey";
 import { DepthSection } from "./plan/DepthSection";
 import { HoverTooltip } from "./picking/HoverTooltip";
 import { Tour } from "./tour/Tour";
+import { StationDayPanel } from "./stationday/StationDayPanel";
 import { buildPlanHaloInstances } from "./plan/halos";
 import { PlanCamera } from "./plan/PlanCamera";
 import { PlanRingsLayer } from "./plan/PlanRingsLayer";
@@ -192,8 +193,9 @@ function SceneContents() {
 
 /**
  * The full-bleed 3D canvas (docs/02 §6), plus the plan view's docked depth section (a DOM panel, shown
- * only in plan view), the hover tooltip, and the guided tour's captions (WEB-09, shown only while it
- * plays). H4's page mounts it beneath the shell.
+ * only in plan view), the hover tooltip, the station-day panel (WEB-10, opened from its corner button)
+ * and the guided tour's captions (WEB-09, shown only while it plays). H4's page mounts it beneath the
+ * shell.
  */
 export function Scene() {
   return (
@@ -214,6 +216,8 @@ export function Scene() {
     <DepthSection />
     <HoverTooltip />
     <HiddenHeroKey />
+    {/* WEB-10: before the tour, so its modal key listener (window, capture) runs first. */}
+    <StationDayPanel />
     <Tour />
     </>
   );
