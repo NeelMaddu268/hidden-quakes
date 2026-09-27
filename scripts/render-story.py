@@ -42,6 +42,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -514,28 +515,64 @@ def hero_station_count() -> Resolver:
     return resolve
 
 
+HIDDEN_HERO_SOURCE = (
+    f"{EVENTS_JSON} → Tier A, catalogMatch null, by the hero rule (most stations, least rmsS)"
+)
+
+
+def _hidden_hero(bundle: Bundle, what: str, pick: Callable[[dict[str, Any]], str]) -> Resolved:
+    """The strict event with no catalog match chosen by the hero's own rule (most stations,
+    then smallest timing misfit, then earliest, then id), from ``events.json``: what H opens."""
+    source = f"{HIDDEN_HERO_SOURCE}{what}"
+    if bundle.events is None:
+        return _not_available(bundle, META_JSON, source)
+    hidden = [e for e in bundle.events if e["tier"] == "A" and e["catalogMatch"] is None]
+    if not hidden:
+        return Resolved(
+            "[condition not met: no strict event without a catalog match; omit this sentence]",
+            source,
+            STATUS_CONDITION,
+        )
+    best = min(
+        hidden,
+        key=lambda e: (-e["quality"]["nStations"], e["quality"]["rmsS"], e["t"], e["id"]),
+    )
+    return Resolved(pick(best), source, STATUS_VALUE)
+
+
 def hidden_hero_id() -> Resolver:
-    """Q37's pointer: the strict event with no catalog match chosen by the hero's own rule
-    (most stations, then smallest timing misfit, then earliest, then id), from ``events.json``."""
-    source = (
-        f"{EVENTS_JSON} → Tier A, catalogMatch null, by the hero rule (most stations, least rmsS)"
+    """Q37's pointer: the hidden hero's id."""
+    return lambda bundle: _hidden_hero(bundle, "", lambda e: str(e["id"]))
+
+
+def hidden_hero_stations() -> Resolver:
+    """ "{hiddenHeroStations} stations agreed": the hidden hero's ``quality.nStations``, what its
+    drawer header prints when H opens it."""
+    return lambda bundle: _hidden_hero(
+        bundle, " → quality.nStations", lambda e: fmt(e["quality"]["nStations"])
     )
 
+
+def window_date() -> Resolver:
+    """The window's day in words ("September 10"), from ``run.windowStart`` (epoch seconds,
+    UTC), so a pitch says the date rather than the window label. Only for a window inside one
+    UTC day; a longer window renders as not available (say the window label instead)."""
+    source = f"{META_JSON} → run.windowStart (UTC day, in words)"
+
     def resolve(bundle: Bundle) -> Resolved:
-        if bundle.events is None:
+        start, _ = _lookup(bundle, META_JSON, "run.windowStart")
+        end, _ = _lookup(bundle, META_JSON, "run.windowEnd")
+        if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in (start, end)):
             return _not_available(bundle, META_JSON, source)
-        hidden = [e for e in bundle.events if e["tier"] == "A" and e["catalogMatch"] is None]
-        if not hidden:
+        first = datetime.fromtimestamp(start, tz=UTC)
+        last = datetime.fromtimestamp(max(start, end - 1), tz=UTC)  # windowEnd is exclusive
+        if first.date() != last.date():
             return Resolved(
-                "[condition not met: no strict event without a catalog match; omit this sentence]",
+                "[not available: the window spans more than one UTC day; say the window label]",
                 source,
-                STATUS_CONDITION,
+                STATUS_NOT_AVAILABLE,
             )
-        best = min(
-            hidden,
-            key=lambda e: (-e["quality"]["nStations"], e["quality"]["rmsS"], e["t"], e["id"]),
-        )
-        return Resolved(str(best["id"]), source, STATUS_VALUE)
+        return Resolved(f"{first:%B} {first.day}", source, STATUS_VALUE)
 
     return resolve
 
@@ -609,6 +646,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
     Spec("{N}", meta_field("summary.publicCatalogCount"), label="{N} (PUBLIC counter)"),
     Spec("{nStations}", hero_station_count()),
     Spec("{hiddenHeroId}", hidden_hero_id()),
+    Spec("{hiddenHeroStations}", hidden_hero_stations()),
     # Metres, whole: the Validation card rounds this row the same way (rows.ts DECIMALS.depth).
     Spec("{medianVErrM}", validation_field("synthetic.medianVErrM", decimals=0)),
     Spec(
@@ -723,6 +761,7 @@ PITCH_SPECS: tuple[Spec, ...] = (
         manual("/api/live/status → latencyS and /health → served.latencyS; only if measured"),
     ),
     Spec("{windowLabel}", meta_field("run.windowLabel")),
+    Spec("{windowDate}", window_date()),
     Spec("{runId}", meta_field("run.id")),
     Spec("{value}", literal("describes the placeholder form; not a placeholder")),
 )
@@ -761,6 +800,12 @@ DEVPOST_SPECS: tuple[Spec, ...] = (
         baseline_strict("stalta"),
     ),
     Spec("<from meta.json: run.windowLabel>", meta_field("run.windowLabel")),
+    Spec("<from meta.json: run.windowStart, as a date>", window_date()),
+    Spec(
+        "<from meta.json: run.tiering.matchedSet.meetingEveryBar.A>",
+        meta_field("run.tiering.matchedSet.meetingEveryBar.A"),
+    ),
+    Spec("<from meta.json: run.tiering.matchedSet.n>", meta_field("run.tiering.matchedSet.n")),
     Spec("<from meta.json: run.pickerWeights>", meta_field("run.pickerWeights")),
     Spec("<from meta.json: run.velocityModel.name>", velocity_model_name()),
     Spec(

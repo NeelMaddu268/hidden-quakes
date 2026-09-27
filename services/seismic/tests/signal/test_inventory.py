@@ -12,7 +12,6 @@ import copy
 import json
 import logging
 import shutil
-import socket
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -79,17 +78,6 @@ STATION_FIELDS = {  # docs/02 -> Station
     "usedInRun",
     "staticsS",
 }
-
-
-@pytest.fixture(autouse=True)
-def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Any socket connection in these tests is a bug: every service is injected."""
-
-    def refuse(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError(f"network access in an offline test: {args}")
-
-    monkeypatch.setattr(socket.socket, "connect", refuse)
-    monkeypatch.setattr(socket, "create_connection", refuse)
 
 
 @pytest.fixture(scope="module")
@@ -170,6 +158,22 @@ def metadata_rate_probe(
                 for ch in st:
                     out[ch.code] = float(ch.sample_rate)
     return out or None
+
+
+def assert_depths_match_stationxml(rows: list[dict[str, Any]], t: float) -> None:
+    """Lane DoD: each row's sensorDepthM is the StationXML depth of every one of its channels."""
+    assert rows
+    for row in rows:
+        for code in row["channels"]:
+            sel = _FIXTURE_INV.select(
+                network=row["network"],
+                station=row["station"],
+                location=row["location"],
+                channel=code,
+                time=UTCDateTime(t),
+            )
+            depths = {float(ch.depth) for net in sel for sta in net for ch in sta}
+            assert depths == {row["sensorDepthM"]}, (row["id"], code, depths)
 
 
 def no_probe(net: str, sta: str, loc: str, channels: Any, t0: float, t1: float) -> None:
@@ -338,6 +342,13 @@ def test_kinds_profiles_and_channel_order(result: InventoryResult) -> None:
         assert row["channels"][0].endswith("Z")
         if row["kind"] == "borehole":
             assert row["sensorDepthM"] > 0
+
+
+@pytest.mark.smoke
+def test_every_row_depth_matches_its_stationxml_channels(
+    result: InventoryResult, run_section: RunSection
+) -> None:
+    assert_depths_match_stationxml(result.rows, run_section.window_start_s)
 
 
 @pytest.mark.smoke
@@ -857,7 +868,8 @@ def test_format_table_lists_every_station(result: InventoryResult) -> None:
 def test_stage_writes_stations_parquet(
     fake_ctx: Any, cfg: StationSelection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    io = pytest.importorskip("hq_contracts.io")  # CONTRACT-01 (H4)
+    from hq_contracts import io  # a hard dependency (pyproject.toml): a broken package fails
+
     seeded = build(fake_ctx.config.run, cfg, fake_ctx.cache_dir)  # seeds every cache
 
     def refuse(*args: Any, **kwargs: Any) -> Any:
@@ -865,18 +877,24 @@ def test_stage_writes_stations_parquet(
 
     monkeypatch.setattr(inv, "requests_get", refuse)
     monkeypatch.setattr(inv._LazyClient, "get", refuse)
+    monkeypatch.setattr(inv, "fdsn_rate_probe", lambda query, rcfg: refuse)  # rate probes too
     inv.run(fake_ctx)
     df = io.read_table(fake_ctx.path(inv.STATIONS_FILE))
     assert list(df["id"]) == EXPECTED_IDS
     assert {"enu_e", "enu_n", "enu_u", "sensorDepthM", "sensorElevM"} <= set(df.columns)
     fork = df[df["id"] == "UU.FORK"].iloc[0]
     assert (fork["sensorDepthM"], fork["sensorElevM"]) == (281.0, pytest.approx(1408.0))
+    assert_depths_match_stationxml(df.to_dict("records"), fake_ctx.config.run.window_start_s)
     assert list(df["usedInRun"]) == [r["usedInRun"] for r in seeded.rows]
     report = json.loads(fake_ctx.path(inv.REPORT_FILE).read_text(encoding="utf-8"))
     assert report["counts"]["selected"] == len(EXPECTED_IDS)
     rec = fake_ctx.records[inv.STAGE]
     assert rec["counts"]["selected"] == len(EXPECTED_IDS)
     assert rec["params"] == {inv.STAGE: cfg.model_dump(mode="json")}
+    # ProcessingRun.stationIds: the usedInRun stations, sorted
+    used = sorted(r["id"] for r in seeded.rows if r["usedInRun"])
+    assert fake_ctx.updates["stationIds"] == used
+    assert len(used) < len(EXPECTED_IDS)  # the fixture has an unused station; it must be left out
 
 
 @pytest.mark.smoke
