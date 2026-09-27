@@ -23,6 +23,7 @@ import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from hq_contracts.io import from_frame, read_models, read_table
@@ -41,6 +42,7 @@ from hq_contracts.models import (
 )
 
 from hq.config.validate import GRConfig
+from hq.export.confidence import read_confidence
 from hq.export.errors import ExportError
 from hq.runs import read_run_json
 from hq.validate import sidecars
@@ -99,6 +101,8 @@ class RunTables:
     # Stations H1's download report lists with no component served at all (REQ-H3-11): the cache
     # holds nothing for them by design, so the evidence build skips them instead of failing.
     stations_without_data: frozenset[str] = frozenset()
+    # ML-01's per-event scores (``confidence.json``), checked against the run; None when absent.
+    confidence: dict[str, Any] | None = None
 
 
 def _listed(ids: Iterable[str]) -> str:
@@ -394,4 +398,5 @@ def load_run_tables(run_dir: Path, *, gr_cfg: GRConfig | None = None) -> RunTabl
         validation=validation,
         validation_source=validation_source,
         stations_without_data=load_stations_without_data(run_dir),
+        confidence=read_confidence(run_dir, [e.id for e in events], run.id),
     )

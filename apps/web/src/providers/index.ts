@@ -1,6 +1,7 @@
 export * from "./types";
 export { ProviderRoot, createProvider, preloadEvidence, isFailoverError, ModeDisabledError } from "./root";
 export { useBundle, useMode, useEvidence, useValidation, useLiveStatus, useFailedOver } from "./hooks";
+export { useConfidence, parseConfidence, CONFIDENCE_SCHEMA, type Confidence, type ConfidenceFile } from "./confidence";
 export { StaticBundleProvider, modeLabel, type StaticMode } from "./static";
 export { LiveProvider, liveLabel, formatWindow, fetchWithTimeout, type LiveStatusSummary } from "./live";
 export { parseMode, isDataMode, mockAllowed, navigateToMode, DEFAULT_MODE, DATA_MODES } from "./mode";
