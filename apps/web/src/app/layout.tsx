@@ -23,7 +23,7 @@ const DESCRIPTION =
 const PREVIEW = { url: "/og.png", width: 1200, height: 630, alt: "Hidden Quakes: strict candidate events underground" };
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://hidden-quakes.vercel.app"),
+  metadataBase: new URL("https://hidden-quakes-final.vercel.app"),
   title: "Hidden Quakes",
   description: DESCRIPTION,
   openGraph: {

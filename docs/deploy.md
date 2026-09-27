@@ -4,7 +4,7 @@ The web app is a static export: `pnpm --filter web build` writes `apps/web/out/`
 
 ## Vercel (the public URL)
 
-**Public link: <https://hidden-quakes.vercel.app>** (no login; verified from a logged-out client). This is the one link for the Devpost, README, video, Expo form and the Gate E check. The project also has a Vercel team alias of the form `hidden-quakes-<team>.vercel.app`; that one is login-protected and must not appear anywhere.
+**Public link: <https://hidden-quakes-final.vercel.app>** (no login; verified from a logged-out client). It is Hieu's Vercel project `hidden-quakes-final`, deployed from `main` with `npx vercel --prod` after Neel's Hobby project hit its 100-deploys-a-day limit on Saturday night; <https://hidden-quakes.vercel.app> stays up with the 9 PM build. This is the one link for the Devpost, README, video, Expo form and the Gate E check. The project also has a Vercel team alias of the form `hidden-quakes-<team>.vercel.app`; that one is login-protected and must not appear anywhere.
 
 Vercel's Git integration builds and deploys `main` on every merge. Nothing in the repo triggers it; the one-time setup is in the dashboard. The project lives on Neel's Hobby account, which blocks Git deployments whose head commit someone else authored (private repo), so after other people's pushes Neel redeploys `main` from his account. Import the GitHub repo as a new project and set:
 
