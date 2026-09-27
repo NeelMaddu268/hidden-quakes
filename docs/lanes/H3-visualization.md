@@ -636,3 +636,11 @@ card flips to the pointer's other side at the viewport edge and before the open 
 and on any phase, filter, time-mode or view change, and stays hidden while the tour plays. On the real bundle
 (`work/web10-hover-check.mjs`) every value matches the bundle in Chrome and WebKit, and a pointer sweep across the
 cluster costs no frame rate.
+
+### WEB-12 · Copy link in the drawer header · 2026-09-26 10:50 PM EDT
+
+REQ-H4-3. A "Copy link" pill left of the close button copies the shell's share link for the open event
+(`shell/share.ts` `eventShareLink`: the page, mode kept, with `?event=<id>`). It reads "Copied" for 1.6 s in the
+accent color, and "Copy failed" in alert red (with a console error) when the clipboard refuses or is missing. It
+resets when the drawer switches events. Browser check (`work/web12-copylink-check.mjs`): the copied link, opened
+in a new tab, reveals and opens the same event.
