@@ -12,6 +12,7 @@ export const H3_OVERLAY_SELECTORS: readonly string[] = Object.freeze([
   '[data-testid="scene-legend"]',
   '[data-testid="vertical-badge"]',
   '[data-testid="abstract-surface-note"]',
+  '[data-testid="station-day-button"]',
   '[data-testid="depth-section"]',
   '[data-testid="time-scrubber"]',
   '.hqd[data-open="true"]',
