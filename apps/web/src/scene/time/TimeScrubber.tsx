@@ -10,11 +10,13 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { LISTEN_CLIPS, listenFitsRun, useListenManifest, type ListenManifest } from "../../audio/manifest";
 import { useDemo } from "../../state/demo";
 import { useBundle } from "../data";
 import { LOOK, publicSwatch } from "../look";
 import { countUpTo, fmtClockUtc, hourTicks } from "./clock";
 import { scrubberRect } from "./layout";
+import { ListenButton } from "./ListenButton";
 import { buildStripModel, drawStrip, recoveredSet, stripTime, stripX, type StripModel, type StripStyle } from "./strip";
 
 const PAD_X = 12;
@@ -66,6 +68,8 @@ function togglePlay(model: StripModel): void {
 interface StripViewProps {
   model: StripModel;
   width: number;
+  /** The busiest-hour Listen clip (WEB-10), when its manifest loaded and fits this run. */
+  listen: ListenManifest | null;
 }
 
 /**
@@ -73,7 +77,7 @@ interface StripViewProps {
  * drawn from a store subscription (coalesced to one redraw per animation frame) straight into the
  * canvas and a few text nodes: nothing here re-renders React while the replay runs.
  */
-function StripView({ model, width }: StripViewProps) {
+function StripView({ model, width, listen }: StripViewProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const slider = useRef<HTMLDivElement>(null);
   const clock = useRef<HTMLSpanElement>(null);
@@ -228,6 +232,7 @@ function StripView({ model, width }: StripViewProps) {
           Time
         </span>
         <span ref={clock} data-testid="time-clock" style={{ color: colors.text, fontFamily: fonts.mono, fontSize: 14, ...numeric }} />
+        {listen && <ListenButton clip={listen} />}
         <span style={{ flex: 1 }} />
         <span data-testid="time-counts" style={{ fontFamily: fonts.mono, fontSize: 11, ...numeric, ...dim, whiteSpace: "nowrap" }}>
           <span ref={pubCount} style={{ color: PUBLIC_BAR }} /> public
@@ -293,6 +298,7 @@ export function TimeScrubber() {
   const phase = useDemo((s) => s.phase);
   const drawerOpen = useDemo((s) => s.selectedEventId !== null);
   const viewport = useViewport();
+  const clip = useListenManifest(LISTEN_CLIPS.busiestHour);
   const ready = bundle.status === "ready" ? bundle : null;
   const model = useMemo(
     () =>
@@ -303,6 +309,7 @@ export function TimeScrubber() {
   );
   const rect = scrubberRect(viewport.width, viewport.height, drawerOpen);
   if (!model || !ready || !rect || !timeMode || phase !== "revealed") return null;
+  const listen = clip && listenFitsRun(clip, ready.meta.run, ready.meta.scene.runId) ? clip : null;
 
   const binMin = Math.round(LOOK.time.binS / 60);
   const panel: CSSProperties = {
@@ -323,7 +330,7 @@ export function TimeScrubber() {
   };
   return (
     <section style={panel} aria-label="Time scrubber" data-testid="time-scrubber">
-      <StripView model={model} width={rect.width} />
+      <StripView model={model} width={rect.width} listen={listen} />
       <div
         style={{
           position: "absolute",
