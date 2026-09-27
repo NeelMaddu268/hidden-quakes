@@ -25,6 +25,8 @@ type ReadyBundle = Extract<BundleState, { status: "ready" }>;
 /** Header (title, projection and framing note, outside count) and footer (axis captions), CSS px. */
 const HEADER_PX = 52;
 const FOOTER_PX = 36;
+/** How often the validation card's position is re-measured (ms). */
+const CARD_MEASURE_MS = 400;
 /** Click radius in the section, CSS px (the 3D picker's default). */
 const HIT_PX = 10;
 
@@ -53,10 +55,36 @@ function useViewport(): { width: number; height: number } {
   return vp;
 }
 
+/**
+ * The top edge (CSS px) of H4's validation card, measured read-only (shell `validation-panel` test id):
+ * the card's height depends on its rows, so the panel stops above where the card actually is. Re-measured
+ * on resize and a few times a second (the card appears after the reveal and its text can change).
+ */
+function useValidationCardTop(): number | null {
+  const [top, setTop] = useState<number | null>(null);
+  useEffect(() => {
+    const measure = () => {
+      const el = document.querySelector('[data-testid="validation-panel"]');
+      const r = el?.getBoundingClientRect();
+      const next = r && r.height > 0 ? Math.floor(r.top) : null;
+      setTop((prev) => (prev === next ? prev : next));
+    };
+    measure();
+    const id = window.setInterval(measure, CARD_MEASURE_MS);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+  return top;
+}
+
 function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
   const { meta, events, catalog, stations } = bundle;
   const vp = useViewport();
-  const rect = sectionPanelRect(vp.width, vp.height);
+  const cardTop = useValidationCardTop();
+  const rect = sectionPanelRect(vp.width, vp.height, cardTop);
   const canvas = useRef<HTMLCanvasElement>(null);
   const headerPx = HEADER_PX;
 
@@ -165,7 +193,7 @@ function SectionPanel({ bundle }: { bundle: ReadyBundle }) {
           Depth section
         </div>
         <div style={{ fontSize: 10.5 }}>
-          Grid east · true scale (1 km = 1 km) · {plot?.framedOn === "all" ? "framed on every event" : "framed on Tier A and B"}
+          Grid east · true scale · {plot?.framedOn === "all" ? "framed on every event" : "framed on Tier A and B"}
         </div>
         <div style={{ fontSize: 10.5, ...numeric }} data-testid="depth-section-outside">
           {outsideText(outside)}

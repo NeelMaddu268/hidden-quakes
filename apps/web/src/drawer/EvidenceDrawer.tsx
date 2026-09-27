@@ -7,7 +7,7 @@ import { useBundle, useEvidence } from "../scene/data";
 import type { SeismicEvent, Station } from "../scene/types";
 import { useDemo } from "../state/demo";
 import { Figures } from "./Figures";
-import { evidenceStations } from "./geometry";
+import { evidenceStations, pickingStations } from "./geometry";
 import { Header } from "./Header";
 import { formatOpenLatency } from "./latency";
 import { RecordSection } from "./RecordSection";
@@ -59,10 +59,18 @@ export function EvidenceDrawer() {
   const stationById = useMemo(() => (ready ? new Map(ready.stations.map((s) => [s.id, s] as const)) : null), [ready]);
   const event: SeismicEvent | null = (shownId && eventById?.get(shownId)) || null;
 
-  const evStations = useMemo<{ stations: Station[] | null; missing: string[] }>(() => {
-    if (evidence.status !== "ready" || !evidence.evidence || !stationById) return { stations: null, missing: [] };
-    return evidenceStations(evidence.evidence.traces, stationById);
-  }, [evidence, stationById]);
+  // Station geometry for the figures: the evidence traces' stations; without an evidence file (the
+  // exporter caps evidence at maxEvents) the stations that picked the event, so location and errors show.
+  const evStations = useMemo<{ stations: Station[] | null; missing: string[]; source: "evidence" | "picks" }>(() => {
+    if (!stationById) return { stations: null, missing: [], source: "evidence" };
+    if (evidence.status === "ready" && evidence.evidence) {
+      return { ...evidenceStations(evidence.evidence.traces, stationById), source: "evidence" };
+    }
+    if (evidence.status === "error" && event) {
+      return { stations: pickingStations(event.pickIds, stationById), missing: [], source: "picks" };
+    }
+    return { stations: null, missing: [], source: "evidence" };
+  }, [evidence, stationById, event]);
 
   // Open latency, logged per open, in three stages after select(): traces committed to the DOM (layout
   // effect), the frame that paints them starts (rAF), and the frame after it starts (double rAF, so the
@@ -120,10 +128,15 @@ export function EvidenceDrawer() {
                 evidence={evidence.status === "ready" ? evidence.evidence : undefined}
                 message={evidence.status === "error" ? evidence.message : undefined}
                 originT={event.t}
+                nStations={event.quality.nStations}
               />
-              {evidence.status !== "error" && (
-                <Figures event={event} meta={ready.meta} stations={evStations.stations} missing={evStations.missing} />
-              )}
+              <Figures
+                event={event}
+                meta={ready.meta}
+                stations={evStations.stations}
+                missing={evStations.missing}
+                source={evStations.source}
+              />
             </>
           )}
         </>

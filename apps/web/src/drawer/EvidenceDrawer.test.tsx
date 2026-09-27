@@ -254,7 +254,7 @@ describe("opening (select / E → hero)", () => {
     render(<EvidenceDrawer />);
     select("hq-test-000002");
     expect(rows()).toHaveLength(4);
-    expect(screen.getByText(/traces/).textContent).toMatch(/4\s*traces · 2–20 Hz bandpass/);
+    expect(document.querySelector(".hqd-caption")!.textContent).toMatch(/(^|\D)4 (of \d+ agreeing stations|stations) shown, closest first.* · 2–20 Hz bandpass · normalized per trace/);
     expect(document.querySelectorAll(".hqd-trace")).toHaveLength(4);
     select(HERO);
     expect(rows()).toHaveLength(16);
@@ -410,6 +410,47 @@ describe("figures", () => {
   });
 });
 
+describe("public-catalog status", () => {
+  it("marks an event with no public-catalog match, and only that", () => {
+    data.bundle = { ...readyBundle(), events: [event(HERO, { catalogMatch: null }), EVENTS[1]] } as BundleState;
+    render(<EvidenceDrawer />);
+    select(HERO);
+    expect(screen.getByTestId("not-in-catalog").textContent).toBe("Not in the public regional catalog");
+    select("hq-test-000002"); // matched to a public-catalog event
+    expect(screen.queryByTestId("not-in-catalog")).toBeNull();
+    expect(screen.getByText("uu60500001")).toBeTruthy();
+  });
+});
+
+describe("tier reasons", () => {
+  it("clamp to two lines with a toggle only when they overflow", () => {
+    const sh = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const ch = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    let overflow = false;
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get() { return overflow && this.classList.contains("hqd-reasons") ? 120 : 0; } });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get() { return overflow && this.classList.contains("hqd-reasons") ? 30 : 0; } });
+    try {
+      data.evidence[HERO] = { status: "ready", evidence: evidence(HERO, 4) };
+      const { unmount } = render(<EvidenceDrawer />);
+      select(HERO);
+      expect(document.querySelector(".hqd-reasons")!.getAttribute("data-clamped")).toBe("true");
+      expect(screen.queryByRole("button", { name: "Show all reasons" })).toBeNull(); // fits: no toggle
+      unmount();
+      act(() => useDemo.getState().select(null));
+      overflow = true;
+      render(<EvidenceDrawer />);
+      select(HERO);
+      const more = screen.getByRole("button", { name: "Show all reasons" });
+      fireEvent.click(more);
+      expect(document.querySelector(".hqd-reasons")!.getAttribute("data-clamped")).toBe("false");
+      expect(screen.getByRole("button", { name: "Show less" }).getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      if (sh) Object.defineProperty(HTMLElement.prototype, "scrollHeight", sh);
+      if (ch) Object.defineProperty(HTMLElement.prototype, "clientHeight", ch);
+    }
+  });
+});
+
 describe("loading and errors", () => {
   it("evidence loading: header at once, a placeholder for traces", () => {
     render(<EvidenceDrawer />);
@@ -420,14 +461,36 @@ describe("loading and errors", () => {
     expectNoBadValues();
   });
 
-  it("evidence error: the message, no traces", () => {
+  it("no evidence file (404): a plain note with no URL or digits; figures from the picking stations", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const ids = STATIONS.slice(0, 3).map((s, i) => `phasenet:instance:${s.id}:P:${1789000000 + i}.5`);
+    data.bundle = { ...readyBundle(), events: [event(HERO, { pickIds: [...ids, `phasenet:instance:${STATIONS[0].id}:S:1789000001.5`] })] } as BundleState;
     data.evidence[HERO] = { status: "error", message: "/data/mock/evidence/x.json: HTTP 404" };
     render(<EvidenceDrawer />);
     select(HERO);
-    expect(screen.getByText(/HTTP 404/)).toBeTruthy();
+    const note = screen.getByTestId("evidence-unavailable");
+    expect(note.textContent).toBe("No waveform evidence was exported for this event.");
+    expect(note.className).toBe("hqd-note"); // neutral, not the alert style
+    expect(document.querySelector(".hqd")!.textContent).not.toMatch(/HTTP|\/data\/|\.json/);
     expect(rows()).toHaveLength(0);
-    // No figure placeholders that would read as a load that never finishes.
-    expect(document.querySelector('[aria-label="Station geometry"]')).toBeNull();
+    // The event's location and errors are known: the figures show, with lines to the 3 picking stations.
+    expect(screen.getByRole("img", { name: /3 stations/ })).toBeTruthy();
+    expect(screen.getByText(/picking station → epicenter lines/)).toBeTruthy();
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/HTTP 404/));
+    info.mockRestore();
+    expectNoBadValues();
+  });
+
+  it("evidence failing to load for another reason: a plain error without the URL, logged loudly", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    data.evidence[HERO] = { status: "error", message: "/data/mock/evidence/x.json: HTTP 500" };
+    render(<EvidenceDrawer />);
+    select(HERO);
+    const note = screen.getByTestId("evidence-unavailable");
+    expect(note.textContent).toBe("Waveform evidence could not be loaded.");
+    expect(note.className).toBe("hqd-error");
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/HTTP 500/));
+    error.mockRestore();
   });
 
   it("bundle still loading: the id and a loading line", () => {

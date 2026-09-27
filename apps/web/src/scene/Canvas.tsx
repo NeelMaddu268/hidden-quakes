@@ -29,6 +29,7 @@ import { depthFogPerSceneUnit, LOOK } from "./look";
 
 import { Picker } from "./picking/Picker";
 import { DepthSection } from "./plan/DepthSection";
+import { Tour } from "./tour/Tour";
 import { buildPlanHaloInstances } from "./plan/halos";
 import { PlanCamera } from "./plan/PlanCamera";
 import { PlanRingsLayer } from "./plan/PlanRingsLayer";
@@ -37,6 +38,7 @@ import { selectedInstanceIndex } from "./picking/selection";
 import { Post } from "./post/Post";
 import { RevealDriver } from "./reveal/RevealDriver";
 import { References } from "./references";
+import { rulerMaxDepthKm } from "./references/ruler";
 import { Terrain } from "./terrain";
 import { TimeDriver } from "./time/TimeDriver";
 import type { BundleState } from "./types";
@@ -87,11 +89,10 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
   const candidates = useMemo(() => buildCandidateInstances(events, ve, windowStart), [events, ve, windowStart]);
   const publicEvents = useMemo(() => buildPublicInstances(catalog, ve, windowStart), [catalog, ve, windowStart]);
   const drive = useCallback((u: EventUniforms) => driveCandidates(u, candidates.indexById), [candidates]);
-  // Frame the structure: Tier A and B candidates. Scattered Tier C events and the public regional
-  // catalog (which spans the whole run bbox, tens of km) stay rendered but don't widen the shot. With
-  // no candidates at all, the public catalog is framed instead.
-
   const surfaceY = depthKmToSceneY(0, meta.scene);
+  // Frame Tier A and B candidates. Scattered Tier C events and the public regional catalog (which spans
+  // the whole run bbox, tens of km) stay rendered but don't widen the shot. With no candidates at all,
+  // the public catalog is framed instead.
   const bounds = useMemo(
     () =>
       computeBounds(
@@ -108,6 +109,11 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
     [candidates, publicEvents, meta.scene],
   );
   const view = useDemo((s) => s.view);
+  // The depth ruler and slices reach the deepest displayed event (candidates and public catalog).
+  const rulerDepthKm = useMemo(
+    () => rulerMaxDepthKm([...events.map((e) => e.elevM), ...catalog.map((c) => c.elevM)], meta.scene),
+    [events, catalog, meta.scene],
+  );
 
   const halos = useMemo(() => buildHaloInstances(events, candidates, ve), [events, candidates, ve]);
   const planRings = useMemo(() => buildPlanHaloInstances(events, candidates), [events, candidates]);
@@ -133,7 +139,7 @@ function BundleScene({ bundle }: { bundle: ReadyBundle }) {
     <>
       <TimeDriver windowStart={windowStart} windowEnd={meta.run.windowEnd} />
       <Terrain scene={meta.scene} bounds={bounds} />
-      <References bundle={bundle} bounds={bounds} planView={view === "plan"} />
+      <References bundle={bundle} bounds={bounds} rulerDepthKm={rulerDepthKm} planView={view === "plan"} />
       <EventsLayer
         name="public-events"
         instances={publicEvents}
@@ -184,7 +190,8 @@ function SceneContents() {
 
 /**
  * The full-bleed 3D canvas (docs/02 §6), plus the plan view's docked depth section (a DOM panel, shown
- * only in plan view). H4's page mounts it beneath the shell.
+ * only in plan view) and the guided tour's captions (WEB-09, shown only while it plays). H4's page
+ * mounts it beneath the shell.
  */
 export function Scene() {
   return (
@@ -203,6 +210,7 @@ export function Scene() {
       <Post />
     </Canvas>
     <DepthSection />
+    <Tour />
     </>
   );
 }

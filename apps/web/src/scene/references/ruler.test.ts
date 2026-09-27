@@ -5,12 +5,12 @@ import { CAMERA_FOV_DEG, presetPose } from "../camera/presets";
 import { depthKmToSceneY } from "../coords";
 import {
   declutterLabels,
-  RULER_MAX_DEPTH_KM,
+  rulerMaxDepthKm,
   rulerAnchor,
   rulerDepthsKm,
   rulerLayout,
   rulerRevealOpacity,
-  SLICE_DEPTHS_KM,
+  sliceDepthsKm,
   sliceSegments,
   stickyTitleT,
   tickLabel,
@@ -23,16 +23,19 @@ const scene = {
   verticalExaggeration: 1,
 };
 
+/** A test-local ruler depth (the scene derives it from the bundle: rulerMaxDepthKm). */
+const DEPTH_KM = 6;
+
 describe("rulerLayout (acceptance: the ruler label reads SceneMeta.depthLabel)", () => {
   it("titles the ruler with SceneMeta.depthLabel verbatim, whatever it says", () => {
     const anchor = { x: -7, z: 0 };
-    expect(rulerLayout(scene, anchor).title).toBe(scene.depthLabel);
+    expect(rulerLayout(scene, anchor, DEPTH_KM).title).toBe(scene.depthLabel);
     const other = { ...scene, depthLabel: "Tiefe unter Gelände (Bezug 1500 m ü. NN) — test ✓" };
-    expect(rulerLayout(other, anchor).title).toBe(other.depthLabel);
+    expect(rulerLayout(other, anchor, DEPTH_KM).title).toBe(other.depthLabel);
   });
 
   it("ticks every 1 km from 0 to 6 km below the site surface, placed with depthKmToSceneY", () => {
-    const layout = rulerLayout(scene, { x: -7, z: 1 });
+    const layout = rulerLayout(scene, { x: -7, z: 1 }, DEPTH_KM);
     expect(layout.ticks.map((t) => t.depthKm)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     for (const t of layout.ticks) {
       expect(t.y).toBe(depthKmToSceneY(t.depthKm, scene));
@@ -44,13 +47,13 @@ describe("rulerLayout (acceptance: the ruler label reads SceneMeta.depthLabel)",
 
   it("measures depth from refSurfaceElevM, not the origin, and honours vertical exaggeration", () => {
     const s = { ...scene, originElevM: 1500, refSurfaceElevM: 1627.7, verticalExaggeration: 2 };
-    const layout = rulerLayout(s, { x: 0, z: 0 });
+    const layout = rulerLayout(s, { x: 0, z: 0 }, DEPTH_KM);
     expect(layout.ticks[0].y).toBeCloseTo(((1627.7 - 1500) / 1000) * 2, 9);
     expect(layout.ticks[6].y - layout.ticks[0].y).toBeCloseTo(-12, 9);
   });
 
   it("draws the spine plus one segment per tick, pointing west", () => {
-    const layout = rulerLayout(scene, { x: -7, z: 0 });
+    const layout = rulerLayout(scene, { x: -7, z: 0 }, DEPTH_KM);
     expect(layout.segments).toHaveLength(2 + 2 * layout.ticks.length);
     expect(layout.segments[0][1]).toBe(layout.ticks[0].y);
     expect(layout.segments[1][1]).toBe(layout.ticks[6].y);
@@ -58,7 +61,7 @@ describe("rulerLayout (acceptance: the ruler label reads SceneMeta.depthLabel)",
   });
 
   it("rulerDepthsKm validates its range", () => {
-    expect(rulerDepthsKm()).toHaveLength(RULER_MAX_DEPTH_KM + 1);
+    expect(rulerDepthsKm(DEPTH_KM)).toHaveLength(DEPTH_KM + 1);
     expect(rulerDepthsKm(3, 0.5)).toEqual([0, 0.5, 1, 1.5, 2, 2.5, 3]);
     expect(() => rulerDepthsKm(6, 0)).toThrow();
   });
@@ -97,7 +100,7 @@ describe("ruler placement is visible in every camera preset", () => {
       for (const aspect of [16 / 9, 4 / 3]) {
         it(`${name} cloud, ${view} @ ${aspect.toFixed(2)}: the title and the ruler are on screen`, () => {
           const cam = cameraFor(view, bounds, aspect);
-          const layout = rulerLayout(scene, rulerAnchor(bounds));
+          const layout = rulerLayout(scene, rulerAnchor(bounds), DEPTH_KM);
           // The sticky title (as DepthRuler places it) is always inside the viewport.
           const viewProj = new Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
           const [top, bottom] = layout.segments;
@@ -176,11 +179,12 @@ describe("declutterLabels", () => {
 describe("sliceSegments", () => {
   const extent = { eMin: -8000, eMax: 8000, nMin: -6000, nMax: 7000 };
 
-  it("draws one square outline per km of depth, 1–6 km, over the surface extent", () => {
-    expect(SLICE_DEPTHS_KM).toEqual([1, 2, 3, 4, 5, 6]);
-    const segs = sliceSegments(extent, scene);
+  it("draws one square outline per km of depth, down to the ruler's depth, over the surface extent", () => {
+    const depths = sliceDepthsKm(DEPTH_KM);
+    expect(depths).toEqual([1, 2, 3, 4, 5, 6]);
+    const segs = sliceSegments(extent, scene, depths);
     expect(segs).toHaveLength(6 * 8);
-    SLICE_DEPTHS_KM.forEach((d, k) => {
+    depths.forEach((d, k) => {
       for (const p of segs.slice(k * 8, k * 8 + 8)) expect(p[1]).toBe(depthKmToSceneY(d, scene));
     });
     const xs = segs.map((p) => p[0]);
@@ -201,5 +205,26 @@ describe("rulerRevealOpacity", () => {
     expect(rulerRevealOpacity(1.2, 0.12)).toBe(0);
     expect(rulerRevealOpacity(0, 0.12)).toBe(1);
     expect(rulerRevealOpacity(0.5, 1)).toBe(1);
+  });
+});
+
+describe("rulerMaxDepthKm (the ruler reaches the deepest displayed event, from provider data)", () => {
+  const ref = { refSurfaceElevM: 1600 };
+  it("rounds the deepest event's display depth up to a whole tick", () => {
+    // depths 2.0, 8.63 and 0.5 km below the site reference
+    expect(rulerMaxDepthKm([1600 - 2000, 1600 - 8630, 1600 - 500], ref)).toBe(9);
+    expect(rulerMaxDepthKm([1600 - 6000], ref)).toBe(6); // exactly on a tick stays there
+    expect(rulerMaxDepthKm([1600 - 6000.4], ref)).toBe(7);
+  });
+  it("is at least one tick, ignores events above the surface and non-finite elevations", () => {
+    expect(rulerMaxDepthKm([], ref)).toBe(1);
+    expect(rulerMaxDepthKm([1700, NaN, Infinity], ref)).toBe(1);
+    expect(rulerMaxDepthKm([1600 - 300], ref)).toBe(1);
+  });
+  it("feeds a ruler whose ticks run from 0 to that depth", () => {
+    const d = rulerMaxDepthKm([1600 - 8630], ref);
+    const layout = rulerLayout(scene, { x: 0, z: 0 }, d);
+    expect(layout.ticks.map((t) => t.depthKm)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(sliceDepthsKm(d)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 });

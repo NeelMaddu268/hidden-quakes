@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { WaveformSnippet } from "../scene/types";
 import {
+  recordCaption,
+  evidenceUnavailable,
+  pickedTraceCount,
   markPercent,
   niceStep,
   normalizationGain,
@@ -148,3 +151,27 @@ describe("pick stagger", () => {
    expect(prepared.traces).toHaveLength(0);
    expect(prepared.skipped[0]).toContain("non-finite waveform sample");
  });
+
+describe("evidence notices", () => {
+  it("a 404 is an expected, neutral note; other failures are errors; neither repeats the URL or status", () => {
+    const miss = evidenceUnavailable("/data/showcase/evidence/hq-x.json: HTTP 404");
+    expect(miss).toEqual({ text: "No waveform evidence was exported for this event.", expected: true });
+    const fail = evidenceUnavailable("/data/showcase/evidence/hq-x.json: HTTP 500");
+    expect(fail.expected).toBe(false);
+    for (const t of [miss.text, fail.text, evidenceUnavailable(undefined).text]) expect(t).not.toMatch(/\d|http|\/|json/i);
+  });
+
+  it("counts traces with a P or S pick", () => {
+    expect(pickedTraceCount([{ pickP: 1 }, { pickS: 2 }, { pickP: null, pickS: null }, {}])).toBe(2);
+    expect(pickedTraceCount([])).toBe(0);
+  });
+});
+
+describe("recordCaption", () => {
+  it("says 'k of N agreeing stations shown' only when every shown trace has a pick", () => {
+    expect(recordCaption(16, 16, 23)).toBe("16 of 23 agreeing stations shown, closest first");
+    expect(recordCaption(16, 11, 23)).toBe("16 stations shown, closest first; 11 of the 23 that agreed are among them");
+    expect(recordCaption(1, 0, null)).toBe("1 station shown, closest first, 0 with a pick");
+    for (const c of [recordCaption(16, 16, NaN), recordCaption(4, 2, undefined)]) expect(c).not.toMatch(/NaN|undefined|null/);
+  });
+});

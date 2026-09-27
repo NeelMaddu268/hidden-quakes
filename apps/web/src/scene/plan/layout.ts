@@ -11,10 +11,14 @@ export const SECTION_LAYOUT = Object.freeze({
   /** Clears the title, mode label and Run details button (with the SYNTHETIC banner's extra 2rem). */
   top: 136,
   /**
-   * Clears the bottom-left stack: mode pills plus the validation panel (shell/validation: bottom
-   * 24px + 2.75rem, at most ~7 rows ≈ 210px tall) and a gap.
+   * Clears the bottom-left stack when the card can't be measured: mode pills plus the validation card
+   * (shell/validation: bottom 24px + 2.75rem; with the baseline, null-test and depth notes it is about
+   * 270px tall at 1280 wide) and a gap. The panel also stops above the card's measured top edge
+   * (`cardTopPx`), so a taller card never slides under it.
    */
-  bottomReserve: 300,
+  bottomReserve: 350,
+  /** Gap kept above the validation card's measured top edge. */
+  cardGap: 16,
   /** Gap kept between the panel and the evidence drawer. */
   drawerGap: 24,
   widthFrac: 0.34,
@@ -43,16 +47,18 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 /**
  * The panel rect for a viewport, or null when the viewport is too small to show it without covering
- * the shell or the drawer (the panel is then simply not shown; the plan map still works).
+ * the shell or the drawer (the panel is then simply not shown; the plan map still works). `cardTopPx`
+ * is the validation card's measured top edge (CSS px), when the card is on screen.
  */
-export function sectionPanelRect(viewportWidth: number, viewportHeight: number): PanelRect | null {
+export function sectionPanelRect(viewportWidth: number, viewportHeight: number, cardTopPx?: number | null): PanelRect | null {
   const L = SECTION_LAYOUT;
   if (!(viewportWidth > 0) || !(viewportHeight > 0)) return null;
   // Never reaches under the open drawer, nor the centered REVEAL button.
   const maxByDrawer = viewportWidth - drawerWidthPx(viewportWidth) - L.drawerGap - L.inset;
   const maxByReveal = viewportWidth * (0.5 - L.revealHalfWidthFrac) - L.inset;
   const width = Math.min(clamp(viewportWidth * L.widthFrac, L.minWidth, L.maxWidth), maxByDrawer, maxByReveal);
-  const maxHeight = viewportHeight - L.top - L.bottomReserve;
+  let maxHeight = viewportHeight - L.top - L.bottomReserve;
+  if (cardTopPx != null && Number.isFinite(cardTopPx)) maxHeight = Math.min(maxHeight, cardTopPx - L.cardGap - L.top);
   const height = Math.min(clamp(viewportHeight * L.heightFrac, L.minHeight, L.maxHeight), maxHeight);
   if (width < L.minWidth || height < L.minHeight) return null;
   return { left: L.inset, top: L.top, width: Math.floor(width), height: Math.floor(height) };
