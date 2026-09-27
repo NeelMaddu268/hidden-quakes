@@ -1,9 +1,18 @@
 """Shared fixtures for the signal lane's tests.
 
-``FakeRunContext`` is a local stand-in for H4's ``hq.runs.RunContext`` (docs/02 -> Stage API)
-until RUN-01 lands; it records what a stage passes to ``record()`` instead of writing run.json.
+``FakeRunContext`` is a light stand-in for H4's ``hq.runs.RunContext`` (docs/02 -> Stage API): it
+records what a stage passes to ``record()`` instead of writing run.json, and rejects a stage name
+H4's registry (``hq.runs.STAGES``) would reject.
+
+Every test here is offline (CLAUDE.md rule 10). The autouse ``_no_network`` guard refuses any
+connection or DNS lookup that leaves the machine from the test's own process. It is a
+monkeypatch, so it does not reach spawned worker processes (the process-pool tests): those tests
+inject fakes and must keep doing so. The refusal raises pytest's ``Failed``, a ``BaseException``,
+so a broad ``except Exception`` retry loop in the code under test cannot swallow it
+(``test_offline_guard.py``).
 """
 
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,6 +25,58 @@ from hq.config.signal import SignalConfig
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs" / "showcase"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+_LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _host(address: Any) -> Any:
+    """The host of a socket address ((host, port[, flowinfo, scope_id]) for AF_INET/AF_INET6)."""
+    host = address[0] if isinstance(address, tuple) and address else address
+    return host.decode() if isinstance(host, bytes) else host
+
+
+def _refuse_remote(what: str, host: Any) -> None:
+    if host not in _LOOPBACK:
+        # pytest.fail raises a BaseException: an ``except Exception`` in the code under test
+        # (the downloader retries on those) cannot turn a network attempt into a retry.
+        pytest.fail(f"network access in an offline test: {what} {host!r}")
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse every non-loopback connection and DNS lookup: each service is injected.
+
+    Loopback must stay allowed: on Windows, asyncio's ProactorEventLoop (seisbench's ``classify``
+    runs one) connects a self-pipe socketpair to 127.0.0.1 when the loop starts.
+    """
+    connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
+    create_connection, getaddrinfo = socket.create_connection, socket.getaddrinfo
+
+    def guarded_connect(self: socket.socket, address: Any) -> None:
+        if self.family in (socket.AF_INET, socket.AF_INET6):
+            _refuse_remote("connect", _host(address))
+        connect(self, address)
+
+    def guarded_connect_ex(self: socket.socket, address: Any) -> int:
+        if self.family in (socket.AF_INET, socket.AF_INET6):
+            _refuse_remote("connect_ex", _host(address))
+        return connect_ex(self, address)
+
+    def guarded_create_connection(address: Any, *args: Any, **kwargs: Any) -> socket.socket:
+        host = _host(address)
+        if host not in (None, ""):
+            _refuse_remote("create_connection", host)
+        return create_connection(address, *args, **kwargs)
+
+    def guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
+        name = _host(host)
+        if name not in (None, ""):
+            _refuse_remote("getaddrinfo", name)
+        return getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+    monkeypatch.setattr(socket, "create_connection", guarded_create_connection)
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
 
 
 @dataclass(frozen=True)
@@ -31,6 +92,7 @@ class FakeRunContext:
     cache_dir: Path
     config: FakeConfig
     records: dict[str, dict[str, Any]] = field(default_factory=dict)
+    updates: dict[str, Any] = field(default_factory=dict)
 
     def path(self, name: str) -> Path:
         return self.run_dir / name
@@ -54,6 +116,14 @@ class FakeRunContext:
             "params": params,
             "field": field,
         }
+
+    def update_run(self, **fields: Any) -> None:
+        from hq.runs import UPDATABLE_FIELDS  # H4's RunContext rejects any other field
+
+        unknown = sorted(set(fields) - set(UPDATABLE_FIELDS))
+        if unknown:
+            raise ValueError(f"update_run: {unknown} are not updatable ProcessingRun fields")
+        self.updates.update(fields)
 
 
 def load_yaml(name: str) -> dict:
