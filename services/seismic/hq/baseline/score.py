@@ -15,6 +15,21 @@ one scale:
   (stage ``tier`` has not run) fails loudly naming H2's tier stage, and no bars are invented;
 - ``summarize_row("stalta", "full", events, matches)``: the point's ``BaselineRow``.
 
+Statics. A scoring run through this module locates WITHOUT station statics, while the run's bars
+come from statics-corrected events. The reason is H2's ``statics.mode: referenceEvents``
+(seismology.yaml): its terms need a match pass, which ``hq.locate.locate`` does not have, so
+``locate()`` runs its pass 1 with no statics (H4's ``NO_STATICS_NOTE``); ``real_api`` binds only
+``cache_dir`` and ``run_id`` and passes no statics table. That stays true until the run's
+``statics.parquet`` reaches ``locate`` here, the way REQ-H1-5 decided (option (a):
+``locate(..., statics=<the run's table>)``, H2 PR #94; H4 wires it into VAL-01's reruns).
+Meanwhile H4's ``rerun_notes`` records ``staticsApplied``: check ``baseline_reference.json``
+``notes`` and the PhaseNet reference row against the run's own tiers before copying a best point
+into ``baseline.chosen``. The run's terms are residuals of PhaseNet picks at the public regional
+catalog's hypocentres of matched events, so they absorb PhaseNet's station timing bias and favour
+PhaseNet; report that beside any comparison. Option (b), bars from a no-statics PhaseNet rerun,
+is superseded; the showcase run's ``baseline_tuning_b.json`` is its historical record and no
+stage reads it.
+
 The PhaseNet ``picks.parquet`` of the same stations and window is scored once through the same
 path (method ``phasenet``) as the reference the baseline's best point is read against (docs/03
 baseline kill switch). It is scored alone, before any grid point: its ``locate`` builds the
