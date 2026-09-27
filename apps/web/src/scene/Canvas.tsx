@@ -29,6 +29,7 @@ import { depthFogPerSceneUnit, LOOK } from "./look";
 
 import { Picker } from "./picking/Picker";
 import { DepthSection } from "./plan/DepthSection";
+import { Tour } from "./tour/Tour";
 import { buildPlanHaloInstances } from "./plan/halos";
 import { PlanCamera } from "./plan/PlanCamera";
 import { PlanRingsLayer } from "./plan/PlanRingsLayer";
@@ -189,7 +190,8 @@ function SceneContents() {
 
 /**
  * The full-bleed 3D canvas (docs/02 §6), plus the plan view's docked depth section (a DOM panel, shown
- * only in plan view). H4's page mounts it beneath the shell.
+ * only in plan view) and the guided tour's captions (WEB-09, shown only while it plays). H4's page
+ * mounts it beneath the shell.
  */
 export function Scene() {
   return (
@@ -208,6 +210,7 @@ export function Scene() {
       <Post />
     </Canvas>
     <DepthSection />
+    <Tour />
     </>
   );
 }
