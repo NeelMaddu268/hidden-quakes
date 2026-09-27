@@ -1,0 +1,120 @@
+/* Event list: left edge under the header, scrolls on its own. Tokens only (--hq-*). */
+
+.panel {
+  position: absolute;
+  left: var(--shell-inset);
+  top: calc(var(--shell-top) + 9.5rem);
+  width: min(34rem, calc(100vw - 2 * var(--shell-inset)));
+  max-height: min(26rem, calc(100vh - var(--shell-top) - 22rem));
+  min-height: 12rem;
+  display: flex;
+  flex-direction: column;
+  padding: 0.7rem 0.8rem 0.6rem;
+  border: 1px solid color-mix(in srgb, var(--hq-contour) 80%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--hq-surface) 92%, transparent);
+  color: var(--hq-text);
+  pointer-events: auto;
+  z-index: 1;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hq-text-dim);
+}
+
+.count {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--hq-text);
+}
+
+.filters {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.scroll {
+  margin-top: 0.5rem;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  background: var(--hq-surface);
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sort {
+  padding: 0.25rem 0.4rem;
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hq-text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.sort:hover,
+.sort:focus-visible {
+  color: var(--hq-text);
+}
+
+.row td {
+  padding: 0.2rem 0.4rem;
+  white-space: nowrap;
+  border-top: 1px solid color-mix(in srgb, var(--hq-contour) 35%, transparent);
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row:hover,
+.row:focus-visible {
+  background: color-mix(in srgb, var(--hq-text) 8%, transparent);
+  outline: none;
+}
+
+.row[data-selected] {
+  background: color-mix(in srgb, var(--hq-recovered) 22%, transparent);
+}
+
+.row[data-tier="A"] td:nth-child(4) {
+  color: var(--hq-strict-halo);
+  font-weight: 600;
+}
+
+/* Phone: the list takes the screen below the header and above the mode pills. */
+@media (max-width: 640px) {
+  .panel {
+    top: calc(var(--shell-top) + 13.25rem);
+    bottom: calc(var(--shell-inset) + 2.75rem);
+    max-height: none;
+    width: calc(100vw - 2 * var(--shell-inset));
+  }
+}
