@@ -58,6 +58,7 @@ DOCS_DEMO = REPO_ROOT / "docs" / "demo"
 PITCH_DOC = DOCS_DEMO / "pitch-and-qa.md"
 DEVPOST_DOC = DOCS_DEMO / "devpost.md"
 SHOTS_DOC = DOCS_DEMO / "video-shot-list.md"  # the pitch's placeholders, spoken over the video
+EXPO_DOC = DOCS_DEMO / "expo-card.md"  # the printed expo cheat card (DEMO-05), pitch placeholders
 DEFAULT_OUT = REPO_ROOT / "data" / "story"
 DEPLOY_DOC = REPO_ROOT / "docs" / "deploy.md"
 PUBLIC_LINK_RE = re.compile(r"\*\*Public link: <(https://[^>\s]+)>\*\*")
@@ -66,7 +67,8 @@ NUMBERS_MD = "numbers.md"
 PITCH_FILLED_MD = "pitch-filled.md"
 DEVPOST_FILLED_MD = "devpost-filled.md"
 SHOTS_FILLED_MD = "video-shot-list-filled.md"
-OUTPUT_FILES = (NUMBERS_MD, PITCH_FILLED_MD, DEVPOST_FILLED_MD, SHOTS_FILLED_MD)
+EXPO_FILLED_MD = "expo-card-filled.md"
+OUTPUT_FILES = (NUMBERS_MD, PITCH_FILLED_MD, DEVPOST_FILLED_MD, SHOTS_FILLED_MD, EXPO_FILLED_MD)
 
 SYNTHETIC_BANNER = (
     "# SYNTHETIC BUNDLE, NOT FOR SUBMISSION\n"
@@ -892,6 +894,7 @@ DOCS: tuple[tuple[str, Path, tuple[Spec, ...], str], ...] = (
     ("pitch", PITCH_DOC, PITCH_SPECS, PITCH_FILLED_MD),
     ("devpost", DEVPOST_DOC, DEVPOST_SPECS, DEVPOST_FILLED_MD),
     ("pitch", SHOTS_DOC, PITCH_SPECS, SHOTS_FILLED_MD),
+    ("pitch", EXPO_DOC, PITCH_SPECS, EXPO_FILLED_MD),
 )
 
 
@@ -1061,6 +1064,7 @@ def render(
     pitch_doc: Path = PITCH_DOC,
     devpost_doc: Path = DEVPOST_DOC,
     shots_doc: Path = SHOTS_DOC,
+    expo_doc: Path = EXPO_DOC,
 ) -> tuple[list[Row], str]:
     """Render the output files; returns the rows and the stdout report."""
     bundle = load_bundle(bundle_dir)
@@ -1068,6 +1072,7 @@ def render(
         ("pitch", pitch_doc, PITCH_SPECS, PITCH_FILLED_MD),
         ("devpost", devpost_doc, DEVPOST_SPECS, DEVPOST_FILLED_MD),
         ("pitch", shots_doc, PITCH_SPECS, SHOTS_FILLED_MD),
+        ("pitch", expo_doc, PITCH_SPECS, EXPO_FILLED_MD),
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     rows: list[Row] = []
