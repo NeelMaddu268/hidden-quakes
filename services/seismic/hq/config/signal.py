@@ -746,6 +746,120 @@ class SonifyConfig(_Section):
         return self
 
 
+# --- SEIS-10: station-day helicorder ------------------------------------------------------------
+
+_HEX_COLOR = r"^#[0-9A-F]{6}$"
+
+
+class HelicorderScale(_Section):
+    """One amplitude scale for the whole day, from the per-pixel peaks of the drawn envelope."""
+
+    refPercentile: float = Field(gt=0.0, le=100.0)  # of per-pixel peak |x| over pixels with data
+    refHeightRows: float = Field(gt=0.0)  # that reference maps to this many row spacings
+    clipRows: float = Field(gt=0.0, le=1.5)  # every trace is clipped at this many row spacings
+
+
+class HelicorderLayout(_Section):
+    """Pixel geometry of the PNG (Matplotlib Agg at ``dpi``)."""
+
+    widthPx: int = Field(ge=640)
+    heightPx: int = Field(ge=480)
+    dpi: int = Field(ge=50)
+    leftPx: int = Field(ge=0)  # plot-area margins
+    rightPx: int = Field(ge=0)
+    topPx: int = Field(ge=0)
+    bottomPx: int = Field(ge=0)
+    headroomRows: float = Field(ge=0.0)  # space above the first row (its markers and swing)
+    footroomRows: float = Field(ge=0.0)  # space below the last row
+    minTraceHeightPx: float = Field(gt=0.0)  # a quiet pixel column is drawn at least this tall
+    maxBytes: int = Field(gt=0)  # the PNG must stay below this
+
+    @model_validator(mode="after")
+    def _check(self) -> "HelicorderLayout":
+        if (
+            self.leftPx + self.rightPx >= self.widthPx
+            or self.topPx + self.bottomPx >= self.heightPx
+        ):
+            raise ValueError("margins leave no plot area")
+        return self
+
+
+class HelicorderMarkers(_Section):
+    """Marker geometry in row spacings above the row's trace centre, and marker styling."""
+
+    tickFromRows: float = Field(ge=0.0)  # candidate tick: from this far above the centre ...
+    tickToRows: float = Field(gt=0.0)  # ... to this far
+    tickWidthPx: float = Field(gt=0.0)
+    haloPx: float = Field(ge=0.0)  # background-coloured outline around every marker
+    diamondRows: float = Field(ge=0.0)  # public-catalog diamond centre, above the centre
+    diamondSizePx: float = Field(gt=0.0)
+    diamondEdgePx: float = Field(gt=0.0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "HelicorderMarkers":
+        if self.tickToRows <= self.tickFromRows:
+            raise ValueError("tickToRows must be above tickFromRows")
+        return self
+
+
+class HelicorderTierOpacity(_Section):
+    A: float = Field(gt=0.0, le=1.0)
+    B: float = Field(gt=0.0, le=1.0)
+    C: float = Field(gt=0.0, le=1.0)
+
+
+class HelicorderStyle(_Section):
+    """Colours from ``packages/visualization/tokens.ts`` (the app palette), as ``#RRGGBB``."""
+
+    background: str = Field(pattern=_HEX_COLOR)
+    text: str = Field(pattern=_HEX_COLOR)
+    textDim: str = Field(pattern=_HEX_COLOR)
+    grid: str = Field(pattern=_HEX_COLOR)
+    traceTones: tuple[
+        Annotated[str, Field(pattern=_HEX_COLOR)], Annotated[str, Field(pattern=_HEX_COLOR)]
+    ]  # alternate row by row
+    candidate: str = Field(pattern=_HEX_COLOR)  # candidate events (tokens.ts recovered)
+    public: str = Field(pattern=_HEX_COLOR)  # public-catalog events (tokens.ts public)
+    tierOpacity: HelicorderTierOpacity  # tokens.ts tierStyle
+    fontFamily: str = Field(min_length=1)
+    titlePt: float = Field(gt=0.0)
+    subtitlePt: float = Field(gt=0.0)
+    labelPt: float = Field(gt=0.0)
+    footerPt: float = Field(gt=0.0)
+
+
+class HelicorderConfig(_Section):
+    """``hq.preprocess.helicorder``: one borehole station's vertical channel over the run's UTC
+    day as a drum plot with candidate and public-catalog event markers. Not a pipeline stage."""
+
+    fileStem: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")  # <stem>.png / <stem>.json
+    title: str = Field(min_length=1)  # headline in the image and the manifest
+    component: str = Field(min_length=1, max_length=1)  # component letter drawn (vertical)
+    stationKind: Literal["surface", "borehole", "strong_motion"]
+    usedInRunOnly: bool  # only stations.parquet rows with usedInRun = true
+    pickPhases: tuple[str, ...] = Field(min_length=1)  # picks.parquet phases counted
+    runnersUp: int = Field(ge=0)  # how many runners-up the manifest lists
+    rowMinutes: Literal[30, 60]
+    padS: float = Field(ge=0.0)  # s read beyond each row end so filter and taper edges fall outside
+    detrend: Literal["linear", "constant", "simple"]
+    taper: TaperConfig  # per gap-separated segment, before the bandpass
+    bandHz: tuple[float, float]  # zero-phase Butterworth bandpass, per segment
+    bandpassCorners: int = Field(ge=1)
+    joinMisalignmentSamples: float = Field(gt=0.0, lt=0.5)  # abutting pieces within this join
+    scale: HelicorderScale
+    layout: HelicorderLayout
+    markers: HelicorderMarkers
+    style: HelicorderStyle
+
+    @model_validator(mode="after")
+    def _check(self) -> "HelicorderConfig":
+        if self.padS < self.taper.maxLengthS:
+            raise ValueError(f"padS {self.padS} must cover taper.maxLengthS")
+        if not 0.0 < self.bandHz[0] < self.bandHz[1]:
+            raise ValueError(f"bandHz must be (low, high) with 0 < low < high, got {self.bandHz}")
+        return self
+
+
 class SignalConfig(_Section):
     """Contents of ``signal.yaml``."""
 
@@ -756,3 +870,4 @@ class SignalConfig(_Section):
     picker: PickerConfig
     baseline: BaselineConfig
     sonify: SonifyConfig
+    helicorder: HelicorderConfig

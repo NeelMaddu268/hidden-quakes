@@ -1,0 +1,76 @@
+{
+  "image": "station-day.png",
+  "widthPx": 1920,
+  "heightPx": 1280,
+  "title": "A day at one station",
+  "caption": "The vertical channel 6K.CS04..GNZ of borehole station 6K.CS04, sensor 40 m below the surface, through 2026-09-10 UTC, bandpassed 5-40 Hz, 30 minutes per row; gaps in the recording are left blank. Amber ticks mark candidate events at their origin times (brighter for higher tiers), and hollow diamonds mark public-catalog events.",
+  "runId": "20260926-0210-a04c611",
+  "stationId": "6K.CS04",
+  "seedId": "6K.CS04..GNZ",
+  "channel": "GNZ",
+  "stationKind": "borehole",
+  "sensorDepthM": 40.0,
+  "dayUtc": "2026-09-10",
+  "startUtc": "2026-09-10T00:00:00Z",
+  "endUtc": "2026-09-11T00:00:00Z",
+  "rowMinutes": 30,
+  "rows": 48,
+  "filterHz": [
+    5.0,
+    40.0
+  ],
+  "gapsFilled": false,
+  "gapSeconds": 0.0010004043579101562,
+  "coverageFraction": 0.9999999884212458,
+  "markerTime": "origin",
+  "legend": [
+    {
+      "key": "tierA",
+      "label": "Candidate events, Tier A",
+      "color": "#FFB547",
+      "opacity": 1.0,
+      "shape": "tick",
+      "count": 32
+    },
+    {
+      "key": "tierB",
+      "label": "Candidate events, Tier B",
+      "color": "#FFB547",
+      "opacity": 0.6,
+      "shape": "tick",
+      "count": 171
+    },
+    {
+      "key": "tierC",
+      "label": "Candidate events, Tier C",
+      "color": "#FFB547",
+      "opacity": 0.3,
+      "shape": "tick",
+      "count": 451
+    },
+    {
+      "key": "public",
+      "label": "Public-catalog events",
+      "color": "#DCE6F2",
+      "opacity": 1.0,
+      "shape": "diamond",
+      "count": 43
+    }
+  ],
+  "selection": {
+    "rule": "Among stations.parquet rows of stationKind used in the run, the station with the most picks.parquet picks of pickPhases over the day (ties: station id order); its vertical channel.",
+    "pickCount": 1379,
+    "runnersUp": [
+      {
+        "stationId": "UU.FORK3",
+        "pickCount": 1361
+      },
+      {
+        "stationId": "6K.CS02",
+        "pickCount": 1088
+      }
+    ]
+  },
+  "source": "EarthScope public waveforms",
+  "generator": "hq.preprocess.helicorder"
+}
