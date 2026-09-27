@@ -3,8 +3,9 @@
 Offline and fast: a fake model with PhaseNet's ``classify`` interface (it honours ``blinding``)
 stands in for seisbench, and chunks come either from a fake iterator (exact control over keep
 intervals, data edges and the TimeMap) or from the real ``iter_model_chunks`` over a fake
-``read_window``. Tests that write parquet need ``hq_contracts`` (H4's CONTRACT-01) and skip
-without it. One test starts a real spawned process pool (about 1.5 s on the dev laptop).
+``read_window``. Tests that write parquet use the real ``hq_contracts`` (a hard dependency: a
+broken package fails, never skips). One test starts a real spawned process pool (about 1.5 s on
+the dev laptop).
 """
 
 import copy
@@ -47,6 +48,7 @@ from hq.pick.run import (
     process_pool_runner,
     run_in_process,
     run_picking,
+    weights_used_by_profile,
     window_alignment_notes,
     zero_pick_reason,
 )
@@ -387,6 +389,85 @@ def test_real_chunk_iterator_with_fake_cache(raw_signal_yaml: dict, tmp_path: Pa
     assert len(reads) == 2
 
 
+def pick_across_one_missing_sample(
+    raw_signal_yaml: dict, tmp_path: Path, gap_at: float
+) -> tuple[Any, FakeModel]:
+    """A 1000 Hz borehole-A station over [T0 - 50, T0 + 150) missing only the raw sample at
+    ``gap_at``, picked over [T0, T0 + 100) through the real ``iter_model_chunks`` and block split,
+    at the SHIPPED blinding. The model fires at the gap -0.5 s, +0.5 s and +1.2 s."""
+    raw = copy.deepcopy(raw_signal_yaml)
+    raw["preprocess"]["chunks"].update({"lengthS": 100.0, "overlapS": 40.0})
+    cfg = SignalConfig.model_validate(raw)
+    rate, start, end = 1000.0, T0 - 50.0, T0 + 150.0
+    n = round((end - start) * rate)
+    hole = round((gap_at - start) * rate)
+    pieces = obspy.Stream()
+    for i, comp in enumerate("Z12"):
+        data = np.random.default_rng(i).normal(size=n) + 5.0
+        for a, b in ((0, hole), (hole + 1, n)):
+            header = {
+                "network": "XX",
+                "station": "SYN",
+                "channel": f"DP{comp}",
+                "sampling_rate": rate,
+                "starttime": obspy.UTCDateTime(start + a / rate),
+            }
+            pieces.append(obspy.Trace(data=data[a:b].copy(), header=header))
+
+    def read_window(station_id: str, t0: float, t1: float, *, cache_dir: Path) -> obspy.Stream:
+        out = obspy.Stream()
+        for tr in pieces:
+            piece = tr.slice(obspy.UTCDateTime(t0), obspy.UTCDateTime(t1), nearest_sample=False)
+            if piece.stats.npts:
+                out.append(piece.copy())
+        return out
+
+    info = StationInfo(
+        id="XX.SYN", preprocessProfile="borehole-A", usedInRun=True, channels=("DPZ", "DP1", "DP2")
+    )
+    fired = [("P", gap_at - 0.5, 0.9), ("S", gap_at + 0.5, 0.8), ("P", gap_at + 1.2, 0.7)]
+    model = FakeModel({"SYN": fired})
+    io = PickIO(
+        iter_chunks=partial(iter_model_chunks, read_window=read_window),
+        load_model=FakeLoader(model),
+        check_cached=no_cache_check,
+    )
+    tasks = plan_tasks({info.id: info}, cfg.picker)
+    result = pick_window(tasks, cfg, T0, T0 + 100.0, cache_dir=tmp_path, io=io)
+    assert [tuple(c["blinding"]) for c in model.calls] == [
+        tuple(raw_signal_yaml["picker"]["seisbench"]["blinding"])
+    ] * len(model.calls)
+    return result, model
+
+
+@pytest.mark.smoke
+def test_missing_raw_sample_off_the_model_grid_drops_gap_edge_picks(
+    raw_signal_yaml: dict, tmp_path: Path
+) -> None:
+    # The only way the published pick stage drops gap-edge picks: a raw hole shorter than one
+    # 100 Hz model sample leaves the decimated traces contiguous, so PhaseNet sees ONE block (no
+    # blinding there) and the raw data edges alone remove the picks within picker.gapEdgeS.
+    result, _ = pick_across_one_missing_sample(raw_signal_yaml, tmp_path, T0 + 50.005)
+    (rep,) = result.reports
+    assert (rep.blocks, rep.droppedNearGap, rep.blindedS) == (1, 2, 0.0)
+    assert summary(result.picks) == [("XX.SYN", "P", 51.205)]  # the +1.2 s pick is kept
+
+
+@pytest.mark.smoke
+def test_missing_raw_sample_on_the_model_grid_splits_the_block(
+    raw_signal_yaml: dict, signal_cfg: SignalConfig, tmp_path: Path
+) -> None:
+    # On the 100 Hz grid the same hole removes a model sample: two blocks, and the shipped
+    # blinding (longer than gapEdgeS) keeps PhaseNet from producing any pick near the gap.
+    blinding_s = signal_cfg.picker.seisbench.blinding[0] / signal_cfg.preprocess.targetRateHz
+    assert blinding_s > signal_cfg.picker.gapEdgeS  # the premise; shipped 2.5 s vs 1 s
+    result, _ = pick_across_one_missing_sample(raw_signal_yaml, tmp_path, T0 + 50.0)
+    (rep,) = result.reports
+    assert (rep.blocks, rep.droppedNearGap) == (2, 0)
+    assert rep.blindedS == pytest.approx(2 * blinding_s, abs=0.02)
+    assert result.picks == []
+
+
 @pytest.mark.smoke
 def test_block_wholly_in_the_read_overlap_is_not_counted(
     signal_cfg: SignalConfig, tmp_path: Path
@@ -645,6 +726,7 @@ def test_pick_fields_ids_and_weights_fallback(
     assert a["id"] == f"phasenet:stead:XX.A:P:{a['t']:.3f}" and a["picker"] == "phasenet:stead"
     assert a["t"] == pytest.approx(T0 + 12.3456, abs=1e-6)
     assert b["id"] == f"phasenet:original:XX.B:S:{T0 + 40.0:.3f}"
+    assert b["picker"] == "phasenet:original"  # the fallback weights' name, not the default model
     assert (a["eventId"], a["residualS"], a["weight"]) == (None, None, None)
     # each worker loads its weights with the per-worker torch thread count
     threads = cfg.picker.run.torchThreadsPerWorker
@@ -838,6 +920,7 @@ def test_stage_writes_report_and_records(fake_ctx: Any, raw_signal_yaml: dict) -
     assert params["pThreshold"] == 0.1 and params["seisbench"]["blinding"] == [50, 50]
     assert params["run"]["workers"] == cfg.picker.run.workers
     assert params["chunks"] == cfg.preprocess.chunks.model_dump(mode="json")
+    assert params["preprocess"] == cfg.preprocess.model_dump(mode="json")  # every knob (rule 8)
     assert params["weightsUsedByProfile"] == {"surface-100": "instance"}
     report = json.loads(ctx.path("pick_report.json").read_text(encoding="utf-8"))
     assert report["weightsUsedByProfile"] == {"surface-100": "instance"}
@@ -987,7 +1070,6 @@ def test_cli_times_must_be_explicit_utc(tmp_path: Path) -> None:
 
 @pytest.mark.smoke
 def test_empty_and_full_picks_tables_round_trip(fake_ctx: Any) -> None:
-    pytest.importorskip("hq_contracts.io")
     from hq_contracts.io import from_frame, read_table
     from hq_contracts.models import Pick
 
@@ -1015,8 +1097,13 @@ def test_empty_and_full_picks_tables_round_trip(fake_ctx: Any) -> None:
         stage_io=io3,
     )
     assert len(result.picks) == 7
-    back = [p.model_dump() for p in from_frame(read_table(fake_ctx.path("picks.parquet")), Pick)]
+    df = read_table(fake_ctx.path("picks.parquet"))
+    back = [p.model_dump() for p in from_frame(df, Pick)]
     assert back == result.picks
+    # every pick carries picker with the weights name its station's profile ran with
+    tasks = plan_tasks(stations("XX.A", "XX.B", "XX.C"), fake_ctx.config.signal.picker)
+    assert set(df["picker"]) == {f"phasenet:{w}" for w in weights_used_by_profile(tasks).values()}
+    assert all(i.startswith(f"{p}:") for i, p in zip(df["id"], df["picker"], strict=True))
 
 
 @pytest.mark.smoke

@@ -14,6 +14,11 @@ Stage ``inventory`` (docs/02 -> Stage API). For the run window and bbox it
 4. assigns ``kind``, ``preprocessProfile`` and ENU (UTM 12N minus the origin, docs/01),
 5. estimates per-station data coverage of the window (MUSTANG daily availability, cached),
 6. caches instrument responses per station for ``read_inventory`` (SEIS-05),
+7. probes the served sample rate of each chosen triplet with a few seconds of dataselect
+   (``stations.rateCheck``): a rate that differs from StationXML follows ``onMismatch``, and no
+   data at any probe follows ``onNoData``,
+8. sets ``usedInRun``: coverage > 0; a station with no measurement follows
+   ``availability.onMissing``, and ``onMissingNoProbeData`` drops one no rate probe got data for,
 
 and writes ``stations.parquet`` plus ``inventory_report.json`` (every decision with its numbers).
 
@@ -1297,6 +1302,7 @@ class StageContext(Protocol):
         counts: dict[str, int],
         params: dict | None = None,
     ) -> None: ...
+    def update_run(self, **fields: Any) -> None: ...
 
 
 def write_stations_parquet(rows: Sequence[Mapping[str, Any]], path: Path) -> None:
@@ -1328,7 +1334,14 @@ def finish(ctx: StageContext, result: InventoryResult, runtime_s: float) -> None
         counts=result.counts,
         params={STAGE: cfg.stations.model_dump(mode="json")},  # nested: RUN-01 maps it to picker
     )
-    logger.info("inventory stage finished in %.1f s", runtime_s)
+    # ProcessingRun.stationIds (docs/02): the stations this run uses, in id order.
+    station_ids = sorted(str(r["id"]) for r in result.rows if r["usedInRun"])
+    ctx.update_run(stationIds=station_ids)
+    logger.info(
+        "inventory stage finished in %.1f s; run.json stationIds: %d usedInRun station(s)",
+        runtime_s,
+        len(station_ids),
+    )
 
 
 def run(ctx: StageContext) -> None:
@@ -1477,6 +1490,7 @@ class _CliContext:
     cache_dir: Path
     config: _CliConfig
     records: dict[str, dict[str, Any]] = field(default_factory=dict)
+    updates: dict[str, Any] = field(default_factory=dict)
 
     def path(self, name: str) -> Path:
         return self.run_dir / name
@@ -1491,6 +1505,10 @@ class _CliContext:
     ) -> None:
         self.records[stage] = {"runtime_s": runtime_s, "counts": counts, "params": params}
         logger.info("record %s: runtime %.1f s, counts %s", stage, runtime_s, counts)
+
+    def update_run(self, **fields: Any) -> None:
+        self.updates.update(fields)
+        logger.info("update_run (CLI, run.json not updated): %s", sorted(fields))
 
 
 def load_cli_config(config_dir: Path) -> _CliConfig:
