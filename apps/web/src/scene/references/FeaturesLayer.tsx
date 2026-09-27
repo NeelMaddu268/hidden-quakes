@@ -225,8 +225,9 @@ function FeatureLabels({ labels, obstacles, planView }: FeatureLabelsProps) {
   }, [gl, overlays]);
 
   useFrame(({ camera, size }) => {
-    if (!frame.current || frame.current.placement.n !== n) {
-      frame.current = makeLabelFrameState(n, (obstacles ? obstacles.rects.length / 4 : 0) + overlays.list.rects.length / 4);
+    const capacity = (obstacles ? obstacles.rects.length / 4 : 0) + overlays.list.rects.length / 4;
+    if (!frame.current || frame.current.placement.n !== n || frame.current.fixed.rects.length / 4 !== capacity + 1) {
+      frame.current = makeLabelFrameState(n, capacity);
     }
     const st = frame.current;
     const { placement: p, fixed, v } = st;
