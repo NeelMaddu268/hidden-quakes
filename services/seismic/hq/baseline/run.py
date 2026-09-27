@@ -1104,9 +1104,11 @@ def record_params(
     """``ctx.record`` params, nested under the stage key (H4, REQ-H1-2: keys never collide).
 
     ``baseline.*`` from signal.yaml, plus what else decides the picks: the shared gap-edge
-    distance and chunking; once the sweep is scored (or its scores kept), the best Tier A point
-    (null when the objective is flat) and ``sweepScoring`` (``baseline_reference.json`` without
-    its per-point list: mode, window and stations, objective, PhaseNet reference row, best and
+    distance, the chunking (``preprocessChunks``, kept for compatibility) and the whole
+    ``preprocess`` block (every knob, CLAUDE.md rule 8; this stage can be rerun on its own).
+    Once the sweep is scored (or its scores kept), also the best Tier A point (null when the
+    objective is flat) and ``sweepScoring`` (``baseline_reference.json`` without its per-point
+    list: mode, window and stations, objective, PhaseNet reference row, best and
     chosen-at-scoring rows, search path, rerun notes). The stage's recorded runtime covers both
     picking and scoring, so each is also recorded on its own (``scoringRuntimeS`` null when
     nothing was scored in this run).
@@ -1117,6 +1119,7 @@ def record_params(
             **signal.baseline.model_dump(mode="json"),
             "pickerGapEdgeS": gap_edge_s(signal),
             "preprocessChunks": signal.preprocess.chunks.model_dump(mode="json"),
+            "preprocess": signal.preprocess.model_dump(mode="json"),
             "sweepBestTierA": None if best is None else dict(best["params"]),
             "sweepScoring": None if scoring is None else record_view(scoring),
             "pickingRuntimeS": picking_s,

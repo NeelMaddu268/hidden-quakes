@@ -625,6 +625,127 @@ class BaselineConfig(_Section):
         return self
 
 
+# --- SEIS-09: sonification -------------------------------------------------------------------------
+
+# MPEG-1 Layer III: the sample rates it covers and its bitrates. libsndfile maps soundfile's
+# compression_level onto a constant bitrate only for MPEG-1 (hq.preprocess.sonify), so both are
+# checked here and the encoded frame header is checked again after writing.
+MPEG1_SAMPLE_RATES_HZ = (32000, 44100, 48000)
+MPEG1_L3_BITRATES_KBPS = (32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320)
+
+
+class SonifyCompressor(_Section):
+    """Soft-knee downward compressor driven by a peak envelope with a short look-ahead.
+
+    Levels are dB relative to the clip's robust level (``levelPercentile`` of ``|x|`` over the
+    samples that hold data). The envelope is the peak of ``|x|`` over the next ``lookaheadMs``,
+    released exponentially (time constant ``releaseMs``), then averaged over the past
+    ``lookaheadMs`` (audio ms). It never falls below ``|x|`` (onsets are not let through first
+    and clamped later), and the gain can start to fall at most ``lookaheadMs`` before the sample
+    that drives it, so the record just before an arrival keeps its level.
+    """
+
+    thresholdDb: float  # compression starts here (middle of the knee)
+    ratio: float = Field(ge=1.0)  # dB in above the threshold per dB out
+    kneeDb: float = Field(ge=0.0)  # width of the soft knee around the threshold
+    lookaheadMs: float = Field(gt=0.0)  # audio ms: attack look-ahead and its smoothing
+    releaseMs: float = Field(gt=0.0)  # audio ms: the envelope falls by 1/e per releaseMs
+
+
+class SonifyRender(_Section):
+    """How one clip is rendered: time scale, band, level processing and encoding."""
+
+    fileStem: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")  # <stem>.ogg / .mp3 / .json
+    speed: int = Field(ge=1)  # playback speed-up: audio seconds = real seconds / speed
+    audioRateHz: int  # sample rate of the audio files
+    bandHz: tuple[float, float]  # zero-phase Butterworth bandpass, REAL Hz (before speed-up)
+    edgeFadeMs: float = Field(gt=0.0)  # audio ms of raised-cosine fade at every segment edge
+    levelPercentile: float = Field(gt=0.0, le=100.0)  # robust level: this percentile of |x|
+    compressor: SonifyCompressor
+    peakDbfs: float = Field(lt=0.0)  # final peak normalization; no sample above it
+    maxTruePeakDbtp: float = Field(le=0.0)  # decoded OGG / MP3: oversampled peak at most this
+    oggQuality: float = Field(ge=0.0, le=1.0)  # Vorbis quality (x10 = oggenc -q)
+    mp3BitrateKbps: int  # constant bitrate
+    maxBytes: int = Field(gt=0)  # each encoded file must stay below this
+
+    @property
+    def realRateHz(self) -> float:
+        """Sample rate on the real time axis: audio samples are real samples played faster."""
+        return self.audioRateHz / self.speed
+
+    @model_validator(mode="after")
+    def _check(self) -> "SonifyRender":
+        if self.audioRateHz not in MPEG1_SAMPLE_RATES_HZ:
+            raise ValueError(f"audioRateHz must be an MPEG-1 rate {MPEG1_SAMPLE_RATES_HZ}")
+        if self.mp3BitrateKbps not in MPEG1_L3_BITRATES_KBPS:
+            raise ValueError(f"mp3BitrateKbps must be one of {MPEG1_L3_BITRATES_KBPS}")
+        if self.maxTruePeakDbtp < self.peakDbfs:
+            raise ValueError(
+                f"{self.fileStem}: maxTruePeakDbtp {self.maxTruePeakDbtp} is below peakDbfs "
+                f"{self.peakDbfs}: every encode would fail"
+            )
+        low, high = self.bandHz
+        nyquist = self.realRateHz / 2.0
+        if not 0.0 < low < high < nyquist:
+            raise ValueError(
+                f"{self.fileStem}: bandHz {self.bandHz} must satisfy 0 < low < high < "
+                f"audioRateHz / speed / 2 = {nyquist:g} real Hz"
+            )
+        return self
+
+
+class SonifyResample(_Section):
+    """``scipy.signal.resample_poly`` from the source rate to ``audioRateHz / speed``."""
+
+    kaiserBeta: float = Field(gt=0.0)  # resample_poly's anti-alias FIR window ("kaiser", beta)
+    maxFactor: int = Field(ge=1)  # largest up or down factor accepted
+    rateRelTol: float = Field(gt=0.0, lt=1e-3)  # up / down must hit the exact ratio within this
+
+
+class SonifyBusiestHour(_Section):
+    """Main clip: the busiest clock-aligned bin of candidate events, one borehole station."""
+
+    binS: float = Field(gt=0.0)  # bins sit on multiples of this since the epoch (3600: UTC hours)
+    render: SonifyRender
+
+
+class SonifyHero(_Section):
+    """Optional clip around the bundle's hero event, at the nearest borehole station with data."""
+
+    preS: float = Field(ge=0.0)  # real s before the origin time
+    postS: float = Field(gt=0.0)  # real s after it
+    minCoverageFraction: float = Field(gt=0.0, le=1.0)  # "has data": Z covers this much
+    render: SonifyRender
+
+
+class SonifyConfig(_Section):
+    """Audio renderings of cached waveforms (``hq.preprocess.sonify``). Not a pipeline stage:
+    nothing here changes stations, picks, gaps or the bundle, and no stage records it."""
+
+    component: str = Field(min_length=1, max_length=1)  # component letter rendered (vertical)
+    stationKind: Literal["surface", "borehole", "strong_motion"]
+    usedInRunOnly: bool  # only stations.parquet rows with usedInRun = true
+    padS: float = Field(ge=0.0)  # real s read beyond each window end so edge effects fall outside
+    detrend: Literal["linear", "constant", "simple"]
+    taper: TaperConfig  # per gap-separated segment, before the bandpass
+    bandpassCorners: int = Field(ge=1)
+    joinMisalignmentSamples: float = Field(gt=0.0, lt=0.5)  # abutting pieces within this join
+    resample: SonifyResample
+    oggStreamSerial: int = Field(ge=0, lt=2**32)  # fixed Ogg serial so re-encodes are identical
+    truePeakOversample: int = Field(ge=2)  # decoded files are oversampled this much for the peak
+    busiestHour: SonifyBusiestHour
+    hero: SonifyHero
+
+    @model_validator(mode="after")
+    def _check(self) -> "SonifyConfig":
+        if self.padS < self.taper.maxLengthS:
+            raise ValueError(f"padS {self.padS} must cover taper.maxLengthS")
+        stems = {self.busiestHour.render.fileStem, self.hero.render.fileStem}
+        if len(stems) != 2:
+            raise ValueError("busiestHour and hero need different fileStem values")
+        return self
+
+
 class SignalConfig(_Section):
     """Contents of ``signal.yaml``."""
 
@@ -634,3 +755,4 @@ class SignalConfig(_Section):
     preprocess: PreprocessConfig
     picker: PickerConfig
     baseline: BaselineConfig
+    sonify: SonifyConfig
