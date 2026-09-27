@@ -202,6 +202,9 @@ function Caption({ segments, stepId }: { segments: CaptionSegment[]; stepId: Tou
   const text = captionText(segments);
 
   const drawerOpen = useDemo((s) => s.selectedEventId !== null);
+  // The shell mounts the Validation card when the reveal settles (phase "revealed"), mid-caption: it
+  // renders in the same commit as this component, so a layout effect on the phase sees it before paint.
+  const phase = useDemo((s) => s.phase);
 
   const measure = useRef(() => {
     const el = ref.current;
@@ -211,9 +214,10 @@ function Caption({ segments, stepId }: { segments: CaptionSegment[]; stepId: Tou
     setBox((prev) => (sameBox(prev, next) ? prev : next));
   });
 
-  // Before paint on every new caption, width (the height depends on the wrap) and drawer change, then a
-  // few times a second: the overlays move with the steps (the scrubber appears, the drawer slides out).
-  useLayoutEffect(() => measure.current(), [text, box?.width, drawerOpen]);
+  // Before paint on every new caption, width (the height depends on the wrap), drawer change and phase
+  // change, then a few times a second: the overlays move with the steps (the scrubber appears, the
+  // drawer slides out).
+  useLayoutEffect(() => measure.current(), [text, box?.width, drawerOpen, phase]);
   useEffect(() => {
     const on = () => measure.current();
     const id = window.setInterval(on, MEASURE_MS);
