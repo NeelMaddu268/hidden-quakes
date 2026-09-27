@@ -11,6 +11,7 @@ import { HelpButton, HelpOverlay, useHelpKey } from "./help/HelpOverlay";
 import { FilterPills, ModePills } from "./Pills";
 import { RevealButton } from "./RevealButton";
 import { RunDetailsButton, RunDetailsPanel, useRunDetailsKey } from "./run-details/RunDetailsPanel";
+import { kioskRequested, useAttractMode } from "./kiosk";
 import { useShareLink } from "./share";
 import styles from "./Shell.module.css";
 import { useKeyboard } from "./useKeyboard";
@@ -39,6 +40,9 @@ export function Shell() {
   const events = ready ? bundle.events : null;
   const eventIds = useMemo(() => (events ? new Set(events.map((e) => e.id)) : null), [events]);
   useShareLink(eventIds);
+  // DEMO-05: expo attract mode (`?kiosk=1` loops the tour; otherwise idle on the start frame starts it).
+  const [kiosk] = useState(() => typeof window !== "undefined" && kioskRequested(window.location.search));
+  useAttractMode({ kiosk, ready });
 
   const synthetic = ready && bundle.info.isSynthetic;
 
