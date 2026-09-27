@@ -329,7 +329,11 @@ def test_decoy_test_sentence_needs_confidence_json(story: ModuleType, tmp_path: 
     file = {
         "schema": "hq.confidence/1",
         "runId": meta["run"]["id"],
-        "model": {"name": "gbm", "heldOut": {"rocAuc": 0.8737, "folds": 5}},
+        "model": {
+            "name": "gbm",
+            "heldOut": {"rocAuc": 0.8737, "rocAucEqualStationCount": 0.8149, "folds": 5},
+            "trainedOn": {"positives": 12, "decoys": 40, "shuffles": 20},
+        },
         "label": "AI decoy test",
         "description": "How much the timing looks like a real association, not a decoy",
         "events": {hero: 0.61},
@@ -341,9 +345,15 @@ def test_decoy_test_sentence_needs_confidence_json(story: ModuleType, tmp_path: 
     assert value[("pitch-and-qa.md", "{confidenceLabel}")] == "AI decoy test"
     assert value[("devpost.md", "<from confidence.json: model.heldOut.rocAuc>")] == "0.87"
     assert value[("devpost.md", "<from confidence.json: label>")] == "AI decoy test"
+    assert value[("pitch-and-qa.md", "{heldOutRocAucEqualStations}")] == "0.81"
+    assert value[("pitch-and-qa.md", "{confidencePositives}")] == "12"
+    assert value[("devpost.md", "<from confidence.json: model.trainedOn.decoys>")] == "40"
     filled = (tmp_path / "present" / "pitch-filled.md").read_text(encoding="utf-8")
-    assert "the AI decoy test, trained on decoy events" in filled
-    assert "ROC AUC is 0.87" in filled
+    assert (
+        "the AI decoy test: a classifier trained on this run's 12 candidates and 40 scrambled-clock decoys"
+        in filled
+    )
+    assert "held-out ROC AUC 0.87 (0.81 even at equal station count)" in filled
 
     file["model"] = {"name": "gbm"}
     (bundle / "confidence.json").write_text(json.dumps(file), encoding="utf-8")
