@@ -58,7 +58,7 @@
 /* REQ-H3-13: one plain line under the title on the first frame. */
 .subtitle {
   margin-top: 0.3rem;
-  max-width: min(30rem, calc(100vw - 2 * var(--shell-inset)));
+  max-width: min(36rem, calc(100vw - 2 * var(--shell-inset)));
   font-size: 0.85rem;
   color: var(--hq-text);
   text-shadow: var(--hq-text-halo);
@@ -66,9 +66,15 @@
 
 /* Run details and the tour button side by side under the mode label. */
 .headerButtons {
+  margin-top: 0.5rem;
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+/* The Run details button carries its own top margin for when it stood alone. */
+.headerButtons > button {
+  margin-top: 0;
 }
 
 .modeLabel {
