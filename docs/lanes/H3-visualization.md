@@ -644,3 +644,29 @@ REQ-H4-3. A "Copy link" pill left of the close button copies the shell's share l
 accent color, and "Copy failed" in alert red (with a console error) when the clipboard refuses or is missing. It
 resets when the drawer switches events. Browser check (`work/web12-copylink-check.mjs`): the copied link, opened
 in a new tab, reveals and opens the same event.
+
+### WEB-13 · polish: record caption, label collisions, depth-section dock · 2026-09-26 11:05 PM EDT
+
+- **Record caption** (`drawer/record.ts` `recordCaption`): "16 of 23 stations shown, closest first" when every
+  shown trace is one of the stations that agreed. When some of the closest stations have no pick, they are
+  counted apart rather than inflating the "of 23": "15 of 23 stations shown, closest first, plus 1 without a
+  pick" (the hidden hero on v3). All digits come from the evidence and `quality.nStations`.
+- **Label collisions in the post-reveal side view.** The feature lines (boundaries, well tracks) are projected
+  each frame and thinned to at most 48 segments each (`thinnedSegments`). Label placement weighs how much line
+  runs through each slot (`segmentLengthInRect`, Liang–Barsky, allocation-free) and how much of its leader
+  crosses other texts, against how far the label moves. Overlaps still decide first, and a line crossing alone
+  never drops a label. Feature labels and the depth ruler's title and ticks sit on a faint background plate
+  (`LABEL_PLATE`), so a line that can't be avoided passes behind the text. On v3 at 1280×720, "Well 16A" and
+  "Well 58-32" step off the boundary dashes; at 1920×1080, "Well 16B" does.
+- **Depth-section dock** (`plan/layout.ts` `sectionDock`, `plan/dock.ts`). The final build's header grew (a
+  subtitle, a second button row, the download row) and so did the validation card (13 px notes). At 1280×720
+  the left column between them was about 150 px, so the panel hid itself while the camera still reserved its
+  space. The dock now measures the shell's edges read-only: title block bottom, card top, counters block
+  bottom, legend top.
+  - It docks left when the left column has room, else right (under the counters, above the legend).
+  - While the drawer covers a right dock, the panel steps aside; the dock doesn't depend on the drawer, so the
+    plan never re-frames on a click.
+  - Before the reveal it plans for the card measured earlier at that size.
+  - The plan camera's reserve follows (`planReservePx`): the panel's side, plus the card's column when the
+    panel is on the right.
+  - The scene labels avoid the same rect.
