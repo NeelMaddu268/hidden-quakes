@@ -1,0 +1,93 @@
+{
+  "stationId": "6K.CS02",
+  "channel": "GNZ",
+  "startUtc": "2026-09-10T09:00:00Z",
+  "endUtc": "2026-09-10T10:00:00Z",
+  "speed": 200,
+  "sampleRateHz": 48000,
+  "filterHz": [
+    10.0,
+    80.0
+  ],
+  "source": "EarthScope public waveforms",
+  "filterDomain": "real ground-motion Hz, before the speed-up; audioBandHz is where it plays",
+  "audioBandHz": [
+    2000.0,
+    16000.0
+  ],
+  "note": "A sped-up audio rendering of public seismic waveform data from one sensor's vertical channel. Gaps in the recording play as silence.",
+  "clip": "hour",
+  "runId": "20260926-0210-a04c611",
+  "seedId": "6K.CS02..GNZ",
+  "durationS": 18.0,
+  "windowS": 3600.0,
+  "realRateHz": 240.0,
+  "sourceSampleRateHz": 1000.0,
+  "gapsAsSilence": true,
+  "silentSeconds": 0.0,
+  "segments": {
+    "read": 1,
+    "placed": 1,
+    "droppedTooShort": 0
+  },
+  "selection": {
+    "rule": "Busiest epoch-aligned UTC bin of binS seconds by candidate events in the bundle's events.json (ties: earliest); within it, the station of stationKind used in the run with the most picks.parquet picks of any phase (ties: station id order); its vertical channel.",
+    "binS": 3600.0,
+    "stationKind": "borehole",
+    "usedInRunOnly": true,
+    "eventsInBin": 57,
+    "stationPicksInBin": 125
+  },
+  "processing": {
+    "detrend": "linear",
+    "taper": {
+      "type": "hann",
+      "maxPercentage": 0.05,
+      "maxLengthS": 1.0
+    },
+    "bandpass": {
+      "corners": 4,
+      "zeroPhase": true
+    },
+    "resample": {
+      "method": "scipy.signal.resample_poly",
+      "kaiserBeta": 5.0,
+      "maxFactor": 1000,
+      "rateRelTol": 1e-09
+    },
+    "levelPercentile": 50.0,
+    "compression": {
+      "description": "Soft-knee downward compressor on a peak envelope: the peak of |x| over the next lookaheadMs, released exponentially (falls by 1/e per releaseMs), then averaged over the past lookaheadMs (audio ms). The envelope never falls below |x|, and the gain can start to fall at most lookaheadMs before the sample that drives it. Levels in dB relative to the levelPercentile of |x| over samples with data. Gain is (1/ratio - 1) x (level - thresholdDb) above the knee, quadratic inside it.",
+      "thresholdDb": 18.0,
+      "ratio": 3.0,
+      "kneeDb": 12.0,
+      "lookaheadMs": 0.5,
+      "releaseMs": 10.0
+    },
+    "edgeFadeMs": 5.0,
+    "peakDbfs": -1.0,
+    "maxTruePeakDbtp": -0.5,
+    "truePeakOversample": 4
+  },
+  "files": {
+    "ogg": {
+      "name": "hidden-quakes-busiest-hour.ogg",
+      "bytes": 254812,
+      "sha256": "1695685d41f08bcb8a222c9173322947610b2e37750a005bb477f132e1bbcce8",
+      "nominalBitrateBps": 110000,
+      "vorbisQuality": 0.6
+    },
+    "mp3": {
+      "name": "hidden-quakes-busiest-hour.mp3",
+      "bytes": 433152,
+      "sha256": "27fed6a8a5f53063f3d7e3fb5db13f209e431a34ec3cc1440507b48aba5b664f",
+      "bitrateKbps": 192
+    }
+  },
+  "encoder": {
+    "library": "python-soundfile",
+    "soundfile": "0.14.0",
+    "libsndfile": "1.2.2"
+  },
+  "generator": "hq.preprocess.sonify"
+}
