@@ -5,7 +5,9 @@ Every table is small synthetic data built inside the tests (seeded); nothing tou
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -643,6 +645,51 @@ def test_stage_checks_depth_against_the_run_section(
     write_run(other)
     with pytest.raises(TierError, match="depthKm"):
         stage.run(other)
+
+
+def write_calibration_run(data_dir: Path, run_id: str, tiering: dict[str, Any],
+                          method: str) -> Path:
+    """A showcase calibration run as hq.locate.calibration reads it (run.json + statics)."""
+    run_dir = data_dir / "showcase" / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    record = {"id": run_id, "mode": "showcase", "locator": {"method": method},
+              "tiering": tiering}
+    (run_dir / "run.json").write_text(json.dumps(record, default=float), encoding="utf-8")
+    write_table(pd.DataFrame({"stationId": ["UU.A"], "phase": ["P"], "staticS": [0.1],
+                              "nEvents": [12]}), run_dir / "statics.parquet", "StationStatic")
+    return run_dir
+
+
+@pytest.mark.smoke
+def test_live_stage_applies_the_calibration_runs_bars(
+    make_ctx: Any, run: RunSection, cfg: SeismologyConfig, tmp_path: Path
+) -> None:
+    """Run mode live: a window with no matched event tiers with the calibration run's bars;
+    the same window in showcase mode fails (no bars from an empty matched set)."""
+    stage = importlib.import_module("hq.tier.run")
+    showcase = make_ctx(run, cfg)
+    write_run(showcase)
+    stage.run(showcase)  # the calibration run: bars from its 40 matched events
+    bars = tier_record(showcase)["params"]
+    write_calibration_run(tmp_path / "data", cfg.live.calibrationRun, bars, cfg.locator.method)
+
+    window = tmp_path / "data" / "live" / "runs" / "window"
+    window.mkdir(parents=True)
+    live = dataclasses.replace(make_ctx(run, cfg), run_dir=window, mode="live", records=[])
+    events, matches = write_run(live)
+    unmatched = matches.assign(eventId=None, dtS=np.nan, distM=np.nan)
+    write_table(unmatched, live.path("matches.parquet"), "Match")
+    stage.run(live)
+    rec = tier_record(live)["params"]
+    assert rec["thresholdSource"] == "supplied" and rec["matchedSet"]["n"] == 0
+    assert rec["thresholds"] == json.loads(json.dumps(bars["thresholds"], default=float))
+    assert rec["calibration"]["runId"] == cfg.live.calibrationRun
+    assert len(read_table(live.path("events.parquet"))) == len(events)
+
+    as_showcase = dataclasses.replace(live, mode="showcase", records=[])
+    with pytest.raises(TierError, match="minMatched"):
+        stage.run(as_showcase)
+    assert "calibration" not in bars  # a showcase record gets no calibration key
 
 
 @pytest.mark.smoke

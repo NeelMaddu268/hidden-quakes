@@ -1,7 +1,8 @@
 /**
- * Mode pills: SHOWCASE always, LIVE only behind the API-04 flag, MOCK only as the current mode,
- * never SNAPSHOT; a switch is a full navigation through `navigateToMode`. API-05: during live
- * failover the label says Snapshot while LIVE stays the pressed pill.
+ * Mode pills: SHOWCASE always, TODAY (snapshot) behind the build's snapshot flag or as the
+ * current mode (WEB-12), LIVE only behind the API-04 flag, MOCK only as the current mode; a
+ * switch is a full navigation through `navigateToMode`. API-05: during live failover the label
+ * says Snapshot while LIVE stays the pressed pill.
  */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,11 +58,22 @@ describe("mode pills", () => {
     expect(pills.map((b) => b.textContent)).toEqual(["showcase", "live"]);
   });
 
-  it("never offers SNAPSHOT: in snapshot mode nothing is current and the label alone says so", async () => {
+  it("offers TODAY only when the build carries a snapshot, and it switches to ?mode=snapshot", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SNAPSHOT_AVAILABLE", "1");
+    const pills = await mountReady("showcase", { isSynthetic: false });
+    expect(pills.map((b) => b.textContent)).toEqual(["showcase", "today"]);
+    expect(pills.map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+    fireEvent.click(pills[1]);
+    expect(navigateToMode).toHaveBeenCalledWith("snapshot");
+  });
+
+  it("presses TODAY in snapshot mode, SHOWCASE goes back, and the label is the snapshot's window and run", async () => {
     const pills = await mountReady("snapshot", { isSynthetic: false });
-    expect(pills.map((b) => b.textContent)).toEqual(["showcase"]);
-    expect(pills[0].getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByTestId("mode-label").textContent).toMatch(/^Snapshot/);
+    expect(pills.map((b) => b.textContent)).toEqual(["showcase", "today"]);
+    expect(pills.map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
+    expect(screen.getByTestId("mode-label").textContent).toBe("Snapshot · window · run snapshot-run");
+    fireEvent.click(pills[0]);
+    expect(navigateToMode).toHaveBeenCalledWith("showcase");
   });
 
   it("LIVE navigates to ?mode=live only when NEXT_PUBLIC_LIVE_ENABLED=1", async () => {

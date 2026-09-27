@@ -103,7 +103,7 @@ snapshot ── a heartbeat or poll of /api/live/status succeeds ──▶ live
   catalog and features from the snapshot bundle (the API does not serve them). The label is
   `Live · last {windowS} · updated {n} min ago`, both values from `LiveStatus`.
 - **Snapshot** is `StaticBundleProvider("snapshot")` reading `/data/snapshot/`, the same reader as
-  showcase. The label is `Snapshot · generated {run.createdAt} by our pipeline · run {run.id}`
+  showcase. The label is `Snapshot · {run.windowLabel} · run {run.id}`
   from the snapshot's own `meta.json`. The LIVE pill stays pressed; the label alone says what is
   on screen. `useLiveStatus()` is `null` while failed over.
 - The worker is polled every `LIVE_POLL_MS` (status + events) and probed every
@@ -163,7 +163,7 @@ Rehearse the failover before the demo. Two terminals from the checkout root:
    `apps/web/public/`.
 3. Open `http://127.0.0.1:4173/?mode=live`. Once the first window is served the label reads
    `Live · last … · updated … min ago`.
-4. Ctrl-C the worker. The label must read `Snapshot · generated … by our pipeline · run …`
+4. Ctrl-C the worker. The label must read `Snapshot · … UTC · run …`
    within 5 s, with LIVE still the pressed pill. Start the worker again: after its first window
    the label returns to Live on its own.
 

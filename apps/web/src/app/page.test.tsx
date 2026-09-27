@@ -14,6 +14,9 @@ vi.mock("@/scene", () => ({
   Scene: () => <div data-testid="scene-stub" />,
   // The shell mounts H3's tour button (REQ-H3-15); the stub keeps WebGL out of jsdom.
   TourButton: () => <button type="button" data-testid="tour-button-stub" />,
+  // The shell's attract mode (DEMO-05) reads the tour store; a real zustand store stands in.
+  startTour: () => undefined,
+  useTour: Object.assign(() => false, { getState: () => ({ running: false }), subscribe: () => () => undefined }),
 }));
 
 beforeEach(() => {

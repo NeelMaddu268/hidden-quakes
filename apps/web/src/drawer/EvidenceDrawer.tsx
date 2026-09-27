@@ -9,6 +9,7 @@ import { useDemo } from "../state/demo";
 import { Figures } from "./Figures";
 import { evidenceStations, pickingStations } from "./geometry";
 import { Header } from "./Header";
+import { HeroListen } from "./HeroListen";
 import { formatOpenLatency } from "./latency";
 import { RecordSection } from "./RecordSection";
 import { DRAWER_CSS } from "./styles";
@@ -109,6 +110,7 @@ export function EvidenceDrawer() {
       {shownId !== null && (
         <>
           <Header eventId={shownId} event={event} meta={ready?.meta ?? null} confidence={confidence} onClose={close} />
+          <HeroListen eventId={shownId} />
           {bundle.status === "loading" && <div className="hqd-section hqd-dim">Loading the data bundle…</div>}
           {bundle.status === "error" && (
             <div className="hqd-section hqd-error" role="status">

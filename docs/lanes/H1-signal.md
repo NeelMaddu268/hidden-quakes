@@ -28,6 +28,7 @@
 | Full-window PhaseNet picks | H2 | `runs/<id>/picks.parquet` | 12:30 AM |
 | STA/LTA picks + threshold sweep | H4 (VAL-01) | `runs/<id>/picks_stalta.parquet`, `baseline_sweep.parquet`, `baseline_reference.json` (scored reruns only) | 4:00 AM |
 | Audio clips + manifests (SEIS-09) | H3, through the lead | `hidden-quakes-busiest-hour.*`, `hidden-quakes-hero.*` (`.ogg`, `.mp3`, `.json`) in an output folder, never `apps/` | features freeze, Sat night |
+| Station-day helicorder + manifest (SEIS-10) | H3 (WEB-10 panel, gallery) | `apps/web/public/helicorder/station-day.png` and `station-day.json` | features freeze, Sat night |
 
 ## Tickets, in order
 
@@ -106,6 +107,17 @@
 - **Not a stage:** it changes no station, pick, gap or bundle file, and no stage records the `sonify` block (inventory, download, pick and baseline record only their own sub-sections). Copy: a sped-up rendering of recorded ground motion, never "the sound of" an event.
 - **Accept:** `tests/signal/test_sonify.py`: selection, rendering, envelope, validators, and the path from a synthetic run dir, bundle and cache through `load_inputs` and both selections. The encoding round trip and the CLI end to end run only under `uv run --with soundfile==0.14.0 pytest`, otherwise they are skipped. Both clips rendered from the frozen run with their manifests.
 - **Hero clip length:** `(preS + postS) / speed` seconds of audio, under a second with the window and speed the ticket asked for. A longer clip is a config change only: lower `sonify.hero.render.speed` and keep `bandHz[1]` below `audioRateHz / speed / 2`.
+
+### SEIS-10 · P1 · Saturday night — "A day at one station" helicorder
+
+- **Goal:** a drum plot (helicorder) of one borehole station's vertical channel over the run's UTC day, with candidate events and public-catalog events marked at their origin times: the WEB-10 station-day panel and a gallery image.
+- **Files:** `hq/preprocess/helicorder.py` (pure functions + CLI), `hq/config/signal.py` (`HelicorderConfig`), `configs/showcase/signal.yaml` (`helicorder:`), `tests/signal/test_helicorder.py`
+- **In → out:** the run's `stations.parquet`, `picks.parquet` and `run.json`, the committed bundle's `events.json`, `catalog.json` and `meta.json`, and the waveform cache (all read only) → `station-day.png` (exactly `layout.widthPx` wide) and `station-day.json` (the station-day asset contract) in `apps/web/public/helicorder/` (writing there authorised by the lead for this ticket).
+- **Run:** `cd services/seismic && uv run python -m hq.preprocess.helicorder --run-dir <run> --cache-dir <cache> --config-dir configs/showcase --bundle-dir ../../apps/web/public/data/showcase --out-dir ../../apps/web/public/helicorder`. Matplotlib (Agg) is already in the locked env through ObsPy. About a minute: the day is read one row at a time.
+- **Station choice:** among `usedInRun` stations of `helicorder.stationKind`, the one with the most `picks.parquet` picks of `pickPhases` over the day, ties in station id order; its vertical channel. The manifest's `selection` records the rule, the winner's pick count and the runners-up, so the choice is never hard-coded anywhere.
+- **As built:** the day is the bundle's run window (checked against `run.json`; it must be exactly one UTC day). Each row is read with `padS` at both ends; every gap-separated segment is detrended, tapered and zero-phase bandpassed (`bandHz`) on its own, never merged with fill or interpolated across a gap. Each segment becomes a per-pixel-column min / max envelope, so a spike shorter than a pixel keeps its height, and each is drawn as its own polygon: columns with no samples stay blank. One amplitude scale for the day (a percentile of the per-column peaks maps to `refHeightRows`), clipped at `clipRows` row spacings. Markers: amber ticks with the tier's opacity for candidate events, hollow diamonds for public-catalog events, from the bundle (the site's numbers); the run tables are cross-checked and a disagreement is logged. The PNG's size is read back from its header and must match the layout, and it must stay under `layout.maxBytes`. `gapSeconds` and `coverageFraction` come from the cache headers.
+- **Not a stage:** it changes no station, pick, gap or bundle file. Copy: "candidate events" and "public-catalog events"; the caption and every number in the image come from the data at render time.
+- **Accept:** `tests/signal/test_helicorder.py` (synthetic): station choice, gaps left blank with segments filtered on their own, row positions, marker selection by day and tier, the manifest's fields, the PNG size, and the config rejecting unknown keys.
 
 ## Domain notes (give these to your agent)
 

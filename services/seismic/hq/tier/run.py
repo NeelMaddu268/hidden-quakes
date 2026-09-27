@@ -25,6 +25,10 @@ and rules, so ``Validation.sweep`` stays empty until a tier run with the sweep e
 recorded). Every output is written under a ``.part`` name first and moved into place only after
 all of them were written.
 
+Run mode live (``hq.locate.calibration``): the bars are the calibration run's
+``ProcessingRun.tiering`` thresholds, applied unchanged (``thresholdSource`` supplied), since a
+short window has too few matched events; ``ProcessingRun.tiering["calibration"]`` records the run.
+
 ``events.parquet`` leaves this stage with every magnitude null; stage magnitude (MAG-01) fills
 them. So a ``magnitude.json`` from an earlier magnitude run is removed before the new
 ``events.parquet`` moves into place (a crash between the two leaves no calibration next to
@@ -52,6 +56,7 @@ from hq_contracts.io import read_table, to_frame, write_table
 from hq_contracts.models import Pick, SeismicEvent, SweepPoint
 
 from hq.config.run import RunSection
+from hq.locate.calibration import load_calibration
 from hq.locate.provenance import stage_provenance
 from hq.tier import Thresholds, TierError, assign_tiers, matched_rows
 from hq.tier.picks import event_picks
@@ -274,8 +279,12 @@ def run(ctx: "RunContext") -> None:
     check_matches_current(events_located, matches, _read(catalog_path, "catalog"),
                           cfg.tiering.consistencyTolM)
 
+    # Live: bars from the calibration run (a short window has too few matched events to derive
+    # them); every other mode derives them from this run's matched set.
+    calibration = load_calibration(ctx)
     result = assign_tiers(
-        events_located, matches, cfg, flags=flags, arrivals=arrivals, stations=stations
+        events_located, matches, cfg, flags=flags, arrivals=arrivals, stations=stations,
+        thresholds=None if calibration is None else calibration.tiering,
     )
     picks_out = event_picks(result.events, arrivals, picks)
     tiering = result.tiering
@@ -356,6 +365,12 @@ def run(ctx: "RunContext") -> None:
         "sweep": sweep_record,
         "provenance": stage_provenance(),
     }
+    if calibration is not None:  # live only, so a showcase record keeps its keys
+        params["calibration"] = {
+            **calibration.to_record(),
+            "note": "bars are the calibration run's ProcessingRun.tiering thresholds (its "
+            "matched set), applied unchanged; none derived from this window",
+        }
     magnitude_status = {
         "status": f"none: stage tier rewrote {EVENTS_TABLE} with every magnitude null; stage "
         f"magnitude (MAG-01) fills them, writes {MAGNITUDE_JSON} and replaces this record",
