@@ -53,7 +53,7 @@ export function Shell() {
       <header className={styles.header}>
         <h1 className={styles.title}>Hidden Quakes</h1>
         {/* REQ-H3-13: what the first frame shows, in one plain line (H2's wording). */}
-        <p className={styles.subtitle}>Seismic events beneath Utah&apos;s geothermal field near Milford, from public data only</p>
+        <p className={styles.subtitle}>Candidate events beneath Utah&apos;s geothermal field near Milford, from public data only</p>
         <p className={styles.phoneNote}>Best on a laptop: the view is three-dimensional and keyboard driven.</p>
         <p className={styles.modeLabel} data-testid="mode-label">
           {bundle.status === "ready" && bundle.info.label}
