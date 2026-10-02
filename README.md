@@ -1,10 +1,10 @@
 # Hidden Quakes
 
-Small earthquakes hiding in public seismic data, found and shown in 3D.
+Candidate events in public seismic data, detected, located and shown in 3D.
 
 ![Hidden Quakes: candidate events under Utah's geothermal field](apps/web/public/og.png)
 
-**Live demo:** https://hidden-quakes-final.vercel.app
+**Live demo:** https://hidden-quakes.vercel.app
 
 ## What it is
 
